@@ -1,16 +1,37 @@
 @import "tailwindcss";
 
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --cream: #fff7ed;
+  --cream-deep: #ffedd5;
+
+  --coral: #ff5a36;
+  --coral-dark: #9f2d18;
+  --coral-light: #ffe4dc;
+
+  --ink: #17202a;
+  --muted: #667085;
+
+  --card:#ffffff;
+  --border: #eee7df;
+
+  --green: #15803d;
+  --green-bg: #dcfce7;
+
+  --yellow: #a16207;
+  --yellow-bg: #fef3c7;
+
+  --red: #dc2626;
+  --red-bg: #fee2e2;
+
+
+ 
 }
 
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+*{
+  box-sizing: border-box;
 }
+
+
 
 @media (prefers-color-scheme: dark) {
   :root {
@@ -18,9 +39,35 @@
     --foreground: #ededed;
   }
 }
+@theme {
+  --color-cream: #FFF7ED;
+  --color-coral-light: #FFE4DC;
+  --color-coral-dark: #FF5A36;
+  --color-ink: #17202A;
+  --color-muted: #667085;
+
+  --shadow-soft: 0 10px 35px rgba(23, 32, 42, 0.07);
+  --shadow-card: 0 4px 20px rgba(23, 32, 42, 0.05);
+
+}
 
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  margin: 0;
+  background: var(--cream);
+  color: var(--ink);
+  font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Open Sans', 'Helvetica Neue', sans-serif,Impact, Haettenschweiler, 'Arial Narrow Bold', sans-serif
+}
+
+button,input,textarea,select{
+  font: inherit;
+}
+button{
+  cursor: pointer;
+}
+button:disabled{
+  cursor: not-allowed;
+}
+input::placeholder,
+textarea::placeholder{
+  color: #98a2b3;
 }

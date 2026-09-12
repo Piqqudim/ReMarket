@@ -66,6 +66,7 @@ model Business {
     id  String @id @default(cuid())
     name  String
     ownerName String?
+    description String?
     locationId String?
     location Location?     @relation(fields: [locationId], references: [id])
     priceMin Int?
