@@ -1,7 +1,8 @@
--"use client";
+"use client";
 import React, {  useState } from "react";
 import { signIn } from "next-auth/react";
 import { useRouter } from "next/navigation";
+import { Store, StoreIcon } from "lucide-react";
 
 
 export default function AdminLogin(){
@@ -54,7 +55,7 @@ export default function AdminLogin(){
                 <div className="flex flex-col items-center text-center mb-10">
                {/*Store Icon*/}
                     <div className="w-28 h-28 rounded-[28px] bg-[#FF563F] flex items-center justify-center shadow-[0_12px_30px_rgba(255,86,63,0.25)] mb-5">
-                     <i className="ti ti-building-store text-white text-[58px]"></i>
+                     <i className="ti ti-building-store text-white text-[58px]"><Store className="h-20 w-20"/></i>
                     </div>
                   {/**Brand Name */}
                     <h1 className="text-[52px] leading-none font-semibold tracking[-2px] text-[#111C27]">
