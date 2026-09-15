@@ -1,3 +1,5 @@
+"use client";
+import { buildContactUrl } from "@/lib/social-links";
 const PLATFORM_LABEL: Record<string,string> ={
     WHATSAPP: "Whatsapp",
     INSTAGRAM: "Instagram",
@@ -7,15 +9,13 @@ const PLATFORM_LABEL: Record<string,string> ={
 
 };
 
-export default function ContactButton({platform, onClick}: {platform: string, onClick: ()=> void;}){
+export default function ContactButton({platform, handle,onClick}: {platform: string, handle: string, onClick: ()=> void;}){
     const isWhatsapp = platform == "WHATSAPP";
-    return(
-        <button 
-         type="button"
-         onClick={onClick}
-         className={["inline-flex items-center justify-center","rounded-full px-4 py-2", "text-xs font-semibold","transition-all duration-150","active:scale-[0.98]",isWhatsapp ? "bg-green-600 text-white hover:bg-green-700": "border border-gray-200 bg-white text-gray-700 hover:bg-gray-50",].join("")}>
+    return (
+        <a href = {buildContactUrl(platform,handle)} target="_blank" rel="noopener noreferrer" onClick={onClick}
+        className={`text-xs rounded-full px-3 py-1.5 font-medium inline-block ${isWhatsapp ? "bg-green-600 text-white":"border border-gray-300 text-gray-700"}`}>
             {PLATFORM_LABEL[platform] ?? platform}
-         </button>
-
+        </a>
     );
+    
 }

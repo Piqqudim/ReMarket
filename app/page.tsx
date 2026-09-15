@@ -1,32 +1,32 @@
 "use client";
 import {ReactNode, SyntheticEvent, useEffect,useState} from "react";
 import {useRouter} from "next/navigation";
-import { Home ,ShoppingBag, Clipboard, Heart,Search, Bell, User, ChevronRight, MoreHorizontal,Package,MapPin,Star,Bookmark,Zap,Utensils,Sparkles,Shirt,Store,Menu,X,Briefcase,Laptop,Scissors, ClipboardList, SearchIcon, NotebookIcon, Notebook, UserCircle, ArrowRight, ScissorsIcon, BoxIcon } from "lucide-react";
+import { Home ,ShoppingBag, Clipboard, Heart,Search, Bell, User, ChevronRight, MoreHorizontal,Package,MapPin,Star,Bookmark,Zap,Utensils,Sparkles,Shirt,Store,Menu,X,Briefcase,Laptop,Scissors, ClipboardList, SearchIcon, NotebookIcon, Notebook, UserCircle, ArrowRight, ScissorsIcon, BoxIcon, Layers3, Plug } from "lucide-react";
 import Box from "next-auth/providers/box";
 
 const CATEGORY_STYLE: Record<string,{bg:string, icon: ReactNode}> = {
-    fashion: {
-        bg: "bg-[#FFF8F5]",
+    Fashion: {
+        bg: "#FFE0D6",
         icon: <Shirt className="h-6 w-6"/>,
     },
-    electronics: {
-        bg: "bg-[#F4FFFC]",
-        icon: <Zap className="h-6 w-6"/>,
+    Electronics: {
+        bg: "#DDF5EA",
+        icon: <Plug className="h-6 w-6"/>,
     },
-    food: {
-        bg: "bg-[#FFFBF1]",
+    Food: {
+        bg: "#FFF0C7",
         icon : <Utensils className="h-6 w-6"/>,
     },
-    beauty: {
-        bg : "bg-[F8F4FF]",
+    Beauty: {
+        bg : "#E7E5FF",
         icon : <Sparkles className="h-6 w-6"/>,
     },
-    textiles: {
-        bg: "bg-[#FFF5FA]",
-        icon: <ScissorsIcon className="h-6 w-6"/>,
+    Textiles: {
+        bg: "#F9DCE8",
+        icon: <Layers3 className="h-6 w-6"/>,
     },
-    services: {
-        bg: "bg-[#F4F7F8]",
+    Services: {
+        bg: "#E4E9EF",
         icon: <Briefcase className="h-6 w-6"/>,
   
 }
@@ -84,8 +84,8 @@ const DEFAULT_CATEGORIES: Category[] = [
 
     }, 
     {
-        id: "textile",
-        name: "Textile",
+        id: "textiles",
+        name: "Textiles",
     },
     {
         id: "services",
@@ -93,7 +93,7 @@ const DEFAULT_CATEGORIES: Category[] = [
     }
 ]
 function getCategoryStyle(name:string) {
-    return (CATEGORY_STYLE[name.toLowerCase()] ?? { bg: "#F3F4F6", icon: <Package className=" h-6 w-6"/>});
+    return (CATEGORY_STYLE[name] ?? { bg: "#EEF1F4", icon: <MoreHorizontal className=" h-6 w-6"/>});
 
 }
 
@@ -212,10 +212,10 @@ function CategorySkeletons({sidebar = false}: {sidebar?: boolean}){
     
     return(
         <main className="min-h screen bg-[#FFF7ED]">
-            <div className="mx-auto min-h-screen w-full max-w-[1500px] px-3 py-3 sm:px-5 sm:py-5">
-             <div className="min-h-[calc(100vh-24px)] overflow-hidden rounded-[18px] border border-[#FF5A36]/100 bg-[#FFFDFC] shadow-sm sm:rounded-[22px] lg:min-h-[calc(100hv-40px)]">
+            <div className="mx-auto min-h screen w-full max-w-[1500px] px-3 py-3 sm:px-5 sm:py-5">
+             <div className="min-h-[calc(100vh-24px)] overflow-hidden rounded-[18px] border border-[#FF5A36]/100 bg-[#FFFDFC] shadow-sm sm:rounded-[22px] lg:min-h-[calc(100vh-40px)]">
               {/*Header */}
-              <header className="flex h-[64px] items-center justify-between border-b border-[#EAE6DF] bg-white px-4 sm:px-6 lg:[h-66px] lg:px-6">
+              <header className="flex h-[64px] items-center justify-between border-b border-[#EAE6DF] bg-white px-4 sm:px-6 lg:h-[66px] lg:px-6">
                 <div className="flex items-center gap-2.5">
                 <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-[#FF5A36] text-white shadow-sm sm:h-10 sm:w-10">
                     <Store className="h-5 w-5"/>
@@ -307,7 +307,7 @@ function CategorySkeletons({sidebar = false}: {sidebar?: boolean}){
                                     return (
                                         <button key={category.id} type="button" onClick={() => handleCategory(category.name)} className="flex w-full items-center gap-3 rounded-xl px-3 py-2 text-left transition hover:bg-white">
                                             <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full" style={{backgroundColor:style.bg,}}>
-                                                <span className="scale-[0.65]">
+                                                <span className="scale-[0.65]">{style.icon}
                                                 </span>
                                             </span>
                                             <span className="truncate text-xs font-medium text-gray-700">{category.name}</span>
@@ -353,7 +353,7 @@ function CategorySkeletons({sidebar = false}: {sidebar?: boolean}){
                                 <h1 className="max-w-[520px] text-[29px] font-bold leading-[1.1] tracking-tight sm:text-[34px] lg:text-[36px]">Find what you need,<br/>right around you</h1>
                             </div>
                             <p className="mt-3 max-w-[470px] text-xs leading-5 text-white/85 sm:text-sm">Search sellers,discover products and connect with people nearby without the hassle.</p>
-                            <form onSubmit={submit} className="mt-5 flex h-[48px] w-full mx-w-[455px] items-center rounded-full bg-white p-1.5 shadow-sm">
+                            <form onSubmit={submit} className="mt-5 flex h-[48px] w-full max-w-[455px] items-center rounded-full bg-white p-1.5 shadow-sm">
                                 <Search className="ml-3 h-[18px] w-[18px] shrink-0 text-gray-500"/>
                                 <input id="homepage-search" value={q} onChange={(event)=>setQ(event.target.value)} placeholder="What are you looking for?" className="min-w-0 flex-1 bg-transparent px-3 text-xs text-gray-800 outline-none placeholder:text-gray-400"/>
                               <button type="submit" className="flex h-[38px] items-center rounded-full bg-[#FF5A36] px-5 text-xs font-bold text-white transition hover:opacity-90">Search</button>
@@ -374,7 +374,7 @@ function CategorySkeletons({sidebar = false}: {sidebar?: boolean}){
                             return(
                             <button key={category.id} type="button" onClick={()=> handleCategory(category.name)} className="group flex min-h-[112px] flex-col items-center justify-center rounded-xl border border-[#E8E4DE] bg-white px-2 py-2 transition hover:-translate-y-0.5 hover:shadow-md">
                                 <span className="flex h-[58px] w-[58px] items-center justify-center rounded-full transition group-hover:scale-105" style={{background:style.bg,}}>{style.icon}</span>
-                                <span className="mt-3 max-w-full truncate text-xs font-medium text-gray-800">{category.name}</span>
+                                <span  className="mt-3 max-w-full truncate text-xs font-medium text-gray-800">{category.name}</span>
                             </button>
                             
                             );
@@ -388,7 +388,7 @@ function CategorySkeletons({sidebar = false}: {sidebar?: boolean}){
                     </section>   
                     {/*Request Banner */}
                     <section className="mt-5 flex flex-col gap-4 rounded-xl border border-[#F4DFC3] bg-[#FFF0D9] px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
-                     <div className="flex items-center gp-3">
+                     <div className="flex items-center gap-3">
                      <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-[#FFE0AD]"><ClipboardList className="h-5 w-5 text-[#A76013]"/></div>    
                      <div>
                         <h2 className="text-sm font-bold text-gray-800">Can't find what you need?</h2>
@@ -435,7 +435,7 @@ function CategorySkeletons({sidebar = false}: {sidebar?: boolean}){
                                 const style=getCategoryStyle( category??"Services");
                                 const location=business.location?.area?? business.location?.address??"Local";
                                 return(
-                                    <article key={business.id} className="overflow-hidden rounded-xl border border-[#E8E4DE] bg-white transition hover:-translate-y-0.5 hover-shadow-md">
+                                    <article key={business.id} className="overflow-hidden rounded-xl border border-[#E8E4DE] bg-white transition hover:-translate-y-0.5 hover:shadow-md">
                                         {/*Business Visual */}
                                      <div className="relative flex h-[92px] items-center justify-center" style={{backgroundColor:style.bg}}>
                                         <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-white/75 shadow-sm">
@@ -487,7 +487,7 @@ function CategorySkeletons({sidebar = false}: {sidebar?: boolean}){
                     {/*Footer */}
                     <footer className="mt-7 flex items-center justify-center gap-3 text-[10px] text-gray-400">
                         <span className="h-px w-16 bg-gray-200"/>
-                        <span>ReMarket . Find it nearby</span>
+                        <span>LocalMarket . Find it nearby</span>
                         <span className="h-px w-16 bg-gray-200"/>
                         </footer>       
                 </div>

@@ -9,6 +9,7 @@ datasource db {
 enum Role {
     ADMIN
     BUYER
+    SELLER
 }
 enum Availability {
     AVAILABLE
@@ -37,6 +38,7 @@ enum SocialPlatform {
     TIKTOK
     FACEBOOK
     PHONE
+    DIRECTIONS
 }
 
 enum VerificationStatus {
@@ -56,7 +58,7 @@ model User {
 
 model Location {
     id String  @id @default(cuid())
-    area String 
+    area String @unique
     lat Float?
     long Float?
     businesses Business[]
@@ -184,6 +186,8 @@ model SearchEvent {
     category String?
     resultCount Int @default(0)
     location String?
+    minPrice Int?
+    maxPrice Int?
     createdAt DateTime @default(now())
 }
 
