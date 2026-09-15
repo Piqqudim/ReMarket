@@ -6,13 +6,14 @@ import{Search,Heart,Sparkles, Bell,UserCircle,Store,Home as HomeIcon,ShoppingBag
 import AvailabilityDot from "@/components/AvailabilityDot";
 import VerificationMark  from "@/components/VerificationMark";
 import ContactButton from "@/components/ContactButton";
+import { ContactPlatform } from "@/lib/social-links";
 
 /*Types */
 //business
 
 type SocialLink = {
-    platform: string;
-    handle: string;
+    platform: ContactPlatform;
+    handle: ContactPlatform;
 }
 type Category = {
     id: string ;
@@ -200,7 +201,7 @@ const [verifiedOnly, setVerifiedOnly] =useState(false);
     //Contact Event
     const contact = (
         businessId: string,
-        platform: string
+        platform: ContactPlatform
     ) => {
         fetch("api/events", {
             method: "POST",
@@ -565,7 +566,7 @@ const [verifiedOnly, setVerifiedOnly] =useState(false);
                         })}
                     </div>
                 </nav>
-                
+
         </main>
        
     )

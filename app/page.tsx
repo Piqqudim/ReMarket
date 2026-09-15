@@ -2,7 +2,7 @@
 import {ReactNode, SyntheticEvent, useEffect,useState} from "react";
 import {useRouter} from "next/navigation";
 import { Home ,ShoppingBag, Clipboard, Heart,Search, Bell, User, ChevronRight, MoreHorizontal,Package,MapPin,Star,Bookmark,Zap,Utensils,Sparkles,Shirt,Store,Menu,X,Briefcase,Laptop,Scissors, ClipboardList, SearchIcon, NotebookIcon, Notebook, UserCircle, ArrowRight, ScissorsIcon, BoxIcon, Layers3, Plug } from "lucide-react";
-import Box from "next-auth/providers/box";
+
 
 const CATEGORY_STYLE: Record<string,{bg:string, icon: ReactNode}> = {
     Fashion: {

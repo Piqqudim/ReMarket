@@ -1,21 +1,39 @@
 "use client";
-import { buildContactUrl } from "@/lib/social-links";
-const PLATFORM_LABEL: Record<string,string> ={
+import { buildContactUrl, ContactPlatform } from "@/lib/social-links";
+const PLATFORM_LABEL: Record<ContactPlatform,string> ={
     WHATSAPP: "Whatsapp",
     INSTAGRAM: "Instagram",
     TIKTOK: "Tiktok",
     FACEBOOK: "Facebook",
     PHONE: "Call",
+    DIRECTIONS: "Directions"
 
 };
-
-export default function ContactButton({platform, handle,onClick}: {platform: string, handle: string, onClick: ()=> void;}){
-    const isWhatsapp = platform == "WHATSAPP";
-    return (
-        <a href = {buildContactUrl(platform,handle)} target="_blank" rel="noopener noreferrer" onClick={onClick}
-        className={`text-xs rounded-full px-3 py-1.5 font-medium inline-block ${isWhatsapp ? "bg-green-600 text-white":"border border-gray-300 text-gray-700"}`}>
-            {PLATFORM_LABEL[platform] ?? platform}
-        </a>
-    );
-    
+interface ContactButtonProps{
+    platform: ContactPlatform,
+    handle: string;
+    onClick? : ()=> void;
 }
+
+export default function ContactButton({platform, handle,onClick}: ContactButtonProps){
+    const isWhatsapp = platform === "WHATSAPP";
+    const isPhone = platform === "PHONE";
+
+    const href = buildContactUrl(platform,handle);
+    if(href === "#"){
+        return null;
+    }
+    return (
+        <a 
+            href={href}
+            target={isPhone ? undefined: "_blank"}
+            rel={isPhone ? undefined: "noopener noreferrer"}
+            onClick={onClick}
+            className={`inline-flex items-center justify-center rounded-full px-3 py-1.5 text-xs font-medium transition ${
+                isWhatsapp? "bg-green-600 text-white hover:bg-green-700": "border border-gray-300 bg-white text-gray-700 hover: bg-gray-50"}`}
+                >
+                    {PLATFORM_LABEL[platform]}
+                </a>
+    );
+}
+    
