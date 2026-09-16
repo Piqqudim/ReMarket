@@ -149,7 +149,7 @@ function formatPrice(product: Product) {
       return `₦${product.priceMin.toLocaleString()}`;
     }
 
-    return `₦${product.priceMin.toLocaleString()} ₦${product.priceMax.toLocaleString()}`;
+    return `₦${product.priceMin.toLocaleString()}-₦${product.priceMax.toLocaleString()}`;
   }
 
   if (product.price != null) {

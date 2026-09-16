@@ -269,7 +269,7 @@ export default function HomePage() {
             !cancelled
           ) {
             setCategories(
-              categoryData.categories.slice(0, 6)
+              categoryData.categories.slice(0, categoryData.categories.length)
             );
           }
         }
