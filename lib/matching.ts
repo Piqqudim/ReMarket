@@ -1,144 +1,419 @@
-import {prisma} from "./prisma";
+// lib/matching.ts
 
-export interface ParsedQuery {
-    keywords: string[];
-    location?: string;
-    budget?: number;
+import { prisma } from "@/lib/prisma";
+
+export type ParsedQuery = {
+  keywords: string[];
+  location?: string;
+  budget?: number;
+};
+
+const GENERIC_WORDS = new Set([
+  "store",
+  "stores",
+  "shop",
+  "shops",
+  "seller",
+  "sellers",
+  "business",
+  "businesses",
+  "item",
+  "items",
+  "product",
+  "products",
+  "thing",
+  "things",
+  "buy",
+  "buying",
+  "find",
+  "looking",
+  "need",
+  "want",
+  "please",
+  "me",
+  "for",
+  "a",
+  "an",
+  "the",
+]);
+
+function normalize(value: string | null | undefined): string {
+  return (value ?? "")
+    .toLowerCase()
+    .normalize("NFKC")
+    .replace(/[^a-z0-9\s]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
 }
-interface MatchCandidate{
-    businessId: string;
-    score: number;
+
+function tokenize(value: string): string[] {
+  return normalize(value)
+    .split(" ")
+    .filter(Boolean);
 }
 
-function normalize(value: string):string {
-    return value.toLowerCase().trim().replace(/[^\p{L}\p{N}\s]/gu,"").replace(/\s+/g,"");
+export function parseQuery(
+  raw: string,
+  explicitLocation?: string,
+  explicitBudget?: number
+): ParsedQuery {
+  let text = normalize(raw);
 
+  let location = explicitLocation
+    ? normalize(explicitLocation)
+    : undefined;
+
+  let budget = explicitBudget;
+
+  const locationMatch = text.match(
+    /\b(?:near|in|at|around)\s+([a-z0-9\s-]+?)(?=\s+(?:under|below|less|budget|for)\b|$)/
+  );
+
+  if (!location && locationMatch?.[1]) {
+    location = normalize(locationMatch[1]);
+  }
+
+  if (locationMatch) {
+    text = text.replace(locationMatch[0], " ");
+  }
+
+  const budgetMatch = text.match(
+    /\b(?:under|below|less than|budget(?: of)?|up to|upto|max(?:imum)?)\s*₦?\s*([\d,]+)/
+  );
+
+  if (budget == null && budgetMatch?.[1]) {
+    budget = Number(
+      budgetMatch[1].replace(/,/g, "")
+    );
+  }
+
+  if (budgetMatch) {
+    text = text.replace(budgetMatch[0], " ");
+  }
+
+  const keywords = tokenize(text);
+
+  return {
+    keywords,
+    location,
+    budget,
+  };
 }
 
-function tokenize(value: string): string[]{
-    return normalize(value).split("").filter((word) => word.length > 1);
+function containsWord(
+  text: string,
+  word: string
+): boolean {
+  const words = tokenize(text);
+
+  return words.some(
+    (item) =>
+      item === word ||
+      item.startsWith(word) ||
+      word.startsWith(item)
+  );
 }
 
-export function parseQuery(raw: string, explicitLocation?: string, explicitBudget?: number): ParsedQuery{
-    const text = normalize(raw);
-    let location = explicitLocation?.trim() || undefined;
-    let cleaned = text;
+function containsPhrase(
+  text: string,
+  phrase: string
+): boolean {
+  const normalizedText = normalize(text);
+  const normalizedPhrase = normalize(phrase);
 
-    /**
-     * Examples:
-     * "Shoes near ikeja"
-     * "bags in yaba"
-     * "phones around surulere"
-     */
-    const locationPattern = /\s+(?:near|in|at|around)\s+(.+)$/i;
-    if(!location){
-        const match = text.match(locationPattern);
-        if(match?.[1]){
-            location = match[1].trim();
-            cleaned = text.slice(0,match.index).trim();
-        }
-    }
-    const keywords = tokenize(cleaned);
+  if (!normalizedText || !normalizedPhrase) {
+    return false;
+  }
 
-    return {
-        keywords:[...new Set(keywords)],
-        location: location ? normalize(location): undefined,
-        budget: typeof explicitBudget === "number" && Number.isFinite(explicitBudget) && explicitBudget > 0 ? explicitBudget: undefined,
-    };   
+  return normalizedText.includes(normalizedPhrase);
 }
 
+export async function findMatches(
+  parsed: ParsedQuery
+) {
+  const businesses =
+    await prisma.business.findMany({
+      where: {
+        status: "ACTIVE",
+      },
 
-export async function findMatches(parsed: ParsedQuery, limit = 20): Promise<MatchCandidate[]>{
-    const businesses = await prisma.business.findMany({
-        where: { status:"ACTIVE"},
-        include : {
-            products: true,
-            categories: { include: { category: true}},
-            location: true,
+      include: {
+        location: true,
+
+        categories: {
+          include: {
+            category: true,
+          },
         },
+
+        products: {
+          where: {
+            status: "ACTIVE",
+          },
+        },
+
+        socialLinks: true,
+      },
     });
-    const scored: MatchCandidate[] = [];
 
-    for(const business of businesses){
-        const searchableText = [
-            business.name,
-            business.description ?? "",
-            ...business.categories.map((item) => item.category.name),
-            ...business.products.flatMap((product) => [
-                product.name,
-                product.description ?? "",
-                ...product.keywords,
-            ]),
-        ].join("");
+  const meaningfulKeywords =
+    parsed.keywords.filter(
+      (keyword) =>
+        !GENERIC_WORDS.has(keyword)
+    );
 
-        const haystackTokens = new Set(tokenize(searchableText));
-        let score = 0;
-        let hits = 0;
-        /**
-         * Keyword relevance
-         */
-        for(const keyword of parsed.keywords){
-            if(haystackTokens.has(keyword)){
-                hits++;
+  const searchKeywords =
+    meaningfulKeywords.length > 0
+      ? meaningfulKeywords
+      : parsed.keywords;
+
+  const queryPhrase =
+    searchKeywords.join(" ");
+
+  const matches = businesses
+    .map((business) => {
+      const businessName =
+        normalize(business.name);
+
+      const description =
+        normalize(business.description);
+
+      const categoryNames =
+        business.categories
+          .map((item) =>
+            normalize(item.category.name)
+          )
+          .join(" ");
+
+      const productNames =
+        business.products
+          .map((product) =>
+            normalize(product.name)
+          )
+          .join(" ");
+
+      const productDescriptions =
+        business.products
+          .map((product) =>
+            normalize(product.description)
+          )
+          .join(" ");
+
+      const productKeywords =
+        business.products
+          .flatMap(
+            (product) =>
+              product.keywords ?? []
+          )
+          .map(normalize)
+          .join(" ");
+
+      const searchableText = [
+        businessName,
+        description,
+        categoryNames,
+        productNames,
+        productDescriptions,
+        productKeywords,
+      ].join(" ");
+
+      let score = 0;
+      let keywordHits = 0;
+
+      /*
+       * Strong business-name match
+       */
+      if (
+        queryPhrase &&
+        containsPhrase(
+          businessName,
+          queryPhrase
+        )
+      ) {
+        score += 100;
+        keywordHits += 1;
+      }
+
+      /*
+       * Match individual search terms
+       */
+      for (const keyword of searchKeywords) {
+        if (!keyword) continue;
+
+        if (
+          containsWord(
+            businessName,
+            keyword
+          )
+        ) {
+          score += 45;
+          keywordHits += 1;
+          continue;
+        }
+
+        if (
+          containsWord(
+            productNames,
+            keyword
+          )
+        ) {
+          score += 35;
+          keywordHits += 1;
+          continue;
+        }
+
+        if (
+          containsWord(
+            categoryNames,
+            keyword
+          )
+        ) {
+          score += 25;
+          keywordHits += 1;
+          continue;
+        }
+
+        if (
+          containsWord(
+            productDescriptions,
+            keyword
+          ) ||
+          containsWord(
+            productKeywords,
+            keyword
+          )
+        ) {
+          score += 20;
+          keywordHits += 1;
+          continue;
+        }
+
+        if (
+          searchableText.includes(keyword)
+        ) {
+          score += 10;
+          keywordHits += 1;
+        }
+      }
+
+      /*
+       * If there was a search query
+       * and nothing matched, remove it.
+       */
+      if (
+        searchKeywords.length > 0 &&
+        keywordHits === 0
+      ) {
+        return null;
+      }
+
+      /*
+       * Location bonus
+       */
+      if (parsed.location) {
+        const businessArea =
+          normalize(
+            business.location?.area
+          );
+
+        if (
+          businessArea &&
+          containsPhrase(
+            businessArea,
+            parsed.location
+          )
+        ) {
+          score += 35;
+        }
+      }
+
+      /*
+       * Budget bonus
+       */
+      if (parsed.budget != null) {
+        const hasAffordableProduct =
+          business.products.some(
+            (product) => {
+              const min =
+                product.priceMin ??
+                product.price;
+
+              const max =
+                product.priceMax ??
+                product.price;
+
+              if (
+                min == null &&
+                max == null
+              ) {
+                return false;
+              }
+
+              if (
+                min != null &&
+                parsed.budget! < min
+              ) {
+                return false;
+              }
+
+              if (
+                max != null &&
+                parsed.budget! > max
+              ) {
+                return false;
+              }
+
+              return true;
             }
-        }
-        if(hits === 0){
-            continue;
-        }
-        score += hits * 10;
+          );
 
-        /**
-         * Exact business-name / category relevance
-         */
-        const normalizedName = normalize(business.name);
-        if(parsed.keywords.some((keyword) =>
-            normalizedName.includes(keyword)
-        )){
-            score +=8;
+        if (hasAffordableProduct) {
+          score += 25;
         }
-        /**
-         * Location relevance
-         */
-        const businessArea = normalize(business.location?.area?? "");
-        if(parsed.location && businessArea.includes(parsed.location)){
-            score += 15;
-        }
-        /**
-         * Budget relevance
-         */
-        if(parsed.budget !== undefined){
-            const budget = parsed.budget;
+      }
 
-            const hasBudgetMatch = business.products.some((product) => {
-                const min = product.priceMin ?? product.price ?? 0;
-                const max = product.priceMax ?? product.price ?? Infinity;
-                return (
-                    min <= budget && max >= budget * 0.5
-                );
-            });
+      /*
+       * Availability
+       */
+      if (
+        business.availability ===
+        "AVAILABLE"
+      ) {
+        score += 8;
+      } else if (
+        business.availability ===
+        "ASK_SELLER"
+      ) {
+        score += 3;
+      }
 
-            if (hasBudgetMatch){
-                score += 10;
-            }
-        }
-        /**
-         * Availability
-         */
-        if(business.availability === "AVAILABLE"){
-            score += 8;
-        } else if( business.availability === "ASK_SELLER"){
-            score += 3;
-        }
+      /*
+       * Verification
+       */
+      if (
+        business.verification ===
+        "VERIFIED"
+      ) {
+        score += 5;
+      }
 
-        /**
-         * Verification
-         */
-        if(business.verification === "VERIFIED"){
-            score += 5;
-        }
-        scored.push({businessId:business.id, score});
-    }
-    return scored.sort((a,b) => b.score - a.score).slice(0, Math.max(1, limit));
-   
-    
+      return {
+        business,
+        score,
+      };
+    })
+    .filter(
+      (
+        item
+      ): item is {
+        business: (typeof businesses)[number];
+        score: number;
+      } => item !== null
+    )
+    .sort(
+      (a, b) =>
+        b.score - a.score
+    );
+
+  return matches;
 }

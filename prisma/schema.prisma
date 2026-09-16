@@ -14,7 +14,7 @@ enum Role {
 enum Availability {
     AVAILABLE
     ASK_SELLER
-    UNAVALIABLE
+    UNAVAILABLE
 }
 enum BusinessStatus {
     ACTIVE

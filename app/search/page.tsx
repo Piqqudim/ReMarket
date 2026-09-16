@@ -1,573 +1,1537 @@
+// app/search/page.tsx
+
 "use client";
-import { SyntheticEvent, useEffect,useState,type ReactNode } from "react";
-import { useSearchParams,useRouter } from "next/navigation";
+
+import {
+  useEffect,
+  useState,
+  type SubmitEvent,
+} from "react";
+
+import {
+  Search,
+  Home,
+  ShoppingBag,
+  ClipboardList,
+  Heart,
+  UserCircle,
+  Store,
+  MapPin,
+  ArrowRight,
+  SlidersHorizontal,
+  X,
+  ChevronDown,
+  Check,
+  Loader2,
+  Package,
+  Bookmark,
+  Star,
+  MoreHorizontal,
+  Shirt,
+  Plug,
+  Utensils,
+  Sparkles,
+  Layers3,
+  Briefcase,
+} from "lucide-react";
+
 import Link from "next/link";
-import{Search,Heart,Sparkles, Bell,UserCircle,Store,Home as HomeIcon,ShoppingBag,ClipboardList,Bookmark,ArrowLeft,ArrowRight,CheckCircle2,MapPin,Package,Shirt,Plug,Utensils,Scissors,Layers3,Wrench,MoreHorizontal, DotIcon, HeartOff, SlidersHorizontal, Loader2, ChevronRight, Briefcase,} from "lucide-react";
-import AvailabilityDot from "@/components/AvailabilityDot";
-import VerificationMark  from "@/components/VerificationMark";
-import ContactButton from "@/components/ContactButton";
-import { ContactPlatform } from "@/lib/social-links";
+import { useRouter, useSearchParams } from "next/navigation";
 
-/*Types */
-//business
+const CATEGORY_STYLE: Record<
+  string,
+  {
+    bg: string;
+    icon: React.ReactNode;
+  }
+> = {
+  Fashion: {
+    bg: "#FFE0D6",
+    icon: <Shirt className="h-5 w-5" />,
+  },
 
-type SocialLink = {
-    platform: ContactPlatform;
-    handle: ContactPlatform;
-}
-type Category = {
-    id: string ;
-    name: string;
-}
-type SearchResult={
-    id:string;
-    name:string;
-    priceMin?:number;
-    priceMax?:number;
-    availability:string;
-    verification:string,
-    location?:{
-        area:string;
-    };
-    categories:{
-        category:{
-            name:string;
-        }
-    }[];
-    socialLinks?:SocialLink[];
-}
+  Electronics: {
+    bg: "#DDF5EA",
+    icon: <Plug className="h-5 w-5" />,
+  },
 
+  Food: {
+    bg: "#FFF0C7",
+    icon: <Utensils className="h-5 w-5" />,
+  },
 
-//Categories
-const CATEGORY_STYLE:Record<string,{bg:string,icon:ReactNode}>={
-    Fashion:{
-        bg:"#FFE0D6",
-        icon:(<Shirt className="h-5 w-5 text-[#D94835]"/>),
-    },
-    Electronics:{
-        bg:"#DDF5EA",
-        icon:(<Plug className="h-5 w-5 text-[#15946B]"/>),
-    },
-    Food:{
-        bg:"#FFF0C7",
-        icon:(<Utensils className="h-5 w-5 text-[#B97900]"/>),
-    },
-    Beauty:{
-        bg:"#E7E5FF",
-        icon:(<Sparkles className="h-5 w-5 text-[#6551C7]"/>),
-    },
-    Textiles:{
-        bg:"#F9DCE8",
-        icon:(<Layers3 className="h-5 w-5 text-[#B64C7A]"/>),
-    },
-    Services:{
-       bg:"#E4E9EF",
-       icon:(<Briefcase className="h-5 w-5 text-[#53616F]"/>),
-    },
+  Beauty: {
+    bg: "#E7E5FF",
+    icon: <Sparkles className="h-5 w-5" />,
+  },
 
+  Textiles: {
+    bg: "#F9DCE8",
+    icon: <Layers3 className="h-5 w-5" />,
+  },
 
-    
+  Services: {
+    bg: "#E4E9EF",
+    icon: <Briefcase className="h-5 w-5" />,
+  },
 };
 
-const DEFAULT_CATEGORIES: Category[] = [
-    {
-        id: "fashion", name:"Fashion"
-    },
-    {
-        id: "electronics",
-        name: "Electronics",
-    },
-    {
-        id: "food",
-        name:"Food"
-    },
-    {
-        id: "beauty",
-        name:"Beauty"
-    },
-    {
-        id: "textiles",
-        name:"Textiles",
+type Category = {
+  id: string;
+  name: string;
+};
+
+type Product = {
+  id: string;
+  name: string;
+  price: number | null;
+  priceMin: number | null;
+  priceMax: number | null;
+  availability:
+    | "AVAILABLE"
+    | "ASK_SELLER"
+    | "UNAVAILABLE";
+  imageUrl: string | null;
+};
+
+type Business = {
+  id: string;
+  name: string;
+
+  description: string | null;
+
+  location: {
+    area?: string | null;
+    address?: string | null;
+  } | null;
+
+  availability:
+    | "AVAILABLE"
+    | "ASK_SELLER"
+    | "UNAVAILABLE";
+
+  verification:
+    | "VERIFIED"
+    | "UNVERIFIED";
+
+  categories: {
+    category: {
+      id: string;
+      name: string;
+    };
+  }[];
+
+  products: Product[];
+
+  socialLinks: {
+    platform: string;
+    handle: string;
+  }[];
+
+  matchScore?: number;
+};
+
+const NAV_ITEMS = [
+  {
+    label: "Home",
+    href: "/",
+    icon: Home,
+  },
+  {
+    label: "Shop",
+    href: "/shop",
+    icon: ShoppingBag,
+  },
+  {
+    label: "Requests",
+    href: "/my-requests",
+    icon: ClipboardList,
+  },
+  {
+    label: "Saved",
+    href: "/saved",
+    icon: Heart,
+  },
+];
+
+function getCategoryStyle(name: string) {
+  return (
+    CATEGORY_STYLE[name] ?? {
+      bg: "#EEF1F4",
+      icon: <MoreHorizontal className="h-5 w-5" />,
+    }
+  );
+}
+
+function formatPrice(
+  product: Product
+): string {
+  if (product.price != null) {
+    return `₦${product.price.toLocaleString()}`;
+  }
+
+  if (
+    product.priceMin != null &&
+    product.priceMax != null
+  ) {
+    return `₦${product.priceMin.toLocaleString()} - ₦${product.priceMax.toLocaleString()}`;
+  }
+
+  if (product.priceMin != null) {
+    return `From ₦${product.priceMin.toLocaleString()}`;
+  }
+
+  if (product.priceMax != null) {
+    return `Up to ₦${product.priceMax.toLocaleString()}`;
+  }
+
+  return "Ask seller";
+}
+
+export default function SearchPage() {
+  const router = useRouter();
+  const searchParams = useSearchParams();
+
+  const urlQuery =
+    searchParams.get("q") ?? "";
+
+  const [query, setQuery] =
+    useState(urlQuery);
+
+  const [categories, setCategories] =
+    useState<Category[]>([]);
+
+  const [businesses, setBusinesses] =
+    useState<Business[]>([]);
+
+  const [loading, setLoading] =
+    useState(true);
+
+  const [error, setError] =
+    useState("");
+
+  const [showFilters, setShowFilters] =
+    useState(false);
+
+  const [category, setCategory] =
+    useState(
+      searchParams.get("category") ?? ""
+    );
+
+  const [location, setLocation] =
+    useState(
+      searchParams.get("location") ?? ""
+    );
+
+  const [minPrice, setMinPrice] =
+    useState(
+      searchParams.get("minPrice") ?? ""
+    );
+
+  const [maxPrice, setMaxPrice] =
+    useState(
+      searchParams.get("maxPrice") ?? ""
+    );
+
+  const [availability, setAvailability] =
+    useState(
+      searchParams.get("availability") ?? ""
+    );
+
+  const [verified, setVerified] =
+    useState(
+      searchParams.get("verified") === "true"
+    );
+
+  useEffect(() => {
+    setQuery(urlQuery);
+  }, [urlQuery]);
+
+  useEffect(() => {
+    const controller =
+      new AbortController();
+
+    async function loadCategories() {
+      try {
+        const response = await fetch(
+          "/api/categories",
+          {
+            cache: "no-store",
+            signal: controller.signal,
+          }
+        );
+
+        if (!response.ok) {
+          throw new Error(
+            "Unable to load categories"
+          );
+        }
+
+        const data =
+          await response.json();
+
+        setCategories(
+          Array.isArray(data.categories)
+            ? data.categories
+            : []
+        );
+      } catch (error) {
+        if (
+          error instanceof DOMException &&
+          error.name === "AbortError"
+        ) {
+          return;
+        }
+
+        console.error(
+          "Category loading error:",
+          error
+        );
+      }
     }
 
-]
+    loadCategories();
 
+    return () => {
+      controller.abort();
+    };
+  }, []);
 
-function getCategoryStyle(name:string){
-    return(
-        CATEGORY_STYLE[name.toLowerCase()]?? {
-            bg:"#EEF1F4",
-            icon:(<MoreHorizontal className="h-5 w-5 text-gray-500"/>),
+  useEffect(() => {
+    const controller =
+      new AbortController();
+
+    async function loadSearchResults() {
+      setLoading(true);
+      setError("");
+
+      try {
+        const params =
+          new URLSearchParams();
+
+        if (urlQuery.trim()) {
+          params.set("q", urlQuery.trim());
         }
+
+        if (category) {
+          params.set("category", category);
+        }
+
+        if (location.trim()) {
+          params.set(
+            "location",
+            location.trim()
+          );
+        }
+
+        if (minPrice.trim()) {
+          params.set(
+            "minPrice",
+            minPrice.trim()
+          );
+        }
+
+        if (maxPrice.trim()) {
+          params.set(
+            "maxPrice",
+            maxPrice.trim()
+          );
+        }
+
+        if (availability) {
+          params.set(
+            "availability",
+            availability
+          );
+        }
+
+        if (verified) {
+          params.set(
+            "verified",
+            "true"
+          );
+        }
+
+        const response = await fetch(
+          `/api/search?${params.toString()}`,
+          {
+            cache: "no-store",
+            signal: controller.signal,
+          }
+        );
+
+        if (!response.ok) {
+          throw new Error(
+            "Unable to complete search"
+          );
+        }
+
+        const data =
+          await response.json();
+
+        if (!controller.signal.aborted) {
+          setBusinesses(
+            Array.isArray(data.businesses)
+              ? data.businesses
+              : []
+          );
+        }
+      } catch (error) {
+        if (
+          error instanceof DOMException &&
+          error.name === "AbortError"
+        ) {
+          return;
+        }
+
+        console.error(
+          "Search loading error:",
+          error
+        );
+
+        setError(
+          "We couldn't complete your search right now."
+        );
+      } finally {
+        if (!controller.signal.aborted) {
+          setLoading(false);
+        }
+      }
+    }
+
+    loadSearchResults();
+
+    return () => {
+      controller.abort();
+    };
+  }, [
+    urlQuery,
+    category,
+    location,
+    minPrice,
+    maxPrice,
+    availability,
+    verified,
+  ]);
+
+  function submitSearch(
+    event: SubmitEvent
+  ) {
+    event.preventDefault();
+
+    const trimmed =
+      query.trim();
+
+    const params =
+      new URLSearchParams();
+
+    if (trimmed) {
+      params.set("q", trimmed);
+    }
+
+    if (category) {
+      params.set(
+        "category",
+        category
+      );
+    }
+
+    if (location.trim()) {
+      params.set(
+        "location",
+        location.trim()
+      );
+    }
+
+    if (minPrice.trim()) {
+      params.set(
+        "minPrice",
+        minPrice.trim()
+      );
+    }
+
+    if (maxPrice.trim()) {
+      params.set(
+        "maxPrice",
+        maxPrice.trim()
+      );
+    }
+
+    if (availability) {
+      params.set(
+        "availability",
+        availability
+      );
+    }
+
+    if (verified) {
+      params.set(
+        "verified",
+        "true"
+      );
+    }
+
+    const queryString =
+      params.toString();
+
+    router.push(
+      queryString
+        ? `/search?${queryString}`
+        : "/search"
     );
-}
-const NAV_ITEMS= [
-    {
-        label:"Home",
-        href:"/",
-        icon:HomeIcon,
-    },
-    {
-        label:"Shop",
-        href:"/shop",
-        icon:ShoppingBag,
-    },
-    {
-        label:"Requests",
-        href:"/request",
-        icon:ClipboardList,
-    },
-    {
-        label:"Saved",
-        href:"/saved",
-        icon:Bookmark
-    },
-];
-const AVAILABILITY_OPTIONS=[
- {
-    value:"AVAILABLE",
-    label:"Available",
- },
- {
-    value:"ASK_SELLER",
-    label:"Ask seller",
- },
- {
-    value:"UNAVAILABLE",
-    label:"Unavailable",
- },
-];
+  }
 
-//Search Results
-export default function SearchResults() {
-    const params=useSearchParams();
-    const router = useRouter();
+  function applyFilters() {
+    const params =
+      new URLSearchParams();
 
-    const q = params.get("q") ?? "";
-//Search
-    const[searchInput, setSearchInput] = useState(q);
-    const [results, setResults] = useState<SearchResult[]>([]);
-    const [loading, setLoading] = useState(true);
-//Categories
-    const [categories, setCategories] = useState<Category[]>(DEFAULT_CATEGORIES);
-    
-//Filter Ui
-const [filterOpen,setFilterOpen]=useState(false);
-const [selectedCategory,setSelectedCategory] =useState("All");
-const [selectedAvailability,setSelectedAvailability]=useState("All");
-const [locationFilter, setLocationFilter] = useState("");
-const [minPrice,setMinPrice] = useState("");
-const [maxPrice,setMaxPrice] =useState("");
-const [verifiedOnly, setVerifiedOnly] =useState(false); 
+    if (query.trim()) {
+      params.set(
+        "q",
+        query.trim()
+      );
+    }
 
+    if (category) {
+      params.set(
+        "category",
+        category
+      );
+    }
 
-  //Load Categories
-    useEffect(() => {
-        fetch("api/categories").then((res) => res.json()).then((data) => {
-            const backendCategories = data.categories ?? [] ;
+    if (location.trim()) {
+      params.set(
+        "location",
+        location.trim()
+      );
+    }
 
-            if(backendCategories.length > 0){
-                setCategories(backendCategories.slice(0,6));
-            }
-        }) .catch(()=>{
-           //Keep Categories default
-        });
-    }, []);
+    if (minPrice.trim()) {
+      params.set(
+        "minPrice",
+        minPrice.trim()
+      );
+    }
 
-    //Search
-    useEffect(()=> {
-        setSearchInput(q);
-        setLoading(true);
+    if (maxPrice.trim()) {
+      params.set(
+        "maxPrice",
+        maxPrice.trim()
+      );
+    }
 
-        fetch(`/api/search?q=${encodeURIComponent(q)}`).then((res)=> res.json()).then((data)=> {
-            setResults(data.results ?? []);
-        }).catch(() => {
-            setResults([]);
-        }).finally(()=> {
-            setLoading(false);
-        });
-    }, [q]);
+    if (availability) {
+      params.set(
+        "availability",
+        availability
+      );
+    }
 
+    if (verified) {
+      params.set(
+        "verified",
+        "true"
+      );
+    }
 
-    const submitSearch = (e: SyntheticEvent<HTMLFormElement>) => {
-        e.preventDefault();
+    router.push(
+      `/search?${params.toString()}`
+    );
 
-        const query = searchInput.trim();
+    setShowFilters(false);
+  }
 
-        if(!query) return;
+  function clearFilters() {
+    setCategory("");
+    setLocation("");
+    setMinPrice("");
+    setMaxPrice("");
+    setAvailability("");
+    setVerified(false);
 
-        router.push(`/search?q=${encodeURIComponent(query)}`);
-    };
-    //Contact Event
-    const contact = (
-        businessId: string,
-        platform: ContactPlatform
-    ) => {
-        fetch("api/events", {
-            method: "POST",
-            headers: {
-                "Content-Type": "application/json",
-                
-            },
-            body: JSON.stringify({
-                businessId,
-                platform,
-            }),
-        }).catch(() => {});
-    };
-    const clearFilters=() =>{
-        setSelectedCategory("All");
-        setSelectedAvailability("All");
-        setLocationFilter("");
-        setMinPrice("");
-        setMaxPrice("");
-        setVerifiedOnly(false);
-    };
+    const params =
+      new URLSearchParams();
 
-    const filteredResults=results.filter((business)=>{
-        //Category
-        if(selectedCategory!=="All"){
-            const matchesCategory=business.categories?.some((item)=>{
-                item.category.name.toLowerCase()===selectedCategory.toLowerCase();
-            });
+    if (query.trim()) {
+      params.set(
+        "q",
+        query.trim()
+      );
+    }
 
-            if(!matchesCategory){
-                return false;
-            }
-        }
-        //Availability
-        if(selectedAvailability!=="All" && business.availability!== selectedAvailability){
-            return false;
-        }
-        //Location
-        if(locationFilter.trim()){
-            const area=business.location?.area?.toLowerCase()??"";
-            if(area.includes(locationFilter.trim().toLowerCase())){
-                return false;
-            }
-        }
-        //Verification
-        if(verifiedOnly){
-            if(business.verification!=="VERIFIED"){
-                return false;
-            }
-        }
-        //Min Price
-        if(minPrice){
-            const minimum=Number(minPrice);
-            if(business.priceMax!==undefined && business.priceMax< minimum){
-                return false;
-            }
-        }
-        //Max Price
-        if(maxPrice){
-            const maximum=Number(maxPrice);
-            if(business.priceMin!==undefined && business.priceMin< maximum){
-                return false;
-            }
-        }
-        return true;
+    router.push(
+      params.toString()
+        ? `/search?${params.toString()}`
+        : "/search"
+    );
 
-    });
-    //Active Filter count
-    const activeFilterCount=[
-        selectedCategory !=="All",
-        selectedAvailability!=="All",
-        !!locationFilter,
-        !!minPrice,
-        !!maxPrice,
-        verifiedOnly,
+    setShowFilters(false);
+  }
 
-    ].filter(Boolean).length;
+  const activeFilterCount =
+    Number(Boolean(category)) +
+    Number(Boolean(location)) +
+    Number(Boolean(minPrice)) +
+    Number(Boolean(maxPrice)) +
+    Number(Boolean(availability)) +
+    Number(verified);
 
-//Seller Card
-   const SellerCard = ({business }: {business: SearchResult}) => {
-    const categoryText=business.categories?.map((item)=>item.category.name).filter(Boolean).join(", ") || "Local Business";
-    const initials=business.name.split("").slice(0,2).map((word)=>word[0]).join("").toUpperCase();
+  return (
+    <main className="min-h-screen bg-[#FFF7ED]">
+      <div className="mx-auto min-h-screen w-full max-w-[1500px] px-3 py-3 sm:px-5 sm:py-5">
+        <div className="min-h-[calc(100vh-24px)] overflow-hidden rounded-[18px] border border-[#FF5A36] bg-[#FFFDFC] shadow-sm sm:rounded-[22px] lg:min-h-[calc(100vh-40px)]">
 
-    return (
-        <article className="rounded-2xl border border-orange-100 bg-white p-4 shadow-card transition hover:-translate-y-0.5 hover:shadow-soft sm:p-5">
-            {/*Seller Header */}
-            <div className="flex items-start justify-between gap-3">
-                <div className="flex min-w-0 gap-3">
-                    {/*Avatar */}
-                    <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-orange-100 text-sm font-bold text-[#9F2D18]">
-                        {initials}
-                    </div>
-                    <div className="min-w-0">
-                        <Link href={`/seller/${business.id}`} className="flex items-center gap-1.5 min-w-0">
-                        <span className="truncate text-sm font-bold sm:text-base">
-                            {business.name}
-                        </span>
-                        <VerificationMark verification={business.verification} variant="inline"/>
-                        </Link>
-                        <p className="mt-1 text-xs text-muted">{categoryText}</p>
-                        {business.location?.area &&(<div className="mt-1.5 flex items-center gap-1 text-xs text-gray-500"><MapPin size={13} className="text-[#FF5A36]"/><span className="truncate">{business.location.area}</span></div>)}
-                    </div>
-                </div>
-                {/*Availability */}
-                <div className="flex shrink-0 items-center gap-1.5">
-                    <AvailabilityDot status={business.availability}/>
-                    <span className="hidden text-[11px] text-gray-500 sm:block">
-                        {business.availability?.toLowerCase().replace("_","") || "Ask seller"}
-                    </span>
-                </div>
-            </div>
-            {/*Price */}
-            {(business.priceMin !== undefined || business.priceMax!== undefined) &&(<p className="mt-3 text-sm font-semibold text-gray-700">
-                {business.priceMin !== undefined && business.priceMax !== undefined? `N${business.priceMin.toLocaleString()}-N${business.priceMax.toLocaleString()}`:business.priceMin!==undefined? `From N${business.priceMin?.toLocaleString()}`:`Up to N${business.priceMax?.toLocaleString()}`}
-            </p>)}
-            {/*Contacts */}
-            {!! business.socialLinks?.length &&(<div className="mt-3 flex flex-wrap gap-1.5">
-                {business.socialLinks.map((social) =>(
-                    <ContactButton key={`${social.platform} -${social.handle}`} platform={social.platform} handle={social.handle} onClick={()=> contact(business.id,social.platform)} /> 
-                )
-                )}
-            </div>
-        )}
-        {/*View Seller */}
-        <Link 
-            href={`/seller/${business.id}`}
-            className="mt-4 flex items-center justify-between border-t border-gray-100 pt-3 text-xs font-semibold text-[#9F2D18]">View Seller <ChevronRight size={15}/></Link>
-        </article>
-    )
-   };
+          {/* HEADER */}
 
-    return (
-        <main className="min-h-screen bg-[#FFF7ED] text-[#17202A]">
-             <div className="mx-auto flex min-h-screen w-full max-w-[1440px]">
-                {/*Desktop SideBar */}
-                <aside className="hidden w-[225px] shrink-0 border-r border-orange-100 bg-white/50 px-4 py-6 lg:flex lg:flex-col">
-                {/*Logo */}
-                <Link 
-                  href="/" className="mb-8 flex items-center gap-2.5 px-2">
-                    <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-[#FF5A36] text-[#FFFFFF] shadow-sm">
-                        <Store size={21} />
-                    </div>
-                    <div>
-                        <p className="text-base font-bold tracking-tight">Remarket</p>
-                        <p className="text-[10px] text-muted">Find it nearby</p>
-                    </div>
-                  </Link>
-                  {/*Navigations */}
-                  <nav className="flex flex-col gap-1">
-                    {NAV_ITEMS.map((item)=>{
-                        const Icon=item.icon;
-                        const active = item.label ==="Search";
-                        return(
-                            <Link key={item.label} href={item.href} className={`flex items-center gap-3 rounded-xl px-3.5 py-3 text-sm font-medium transition ${ active ?"bg-[#FF5A36] text-[#FFFFFF] shadow-sm":"text-gray-700 hover:bg-orange-50 hover:text-[#9F2D18]"}`}>
-                                <Icon size={19}/>{item.label}
-                            </Link>
-                        );
+          <header className="flex h-[64px] items-center justify-between border-b border-[#EAE6DF] bg-white px-4 sm:px-6 lg:h-[66px] lg:px-6">
+            <Link
+              href="/"
+              className="flex items-center gap-2.5"
+            >
+              <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-[#FF5A36] text-white shadow-sm">
+                <Store className="h-5 w-5" />
+              </div>
+
+              <div>
+                <p className="text-sm font-bold tracking-tight">
+                  ReMarket
+                </p>
+
+                <p className="text-[10px] leading-none text-muted">
+                  Find it nearby
+                </p>
+              </div>
+            </Link>
+
+            {/* DESKTOP NAV */}
+
+            <nav className="hidden items-center gap-1 md:flex">
+              {NAV_ITEMS.map((item) => {
+                return (
+                  <button
+                    key={item.label}
+                    type="button"
+                    onClick={() =>
+                      router.push(
+                        item.href
+                      )
                     }
-                    )}
-                  </nav>
-                  {/*Divider */}
-                  <div className="my-5 border-t border-gray-200"/>
-                  {/*
-                  Categories */}
-                  <div>
-                    <p className="px-3 text-[10px] font-semibold uppercase tracking-[0.16em] text-gray-400">Categories</p>
-                    <div className="mt-3 flex flex-col gap-1">
-                        {categories.map((category)=>{
-                            const style = CATEGORY_STYLE[category.name];
-                            return(
-                                <Link key={category.id} href={`/shop?category=${encodeURIComponent(category.name)}`} className="flex items-center gap-3 rounded-xl px-3 py-2.5 text-xs text-gray-700 transition hover:bg-white">
-                                    <span className="flex h-7 w-7 items-center justify-center rounded-full text-sm" style={{backgroundColor:style?.bg??"#F3F4F6",}}>
-                                        {style?.icon}
-                                    </span>
-                                    {category.name}
-                                </Link>
-                            );
+                    className="rounded-xl px-4 py-2 text-xs font-semibold text-gray-700 transition hover:bg-gray-50"
+                  >
+                    {item.label}
+                  </button>
+                );
+              })}
+            </nav>
+
+            {/* RIGHT */}
+
+            <div className="flex items-center gap-2 sm:gap-3">
+              <button
+                type="button"
+                onClick={() =>
+                  router.push("/")
+                }
+                className="hidden h-9 w-9 items-center justify-center rounded-full hover:bg-gray-50 sm:flex"
+                aria-label="Home"
+              >
+                <Home className="h-[19px] w-[19px] text-gray-700" />
+              </button>
+
+              <button
+                type="button"
+                className="hidden h-9 w-9 items-center justify-center rounded-full hover:bg-gray-50 sm:flex"
+                aria-label="Saved"
+              >
+                <Heart className="h-[19px] w-[19px] text-gray-700" />
+              </button>
+
+              <button
+                type="button"
+                className="hidden h-9 w-9 items-center justify-center rounded-full bg-gray-100 sm:flex"
+                aria-label="Profile"
+              >
+                <UserCircle className="h-6 w-6 text-gray-700" />
+              </button>
+
+              <button
+                type="button"
+                onClick={() =>
+                  router.push(
+                    "/request"
+                  )
+                }
+                className="rounded-xl bg-[#FF5A36] px-3.5 py-2.5 text-[11px] font-bold text-white shadow-sm transition hover:opacity-90 sm:px-4 sm:text-xs"
+              >
+                Request something
+              </button>
+            </div>
+          </header>
+
+          <div className="flex">
+
+            {/* SIDEBAR */}
+
+            <aside className="hidden w-[190px] shrink-0 border-r border-[#EAE6DF] bg-[#FCFAF6] px-3 py-5 lg:block">
+              <nav className="space-y-1">
+                {NAV_ITEMS.map(
+                  (item) => {
+                    const Icon =
+                      item.icon;
+
+                    return (
+                      <button
+                        key={item.label}
+                        type="button"
+                        onClick={() =>
+                          router.push(
+                            item.href
+                          )
                         }
-                        )}
-                        <Link href="/shop" className="flex items-center gap-3 rounded-xl px-3 px-2.5 text-xs text-gray-600 transition hover:bg-white">
-                        <span className="flex h-7 w-7 items-center justify-center rounded-full bg-gray-100"><MoreHorizontal className="h-6 w-6"/></span>
-                        More
-                        </Link>
-                        </div>
-                    </div> 
-                        {/*Request Card */}
-                       
-                </aside>
-                {/*Main */}
-                <div className="min-w-0 flex-1">
-                    <header className="hidden h-[72px] items-center justify-between border-b border-orange-100 bg-white/40 px-7 lg:flex">
-                    <div className="flex items-center gap-7">
-                        <span className="text-sm font-semibold text-[#9F2D18]">Search</span>
-                        <Link href="/shop" className="text-sm text-gray-600 hover:text-[#17202A]">Shop</Link>
-                        <Link href="/request" className="text-sm text-gray-600 hover:text-[#17202A]">Requests</Link>
-                           <Link href="/saved" className="text-sm text-gray-600 hover:text-[#17202A]">Saved</Link>
+                        className={`flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-sm font-medium transition hover:bg-white ${
+                          item.label ===
+                          "Shop"
+                            ? "bg-white text-[#9F2D18]"
+                            : "text-gray-700"
+                        }`}
+                      >
+                        <Icon className="h-[18px] w-[18px]" />
+                        <span>
+                          {item.label}
+                        </span>
+                      </button>
+                    );
+                  }
+                )}
+              </nav>
 
-                    </div>
-                    <Link href="/request" className="rounded-xl bg-[#FF5A36] px-4 py-2.5 text-xs font-semibold text-white shadow-sm hover:opacity-90">
-                            Request Something
-                    </Link>
-                    </header>
+              <div className="my-5 h-px bg-[#E7E2DB]" />
 
-                    {/**MOBILE HEADER */}
-                    <header className="flex items-center justify-between px-4 pt-5 lg:hidden">
-                        <Link href="/" className="flex items-center gap-2.5">
-                        <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-[#FF5A36] text-white">
-                            <Store size={20} />
-                        </div>
-                        <div>
-                            <p className="text-sm font-bold">
-                                Re <span className="text-[#9F2D18]">Market</span>
-                            </p>
-                            <p className="text-[10px] text-muted">
-                                Find it nearby
-                            </p>
-                        </div>
-                        </Link>
+              <div>
+                <p className="px-3 text-[10px] font-bold uppercase tracking-[0.12em] text-gray-400">
+                  Categories
+                </p>
 
-                        <Link href="/request" className="rounded-full border border-orange-100 bg-white px-3.5 py-2 text-xs font-semibold shadow-sm">
-                        Request
-                        
-                        </Link>
-                    </header>
+                <div className="mt-3 space-y-1">
+                  {categories
+                    .slice(0, 6)
+                    .map(
+                      (item) => {
+                        const style =
+                          getCategoryStyle(
+                            item.name
+                          );
 
-                    {/**CONTENT */}
-                    <div className="mx-auto w-full max-w-6xl px-4 pb-28 pt-6 sm:px-6 lg:px-8 lg:pb-10 lg:pt-8">
-                        <Link href="/" className="mb-5 inline-flex items-center gap-1.5 text-xs text-muted hover:text-[#17202A]">
-                        <ChevronRight size={24} className="rotate-180"/>
-                        Back Home
-                        </Link>
-                        {/**SEARCH HERO */}
-                        <section className="relative overflow-hidden rounded-3xl bg-[#FF5A36] px-5 px-6 text-white shadow-card sm:px-7 sm:py-7">
-                            <div className="pointer-events-none absolute -right-12 -top-20 h-48 w-48 rounded-full bg-white/10"/>
-                            <div className="pointer-events-none absolute -bottom-20 right-20 h-40 w-40 rounded-full bg-white/10"/>
-                            <div className="relative">
-                                <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-white/75">
-                                    Local Search
-                                </p>
-                                <h1 className="mt-2 text-2xl font-bold tracking-tight sm:text-3xl">
-                                    Find what you need
-                                </h1>
-                                <p className="mt-1.5 max-w-xl text-sm leading-6 text-white/85">
-                                Search local sellers, products and services near you
-                                </p>
-                                {/**SEARCH */}
-                                <form onSubmit={submitSearch} className="mt-5 flex w-full items-center gap-2 rounded-full bg-white p-1.5">
-                                    <Search size={18} className="ml-3 shrink-0 text-gray-400"/>
-                                    <input value={searchInput} onChange={(e) => setSearchInput(e.target.value)} placeholder="what are you looking for ?" className="min-w-0 flex-1 bg-transparent px-1 py-2.5 text-sm text-gray-800 outline-none placeholder:text-gray-400"/>
-                                    <button type="submit" disabled={!searchInput.trim()} className="rounded-full bg-[#FF5A36] px-5 py-2.5 text-xs font-semibold text-white transition hover:opacity-90 disabled:opacity-50">
-                                        Search
-                                    </button>
-                                </form>
-                            </div>
-                        </section>
-                        {/**RESULT HEADER */}
-                        <div className="mt-7">
-                            <div className="flex items-end justify-between gap-4">
-                                <div>
-                                    <h2 className="text-lg font-bold sm:text-xl">
-                                        {q? `Results for ${q}` : "Search results"}
-                                    </h2>
-                                    {!loading && (<p className="mt-1 text-xs text-muted">
-                                        {filteredResults.length} {""} {filteredResults.length === 1 ? "seller" : "sellers"} {""} found
-                                    </p>)}
-                                </div>
-                                {/**FILTER */}
-                                <button type="button" onClick={() => setFilterOpen(true)} className="relative flex shrink-0 items-center gap-1.5 rounded-full border border-orange-100 bg-white px-3.5 py-2 text-xs font-semibold text-gray-600 shadow-sm transition hover:border-[#FF5A36] hover:text-[#9F2D18]">
-                                        <SlidersHorizontal size={14} /> 
-                                        Filter { activeFilterCount > 0 && <span className="flex h-4 min-w-4 items-center justify-center rounded-full bg-[#FF5A36] px-1 text-[9px] font-bold text-white">{activeFilterCount}</span>}
-                                </button>
-                            </div>
+                        return (
+                          <button
+                            key={
+                              item.id
+                            }
+                            type="button"
+                            onClick={() =>
+                              setCategory(
+                                item.name
+                              )
+                            }
+                            className="flex w-full items-center gap-3 rounded-xl px-3 py-2 text-left transition hover:bg-white"
+                          >
+                            <span
+                              className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full"
+                              style={{
+                                backgroundColor:
+                                  style.bg,
+                              }}
+                            >
+                              <span className="scale-[0.65]">
+                                {
+                                  style.icon
+                                }
+                              </span>
+                            </span>
 
-                            {/**CATEGORY CHIPS */}
-                            <div className="mt-4 flex gap-2 overflow-x-auto pb-1 scrollbar-none">
-                                <button type="button" onClick={() => setSelectedCategory("All")} className={ `flex shrink-0 items-center gap-1.5 rounded-full px-4 py-2 text-xs font-semibold transition ${
-                                selectedCategory === "All" ? "bg-[#FF5A36] text-white": "border border-orange-100 bg-white text-gray-600 hover:border-[#FF5A36]"}`}>All</button>
-                                { categories.map((category) => {
-                                    const style = CATEGORY_STYLE[category.name];
-                                    const active = selectedCategory === category.name;
-                                    return( 
-                                        <button key={category.id} type="button" onClick={()=> setSelectedCategory(active ? "All": category.name)} className={`flex shrink-0 items-center gap-1.5 rounded-full border px-3 py-2 text-xs font-medium transition ${
-                                            active ? "border-[#FF5A36] bg-orange-50 text-[#9F2D18]" : "border-orange-100 bg-white text-gray-600 hover:border-[#FF5A36]"}`}>
-                                                <span className="flex h-5 w-5 items-center justify-center rounded-full text-[11px]" style={{ backgroundColor: style?.bg ?? "#F3F4F6",}}>
-                                                    {style?.icon ?? "."}
-                                                </span>
-                                                {category.name}
-                                            </button>
-                                    );
-                                })}
-                            </div>
-                        </div>
+                            <span className="truncate text-xs font-medium text-gray-700">
+                              {
+                                item.name
+                              }
+                            </span>
+                          </button>
+                        );
+                      }
+                    )}
 
-                        {/**LOADING */}
-                        {loading && (<div className="mt-5 flex items-center justify-center rounded-2xl border border-orange-100 bg-white py-16 shadow-card"><div className="flex items-center gap-2 text-sm text-muted"> <Loader2 size={17} className="animate-spin text-[#FF5A36]"/>Searching local</div></div>)}
-                        {/**EMPTY */}
-                        {!loading && filteredResults.length === 0 && (<div className="mt-5 rounded-2xl border border-orange-100 bg-white px-6 py-12 text-center shadow-card"><div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-orange-50 text-[#FF5A36]"><Search size={24}/></div> <h3 className="mt-5 text-base font-bold">No seller found</h3><p className="mx-auto mt-2 max-w-m text-sm leading-6 text-muted"> {results.length > 0 ? "Try changing your filters or search for something else": "We couldn't find a seller matching your search"}</p>{activeFilterCount > 0 && (<button type="button" onClick={clearFilters} className="mt-4 text-ms font-semibold text-[#9F2D18] underline">Clear filters</button>)}
-                        <div>
-                            <Link href={`/request${
-                                q ? `?q=${encodeURIComponent(q)}`:""
-                                }`} className="mt-5 inline-flex items-center gap-2 rounded-xl bg-[#FF5A36] px-5 py-3 text-xs font-semibold text-white">
-                                    Submit a request
-                                    <ChevronRight size={15} />
-                                </Link>
-                            </div></div>)}
-                        {/**RESULTS */}
-                        {!loading &&  filteredResults.length > 0 && (<div className="mt-5 grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
-                            {filteredResults.map((business) => <SellerCard key={business.id} business={business}/>)}
-                            </div>)}
-                        
-                        {/**REQUEST CTA */}
-                        {!loading && (<section className="mt-7 rounded-2xl border border-[#FF5A36]/100 bg-[#FF5A36]/9 p-5 sm:flex sm:items-center sm:justify-between sm:gap-6">
-                            <div>
-                                <p className="text-sm font-bold">
-                                    Can't find what you need ?
-                                </p>
-                                <p className="mt-1 text-xs leading-5 text-muted">Tell us what you are looking for and we will help you find matching local sellers</p>
-                            </div>
-                            <Link href={`/request${
-                            q ? `?q=${encodeURIComponent(q)}`:""}`}
-                            className="mt-4 flex items-center justify-center gap-2 rounded-xl bg-[#FF5A36] px-4 py-3 text-xs font-semibold text-white sm:mt-0">
-                                Submit a request
-                                <ChevronRight size={15} />
-                            </Link>
-                            
-                        </section>)}
-                        <footer className="mt-10 hidden pb-5 text-center text-[11px] text-gray-400 lg:block">
-                            LocalMarket . Find it nearby
-                        </footer>
-                    </div>
+                  <button
+                    type="button"
+                    onClick={() =>
+                      router.push(
+                        "/shop"
+                      )
+                    }
+                    className="flex w-full items-center gap-3 rounded-xl px-3 py-2 text-left transition hover:bg-white"
+                  >
+                    <span className="flex h-7 w-7 items-center justify-center rounded-full bg-gray-100">
+                      <MoreHorizontal className="h-4 w-4 text-gray-500" />
+                    </span>
+
+                    <span className="text-xs font-medium text-gray-700">
+                      More
+                    </span>
+                  </button>
                 </div>
-             </div>
-             {/**MOBILE BOTTOM NAV */}
-             <nav 
-                className="fixed inset-x-0 bottom-0 z-50 border-t border-[#FF5A36]/100 bg-white/95 px-3 pb-[max(10px, safe-area-inset-bottom)] pt-2 backdrop-blur lg:hidden">
-                    <div className="mx-auto flex max-w-md items-center justify-around">
-                        {NAV_ITEMS.map((item) => {
-                            const Icon = item.icon;
-                            return(
-                                <Link 
-                                key={item.label}
-                                href={item.href}
-                                className={`
-                                    flex
-                                    min-w-[64px]
-                                    flex-col
-                                    items-center
-                                    px-3
-                                    py-1.5
-                                    text-[10px]
-                                    font-medium
-                                    transition ${
-                                    item.label === "Search" ? "text-[#9F2D18]": "text-gray-400 hover:text-[#9F2D18]"
-                                    }
-                                    `}>
-                                        <Icon size={21} />
-                                        <span>
-                                            {item.label}
-                                        </span>
-                                    </Link>
-                            );
-                        })}
-                    </div>
-                </nav>
+              </div>
+            </aside>
 
-        </main>
-       
-    )
+            {/* CONTENT */}
+
+            <div className="min-w-0 flex-1">
+              <div className="px-4 pb-24 pt-4 sm:px-6 sm:pt-6 lg:px-6 lg:pb-8">
+
+                {/* SEARCH */}
+
+                <section className="rounded-[18px] bg-[#FF5A36] px-5 py-6 text-white shadow-soft sm:px-7 sm:py-7">
+                  <div className="max-w-[720px]">
+                    <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-white/75">
+                      Search ReMarket
+                    </p>
+
+                    <h1 className="mt-2 text-[26px] font-bold leading-tight sm:text-[30px]">
+                      Find what you need
+                    </h1>
+
+                    <p className="mt-2 max-w-[520px] text-xs leading-5 text-white/80 sm:text-sm">
+                      Search local sellers and products around you.
+                    </p>
+
+                    <form
+                      onSubmit={
+                        submitSearch
+                      }
+                      className="mt-5 flex h-[48px] w-full items-center rounded-full bg-white p-1.5 shadow-sm"
+                    >
+                      <Search className="ml-3 h-[18px] w-[18px] shrink-0 text-gray-500" />
+
+                      <input
+                        value={query}
+                        onChange={(event) =>
+                          setQuery(
+                            event.target.value
+                          )
+                        }
+                        placeholder="What are you looking for?"
+                        className="min-w-0 flex-1 bg-transparent px-3 text-xs text-gray-800 outline-none placeholder:text-gray-400"
+                      />
+
+                      <button
+                        type="submit"
+                        className="flex h-[38px] items-center rounded-full bg-[#FF5A36] px-5 text-xs font-bold text-white transition hover:opacity-90"
+                      >
+                        Search
+                      </button>
+                    </form>
+                  </div>
+                </section>
+
+                {/* SEARCH TOOLBAR */}
+
+                <section className="mt-5">
+                  <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                    <div>
+                      <h2 className="text-lg font-bold text-[#17202A]">
+                        Search results
+                      </h2>
+
+                      <p className="mt-0.5 text-xs text-muted">
+                        {loading
+                          ? "Finding local businesses..."
+                          : `${businesses.length} ${
+                              businesses.length ===
+                              1
+                                ? "business"
+                                : "businesses"
+                            } found`}
+                      </p>
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setShowFilters(
+                          true
+                        )
+                      }
+                      className="flex items-center justify-center gap-2 rounded-xl border border-[#E8E4DE] bg-white px-4 py-2.5 text-xs font-semibold text-gray-700 transition hover:border-[#FFB09B] hover:text-[#9F2D18]"
+                    >
+                      <SlidersHorizontal className="h-4 w-4" />
+                      Filters
+
+                      {activeFilterCount >
+                        0 && (
+                        <span className="flex h-5 min-w-5 items-center justify-center rounded-full bg-[#FF5A36] px-1.5 text-[9px] font-bold text-white">
+                          {
+                            activeFilterCount
+                          }
+                        </span>
+                      )}
+                    </button>
+                  </div>
+
+                  {/* ACTIVE FILTERS */}
+
+                  {activeFilterCount >
+                    0 && (
+                    <div className="mt-3 flex flex-wrap gap-2">
+                      {category && (
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setCategory(
+                              ""
+                            )
+                          }
+                          className="flex items-center gap-1.5 rounded-full bg-[#FFE0D6] px-3 py-1.5 text-[10px] font-semibold text-[#9F2D18]"
+                        >
+                          {category}
+                          <X className="h-3 w-3" />
+                        </button>
+                      )}
+
+                      {location && (
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setLocation(
+                              ""
+                            )
+                          }
+                          className="flex items-center gap-1.5 rounded-full bg-[#E9EDF0] px-3 py-1.5 text-[10px] font-semibold text-gray-700"
+                        >
+                          {location}
+                          <X className="h-3 w-3" />
+                        </button>
+                      )}
+
+                      {(minPrice ||
+                        maxPrice) && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setMinPrice(
+                              ""
+                            );
+                            setMaxPrice(
+                              ""
+                            );
+                          }}
+                          className="flex items-center gap-1.5 rounded-full bg-[#FFF0C7] px-3 py-1.5 text-[10px] font-semibold text-[#8A671D]"
+                        >
+                          Price
+                          <X className="h-3 w-3" />
+                        </button>
+                      )}
+
+                      {availability && (
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setAvailability(
+                              ""
+                            )
+                          }
+                          className="flex items-center gap-1.5 rounded-full bg-[#DDF5EA] px-3 py-1.5 text-[10px] font-semibold text-[#137A59]"
+                        >
+                          {availability ===
+                          "AVAILABLE"
+                            ? "Available"
+                            : availability ===
+                              "ASK_SELLER"
+                            ? "Ask seller"
+                            : "Unavailable"}
+
+                          <X className="h-3 w-3" />
+                        </button>
+                      )}
+
+                      {verified && (
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setVerified(
+                              false
+                            )
+                          }
+                          className="flex items-center gap-1.5 rounded-full bg-[#E7E5FF] px-3 py-1.5 text-[10px] font-semibold text-[#62559B]"
+                        >
+                          Verified
+                          <X className="h-3 w-3" />
+                        </button>
+                      )}
+                    </div>
+                  )}
+                </section>
+
+                {/* RESULTS */}
+
+                <section className="mt-5">
+                  {loading && (
+                    <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+                      {[
+                        1,
+                        2,
+                        3,
+                        4,
+                      ].map(
+                        (item) => (
+                          <div
+                            key={item}
+                            className="h-[220px] animate-pulse rounded-xl border border-[#E8E4DE] bg-white"
+                          />
+                        )
+                      )}
+                    </div>
+                  )}
+
+                  {!loading && error && (
+                    <div className="rounded-xl border border-[#E8E4DE] bg-white px-5 py-12 text-center">
+                      <Search className="mx-auto h-8 w-8 text-gray-300" />
+
+                      <p className="mt-3 text-sm font-semibold text-gray-700">
+                        Search unavailable
+                      </p>
+
+                      <p className="mt-1 text-xs text-gray-400">
+                        {error}
+                      </p>
+
+                      <button
+                        type="button"
+                        onClick={() =>
+                          window.location.reload()
+                        }
+                        className="mt-4 rounded-xl bg-[#FF5A36] px-4 py-2.5 text-xs font-semibold text-white"
+                      >
+                        Try again
+                      </button>
+                    </div>
+                  )}
+
+                  {!loading &&
+                    !error &&
+                    businesses.length ===
+                      0 && (
+                      <div className="rounded-xl border border-[#E8E4DE] bg-white px-5 py-12 text-center">
+                        <Search className="mx-auto h-8 w-8 text-gray-300" />
+
+                        <p className="mt-3 text-sm font-semibold text-gray-700">
+                          We couldn't find that
+                        </p>
+
+                        <p className="mt-1 text-xs leading-5 text-gray-400">
+                          Try another search or adjust your filters.
+                        </p>
+
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setShowFilters(
+                              true
+                            )
+                          }
+                          className="mt-4 inline-flex items-center gap-2 rounded-xl bg-[#FF5A36] px-4 py-2.5 text-xs font-semibold text-white"
+                        >
+                          Adjust filters
+                          <SlidersHorizontal className="h-3.5 w-3.5" />
+                        </button>
+                      </div>
+                    )}
+
+                  {!loading &&
+                    !error &&
+                    businesses.length >
+                      0 && (
+                      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+                        {businesses.map(
+                          (business) => {
+                            const category =
+                              business
+                                .categories?.[0]
+                                ?.category
+                                ?.name ??
+                              "Services";
+
+                            const style =
+                              getCategoryStyle(
+                                category
+                              );
+
+                            const location =
+                              business.location
+                                ?.area ??
+                              business.location
+                                ?.address ??
+                              "Local";
+
+                            return (
+                              <article
+                                key={
+                                  business.id
+                                }
+                                className="overflow-hidden rounded-xl border border-[#E8E4DE] bg-white transition hover:-translate-y-0.5 hover:shadow-md"
+                              >
+                                <Link
+                                  href={`/seller/${business.id}`}
+                                  className="relative flex h-[92px] items-center justify-center"
+                                  style={{
+                                    backgroundColor:
+                                      style.bg,
+                                  }}
+                                >
+                                  <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-white/75 shadow-sm">
+                                    <Store className="h-7 w-7 text-gray-700" />
+                                  </div>
+
+                                  <span className="absolute right-3 top-3 rounded-full bg-[#DDF5EA] px-2.5 py-1 text-[9px] font-semibold text-[#137A59]">
+                                    {business.availability ===
+                                    "AVAILABLE"
+                                      ? "Available"
+                                      : "Active"}
+                                  </span>
+                                </Link>
+
+                                <div className="p-3.5">
+                                  <div className="flex items-start justify-between gap-2">
+                                    <div className="min-w-0">
+                                      <Link
+                                        href={`/seller/${business.id}`}
+                                        className="block truncate text-sm font-bold text-[#17202A] hover:text-[#9F2D18]"
+                                      >
+                                        {
+                                          business.name
+                                        }
+                                      </Link>
+
+                                      <p className="mt-1 flex items-center gap-1 truncate text-[10px] text-muted">
+                                        <span className="truncate">
+                                          {
+                                            category
+                                          }
+                                        </span>
+
+                                        <span>
+                                          .
+                                        </span>
+
+                                        <span className="flex min-w-0 items-center gap-1 truncate">
+                                          <MapPin className="h-3 w-3 shrink-0" />
+                                          {
+                                            location
+                                          }
+                                        </span>
+                                      </p>
+                                    </div>
+
+                                    <button
+                                      type="button"
+                                      aria-label={`Save ${business.name}`}
+                                      className="shrink-0 text-gray-500 transition hover:text-[#9F2D18]"
+                                    >
+                                      <Bookmark className="h-4 w-4" />
+                                    </button>
+                                  </div>
+
+                                  <div className="mt-3 flex items-center justify-between">
+                                    <div className="flex items-center gap-1">
+                                      <Star className="h-5 w-5 text-[#F2B52B]" />
+
+                                      <span className="text-[11px] font-semibold text-gray-700">
+                                        Local
+                                      </span>
+                                    </div>
+
+                                    <div className="flex items-center gap-1 text-[10px] text-gray-400">
+                                      <Package className="h-3 w-3" />
+
+                                      <span>
+                                        {
+                                          business
+                                            .products
+                                            ?.length
+                                        }{" "}
+                                        available
+                                      </span>
+                                    </div>
+                                  </div>
+
+                                  {business
+                                    .products
+                                    ?.length >
+                                    0 && (
+                                    <div className="mt-3 border-t border-[#F0ECE6] pt-3">
+                                      <p className="truncate text-[10px] font-semibold text-gray-600">
+                                        {
+                                          business
+                                            .products[0]
+                                            .name
+                                        }
+                                      </p>
+
+                                      <p className="mt-1 text-[10px] text-gray-400">
+                                        {
+                                          formatPrice(
+                                            business
+                                              .products[0]
+                                          )
+                                        }
+                                      </p>
+                                    </div>
+                                  )}
+
+                                  <Link
+                                    href={`/seller/${business.id}`}
+                                    className="mt-3 flex w-full items-center justify-center gap-2 rounded-lg bg-[#FFF1ED] py-2.5 text-[11px] font-bold text-[#9F2D18] transition hover:bg-[#FFE6DF]"
+                                  >
+                                    Browse
+                                    <ArrowRight className="h-3.5 w-3.5" />
+                                  </Link>
+                                </div>
+                              </article>
+                            );
+                          }
+                        )}
+                      </div>
+                    )}
+                </section>
+
+                <footer className="mt-7 flex items-center justify-center gap-3 text-[10px] text-gray-400">
+                  <span className="h-px w-16 bg-gray-200" />
+
+                  <span>
+                    ReMarket · Find it nearby
+                  </span>
+
+                  <span className="h-px w-16 bg-gray-200" />
+                </footer>
+              </div>
+            </div>
+          </div>
+
+          {/* FILTER PANEL */}
+
+          {showFilters && (
+            <div className="fixed inset-0 z-[60]">
+              <button
+                type="button"
+                aria-label="Close filters"
+                onClick={() =>
+                  setShowFilters(false)
+                }
+                className="absolute inset-0 bg-black/20 backdrop-blur-[1px]"
+              />
+
+              <div className="absolute bottom-0 left-0 right-0 max-h-[88vh] overflow-y-auto rounded-t-[24px] border-t border-[#E8E4DE] bg-[#FFFDFC] p-5 shadow-2xl sm:left-auto sm:bottom-4 sm:right-4 sm:top-4 sm:w-[380px] sm:rounded-[22px] sm:border">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <h2 className="text-base font-bold text-[#17202A]">
+                      Filters
+                    </h2>
+
+                    <p className="mt-0.5 text-[11px] text-muted">
+                      Narrow down your results
+                    </p>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setShowFilters(
+                        false
+                      )
+                    }
+                    className="flex h-9 w-9 items-center justify-center rounded-full bg-gray-100 text-gray-600"
+                    aria-label="Close filters"
+                  >
+                    <X className="h-4 w-4" />
+                  </button>
+                </div>
+
+                {/* CATEGORY */}
+
+                <div className="mt-6">
+                  <label className="text-xs font-bold text-gray-700">
+                    Category
+                  </label>
+
+                  <div className="mt-2 grid grid-cols-2 gap-2">
+                    {categories.map(
+                      (item) => {
+                        const active =
+                          category ===
+                          item.name;
+
+                        const style =
+                          getCategoryStyle(
+                            item.name
+                          );
+
+                        return (
+                          <button
+                            key={
+                              item.id
+                            }
+                            type="button"
+                            onClick={() =>
+                              setCategory(
+                                active
+                                  ? ""
+                                  : item.name
+                              )
+                            }
+                            className={`flex items-center gap-2 rounded-xl border px-3 py-2.5 text-left text-[11px] font-semibold transition ${
+                              active
+                                ? "border-[#FFB09B] bg-[#FFF1ED] text-[#9F2D18]"
+                                : "border-[#E8E4DE] bg-white text-gray-700 hover:bg-gray-50"
+                            }`}
+                          >
+                            <span
+                              className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full"
+                              style={{
+                                backgroundColor:
+                                  style.bg,
+                              }}
+                            >
+                              {style.icon}
+                            </span>
+
+                            <span className="truncate">
+                              {
+                                item.name
+                              }
+                            </span>
+
+                            {active && (
+                              <Check className="ml-auto h-3.5 w-3.5" />
+                            )}
+                          </button>
+                        );
+                      }
+                    )}
+                  </div>
+                </div>
+
+                {/* LOCATION */}
+
+                <div className="mt-5">
+                  <label className="text-xs font-bold text-gray-700">
+                    Location
+                  </label>
+
+                  <div className="relative mt-2">
+                    <MapPin className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" />
+
+                    <input
+                      value={location}
+                      onChange={(event) =>
+                        setLocation(
+                          event.target.value
+                        )
+                      }
+                      placeholder="e.g. Ikeja"
+                      className="h-11 w-full rounded-xl border border-[#E8E4DE] bg-white pl-10 pr-3 text-xs outline-none transition focus:border-[#FF9B82] focus:ring-4 focus:ring-[#FF5A36]/10"
+                    />
+                  </div>
+                </div>
+
+                {/* PRICE */}
+
+                <div className="mt-5">
+                  <label className="text-xs font-bold text-gray-700">
+                    Price range
+                  </label>
+
+                  <div className="mt-2 grid grid-cols-2 gap-2">
+                    <input
+                      value={minPrice}
+                      onChange={(event) =>
+                        setMinPrice(
+                          event.target.value
+                        )
+                      }
+                      inputMode="numeric"
+                      placeholder="Min price"
+                      className="h-11 rounded-xl border border-[#E8E4DE] bg-white px-3 text-xs outline-none transition focus:border-[#FF9B82] focus:ring-4 focus:ring-[#FF5A36]/10"
+                    />
+
+                    <input
+                      value={maxPrice}
+                      onChange={(event) =>
+                        setMaxPrice(
+                          event.target.value
+                        )
+                      }
+                      inputMode="numeric"
+                      placeholder="Max price"
+                      className="h-11 rounded-xl border border-[#E8E4DE] bg-white px-3 text-xs outline-none transition focus:border-[#FF9B82] focus:ring-4 focus:ring-[#FF5A36]/10"
+                    />
+                  </div>
+                </div>
+
+                {/* AVAILABILITY */}
+
+                <div className="mt-5">
+                  <label className="text-xs font-bold text-gray-700">
+                    Availability
+                  </label>
+
+                  <div className="relative mt-2">
+                    <select
+                      value={
+                        availability
+                      }
+                      onChange={(event) =>
+                        setAvailability(
+                          event.target.value
+                        )
+                      }
+                      className="h-11 w-full appearance-none rounded-xl border border-[#E8E4DE] bg-white px-3 pr-9 text-xs text-gray-700 outline-none transition focus:border-[#FF9B82] focus:ring-4 focus:ring-[#FF5A36]/10"
+                    >
+                      <option value="">
+                        Any availability
+                      </option>
+
+                      <option value="AVAILABLE">
+                        Available now
+                      </option>
+
+                      <option value="ASK_SELLER">
+                        Ask seller
+                      </option>
+
+                      <option value="UNAVAILABLE">
+                        Unavailable
+                      </option>
+                    </select>
+
+                    <ChevronDown className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" />
+                  </div>
+                </div>
+
+                {/* VERIFIED */}
+
+                <button
+                  type="button"
+                  onClick={() =>
+                    setVerified(
+                      !verified
+                    )
+                  }
+                  className={`mt-5 flex w-full items-center justify-between rounded-xl border px-4 py-3 transition ${
+                    verified
+                      ? "border-[#BFE7D0] bg-[#F0FBF5]"
+                      : "border-[#E8E4DE] bg-white"
+                  }`}
+                >
+                  <div className="flex items-center gap-3">
+                    <div
+                      className={`flex h-8 w-8 items-center justify-center rounded-full ${
+                        verified
+                          ? "bg-[#DDF5EA] text-[#137A59]"
+                          : "bg-gray-100 text-gray-500"
+                      }`}
+                    >
+                      <Check className="h-4 w-4" />
+                    </div>
+
+                    <div className="text-left">
+                      <p className="text-xs font-bold text-gray-700">
+                        Verified businesses
+                      </p>
+
+                      <p className="mt-0.5 text-[10px] text-gray-400">
+                        Show verified sellers only
+                      </p>
+                    </div>
+                  </div>
+
+                  <div
+                    className={`h-5 w-9 rounded-full p-0.5 transition ${
+                      verified
+                        ? "bg-[#FF5A36]"
+                        : "bg-gray-200"
+                    }`}
+                  >
+                    <div
+                      className={`h-4 w-4 rounded-full bg-white shadow-sm transition ${
+                        verified
+                          ? "translate-x-4"
+                          : "translate-x-0"
+                      }`}
+                    />
+                  </div>
+                </button>
+
+                {/* ACTIONS */}
+
+                <div className="mt-6 flex gap-2 border-t border-[#EAE6DF] pt-5">
+                  <button
+                    type="button"
+                    onClick={
+                      clearFilters
+                    }
+                    className="flex-1 rounded-xl border border-[#E8E4DE] bg-white py-3 text-xs font-bold text-gray-700 transition hover:bg-gray-50"
+                  >
+                    Clear
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={
+                      applyFilters
+                    }
+                    className="flex-[1.5] rounded-xl bg-[#FF5A36] py-3 text-xs font-bold text-white transition hover:opacity-90"
+                  >
+                    Apply filters
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* MOBILE NAV */}
+
+          <nav className="fixed bottom-0 left-0 right-0 z-50 border-t border-gray-200 bg-white/95 px-2 pb-[max(6px,safe-area-inset-bottom)] pt-1.5 backdrop-blur lg:hidden">
+            <div className="mx-auto grid max-w-md grid-cols-4">
+              {NAV_ITEMS.map(
+                (item) => {
+                  const Icon =
+                    item.icon;
+
+                  return (
+                    <button
+                      key={item.label}
+                      type="button"
+                      onClick={() =>
+                        router.push(
+                          item.href
+                        )
+                      }
+                      className={`flex flex-col items-center justify-center gap-1 rounded-xl py-2 ${
+                        item.label ===
+                        "Shop"
+                          ? "text-[#9F2D18]"
+                          : "text-gray-500"
+                      }`}
+                    >
+                      <Icon className="h-[19px] w-[19px]" />
+
+                      <span className="text-[9px] font-medium">
+                        {item.label}
+                      </span>
+                    </button>
+                  );
+                }
+              )}
+            </div>
+          </nav>
+        </div>
+      </div>
+    </main>
+  );
 }

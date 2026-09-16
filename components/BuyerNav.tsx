@@ -1,6 +1,6 @@
 "use client";
 
-import { Home, MapPin, ShoppingBag } from "lucide-react";
+import { Heart, Home, MapPin, ShoppingBag } from "lucide-react";
 import Link from "next/link";
 
 const NAV_ITEMS = [
@@ -22,7 +22,7 @@ const NAV_ITEMS = [
     {
         label: "Saved",
         href : "/saved",
-        icon: "Heart",
+        icon: Heart,
     },
 
 ];
@@ -53,6 +53,7 @@ export default function BuyerNav(){
                 return (
                     <Link key={item.href} href={item.href} className="flex items-center gap-3 rounded-xl px-3.5 py-3 text-sm font-medium text-gray-700 transition hover:bg-[#FF5A36] hover: text-[#9F2D18]">
                         <Icon size={19} />
+                        {item.label}
                     </Link>
                 );
             })}
