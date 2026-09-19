@@ -6,13 +6,14 @@ import { requireAdmin } from "@/lib/admin-auth";
 
 
 export async function GET() {
+  try{
   const auth = await requireAdmin();
 
   if (!auth.authorized) {
     return auth.response;
   }
 
-  try {
+
     const [
       businesses,
       products,

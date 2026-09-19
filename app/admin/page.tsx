@@ -99,7 +99,10 @@ export default function AdminPage() {
         const response = await fetch("/api/admin/overview");
 
         if (!response.ok) {
-          throw new Error("Unable to load admin overview");
+          const body = await response.text();
+          console.error("Admin overview request failed:", response.status,body);
+
+          throw new Error(`admin overview failed (${response.status,body}): ${body}`);
         }
 
         const result: Overview = await response.json();
