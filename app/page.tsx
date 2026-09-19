@@ -283,7 +283,7 @@ export default function HomePage() {
           if (!cancelled) {
             setFeaturedBusinesses(
               Array.isArray(featuredData.businesses)
-                ? featuredData.businesses.slice(0, 4)
+                ? featuredData.businesses.slice(0, 5)
                 : []
             );
           }
@@ -381,7 +381,7 @@ export default function HomePage() {
     );
   };
 
-  const submit = (event: SyntheticEvent) => {
+  const submit = (event: React.SubmitEvent<HTMLFormElement>) => {
     event.preventDefault();
 
     const query = q.trim();

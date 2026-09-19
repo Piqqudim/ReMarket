@@ -1,25 +1,17 @@
 "use client";
 
-import {
-  useEffect,
-  useState,
-} from "react";
-
+import { useState } from "react";
 import Link from "next/link";
-
 import {
   Home,
   ShoppingBag,
   ClipboardList,
   Heart,
   Plus,
+  ArrowLeft,
   MapPin,
-  Package,
-  ChevronRight,
-  Clock3,
+  ImagePlus,
   CheckCircle2,
-  MessageCircle,
-  XCircle,
   Loader2,
   Search,
 } from "lucide-react";
@@ -47,26 +39,20 @@ const NAV_ITEMS = [
   },
 ];
 
-type RequestStatus =
-  | "NEW"
-  | "MATCHED"
-  | "CONTACTED"
-  | "FULFILLED"
-  | "UNFULFILLED"
-  | "CLOSED";
+const CATEGORIES = [
+  "Fashion",
+  "Electronics",
+  "Food",
+  "Beauty",
+  "Textiles",
+  "Services",
+];
 
-type BuyerRequest = {
+type CreatedRequest = {
   id: string;
+  requestCode: string;
   query: string;
-  category?: string | null;
-  budget?: number | null;
-  locationArea?: string | null;
-  quantity?: number | null;
-  description?: string | null;
-  imageUrl?: string | null;
-  status: RequestStatus;
-  createdAt: string;
-
+  status: string;
   matches?: Array<{
     id: string;
     score: number;
@@ -74,339 +60,159 @@ type BuyerRequest = {
       id: string;
       name: string;
       verification: string;
-      location?: {
-        area: string;
-      } | null;
     };
   }>;
 };
 
-function formatMoney(value: number | null | undefined) {
-  if (value === null || value === undefined) {
-    return null;
-  }
+export default function RequestPage() {
+  const [query, setQuery] = useState("");
+  const [category, setCategory] = useState("");
+  const [budget, setBudget] = useState("");
+  const [locationArea, setLocationArea] = useState("");
+  const [quantity, setQuantity] = useState("");
+  const [description, setDescription] = useState("");
+  const [buyerContact, setBuyerContact] = useState("");
+  const [imageUrl, setImageUrl] = useState("");
 
-  return `₦${value.toLocaleString("en-NG")}`;
-}
-
-function formatDate(value: string) {
-  const date = new Date(value);
-
-  if (Number.isNaN(date.getTime())) {
-    return "";
-  }
-
-  return date.toLocaleDateString("en-NG", {
-    day: "numeric",
-    month: "short",
-    year: "numeric",
-  });
-}
-
-function getStatusInfo(status: RequestStatus) {
-  switch (status) {
-    case "MATCHED":
-      return {
-        label: "Matched",
-        icon: CheckCircle2,
-        className:
-          "bg-[#E7F7ED] text-[#18794E]",
-      };
-
-    case "CONTACTED":
-      return {
-        label: "Contacted",
-        icon: MessageCircle,
-        className:
-          "bg-[#E7E5FF] text-[#5146A6]",
-      };
-
-    case "FULFILLED":
-      return {
-        label: "Fulfilled",
-        icon: CheckCircle2,
-        className:
-          "bg-[#DDF5EA] text-[#18794E]",
-      };
-
-    case "UNFULFILLED":
-      return {
-        label: "Not fulfilled",
-        icon: XCircle,
-        className:
-          "bg-[#FFE4DE] text-[#A83A25]",
-      };
-
-    case "CLOSED":
-      return {
-        label: "Closed",
-        icon: XCircle,
-        className:
-          "bg-[#EAE6DF] text-[#66615B]",
-      };
-
-    case "NEW":
-    default:
-      return {
-        label: "Finding sellers",
-        icon: Clock3,
-        className:
-          "bg-[#FFF0C7] text-[#8A6412]",
-      };
-  }
-}
-
-function RequestCard({
-  request,
-}: {
-  request: BuyerRequest;
-}) {
-  const status = getStatusInfo(request.status);
-  const StatusIcon = status.icon;
-
-  const matches = request.matches ?? [];
-
-  return (
-    <article
-      className="
-        rounded-[18px]
-        border border-[#EAE6DF]
-        bg-white
-        p-4
-        shadow-[0_4px_18px_rgba(23,32,42,0.04)]
-        transition
-        hover:-translate-y-[1px]
-        hover:shadow-[0_8px_24px_rgba(23,32,42,0.07)]
-      "
-    >
-      <div className="flex gap-4">
-        {/* Image / Icon */}
-        <div
-          className="
-            flex
-            h-16
-            w-16
-            shrink-0
-            items-center
-            justify-center
-            overflow-hidden
-            rounded-[14px]
-            bg-[#FFF0D9]
-          "
-        >
-          {request.imageUrl ? (
-            <img
-              src={request.imageUrl}
-              alt={request.query}
-              className="h-full w-full object-cover"
-            />
-          ) : (
-            <Package
-              size={26}
-              strokeWidth={1.8}
-              className="text-[#FF5A36]"
-            />
-          )}
-        </div>
-
-        {/* Main */}
-        <div className="min-w-0 flex-1">
-          <div className="flex flex-wrap items-start justify-between gap-2">
-            <div>
-              <h2 className="text-[16px] font-bold tracking-tight text-[#17202A]">
-                {request.query}
-              </h2>
-
-              {request.category && (
-                <p className="mt-0.5 text-[12px] text-[#77716A]">
-                  {request.category}
-                </p>
-              )}
-            </div>
-
-            <span
-              className={`
-                inline-flex
-                items-center
-                gap-1.5
-                rounded-full
-                px-2.5
-                py-1
-                text-[11px]
-                font-bold
-                ${status.className}
-              `}
-            >
-              <StatusIcon size={13} />
-              {status.label}
-            </span>
-          </div>
-
-          <div className="mt-3 flex flex-wrap gap-x-4 gap-y-2 text-[12px] text-[#6F6A64]">
-            {request.locationArea && (
-              <span className="inline-flex items-center gap-1">
-                <MapPin size={13} />
-                {request.locationArea}
-              </span>
-            )}
-
-            {request.budget !== null &&
-              request.budget !== undefined && (
-                <span className="inline-flex items-center gap-1">
-                  Budget {formatMoney(request.budget)}
-                </span>
-              )}
-
-            {request.quantity !== null &&
-              request.quantity !== undefined && (
-                <span className="inline-flex items-center gap-1">
-                  Qty {request.quantity}
-                </span>
-              )}
-
-            <span className="inline-flex items-center gap-1">
-              <Clock3 size={13} />
-              {formatDate(request.createdAt)}
-            </span>
-          </div>
-
-          {request.description && (
-            <p className="mt-3 line-clamp-2 text-[13px] leading-5 text-[#55504A]">
-              {request.description}
-            </p>
-          )}
-
-          {/* Matches */}
-          {matches.length > 0 && (
-            <div className="mt-4 border-t border-[#EEEAE4] pt-3">
-              <p className="mb-2 text-[11px] font-bold uppercase tracking-[0.08em] text-[#8A847D]">
-                Sellers found
-              </p>
-
-              <div className="flex flex-wrap gap-2">
-                {matches.slice(0, 3).map((match) => (
-                  <Link
-                    key={match.id}
-                    href={`/seller/${match.business.id}`}
-                    className="
-                      inline-flex
-                      items-center
-                      gap-1.5
-                      rounded-full
-                      border border-[#EAE6DF]
-                      bg-[#FCFAF6]
-                      px-3
-                      py-1.5
-                      text-[12px]
-                      font-semibold
-                      text-[#33302C]
-                      transition
-                      hover:border-[#FFB39F]
-                      hover:bg-[#FFF7ED]
-                    "
-                  >
-                    {match.business.name}
-
-                    {match.business.verification ===
-                      "VERIFIED" && (
-                      <CheckCircle2
-                        size={12}
-                        className="text-[#18794E]"
-                      />
-                    )}
-                  </Link>
-                ))}
-
-                {matches.length > 3 && (
-                  <span className="px-1 py-1.5 text-[11px] font-semibold text-[#8A847D]">
-                    +{matches.length - 3} more
-                  </span>
-                )}
-              </div>
-            </div>
-          )}
-
-          {/* Bottom action */}
-          <div className="mt-4 flex items-center justify-between gap-3">
-            <span className="text-[11px] text-[#99928A]">
-              Request #{request.id.slice(-6)}
-            </span>
-
-            {matches.length > 0 && (
-              <Link
-                href={`/my-requests/${request.id}`}
-                className="
-                  inline-flex
-                  items-center
-                  gap-1
-                  text-[12px]
-                  font-bold
-                  text-[#FF5A36]
-                  hover:text-[#D94727]
-                "
-              >
-                View matches
-                <ChevronRight size={14} />
-              </Link>
-            )}
-          </div>
-        </div>
-      </div>
-    </article>
-  );
-}
-
-export default function MyRequestsPage() {
-  const [requests, setRequests] = useState<
-    BuyerRequest[]
-  >([]);
-
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(false);
+  const [uploading, setUploading] = useState(false);
 
   const [error, setError] = useState("");
 
-  useEffect(() => {
-    async function loadRequests() {
-      try {
-        setLoading(true);
-        setError("");
+  const [createdRequest, setCreatedRequest] =
+    useState<CreatedRequest | null>(null);
 
-        const response = await fetch(
-          "/api/requests",
-          {
-            cache: "no-store",
-          }
-        );
+  async function handleImageUpload(
+    event: React.ChangeEvent<HTMLInputElement>
+  ) {
+    const file = event.target.files?.[0];
 
-        if (!response.ok) {
-          throw new Error(
-            "Unable to load requests"
-          );
-        }
-
-        const data = await response.json();
-
-        setRequests(
-          Array.isArray(data.requests)
-            ? data.requests
-            : []
-        );
-      } catch (error) {
-        console.error(
-          "My requests error:",
-          error
-        );
-
-        setError(
-          "We couldn't load your requests right now."
-        );
-      } finally {
-        setLoading(false);
-      }
+    if (!file) {
+      return;
     }
 
-    loadRequests();
-  }, []);
+    try {
+      setUploading(true);
+      setError("");
+
+      const formData = new FormData();
+      formData.append("file", file);
+
+      const response = await fetch("/api/upload", {
+        method: "POST",
+        body: formData,
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(
+          data.error || "Unable to upload image"
+        );
+      }
+
+      setImageUrl(data.url);
+    } catch (error) {
+      console.error("Image upload error:", error);
+
+      setError(
+        error instanceof Error
+          ? error.message
+          : "Unable to upload image"
+      );
+    } finally {
+      setUploading(false);
+    }
+  }
+
+  async function handleSubmit(
+    event: React.SubmitEvent<HTMLFormElement>
+  ) {
+    event.preventDefault();
+
+    if (!query.trim()) {
+      setError("Tell us what you're looking for.");
+      return;
+    }
+
+    if (!buyerContact.trim()) {
+      setError(
+        "Add a WhatsApp or phone number so sellers can reach you."
+      );
+      return;
+    }
+
+    try {
+      setLoading(true);
+      setError("");
+      setCreatedRequest(null);
+
+      const response = await fetch("/api/request", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          query: query.trim(),
+
+          category:
+            category || undefined,
+
+          budget: budget
+            ? Number(budget)
+            : undefined,
+
+          locationArea:
+            locationArea.trim() || undefined,
+
+          quantity: quantity
+            ? Number(quantity)
+            : undefined,
+
+          description:
+            description.trim() || undefined,
+
+          imageUrl:
+            imageUrl || undefined,
+
+          buyerContact:
+            buyerContact.trim(),
+        }),
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(
+          data.error || "Unable to create request"
+        );
+      }
+
+      setCreatedRequest(data.request);
+
+      setQuery("");
+      setCategory("");
+      setBudget("");
+      setLocationArea("");
+      setQuantity("");
+      setDescription("");
+      setBuyerContact("");
+      setImageUrl("");
+    } catch (error) {
+      console.error(
+        "Create request error:",
+        error
+      );
+
+      setError(
+        error instanceof Error
+          ? error.message
+          : "Unable to create your request"
+      );
+    } finally {
+      setLoading(false);
+    }
+  }
 
   return (
     <main className="min-h-screen bg-[#FFF7ED] p-0 md:p-4">
@@ -416,14 +222,13 @@ export default function MyRequestsPage() {
           min-h-screen
           max-w-[1500px]
           overflow-hidden
-          rounded-none
-          border-[#FF5A36]
           bg-[#FFFDFC]
           shadow-none
 
           md:min-h-[calc(100vh-32px)]
           md:rounded-[22px]
           md:border
+          md:border-[#FF5A36]
           md:shadow-[0_12px_40px_rgba(159,45,24,0.08)]
         "
       >
@@ -471,32 +276,34 @@ export default function MyRequestsPage() {
             </div>
           </Link>
 
-          <div className="hidden items-center gap-3 md:flex">
-            <Link
-              href="/request"
-              className="
-                inline-flex
-                items-center
-                gap-2
-                rounded-[11px]
-                bg-[#FF5A36]
-                px-4
-                py-2.5
-                text-[12px]
-                font-bold
-                text-white
-                transition
-                hover:bg-[#E94D2D]
-              "
-            >
-              <Plus size={15} />
-              Request something
-            </Link>
-          </div>
+          <Link
+            href="/my-requests"
+            className="
+              hidden
+              items-center
+              gap-2
+              rounded-[11px]
+              border
+              border-[#EAE6DF]
+              bg-white
+              px-3
+              py-2
+              text-[12px]
+              font-bold
+              text-[#55504A]
+              transition
+              hover:border-[#FFB39F]
+              hover:bg-[#FFF7ED]
+              md:flex
+            "
+          >
+            <ClipboardList size={15} />
+            My Requests
+          </Link>
         </header>
 
         <div className="flex min-h-[calc(100vh-66px)]">
-          {/* Desktop Sidebar */}
+          {/* Sidebar */}
           <aside
             className="
               hidden
@@ -514,15 +321,11 @@ export default function MyRequestsPage() {
               {NAV_ITEMS.map((item) => {
                 const Icon = item.icon;
 
-                const active =
-                  item.href ===
-                  "/my-requests";
-
                 return (
                   <Link
                     key={item.href}
                     href={item.href}
-                    className={`
+                    className="
                       flex
                       items-center
                       gap-3
@@ -531,13 +334,11 @@ export default function MyRequestsPage() {
                       py-2.5
                       text-[12px]
                       font-semibold
+                      text-[#6F6A64]
                       transition
-                      ${
-                        active
-                          ? "bg-[#FFE0D6] text-[#9F2D18]"
-                          : "text-[#6F6A64] hover:bg-[#F3EEE7] hover:text-[#292622]"
-                      }
-                    `}
+                      hover:bg-[#F3EEE7]
+                      hover:text-[#292622]
+                    "
                   >
                     <Icon size={17} />
                     {item.label}
@@ -548,165 +349,150 @@ export default function MyRequestsPage() {
 
             <div className="mt-6 rounded-[14px] bg-[#FFF0D9] p-3">
               <p className="text-[12px] font-bold text-[#7E321F]">
-                Can't find it?
+                Looking for something?
               </p>
 
               <p className="mt-1 text-[11px] leading-4 text-[#91644F]">
-                Tell ReMarket what you need and
-                we'll look for sellers nearby.
+                Tell us what you need and we'll
+                look for nearby sellers.
               </p>
-
-              <Link
-                href="/request"
-                className="
-                  mt-3
-                  inline-flex
-                  items-center
-                  gap-1
-                  text-[11px]
-                  font-bold
-                  text-[#FF5A36]
-                "
-              >
-                Make a request
-                <ChevronRight size={13} />
-              </Link>
             </div>
           </aside>
 
           {/* Main */}
           <section className="min-w-0 flex-1 px-4 py-5 pb-24 md:px-6 md:py-6 md:pb-6">
-            <div className="mx-auto max-w-[1050px]">
+            <div className="mx-auto max-w-[850px]">
+              {/* Back */}
+              <Link
+                href="/"
+                className="
+                  inline-flex
+                  items-center
+                  gap-1.5
+                  text-[12px]
+                  font-semibold
+                  text-[#77716A]
+                  hover:text-[#FF5A36]
+                "
+              >
+                <ArrowLeft size={14} />
+                Back to ReMarket
+              </Link>
+
               {/* Heading */}
-              <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-end">
-                <div>
-                  <p className="text-[11px] font-bold uppercase tracking-[0.12em] text-[#FF5A36]">
-                    Your activity
-                  </p>
+              <div className="mt-5">
+                <p className="text-[11px] font-bold uppercase tracking-[0.12em] text-[#FF5A36]">
+                  Find it nearby
+                </p>
 
-                  <h1 className="mt-1 text-[25px] font-extrabold tracking-tight text-[#17202A]">
-                    My Requests
-                  </h1>
+                <h1 className="mt-1 text-[27px] font-extrabold tracking-tight text-[#17202A]">
+                  Request something
+                </h1>
 
-                  <p className="mt-1 max-w-[600px] text-[13px] leading-5 text-[#77716A]">
-                    Keep track of the things you've
-                    asked ReMarket to find nearby.
-                  </p>
-                </div>
-
-                <Link
-                  href="/request"
-                  className="
-                    inline-flex
-                    w-fit
-                    items-center
-                    gap-2
-                    rounded-[11px]
-                    bg-[#FF5A36]
-                    px-4
-                    py-2.5
-                    text-[12px]
-                    font-bold
-                    text-white
-                    transition
-                    hover:bg-[#E94D2D]
-                  "
-                >
-                  <Plus size={15} />
-                  New request
-                </Link>
+                <p className="mt-1 max-w-[620px] text-[13px] leading-5 text-[#77716A]">
+                  Can't find what you're looking
+                  for? Tell us what you need and
+                  we'll look for sellers around you.
+                </p>
               </div>
 
-              {/* Content */}
-              <div className="mt-6">
-                {loading ? (
-                  <div className="flex min-h-[300px] items-center justify-center">
-                    <div className="flex items-center gap-2 text-[13px] font-semibold text-[#77716A]">
-                      <Loader2
-                        size={18}
-                        className="animate-spin"
-                      />
-                      Loading your requests...
-                    </div>
-                  </div>
-                ) : error ? (
-                  <div className="rounded-[18px] border border-[#F0C7BE] bg-[#FFF1ED] p-6 text-center">
-                    <p className="text-[14px] font-bold text-[#9F2D18]">
-                      Something went wrong
-                    </p>
-
-                    <p className="mt-1 text-[12px] text-[#8C6257]">
-                      {error}
-                    </p>
-
-                    <button
-                      type="button"
-                      onClick={() =>
-                        window.location.reload()
-                      }
-                      className="
-                        mt-4
-                        rounded-[10px]
-                        bg-[#FF5A36]
-                        px-4
-                        py-2
-                        text-[12px]
-                        font-bold
-                        text-white
-                      "
-                    >
-                      Try again
-                    </button>
-                  </div>
-                ) : requests.length === 0 ? (
+              {/* Success */}
+              {createdRequest ? (
+                <div
+                  className="
+                    mt-6
+                    rounded-[20px]
+                    border
+                    border-[#BDE6CE]
+                    bg-[#F0FBF4]
+                    p-6
+                  "
+                >
                   <div
                     className="
                       flex
-                      min-h-[360px]
-                      flex-col
+                      h-12
+                      w-12
                       items-center
                       justify-center
-                      rounded-[20px]
-                      border
-                      border-dashed
-                      border-[#E5DED4]
-                      bg-[#FCFAF6]
-                      px-6
-                      text-center
+                      rounded-full
+                      bg-[#DDF5EA]
+                      text-[#18794E]
                     "
                   >
-                    <div
-                      className="
-                        flex
-                        h-16
-                        w-16
-                        items-center
-                        justify-center
-                        rounded-full
-                        bg-[#FFE0D6]
-                        text-[#FF5A36]
-                      "
-                    >
-                      <ClipboardList
-                        size={28}
-                        strokeWidth={1.8}
-                      />
-                    </div>
+                    <CheckCircle2 size={25} />
+                  </div>
 
-                    <h2 className="mt-4 text-[17px] font-bold text-[#17202A]">
-                      No requests yet
-                    </h2>
+                  <h2 className="mt-4 text-[19px] font-extrabold text-[#17202A]">
+                    Request submitted
+                  </h2>
 
-                    <p className="mt-1 max-w-[400px] text-[12px] leading-5 text-[#77716A]">
-                      Can't find what you're looking
-                      for? Create a request and let
-                      nearby sellers find you.
+                  <p className="mt-1 text-[13px] leading-5 text-[#59635D]">
+                    We're now looking for sellers
+                    that can help with your request.
+                  </p>
+
+                  <div className="mt-5 rounded-[14px] bg-white p-4">
+                    <p className="text-[10px] font-bold uppercase tracking-[0.1em] text-[#8A847D]">
+                      Your request code
                     </p>
 
+                    <p className="mt-1 text-[24px] font-extrabold tracking-[0.12em] text-[#FF5A36]">
+                      {createdRequest.requestCode}
+                    </p>
+
+                    <p className="mt-2 text-[11px] leading-4 text-[#77716A]">
+                      Keep this code. You can use it
+                      later to find this request.
+                    </p>
+                  </div>
+
+                  {createdRequest.matches &&
+                    createdRequest.matches.length > 0 && (
+                      <div className="mt-4 rounded-[14px] bg-white p-4">
+                        <p className="text-[12px] font-bold text-[#17202A]">
+                          Sellers found
+                        </p>
+
+                        <div className="mt-2 space-y-2">
+                          {createdRequest.matches
+                            .slice(0, 3)
+                            .map((match) => (
+                              <Link
+                                key={match.id}
+                                href={`/seller/${match.business.id}`}
+                                className="
+                                  flex
+                                  items-center
+                                  justify-between
+                                  rounded-[10px]
+                                  border
+                                  border-[#EAE6DF]
+                                  px-3
+                                  py-2.5
+                                  text-[12px]
+                                  font-semibold
+                                  text-[#33302C]
+                                  hover:bg-[#FFF7ED]
+                                "
+                              >
+                                <span>
+                                  {match.business.name}
+                                </span>
+
+                                <span className="text-[#FF5A36]">
+                                  View
+                                </span>
+                              </Link>
+                            ))}
+                        </div>
+                      </div>
+                    )}
+
+                  <div className="mt-5 flex flex-wrap gap-2">
                     <Link
-                      href="/request"
+                      href="/my-requests"
                       className="
-                        mt-5
                         inline-flex
                         items-center
                         gap-2
@@ -719,26 +505,516 @@ export default function MyRequestsPage() {
                         text-white
                       "
                     >
-                      <Plus size={15} />
-                      Request something
+                      <ClipboardList size={15} />
+                      View my requests
                     </Link>
+
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setCreatedRequest(null)
+                      }
+                      className="
+                        rounded-[11px]
+                        border
+                        border-[#EAE6DF]
+                        bg-white
+                        px-4
+                        py-2.5
+                        text-[12px]
+                        font-bold
+                        text-[#55504A]
+                      "
+                    >
+                      Make another request
+                    </button>
                   </div>
-                ) : (
-                  <div className="space-y-3">
-                    {requests.map((request) => (
-                      <RequestCard
-                        key={request.id}
-                        request={request}
+                </div>
+              ) : (
+                <form
+                  onSubmit={handleSubmit}
+                  className="mt-6 space-y-4"
+                >
+                  {/* Main request */}
+                  <div
+                    className="
+                      rounded-[20px]
+                      border
+                      border-[#EAE6DF]
+                      bg-white
+                      p-4
+                      md:p-5
+                    "
+                  >
+                    <h2 className="text-[15px] font-bold text-[#17202A]">
+                      What are you looking for?
+                    </h2>
+
+                    <p className="mt-1 text-[11px] text-[#8A847D]">
+                      Start with the item or service
+                      you need.
+                    </p>
+
+                    <div className="mt-4">
+                      <label
+                        htmlFor="query"
+                        className="mb-1.5 block text-[12px] font-bold text-[#33302C]"
+                      >
+                        Item or service
+                      </label>
+
+                      <input
+                        id="query"
+                        name="query"
+                        value={query}
+                        onChange={(event) =>
+                          setQuery(event.target.value)
+                        }
+                        placeholder="e.g. black sneakers"
+                        className="
+                          w-full
+                          rounded-[11px]
+                          border
+                          border-[#EAE6DF]
+                          bg-[#FCFAF6]
+                          px-3
+                          py-3
+                          text-[13px]
+                          text-[#17202A]
+                          outline-none
+                          transition
+                          placeholder:text-[#AAA39B]
+                          focus:border-[#FF5A36]
+                          focus:bg-white
+                          focus:ring-2
+                          focus:ring-[#FF5A36]/10
+                        "
                       />
-                    ))}
+                    </div>
+
+                    <div className="mt-4">
+                      <label
+                        htmlFor="category"
+                        className="mb-1.5 block text-[12px] font-bold text-[#33302C]"
+                      >
+                        Category
+                      </label>
+
+                      <select
+                        id="category"
+                        name="category"
+                        value={category}
+                        onChange={(event) =>
+                          setCategory(event.target.value)
+                        }
+                        className="
+                          w-full
+                          rounded-[11px]
+                          border
+                          border-[#EAE6DF]
+                          bg-[#FCFAF6]
+                          px-3
+                          py-3
+                          text-[13px]
+                          text-[#17202A]
+                          outline-none
+                          focus:border-[#FF5A36]
+                        "
+                      >
+                        <option value="">
+                          Select a category
+                        </option>
+
+                        {CATEGORIES.map(
+                          (item) => (
+                            <option
+                              key={item}
+                              value={item}
+                            >
+                              {item}
+                            </option>
+                          )
+                        )}
+                      </select>
+                    </div>
                   </div>
-                )}
-              </div>
+
+                  {/* Details */}
+                  <div
+                    className="
+                      rounded-[20px]
+                      border
+                      border-[#EAE6DF]
+                      bg-white
+                      p-4
+                      md:p-5
+                    "
+                  >
+                    <h2 className="text-[15px] font-bold text-[#17202A]">
+                      Tell us a little more
+                    </h2>
+
+                    <div className="mt-4 grid gap-4 sm:grid-cols-2">
+                      <div>
+                        <label
+                          htmlFor="budget"
+                          className="mb-1.5 block text-[12px] font-bold text-[#33302C]"
+                        >
+                          Budget
+                        </label>
+
+                        <div className="relative">
+                          <span className="absolute left-3 top-1/2 -translate-y-1/2 text-[12px] font-semibold text-[#8A847D]">
+                            ₦
+                          </span>
+
+                          <input
+                            id="budget"
+                            name="budget"
+                            type="number"
+                            min="0"
+                            value={budget}
+                            onChange={(event) =>
+                              setBudget(
+                                event.target.value
+                              )
+                            }
+                            placeholder="30000"
+                            className="
+                              w-full
+                              rounded-[11px]
+                              border
+                              border-[#EAE6DF]
+                              bg-[#FCFAF6]
+                              py-3
+                              pl-7
+                              pr-3
+                              text-[13px]
+                              outline-none
+                              focus:border-[#FF5A36]
+                            "
+                          />
+                        </div>
+                      </div>
+
+                      <div>
+                        <label
+                          htmlFor="quantity"
+                          className="mb-1.5 block text-[12px] font-bold text-[#33302C]"
+                        >
+                          Quantity
+                        </label>
+
+                        <input
+                          id="quantity"
+                          name="quantity"
+                          type="number"
+                          min="1"
+                          value={quantity}
+                          onChange={(event) =>
+                            setQuantity(
+                              event.target.value
+                            )
+                          }
+                          placeholder="1"
+                          className="
+                            w-full
+                            rounded-[11px]
+                            border
+                            border-[#EAE6DF]
+                            bg-[#FCFAF6]
+                            px-3
+                            py-3
+                            text-[13px]
+                            outline-none
+                            focus:border-[#FF5A36]
+                          "
+                        />
+                      </div>
+                    </div>
+
+                    <div className="mt-4">
+                      <label
+                        htmlFor="locationArea"
+                        className="mb-1.5 block text-[12px] font-bold text-[#33302C]"
+                      >
+                        Area
+                      </label>
+
+                      <div className="relative">
+                        <MapPin
+                          size={15}
+                          className="
+                            absolute
+                            left-3
+                            top-1/2
+                            -translate-y-1/2
+                            text-[#8A847D]
+                          "
+                        />
+
+                        <input
+                          id="locationArea"
+                          name="locationArea"
+                          value={locationArea}
+                          onChange={(event) =>
+                            setLocationArea(
+                              event.target.value
+                            )
+                          }
+                          placeholder="e.g. Yaba"
+                          className="
+                            w-full
+                            rounded-[11px]
+                            border
+                            border-[#EAE6DF]
+                            bg-[#FCFAF6]
+                            py-3
+                            pl-9
+                            pr-3
+                            text-[13px]
+                            outline-none
+                            focus:border-[#FF5A36]
+                          "
+                        />
+                      </div>
+                    </div>
+
+                    <div className="mt-4">
+                      <label
+                        htmlFor="description"
+                        className="mb-1.5 block text-[12px] font-bold text-[#33302C]"
+                      >
+                        More details
+                      </label>
+
+                      <textarea
+                        id="description"
+                        name="description"
+                        value={description}
+                        onChange={(event) =>
+                          setDescription(
+                            event.target.value
+                          )
+                        }
+                        rows={4}
+                        placeholder="Any colour, size, brand, or other details?"
+                        className="
+                          w-full
+                          resize-none
+                          rounded-[11px]
+                          border
+                          border-[#EAE6DF]
+                          bg-[#FCFAF6]
+                          px-3
+                          py-3
+                          text-[13px]
+                          leading-5
+                          outline-none
+                          placeholder:text-[#AAA39B]
+                          focus:border-[#FF5A36]
+                          focus:bg-white
+                        "
+                      />
+                    </div>
+
+                    {/* Image */}
+                    <div className="mt-4">
+                      <label
+                        htmlFor="request-image"
+                        className="
+                          flex
+                          cursor-pointer
+                          items-center
+                          gap-3
+                          rounded-[12px]
+                          border
+                          border-dashed
+                          border-[#DCD5CC]
+                          bg-[#FCFAF6]
+                          p-3
+                          transition
+                          hover:border-[#FFB39F]
+                          hover:bg-[#FFF7ED]
+                        "
+                      >
+                        <div
+                          className="
+                            flex
+                            h-10
+                            w-10
+                            shrink-0
+                            items-center
+                            justify-center
+                            rounded-[10px]
+                            bg-[#FFE0D6]
+                            text-[#FF5A36]
+                          "
+                        >
+                          {uploading ? (
+                            <Loader2
+                              size={18}
+                              className="animate-spin"
+                            />
+                          ) : (
+                            <ImagePlus size={18} />
+                          )}
+                        </div>
+
+                        <div>
+                          <p className="text-[12px] font-bold text-[#33302C]">
+                            {uploading
+                              ? "Uploading image..."
+                              : imageUrl
+                                ? "Image added"
+                                : "Add a photo"}
+                          </p>
+
+                          <p className="mt-0.5 text-[10px] text-[#8A847D]">
+                            A photo can help sellers
+                            understand what you need.
+                          </p>
+                        </div>
+                      </label>
+
+                      <input
+                        id="request-image"
+                        type="file"
+                        accept="image/*"
+                        onChange={
+                          handleImageUpload
+                        }
+                        className="hidden"
+                      />
+                    </div>
+                  </div>
+
+                  {/* Contact */}
+                  <div
+                    className="
+                      rounded-[20px]
+                      border
+                      border-[#EAE6DF]
+                      bg-white
+                      p-4
+                      md:p-5
+                    "
+                  >
+                    <h2 className="text-[15px] font-bold text-[#17202A]">
+                      How can sellers reach you?
+                    </h2>
+
+                    <p className="mt-1 text-[11px] leading-4 text-[#8A847D]">
+                      No account is needed. Use a
+                      WhatsApp or phone number.
+                    </p>
+
+                    <div className="mt-4">
+                      <label
+                        htmlFor="buyerContact"
+                        className="mb-1.5 block text-[12px] font-bold text-[#33302C]"
+                      >
+                        WhatsApp or phone number
+                      </label>
+
+                      <input
+                        id="buyerContact"
+                        name="buyerContact"
+                        type="tel"
+                        value={buyerContact}
+                        onChange={(event) =>
+                          setBuyerContact(
+                            event.target.value
+                          )
+                        }
+                        placeholder="08012345678"
+                        className="
+                          w-full
+                          rounded-[11px]
+                          border
+                          border-[#EAE6DF]
+                          bg-[#FCFAF6]
+                          px-3
+                          py-3
+                          text-[13px]
+                          outline-none
+                          placeholder:text-[#AAA39B]
+                          focus:border-[#FF5A36]
+                          focus:bg-white
+                        "
+                      />
+                    </div>
+                  </div>
+
+                  {/* Error */}
+                  {error && (
+                    <div
+                      className="
+                        rounded-[12px]
+                        border
+                        border-[#F0C7BE]
+                        bg-[#FFF1ED]
+                        px-4
+                        py-3
+                        text-[12px]
+                        font-semibold
+                        text-[#9F2D18]
+                      "
+                    >
+                      {error}
+                    </div>
+                  )}
+
+                  {/* Submit */}
+                  <button
+                    type="submit"
+                    disabled={loading || uploading}
+                    className="
+                      flex
+                      w-full
+                      items-center
+                      justify-center
+                      gap-2
+                      rounded-[13px]
+                      bg-[#FF5A36]
+                      px-4
+                      py-3.5
+                      text-[13px]
+                      font-bold
+                      text-white
+                      transition
+                      hover:bg-[#E94D2D]
+                      disabled:cursor-not-allowed
+                      disabled:opacity-60
+                    "
+                  >
+                    {loading ? (
+                      <>
+                        <Loader2
+                          size={17}
+                          className="animate-spin"
+                        />
+                        Finding sellers...
+                      </>
+                    ) : (
+                      <>
+                        <Plus size={17} />
+                        Submit request
+                      </>
+                    )}
+                  </button>
+
+                  <p className="text-center text-[10px] leading-4 text-[#99928A]">
+                    You don't need an account to
+                    make a request.
+                  </p>
+                </form>
+              )}
             </div>
           </section>
         </div>
 
-        {/* Mobile Bottom Navigation */}
+        {/* Mobile navigation */}
         <nav
           className="
             fixed
@@ -759,14 +1035,11 @@ export default function MyRequestsPage() {
             {NAV_ITEMS.map((item) => {
               const Icon = item.icon;
 
-              const active =
-                item.href === "/my-requests";
-
               return (
                 <Link
                   key={item.href}
                   href={item.href}
-                  className={`
+                  className="
                     flex
                     min-w-[62px]
                     flex-col
@@ -777,12 +1050,8 @@ export default function MyRequestsPage() {
                     py-1.5
                     text-[10px]
                     font-semibold
-                    ${
-                      active
-                        ? "text-[#FF5A36]"
-                        : "text-[#77716A]"
-                    }
-                  `}
+                    text-[#77716A]
+                  "
                 >
                   <Icon size={18} />
                   {item.label}

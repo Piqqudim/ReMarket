@@ -1159,7 +1159,7 @@ export default function SellerPage() {
                       </p>
 
                       <Link
-                        href="/request"
+                        href="/my-requests"
                         className="
                           mt-4
                           flex

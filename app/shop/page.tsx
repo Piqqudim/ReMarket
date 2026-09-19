@@ -406,7 +406,7 @@ export default function ShopPage() {
           </nav>
 
           <Link
-            href="/request"
+            href="/my-requests"
             className="rounded-xl bg-[#FF5A36] px-3 py-2 text-xs font-bold text-white transition hover:bg-[#E94D2C] sm:px-4 sm:text-sm"
           >
             Request something

@@ -485,7 +485,7 @@ async function main() {
       priceMax: 20000,
       phone: "08088899001",
       verification: "UNVERIFIED" as const,
-      availability: Availability.UNAVALIABLE,
+      availability: Availability.UNAVAILABLE,
       socialLinks: [
         {
           platform: "WHATSAPP" as const,

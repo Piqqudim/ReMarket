@@ -390,7 +390,7 @@ export default function NearMePage() {
           </nav>
 
           <Link
-            href="/request"
+            href="/my-requests"
             className="
               rounded-xl
               bg-[#FF5A36]
