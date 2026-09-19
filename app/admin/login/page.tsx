@@ -14,7 +14,7 @@ export default function AdminLogin(){
     const router = useRouter();
    
 
-    const submit = async(e: React.SyntheticEvent<HTMLFormElement>)=> {
+    const submit = async(e: React.SubmitEvent<HTMLFormElement>)=> {
         e.preventDefault();
         setError("");
         setLoading(true);

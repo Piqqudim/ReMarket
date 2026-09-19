@@ -375,7 +375,7 @@ export default function HomePage() {
 
       {
         enableHighAccuracy: false,
-        timeout: 10000,
+        timeout: 100000,
         maximumAge: 300000,
       }
     );
