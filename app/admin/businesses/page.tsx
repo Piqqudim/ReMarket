@@ -227,14 +227,14 @@ export default function AdminBusinessesPage() {
            </p>
              </div>
 
-          <Link
+           <Link
           href="/admin/businesses/new"
             className="inline-flex h-10 items-center justify-center gap-2 rounded-xl bg-[#FF5A36] px-4 text-sm font-extrabold text-white shadow-sm transition hover:bg-[#E94B29]"
              >
              <Plus size={17} />
              Add Business
            </Link>
-              </div>
+            </div>
           </header>
 
           <div className="p-4 sm:p-6">
