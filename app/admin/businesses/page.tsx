@@ -11,6 +11,7 @@ import {
   Search,
   Store,
   X,
+  Plus
 } from "lucide-react";
 import { useEffect, useState } from "react";
 
@@ -215,6 +216,25 @@ export default function AdminBusinessesPage() {
             >
               Marketplace
             </Link>
+            <div className="mb-6 flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
+            <div>
+              <h1 className="text-2xl font-black tracking-tight sm:text-3xl">
+               Businesses
+              </h1>
+
+           <p className="mt-1 text-sm text-[#81776F]">
+                Manage businesses listed on ReMarket.
+           </p>
+             </div>
+
+          <Link
+          href="/admin/businesses/new"
+            className="inline-flex h-10 items-center justify-center gap-2 rounded-xl bg-[#FF5A36] px-4 text-sm font-extrabold text-white shadow-sm transition hover:bg-[#E94B29]"
+             >
+             <Plus size={17} />
+             Add Business
+           </Link>
+              </div>
           </header>
 
           <div className="p-4 sm:p-6">
