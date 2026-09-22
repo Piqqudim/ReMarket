@@ -1,204 +1,238 @@
 generator client {
-    provider = "prisma-client-js"
+  provider = "prisma-client-js"
 }
-datasource db {
-    provider = "postgresql"
-    url = env("DATABASE_URL")
-    
-}
-enum Role {
-    ADMIN
-    BUYER
-    SELLER
-}
-enum Availability {
-    AVAILABLE
-    ASK_SELLER
-    UNAVAILABLE
-}
-enum BusinessStatus {
-    ACTIVE
-    INACTIVE
-    PENDING
 
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  ADMIN
+  BUYER
+  SELLER
+}
+
+enum Availability {
+  AVAILABLE
+  ASK_SELLER
+  UNAVAILABLE
+}
+
+enum BusinessStatus {
+  ACTIVE
+  INACTIVE
+  PENDING
 }
 
 enum RequestStatus {
-    NEW
-    MATCHED
-    CONTACTED
-    FULFILLED
-    UNFULFILLED
-    CLOSED
+  NEW
+  MATCHED
+  CONTACTED
+  FULFILLED
+  UNFULFILLED
+  CLOSED
 }
 
 enum SocialPlatform {
-    WHATSAPP
-    INSTAGRAM
-    TIKTOK
-    FACEBOOK
-    PHONE
-    DIRECTIONS
+  WHATSAPP
+  INSTAGRAM
+  TIKTOK
+  FACEBOOK
+  PHONE
+  DIRECTIONS
 }
 
 enum VerificationStatus {
-    UNVERIFIED
-    VERIFIED
+  UNVERIFIED
+  VERIFIED
 }
 
 model User {
-    id String @id @default(cuid())
-    email String @unique
-    password String 
-    role Role @default(BUYER)
-    name String? 
-    createdAt DateTime @default(now())
-    
+  id        String   @id @default(cuid())
+  email     String   @unique
+  password  String
+  role      Role     @default(BUYER)
+  name      String?
+  createdAt DateTime @default(now())
 }
 
 model Location {
-    id String  @id @default(cuid())
-    area String @unique
-    lat Float?
-    long Float?
-    businesses Business[]
-}
-
-model Business {
-    id  String @id @default(cuid())
-    name  String
-    ownerName String?
-    description String?
-    locationId String?
-    location Location?     @relation(fields: [locationId], references: [id])
-    priceMin Int?
-    priceMax Int?
-    availability Availability @default(ASK_SELLER)
-    phone String?
-    status BusinessStatus @default(ACTIVE)
-    verification VerificationStatus @default(UNVERIFIED)
-    notes String? 
-    onboardedAt DateTime @default(now())
-    categories BusinessCategory[]
-    products Product[]
-    socialLinks  BusinessSocialLink[]
-    matches Match[]
-    contactEvents ContactEvent[]
-
-    @@index([status])
-    @@index([verification])
-
-
+  id         String     @id @default(cuid())
+  area       String     @unique
+  lat        Float?
+  long       Float?
+  businesses Business[]
 }
 
 model BusinessSocialLink {
-    id String @id @default(cuid())
-    businessId String 
-    business Business @relation(fields:[businessId], references: [id], onDelete: Cascade)
-    platform SocialPlatform
-    handle String
+  id         String         @id @default(cuid())
+  businessId String
+  business   Business       @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  platform   SocialPlatform
+  handle     String
 
-    @@index([businessId])
+  @@index([businessId])
 }
 
 model Category {
-    id String @id @default(cuid())
-    name String @unique
-    business BusinessCategory[]
-    products Product[]
-    requests BuyerRequest[]
+  id       String             @id @default(cuid())
+  name     String             @unique
+  business BusinessCategory[]
+  products Product[]
+  requests BuyerRequest[]
 }
 
 model BusinessCategory {
-    businessId String 
-    categoryId String
-    business Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
-    category Category @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+  businessId String
+  categoryId String
+  business   Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  category   Category @relation(fields: [categoryId], references: [id], onDelete: Cascade)
 
-    @@id([businessId,categoryId])
+  @@id([businessId, categoryId])
+}
 
+model Business {
+  id          String  @id @default(cuid())
+  name        String
+  ownerName   String?
+  description String?
+
+  locationId String?
+  location   Location? @relation(fields: [locationId], references: [id])
+
+  priceMin Int?
+  priceMax Int?
+
+  availability Availability @default(ASK_SELLER)
+
+  phone String?
+
+  status       BusinessStatus     @default(ACTIVE)
+  verification VerificationStatus @default(UNVERIFIED)
+
+  notes String?
+
+  imageUrl String?
+
+  onboardedAt DateTime @default(now())
+
+  categories    BusinessCategory[]
+  products      Product[]
+  socialLinks   BusinessSocialLink[]
+  matches       Match[]
+  contactEvents ContactEvent[]
+
+  @@index([status])
+  @@index([verification])
 }
 
 model Product {
-    id String @id @default(cuid())
-    businessId String 
-    business Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
-    name String 
-    description String?
-    categoryId String?
-    category Category? @relation( fields: [categoryId], references: [id])
-    price Int?
-    priceMin Int?
-    priceMax Int?
-    availability Availability @default(ASK_SELLER)
-    keywords String[] @default([])
-    imageUrl String?
-    status BusinessStatus @default(ACTIVE)
-    updatedAt DateTime @updatedAt
+  id String @id @default(cuid())
 
-    @@index([businessId])
-    @@index([categoryId])
+  businessId String
+  business   Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+
+  name        String
+  description String?
+
+  categoryId String?
+  category   Category? @relation(fields: [categoryId], references: [id])
+
+  price    Int?
+  priceMin Int?
+  priceMax Int?
+
+  availability Availability @default(ASK_SELLER)
+
+  keywords String[] @default([])
+
+  imageUrl String?
+
+  images ProductImage[]
+
+  status BusinessStatus @default(ACTIVE)
+
+  updatedAt DateTime @updatedAt
+
+  @@index([businessId])
+  @@index([categoryId])
+}
+
+model ProductImage {
+  id String @id @default(cuid())
+
+  productId String
+  product   Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  url      String
+  publicId String?
+
+  sortOrder Int @default(0)
+
+  createdAt DateTime @default(now())
+
+  @@index([productId])
+  @@index([productId, sortOrder])
 }
 
 model BuyerRequest {
-    id String @id @default(cuid())
-    query String 
-    requestCode String @unique
-    categoryId String?
-    category Category? @relation(fields: [categoryId], references: [id], onDelete: Cascade)
-    budget Int?
-    locationArea String?
-    quantity Int?
-    description String?
-    imageUrl String?
-    status RequestStatus @default(NEW)
-    buyerContact String?
-    createdAt DateTime @default(now())
-    matches Match[]
+  id           String        @id @default(cuid())
+  query        String
+  requestCode  String        @unique
+  categoryId   String?
+  category     Category?     @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+  budget       Int?
+  locationArea String?
+  quantity     Int?
+  description  String?
+  imageUrl     String?
+  status       RequestStatus @default(NEW)
+  buyerContact String?
+  createdAt    DateTime      @default(now())
+  matches      Match[]
 
-    @@index([status])
-    @@index([buyerContact])
+  @@index([status])
+  @@index([buyerContact])
 }
 
 model Match {
-    id String @id @default(cuid())
-    requestId String 
-    request BuyerRequest @relation(fields: [requestId], references: [id], onDelete: Cascade)
-    businessId String 
-    business Business @relation(fields: [businessId], references: [id],onDelete: Cascade)
-    score Int @default(0)
-    addedManually Boolean @default(false)
-    createdAt DateTime @default(now())
+  id            String       @id @default(cuid())
+  requestId     String
+  request       BuyerRequest @relation(fields: [requestId], references: [id], onDelete: Cascade)
+  businessId    String
+  business      Business     @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  score         Int          @default(0)
+  addedManually Boolean      @default(false)
+  createdAt     DateTime     @default(now())
 
-    @@unique([requestId,businessId])
-
+  @@unique([requestId, businessId])
 }
 
 model ContactEvent {
-    id String  @id @default(cuid())
-    businessId String 
-    business Business @relation(fields: [businessId], references: [id])
-    requestId String?
-    platform SocialPlatform
-    createdAt DateTime @default(now()) 
-
+  id         String         @id @default(cuid())
+  businessId String
+  business   Business       @relation(fields: [businessId], references: [id])
+  requestId  String?
+  platform   SocialPlatform
+  createdAt  DateTime       @default(now())
 }
 
 model SearchEvent {
-    id String @id @default(cuid())
-    query String
-    category String?
-    resultCount Int @default(0)
-    location String?
-    minPrice Int?
-    maxPrice Int?
-    createdAt DateTime @default(now())
+  id          String   @id @default(cuid())
+  query       String
+  category    String?
+  resultCount Int      @default(0)
+  location    String?
+  minPrice    Int?
+  maxPrice    Int?
+  createdAt   DateTime @default(now())
 }
 
 model AdminNote {
-    id String @id @default(cuid())
-    businessId String?
-    requestId String?
-    content String
-    createdAt DateTime @default(now())
+  id         String   @id @default(cuid())
+  businessId String?
+  requestId  String?
+  content    String
+  createdAt  DateTime @default(now())
 }

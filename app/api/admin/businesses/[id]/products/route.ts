@@ -1,224 +1,319 @@
-import { NextResponse } from "next/server";
+import {
+  NextRequest,
+  NextResponse,
+} from "next/server";
+
 import { prisma } from "@/lib/prisma";
-import { requireAdmin } from "@/lib/admin-auth";
+import { requireAdmin } from "@/lib/require-admin";
+import {
+  Availability,
+  BusinessStatus,
+} from "@prisma/client";
 
-const AVAILABILITIES = [
-  "AVAILABLE",
-  "ASK_SELLER",
-  "UNAVAILABLE",
-] as const;
-
-const BUSINESS_STATUSES = [
-  "ACTIVE",
-  "INACTIVE",
-  "PENDING",
-] as const;
-
-type RouteContext = {
-  params: Promise<{ id: string }>;
-};
-
-function isNonNegativeInteger(value: unknown): boolean {
+function isAvailability(
+  value: unknown
+): value is Availability {
   return (
-    typeof value === "number" &&
-    Number.isInteger(value) &&
-    value >= 0
+    value === Availability.AVAILABLE ||
+    value ===
+      Availability.ASK_SELLER ||
+    value ===
+      Availability.UNAVAILABLE
   );
 }
 
-function cleanString(value: unknown): string | null {
-  if (typeof value !== "string") {
+function isBusinessStatus(
+  value: unknown
+): value is BusinessStatus {
+  return (
+    value === BusinessStatus.ACTIVE ||
+    value === BusinessStatus.INACTIVE ||
+    value === BusinessStatus.PENDING
+  );
+}
+
+function parseOptionalInt(
+  value: unknown
+): number | null {
+  if (
+    value === null ||
+    value === undefined ||
+    value === ""
+  ) {
     return null;
   }
 
-  const trimmed = value.trim();
+  const parsed =
+    Number(value);
 
-  return trimmed.length > 0 ? trimmed : null;
+  if (
+    !Number.isFinite(parsed)
+  ) {
+    return null;
+  }
+
+  return Math.floor(parsed);
 }
 
-function cleanKeywords(value: unknown): string[] {
+function parseKeywords(
+  value: unknown
+): string[] {
   if (!Array.isArray(value)) {
     return [];
   }
 
-  return Array.from(
-    new Set(
-      value
-        .filter((item): item is string => typeof item === "string")
-        .map((item) => item.trim().toLowerCase())
-        .filter(Boolean),
-    ),
-  );
+  return value
+    .filter(
+      (item): item is string =>
+        typeof item ===
+        "string"
+    )
+    .map((item) =>
+      item.trim()
+    )
+    .filter(Boolean);
 }
 
 export async function GET(
-  request: Request,
-  { params }: RouteContext,
+  request: NextRequest,
+  {
+    params,
+  }: {
+    params: Promise<{
+      id: string;
+    }>;
+  }
 ) {
-  const auth = await requireAdmin();
-
-  if (!auth.authorized) {
-    return auth.response;
-  }
-
-  const { id: businessId } = await params;
-
-  if (!businessId) {
-    return NextResponse.json(
-      { error: "Business ID is required" },
-      { status: 400 },
-    );
-  }
-
   try {
-    const business = await prisma.business.findUnique({
-      where: {
-        id: businessId,
-      },
-      select: {
-        id: true,
-        name: true,
-      },
-    });
+    await requireAdmin();
+
+    const { id: businessId } =
+      await params;
+
+    const business =
+      await prisma.business.findUnique(
+        {
+          where: {
+            id: businessId,
+          },
+          select: {
+            id: true,
+          },
+        }
+      );
 
     if (!business) {
       return NextResponse.json(
-        { error: "Business not found" },
-        { status: 404 },
+        {
+          error:
+            "Business not found.",
+        },
+        {
+          status: 404,
+        }
       );
     }
 
-    const products = await prisma.product.findMany({
-      where: {
-        businessId,
-      },
-      orderBy: {
-        updatedAt: "desc",
-      },
-      include: {
-        category: {
-          select: {
-            id: true,
-            name: true,
+    const products =
+      await prisma.product.findMany(
+        {
+          where: {
+            businessId,
           },
-        },
-      },
-    });
+
+          include: {
+            category: true,
+
+            images: {
+              orderBy: [
+                {
+                  sortOrder:
+                    "asc",
+                },
+                {
+                  createdAt:
+                    "asc",
+                },
+              ],
+            },
+          },
+
+          orderBy: {
+            updatedAt:
+              "desc",
+          },
+        }
+      );
 
     return NextResponse.json({
-      business,
       products,
     });
   } catch (error) {
-    console.error("Admin business products GET error:", error);
+    console.error(
+      "Admin products GET error:",
+      error
+    );
 
     return NextResponse.json(
-      { error: "Unable to load business products" },
-      { status: 500 },
+      {
+        error:
+          "Unable to load products.",
+      },
+      {
+        status: 500,
+      }
     );
   }
 }
 
 export async function POST(
-  request: Request,
-  { params }: RouteContext,
+  request: NextRequest,
+  {
+    params,
+  }: {
+    params: Promise<{
+      id: string;
+    }>;
+  }
 ) {
-  const auth = await requireAdmin();
-
-  if (!auth.authorized) {
-    return auth.response;
-  }
-
-  const { id: businessId } = await params;
-
-  if (!businessId) {
-    return NextResponse.json(
-      { error: "Business ID is required" },
-      { status: 400 },
-    );
-  }
-
   try {
-    const body = await request.json();
+    await requireAdmin();
 
-    const name = cleanString(body.name);
+    const { id: businessId } =
+      await params;
+
+    const body =
+      await request.json();
+
+    const name =
+      typeof body.name ===
+      "string"
+        ? body.name.trim()
+        : "";
 
     if (!name) {
       return NextResponse.json(
-        { error: "Product name is required" },
-        { status: 400 },
+        {
+          error:
+            "Product name is required.",
+        },
+        {
+          status: 400,
+        }
       );
     }
 
-    const business = await prisma.business.findUnique({
-      where: {
-        id: businessId,
-      },
-      select: {
-        id: true,
-        name: true,
-      },
-    });
+    const business =
+      await prisma.business.findUnique(
+        {
+          where: {
+            id: businessId,
+          },
+          select: {
+            id: true,
+          },
+        }
+      );
 
     if (!business) {
       return NextResponse.json(
-        { error: "Business not found" },
-        { status: 404 },
+        {
+          error:
+            "Business not found.",
+        },
+        {
+          status: 404,
+        }
       );
     }
 
-    const description = cleanString(body.description);
-    const imageUrl = cleanString(body.imageUrl);
-    const categoryId = cleanString(body.categoryId);
+    const categoryId =
+      typeof body.categoryId ===
+      "string" &&
+      body.categoryId.trim()
+        ? body.categoryId.trim()
+        : null;
+
+    if (categoryId) {
+      const category =
+        await prisma.category.findUnique(
+          {
+            where: {
+              id: categoryId,
+            },
+          }
+        );
+
+      if (!category) {
+        return NextResponse.json(
+          {
+            error:
+              "Category not found.",
+          },
+          {
+            status: 400,
+          }
+        );
+      }
+    }
 
     const price =
-      body.price === null ||
-      body.price === undefined ||
-      body.price === ""
-        ? null
-        : Number(body.price);
+      parseOptionalInt(
+        body.price
+      );
 
     const priceMin =
-      body.priceMin === null ||
-      body.priceMin === undefined ||
-      body.priceMin === ""
-        ? null
-        : Number(body.priceMin);
+      parseOptionalInt(
+        body.priceMin
+      );
 
     const priceMax =
-      body.priceMax === null ||
-      body.priceMax === undefined ||
-      body.priceMax === ""
-        ? null
-        : Number(body.priceMax);
+      parseOptionalInt(
+        body.priceMax
+      );
 
     if (
       price !== null &&
-      !isNonNegativeInteger(price)
+      price < 0
     ) {
       return NextResponse.json(
-        { error: "Price must be a non-negative whole number" },
-        { status: 400 },
+        {
+          error:
+            "Price cannot be negative.",
+        },
+        {
+          status: 400,
+        }
       );
     }
 
     if (
       priceMin !== null &&
-      !isNonNegativeInteger(priceMin)
+      priceMin < 0
     ) {
       return NextResponse.json(
-        { error: "Minimum price must be a non-negative whole number" },
-        { status: 400 },
+        {
+          error:
+            "Minimum price cannot be negative.",
+        },
+        {
+          status: 400,
+        }
       );
     }
 
     if (
       priceMax !== null &&
-      !isNonNegativeInteger(priceMax)
+      priceMax < 0
     ) {
       return NextResponse.json(
-        { error: "Maximum price must be a non-negative whole number" },
-        { status: 400 },
+        {
+          error:
+            "Maximum price cannot be negative.",
+        },
+        {
+          status: 400,
+        }
       );
     }
 
@@ -228,83 +323,160 @@ export async function POST(
       priceMin > priceMax
     ) {
       return NextResponse.json(
-        { error: "Minimum price cannot be greater than maximum price" },
-        { status: 400 },
+        {
+          error:
+            "Minimum price cannot exceed maximum price.",
+        },
+        {
+          status: 400,
+        }
       );
     }
 
     const availability =
-      typeof body.availability === "string" &&
-      AVAILABILITIES.includes(body.availability as any)
+      isAvailability(
+        body.availability
+      )
         ? body.availability
-        : "ASK_SELLER";
+        : Availability.ASK_SELLER;
 
     const status =
-      typeof body.status === "string" &&
-      BUSINESS_STATUSES.includes(body.status as any)
+      isBusinessStatus(
+        body.status
+      )
         ? body.status
-        : "ACTIVE";
+        : BusinessStatus.ACTIVE;
 
-    if (categoryId) {
-      const category = await prisma.category.findUnique({
-        where: {
-          id: categoryId,
-        },
-        select: {
-          id: true,
-        },
-      });
+    const description =
+      typeof body.description ===
+      "string"
+        ? body.description.trim() ||
+          null
+        : null;
 
-      if (!category) {
-        return NextResponse.json(
-          { error: "Category not found" },
-          { status: 400 },
-        );
-      }
-    }
+    const keywords =
+      parseKeywords(
+        body.keywords
+      );
 
-    const product = await prisma.product.create({
-      data: {
-        businessId,
-        name,
-        description,
-        categoryId,
-        price,
-        priceMin,
-        priceMax,
-        availability,
-        keywords: cleanKeywords(body.keywords),
-        imageUrl,
-        status,
-      },
-      include: {
-        category: {
-          select: {
-            id: true,
-            name: true,
+    const requestedImages =
+      Array.isArray(body.images)
+        ? body.images
+            .filter(
+              (
+                value
+              ): value is string =>
+                typeof value ===
+                "string"
+            )
+            .map((value) =>
+              value.trim()
+            )
+            .filter(Boolean)
+        : [];
+
+    const legacyImageUrl =
+      typeof body.imageUrl ===
+        "string" &&
+      body.imageUrl.trim()
+        ? body.imageUrl.trim()
+        : null;
+
+    const imageUrls =
+      requestedImages.length >
+      0
+        ? requestedImages
+        : legacyImageUrl
+          ? [legacyImageUrl]
+          : [];
+
+    const product =
+      await prisma.product.create(
+        {
+          data: {
+            businessId,
+
+            name,
+
+            description,
+
+            categoryId,
+
+            price,
+
+            priceMin,
+
+            priceMax,
+
+            availability,
+
+            keywords,
+
+            status,
+
+            imageUrl:
+              imageUrls[0] ??
+              null,
+
+            images:
+              imageUrls.length
+                ? {
+                    create:
+                      imageUrls.map(
+                        (
+                          url,
+                          index
+                        ) => ({
+                          url,
+                          sortOrder:
+                            index,
+                        })
+                      ),
+                  }
+                : undefined,
           },
-        },
-        business: {
-          select: {
-            id: true,
-            name: true,
+
+          include: {
+            category: true,
+
+            images: {
+              orderBy: [
+                {
+                  sortOrder:
+                    "asc",
+                },
+                {
+                  createdAt:
+                    "asc",
+                },
+              ],
+            },
           },
-        },
-      },
-    });
+        }
+      );
 
     return NextResponse.json(
       {
         product,
       },
-      { status: 201 },
+      {
+        status: 201,
+      }
     );
   } catch (error) {
-    console.error("Admin business product POST error:", error);
+    console.error(
+      "Admin products POST error:",
+      error
+    );
 
     return NextResponse.json(
-      { error: "Unable to create product" },
-      { status: 500 },
+      {
+        error:
+          "Unable to create product.",
+      },
+      {
+        status: 500,
+      }
     );
   }
 }

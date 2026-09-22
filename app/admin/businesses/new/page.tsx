@@ -1,5 +1,6 @@
 "use client";
 
+import type { FormEvent } from "react";
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -101,9 +102,7 @@ export default function NewBusinessPage() {
   useEffect(() => {
     async function loadCategories() {
       try {
-        const response = await fetch(
-          "/api/categories"
-        );
+        const response = await fetch("/api/categories");
 
         if (!response.ok) {
           throw new Error(
@@ -120,9 +119,7 @@ export default function NewBusinessPage() {
         );
       } catch (err) {
         console.error(err);
-        setError(
-          "Unable to load categories."
-        );
+        setError("Unable to load categories.");
       } finally {
         setLoadingCategories(false);
       }
@@ -177,7 +174,7 @@ export default function NewBusinessPage() {
   }
 
   async function handleSubmit(
-    event: React.FormEvent<HTMLFormElement>
+    event: FormEvent<HTMLFormElement>
   ) {
     event.preventDefault();
 
@@ -210,23 +207,17 @@ export default function NewBusinessPage() {
             phone: phone.trim() || undefined,
             description:
               description.trim() || undefined,
-
             area: area.trim(),
-
             lat: latitude
               ? Number(latitude)
               : undefined,
-
             lng: longitude
               ? Number(longitude)
               : undefined,
-
             categories: selectedCategories,
-
             availability,
             verification,
             status,
-
             socialLinks: socialLinks
               .filter(
                 (link) => link.handle.trim()
@@ -248,7 +239,18 @@ export default function NewBusinessPage() {
         );
       }
 
-      router.push("/admin/businesses");
+      const createdBusinessId =
+        data.business?.id ?? data.id;
+
+      if (!createdBusinessId) {
+        throw new Error(
+          "Business was created, but its ID was not returned."
+        );
+      }
+
+      router.push(
+        `/admin/businesses/${createdBusinessId}`
+      );
     } catch (err) {
       setError(
         err instanceof Error
@@ -312,7 +314,6 @@ export default function NewBusinessPage() {
               <nav className="space-y-1">
                 {NAV_ITEMS.map((item) => {
                   const Icon = item.icon;
-
                   const active =
                     item.label === "Businesses";
 
@@ -511,42 +512,40 @@ export default function NewBusinessPage() {
                     </div>
                   ) : (
                     <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-4">
-                      {categories.map(
-                        (category) => {
-                          const selected =
-                            selectedCategories.includes(
-                              category.name
-                            );
-
-                          return (
-                            <button
-                              key={category.id}
-                              type="button"
-                              onClick={() =>
-                                toggleCategory(
-                                  category.name
-                                )
-                              }
-                              className={[
-                                "flex items-center justify-between rounded-xl border px-3 py-3 text-left text-sm font-semibold transition",
-                                selected
-                                  ? "border-[#FF5A36] bg-[#FFF0EA] text-[#9F2D18]"
-                                  : "border-[#E8E4DE] bg-[#FFFDFC] text-[#675D55] hover:border-[#FFB29F]",
-                              ].join(" ")}
-                            >
-                              <span>
-                                {category.name}
-                              </span>
-
-                              {selected && (
-                                <span className="flex h-5 w-5 items-center justify-center rounded-full bg-[#FF5A36] text-white">
-                                  <Check size={12} />
-                                </span>
-                              )}
-                            </button>
+                      {categories.map((category) => {
+                        const selected =
+                          selectedCategories.includes(
+                            category.name
                           );
-                        }
-                      )}
+
+                        return (
+                          <button
+                            key={category.id}
+                            type="button"
+                            onClick={() =>
+                              toggleCategory(
+                                category.name
+                              )
+                            }
+                            className={[
+                              "flex items-center justify-between rounded-xl border px-3 py-3 text-left text-sm font-semibold transition",
+                              selected
+                                ? "border-[#FF5A36] bg-[#FFF0EA] text-[#9F2D18]"
+                                : "border-[#E8E4DE] bg-[#FFFDFC] text-[#675D55] hover:border-[#FFB29F]",
+                            ].join(" ")}
+                          >
+                            <span>
+                              {category.name}
+                            </span>
+
+                            {selected && (
+                              <span className="flex h-5 w-5 items-center justify-center rounded-full bg-[#FF5A36] text-white">
+                                <Check size={12} />
+                              </span>
+                            )}
+                          </button>
+                        );
+                      })}
                     </div>
                   )}
                 </section>
@@ -668,15 +667,12 @@ export default function NewBusinessPage() {
                           >
                             <div className="relative sm:w-[190px]">
                               <select
-                                value={
-                                  link.platform
-                                }
+                                value={link.platform}
                                 onChange={(event) =>
                                   updateSocialLink(
                                     index,
                                     "platform",
-                                    event.target
-                                      .value
+                                    event.target.value
                                   )
                                 }
                                 className="w-full appearance-none rounded-lg border border-[#E3DED7] bg-white px-3 py-2.5 pr-9 text-sm font-semibold outline-none focus:border-[#FF5A36]"
@@ -795,10 +791,6 @@ export default function NewBusinessPage() {
     </div>
   );
 }
-
-/* ---------------------------------- */
-/* Reusable form components           */
-/* ---------------------------------- */
 
 function Field({
   label,

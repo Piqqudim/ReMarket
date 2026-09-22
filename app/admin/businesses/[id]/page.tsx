@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import {
-  ArrowLeft,
+ArrowLeft,
   CheckCircle2,
   Edit3,
   ExternalLink,
@@ -110,7 +110,7 @@ export default function AdminBusinessDetailsPage() {
         </div>
       </PageShell>
     );
-  }
+  };
 
   return (
     <PageShell>
@@ -171,7 +171,7 @@ export default function AdminBusinessDetailsPage() {
 
           <div className="flex gap-2">
             <Link
-              href={`/seller/${business.id}`}
+              href={`/business/${business.id}`}
               target="_blank"
               className="inline-flex h-10 items-center gap-2 rounded-xl border border-[#E3DED7] bg-white px-3.5 text-sm font-bold text-[#675D55] hover:border-[#FF5A36] hover:text-[#9F2D18]"
             >
@@ -186,8 +186,15 @@ export default function AdminBusinessDetailsPage() {
               <Edit3 size={15} />
               Edit
             </Link>
-          </div>
-        </div>
+            <Link
+              href={`/admin/businesses/${business.id}/products/new`}
+              className="inline-flex h-10 items-center justify-center gap-2 rounded-xl bg-[#FF5A36] px-4 text-sm font-extrabold text-white shadow-sm transition hover:bg-[#E94B29]"
+                >
+             <Plus size={17} />
+             Add Product
+              </Link>
+             </div>
+              </div>
 
         {business.description && (
           <div className="mt-5 border-t border-[#EAE6DF] pt-5">
@@ -215,108 +222,131 @@ export default function AdminBusinessDetailsPage() {
       </section>
 
       {/* Products */}
-      <section className="mt-5 rounded-2xl border border-[#EAE6DF] bg-white p-5 sm:p-6">
-        <div className="mb-5 flex flex-col justify-between gap-3 sm:flex-row sm:items-center">
-          <div className="flex items-center gap-3">
-            <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-[#DDF5EA] text-[#287A4B]">
-              <Package size={19} />
+     <section className="rounded-2xl border border-[#EAE6DF] bg-white p-5 shadow-sm md:p-6">
+  <div className="mb-5 flex items-center justify-between gap-4">
+    <div>
+      <h2 className="text-base font-black text-[#17202A]">
+        Products
+      </h2>
+
+      <p className="mt-1 text-sm text-[#7B828A]">
+        Products currently listed for this business.
+      </p>
+    </div>
+
+    <Link
+      href={`/admin/businesses/${business.id}/products/new`}
+      className="inline-flex h-10 shrink-0 items-center justify-center gap-2 rounded-xl bg-[#FF5A36] px-4 text-sm font-extrabold text-white shadow-sm transition hover:bg-[#E94B29]"
+    >
+      <Plus size={17} />
+      Add Product
+    </Link>
+  </div>
+
+  {business.products.length === 0 ? (
+    <div className="rounded-xl border border-dashed border-[#E8E4DE] bg-[#FCFAF6] px-5 py-10 text-center">
+      <Package
+        size={28}
+        className="mx-auto text-[#A0A4A8]"
+      />
+
+      <p className="mt-3 text-sm font-extrabold text-[#17202A]">
+        No products yet
+      </p>
+
+      <p className="mt-1 text-sm text-[#7B828A]">
+        Add the first product for this business.
+      </p>
+
+      <Link
+        href={`/admin/businesses/${business.id}/products/new`}
+        className="mt-4 inline-flex h-10 items-center justify-center gap-2 rounded-xl bg-[#FF5A36] px-4 text-sm font-extrabold text-white"
+      >
+        <Plus size={17} />
+        Add Product
+      </Link>
+    </div>
+  ) : (
+    <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+      {business.products.map((product) => (
+        <article
+          key={product.id}
+          className="rounded-xl border border-[#EAE6DF] bg-[#FFFDFC] p-4"
+        >
+          <div className="flex items-start justify-between gap-3">
+            <div className="min-w-0">
+              <h3 className="truncate text-sm font-black text-[#17202A]">
+                {product.name}
+              </h3>
+
+              {product.description && (
+                <p className="mt-1 line-clamp-2 text-xs text-[#7B828A]">
+                  {product.description}
+                </p>
+              )}
             </div>
 
-            <div>
-              <h2 className="font-extrabold">
-                Products
-              </h2>
+            <span
+              className={`shrink-0 rounded-full px-2.5 py-1 text-[11px] font-extrabold ${
+                product.status === "ACTIVE"
+                  ? "bg-[#E4F5E9] text-[#287A3D]"
+                  : "bg-[#F1EFEB] text-[#73706B]"
+              }`}
+            >
+              {product.status}
+            </span>
+          </div>
 
-              <p className="text-xs text-[#8B8178]">
-                Products sold by {business.name}
-              </p>
+          <div className="mt-4 space-y-2">
+            <div className="flex items-center justify-between text-xs">
+              <span className="text-[#8A8F95]">
+                Price
+              </span>
+
+              <span className="font-extrabold text-[#17202A]">
+                {product.price !== null
+                  ? `₦${product.price.toLocaleString()}`
+                  : product.priceMin !== null ||
+                      product.priceMax !== null
+                    ? `₦${
+                        product.priceMin?.toLocaleString() ??
+                        "?"
+                      } - ₦${
+                        product.priceMax?.toLocaleString() ??
+                        "?"
+                      }`
+                    : "Ask seller"}
+              </span>
+            </div>
+
+            <div className="flex items-center justify-between text-xs">
+              <span className="text-[#8A8F95]">
+                Availability
+              </span>
+
+              <span className="font-bold text-[#17202A]">
+                {product.availability.replace(
+                  "_",
+                  " ",
+                )}
+              </span>
             </div>
           </div>
 
-          <Link
-            href={`/admin/businesses/${business.id}/products/new`}
-            className="inline-flex h-10 items-center justify-center gap-2 rounded-xl bg-[#FF5A36] px-4 text-sm font-extrabold text-white hover:bg-[#E94B29]"
-          >
-            <Plus size={16} />
-            Add Product
-          </Link>
-        </div>
-
-        {business.products.length === 0 ? (
-          <div className="rounded-xl border border-dashed border-[#D8D0C8] px-5 py-10 text-center">
-            <Package
-              size={30}
-              className="mx-auto text-[#B5ACA4]"
-            />
-
-            <p className="mt-3 text-sm font-bold text-[#675D55]">
-              No products yet
-            </p>
-
-            <p className="mt-1 text-xs text-[#9B928A]">
-              Add the first product for this
-              business.
-            </p>
-
+          <div className="mt-4 flex justify-end border-t border-[#EAE6DF] pt-3">
             <Link
-              href={`/admin/businesses/${business.id}/products/new`}
-              className="mt-4 inline-flex items-center gap-2 rounded-xl bg-[#FFF0EA] px-4 py-2.5 text-xs font-extrabold text-[#9F2D18]"
+              href={`/admin/businesses/${business.id}/products/${product.id}/edit`}
+              className="inline-flex h-9 items-center justify-center gap-2 rounded-lg border border-[#E8E4DE] bg-white px-3 text-xs font-extrabold text-[#68707A] transition hover:border-[#FF5A36] hover:text-[#FF5A36]"
             >
-              <Plus size={15} />
-              Add Product
+              <Edit3 size={14} />
+              Edit
             </Link>
           </div>
-        ) : (
-          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
-            {business.products.map(
-              (product) => (
-                <div
-                  key={product.id}
-                  className="rounded-xl border border-[#E8E4DE] bg-[#FCFAF6] p-4"
-                >
-                  <div className="flex items-start justify-between gap-3">
-                    <div className="min-w-0">
-                      <h3 className="truncate text-sm font-extrabold">
-                        {product.name}
-                      </h3>
-
-                      {product.description && (
-                        <p className="mt-1 line-clamp-2 text-xs leading-5 text-[#81776F]">
-                          {product.description}
-                        </p>
-                      )}
-                    </div>
-
-                    <ProductStatus
-                      status={product.status}
-                    />
-                  </div>
-
-                  <div className="mt-4 flex items-end justify-between">
-                    <div>
-                      <p className="text-[10px] font-bold uppercase tracking-wide text-[#A49B92]">
-                        Price
-                      </p>
-
-                      <p className="mt-0.5 text-sm font-black text-[#9F2D18]">
-                        {formatPrice(product)}
-                      </p>
-                    </div>
-
-                    <Link
-                      href={`/admin/businesses/${business.id}/products/${product.id}/edit`}
-                      className="rounded-lg border border-[#E3DED7] bg-white p-2 text-[#675D55] hover:border-[#FF5A36] hover:text-[#9F2D18]"
-                      aria-label={`Edit ${product.name}`}
-                    >
-                      <Edit3 size={15} />
-                    </Link>
-                  </div>
-                </div>
-              )
-            )}
-          </div>
-        )}
-      </section>
+        </article>
+      ))}
+    </div>
+  )}
+</section>
 
       {/* Contact information */}
       <section className="mt-5 grid gap-5 lg:grid-cols-2">

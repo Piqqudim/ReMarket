@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
+import type { FormEvent } from "react";
 import { useEffect, useState } from "react";
 import {
   ArrowLeft,
@@ -27,26 +28,50 @@ export default function NewProductPage() {
 
   const businessId = params.id;
 
-  const [business, setBusiness] = useState<Business | null>(null);
-  const [categories, setCategories] = useState<Category[]>([]);
+  const [business, setBusiness] =
+    useState<Business | null>(null);
 
-  const [loading, setLoading] = useState(true);
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState("");
+  const [categories, setCategories] =
+    useState<Category[]>([]);
 
-  const [name, setName] = useState("");
-  const [description, setDescription] = useState("");
-  const [categoryId, setCategoryId] = useState("");
+  const [loading, setLoading] =
+    useState(true);
 
-  const [price, setPrice] = useState("");
-  const [priceMin, setPriceMin] = useState("");
-  const [priceMax, setPriceMax] = useState("");
+  const [saving, setSaving] =
+    useState(false);
 
-  const [availability, setAvailability] = useState("ASK_SELLER");
-  const [status, setStatus] = useState("ACTIVE");
+  const [error, setError] =
+    useState("");
 
-  const [keywords, setKeywords] = useState("");
-  const [imageUrl, setImageUrl] = useState("");
+  const [name, setName] =
+    useState("");
+
+  const [description, setDescription] =
+    useState("");
+
+  const [categoryId, setCategoryId] =
+    useState("");
+
+  const [price, setPrice] =
+    useState("");
+
+  const [priceMin, setPriceMin] =
+    useState("");
+
+  const [priceMax, setPriceMax] =
+    useState("");
+
+  const [availability, setAvailability] =
+    useState("ASK_SELLER");
+
+  const [status, setStatus] =
+    useState("ACTIVE");
+
+  const [keywords, setKeywords] =
+    useState("");
+
+  const [imageUrl, setImageUrl] =
+    useState("");
 
   useEffect(() => {
     async function loadData() {
@@ -54,42 +79,62 @@ export default function NewProductPage() {
         setLoading(true);
         setError("");
 
-        const [businessResponse, categoriesResponse] =
-          await Promise.all([
-            fetch(`/api/admin/businesses/${businessId}`),
-            fetch("/api/categories"),
-          ]);
+        const [
+          businessResponse,
+          categoriesResponse,
+        ] = await Promise.all([
+          fetch(
+            `/api/admin/businesses/${businessId}`
+          ),
+          fetch("/api/categories"),
+        ]);
 
-        const businessData = await businessResponse.json();
-        const categoriesData = await categoriesResponse.json();
+        const businessData =
+          await businessResponse.json();
+
+        const categoriesData =
+          await categoriesResponse.json();
 
         if (!businessResponse.ok) {
           throw new Error(
-            businessData.error || "Unable to load business",
+            businessData.error ||
+              "Unable to load business"
           );
         }
 
         if (!categoriesResponse.ok) {
           throw new Error(
-            categoriesData.error || "Unable to load categories",
+            categoriesData.error ||
+              "Unable to load categories"
+          );
+        }
+
+        const loadedBusiness =
+          businessData.business ??
+          businessData;
+
+        if (!loadedBusiness?.id) {
+          throw new Error(
+            "Business data is missing."
           );
         }
 
         setBusiness({
-          id: businessData.id,
-          name: businessData.name,
+          id: loadedBusiness.id,
+          name: loadedBusiness.name,
         });
 
         setCategories(
           Array.isArray(categoriesData)
             ? categoriesData
-            : categoriesData.categories ?? [],
+            : categoriesData.categories ??
+                []
         );
       } catch (err) {
         setError(
           err instanceof Error
             ? err.message
-            : "Unable to load product form",
+            : "Unable to load product form"
         );
       } finally {
         setLoading(false);
@@ -102,12 +147,14 @@ export default function NewProductPage() {
   }, [businessId]);
 
   async function handleSubmit(
-    event: React.SubmitEvent<HTMLFormElement>,
+    event: FormEvent<HTMLFormElement>
   ) {
     event.preventDefault();
 
     if (!name.trim()) {
-      setError("Product name is required.");
+      setError(
+        "Product name is required."
+      );
       return;
     }
 
@@ -116,28 +163,34 @@ export default function NewProductPage() {
       (!Number.isInteger(Number(price)) ||
         Number(price) < 0)
     ) {
-      setError("Price must be a valid non-negative whole number.");
+      setError(
+        "Price must be a valid non-negative whole number."
+      );
       return;
     }
 
     if (
       priceMin &&
-      (!Number.isInteger(Number(priceMin)) ||
+      (!Number.isInteger(
+        Number(priceMin)
+      ) ||
         Number(priceMin) < 0)
     ) {
       setError(
-        "Minimum price must be a valid non-negative whole number.",
+        "Minimum price must be a valid non-negative whole number."
       );
       return;
     }
 
     if (
       priceMax &&
-      (!Number.isInteger(Number(priceMax)) ||
+      (!Number.isInteger(
+        Number(priceMax)
+      ) ||
         Number(priceMax) < 0)
     ) {
       setError(
-        "Maximum price must be a valid non-negative whole number.",
+        "Maximum price must be a valid non-negative whole number."
       );
       return;
     }
@@ -145,10 +198,11 @@ export default function NewProductPage() {
     if (
       priceMin &&
       priceMax &&
-      Number(priceMin) > Number(priceMax)
+      Number(priceMin) >
+        Number(priceMax)
     ) {
       setError(
-        "Minimum price cannot be greater than maximum price.",
+        "Minimum price cannot be greater than maximum price."
       );
       return;
     }
@@ -162,45 +216,70 @@ export default function NewProductPage() {
         {
           method: "POST",
           headers: {
-            "Content-Type": "application/json",
+            "Content-Type":
+              "application/json",
           },
           body: JSON.stringify({
             name: name.trim(),
-            description: description.trim() || undefined,
-            categoryId: categoryId || undefined,
+            description:
+              description.trim() ||
+              undefined,
 
-            price: price ? Number(price) : undefined,
-            priceMin: priceMin ? Number(priceMin) : undefined,
-            priceMax: priceMax ? Number(priceMax) : undefined,
+            categoryId:
+              categoryId || undefined,
+
+            price:
+              price
+                ? Number(price)
+                : undefined,
+
+            priceMin:
+              priceMin
+                ? Number(priceMin)
+                : undefined,
+
+            priceMax:
+              priceMax
+                ? Number(priceMax)
+                : undefined,
 
             availability,
             status,
 
             keywords: keywords
               .split(",")
-              .map((keyword) => keyword.trim())
+              .map((keyword) =>
+                keyword.trim()
+              )
               .filter(Boolean),
 
-            imageUrl: imageUrl.trim() || undefined,
+            imageUrl:
+              imageUrl.trim() ||
+              undefined,
           }),
-        },
+        }
       );
 
-      const data = await response.json();
+      const data =
+        await response.json();
 
       if (!response.ok) {
         throw new Error(
-          data.error || "Unable to create product",
+          data.error ||
+            "Unable to create product"
         );
       }
 
-      router.push(`/admin/businesses/${businessId}`);
+      router.push(
+        `/admin/businesses/${businessId}`
+      );
+
       router.refresh();
     } catch (err) {
       setError(
         err instanceof Error
           ? err.message
-          : "Unable to create product",
+          : "Unable to create product"
       );
     } finally {
       setSaving(false);
@@ -245,6 +324,7 @@ export default function NewProductPage() {
   return (
     <main className="min-h-screen bg-[#FFF7ED] p-3 md:p-6">
       <div className="mx-auto flex min-h-[calc(100vh-24px)] max-w-[1500px] overflow-hidden rounded-[22px] border border-[#FF5A36] bg-[#FFFDFC] shadow-[0_10px_30px_rgba(255,90,54,0.08)] md:min-h-[calc(100vh-48px)]">
+
         {/* Sidebar */}
         <aside className="hidden w-[190px] shrink-0 border-r border-[#EAE6DF] bg-[#FCFAF6] md:block">
           <div className="flex h-16 items-center border-b border-[#EAE6DF] px-5">
@@ -345,8 +425,8 @@ export default function NewProductPage() {
             </div>
 
             {error && (
-              <div className="mb-5 flex items-start gap-3 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm font-semibold text-red-700">
-                <span>{error}</span>
+              <div className="mb-5 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm font-semibold text-red-700">
+                {error}
               </div>
             )}
 
@@ -354,7 +434,6 @@ export default function NewProductPage() {
               onSubmit={handleSubmit}
               className="space-y-5"
             >
-              {/* Product information */}
               <section className="rounded-2xl border border-[#EAE6DF] bg-white p-5 shadow-sm md:p-6">
                 <div className="mb-5">
                   <h2 className="text-base font-black text-[#17202A]">
@@ -378,7 +457,7 @@ export default function NewProductPage() {
                         setName(event.target.value)
                       }
                       placeholder="e.g. Samsung Galaxy A15"
-                      className="h-11 w-full rounded-xl border border-[#E8E4DE] bg-[#FFFDFC] px-3 text-sm text-[#17202A] outline-none transition placeholder:text-[#A0A4A8] focus:border-[#FF5A36] focus:ring-2 focus:ring-[#FF5A36]/10"
+                      className="h-11 w-full rounded-xl border border-[#E8E4DE] bg-[#FFFDFC] px-3 text-sm text-[#17202A] outline-none transition placeholder:text-[#A0A4A8] focus:border-[#FF5A36]"
                     />
                   </div>
 
@@ -390,11 +469,13 @@ export default function NewProductPage() {
                     <textarea
                       value={description}
                       onChange={(event) =>
-                        setDescription(event.target.value)
+                        setDescription(
+                          event.target.value
+                        )
                       }
                       rows={4}
                       placeholder="Describe the product..."
-                      className="w-full resize-none rounded-xl border border-[#E8E4DE] bg-[#FFFDFC] px-3 py-3 text-sm text-[#17202A] outline-none transition placeholder:text-[#A0A4A8] focus:border-[#FF5A36] focus:ring-2 focus:ring-[#FF5A36]/10"
+                      className="w-full resize-none rounded-xl border border-[#E8E4DE] bg-[#FFFDFC] px-3 py-3 text-sm text-[#17202A] outline-none transition placeholder:text-[#A0A4A8] focus:border-[#FF5A36]"
                     />
                   </div>
 
@@ -406,7 +487,9 @@ export default function NewProductPage() {
                     <select
                       value={categoryId}
                       onChange={(event) =>
-                        setCategoryId(event.target.value)
+                        setCategoryId(
+                          event.target.value
+                        )
                       }
                       className="h-11 w-full rounded-xl border border-[#E8E4DE] bg-[#FFFDFC] px-3 text-sm font-semibold text-[#17202A] outline-none focus:border-[#FF5A36]"
                     >
@@ -414,20 +497,21 @@ export default function NewProductPage() {
                         Select a category
                       </option>
 
-                      {categories.map((category) => (
-                        <option
-                          key={category.id}
-                          value={category.id}
-                        >
-                          {category.name}
-                        </option>
-                      ))}
+                      {categories.map(
+                        (category) => (
+                          <option
+                            key={category.id}
+                            value={category.id}
+                          >
+                            {category.name}
+                          </option>
+                        )
+                      )}
                     </select>
                   </div>
                 </div>
               </section>
 
-              {/* Pricing */}
               <section className="rounded-2xl border border-[#EAE6DF] bg-white p-5 shadow-sm md:p-6">
                 <div className="mb-5">
                   <h2 className="text-base font-black text-[#17202A]">
@@ -440,77 +524,23 @@ export default function NewProductPage() {
                 </div>
 
                 <div className="grid gap-4 md:grid-cols-3">
-                  <div>
-                    <label className="mb-2 block text-sm font-extrabold text-[#17202A]">
-                      Exact price
-                    </label>
+                  <PriceField
+                    label="Exact price"
+                    value={price}
+                    onChange={setPrice}
+                  />
 
-                    <div className="relative">
-                      <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm font-bold text-[#7B828A]">
-                        ₦
-                      </span>
+                  <PriceField
+                    label="Minimum price"
+                    value={priceMin}
+                    onChange={setPriceMin}
+                  />
 
-                      <input
-                        type="number"
-                        min="0"
-                        step="1"
-                        value={price}
-                        onChange={(event) =>
-                          setPrice(event.target.value)
-                        }
-                        placeholder="0"
-                        className="h-11 w-full rounded-xl border border-[#E8E4DE] bg-[#FFFDFC] pl-8 pr-3 text-sm text-[#17202A] outline-none focus:border-[#FF5A36]"
-                      />
-                    </div>
-                  </div>
-
-                  <div>
-                    <label className="mb-2 block text-sm font-extrabold text-[#17202A]">
-                      Minimum price
-                    </label>
-
-                    <div className="relative">
-                      <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm font-bold text-[#7B828A]">
-                        ₦
-                      </span>
-
-                      <input
-                        type="number"
-                        min="0"
-                        step="1"
-                        value={priceMin}
-                        onChange={(event) =>
-                          setPriceMin(event.target.value)
-                        }
-                        placeholder="0"
-                        className="h-11 w-full rounded-xl border border-[#E8E4DE] bg-[#FFFDFC] pl-8 pr-3 text-sm text-[#17202A] outline-none focus:border-[#FF5A36]"
-                      />
-                    </div>
-                  </div>
-
-                  <div>
-                    <label className="mb-2 block text-sm font-extrabold text-[#17202A]">
-                      Maximum price
-                    </label>
-
-                    <div className="relative">
-                      <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm font-bold text-[#7B828A]">
-                        ₦
-                      </span>
-
-                      <input
-                        type="number"
-                        min="0"
-                        step="1"
-                        value={priceMax}
-                        onChange={(event) =>
-                          setPriceMax(event.target.value)
-                        }
-                        placeholder="0"
-                        className="h-11 w-full rounded-xl border border-[#E8E4DE] bg-[#FFFDFC] pl-8 pr-3 text-sm text-[#17202A] outline-none focus:border-[#FF5A36]"
-                      />
-                    </div>
-                  </div>
+                  <PriceField
+                    label="Maximum price"
+                    value={priceMax}
+                    onChange={setPriceMax}
+                  />
                 </div>
 
                 <p className="mt-3 text-xs text-[#8A8F95]">
@@ -518,7 +548,6 @@ export default function NewProductPage() {
                 </p>
               </section>
 
-              {/* Availability */}
               <section className="rounded-2xl border border-[#EAE6DF] bg-white p-5 shadow-sm md:p-6">
                 <div className="mb-5">
                   <h2 className="text-base font-black text-[#17202A]">
@@ -527,61 +556,48 @@ export default function NewProductPage() {
                 </div>
 
                 <div className="grid gap-4 md:grid-cols-2">
-                  <div>
-                    <label className="mb-2 block text-sm font-extrabold text-[#17202A]">
-                      Availability
-                    </label>
+                  <SelectField
+                    label="Availability"
+                    value={availability}
+                    onChange={setAvailability}
+                    options={[
+                      {
+                        value: "AVAILABLE",
+                        label: "Available",
+                      },
+                      {
+                        value: "ASK_SELLER",
+                        label: "Ask seller",
+                      },
+                      {
+                        value: "UNAVAILABLE",
+                        label: "Unavailable",
+                      },
+                    ]}
+                  />
 
-                    <select
-                      value={availability}
-                      onChange={(event) =>
-                        setAvailability(event.target.value)
-                      }
-                      className="h-11 w-full rounded-xl border border-[#E8E4DE] bg-[#FFFDFC] px-3 text-sm font-semibold text-[#17202A] outline-none focus:border-[#FF5A36]"
-                    >
-                      <option value="AVAILABLE">
-                        Available
-                      </option>
-
-                      <option value="ASK_SELLER">
-                        Ask seller
-                      </option>
-
-                      <option value="UNAVAILABLE">
-                        Unavailable
-                      </option>
-                    </select>
-                  </div>
-
-                  <div>
-                    <label className="mb-2 block text-sm font-extrabold text-[#17202A]">
-                      Status
-                    </label>
-
-                    <select
-                      value={status}
-                      onChange={(event) =>
-                        setStatus(event.target.value)
-                      }
-                      className="h-11 w-full rounded-xl border border-[#E8E4DE] bg-[#FFFDFC] px-3 text-sm font-semibold text-[#17202A] outline-none focus:border-[#FF5A36]"
-                    >
-                      <option value="ACTIVE">
-                        Active
-                      </option>
-
-                      <option value="INACTIVE">
-                        Inactive
-                      </option>
-
-                      <option value="PENDING">
-                        Pending
-                      </option>
-                    </select>
-                  </div>
+                  <SelectField
+                    label="Status"
+                    value={status}
+                    onChange={setStatus}
+                    options={[
+                      {
+                        value: "ACTIVE",
+                        label: "Active",
+                      },
+                      {
+                        value: "INACTIVE",
+                        label: "Inactive",
+                      },
+                      {
+                        value: "PENDING",
+                        label: "Pending",
+                      },
+                    ]}
+                  />
                 </div>
               </section>
 
-              {/* Search information */}
               <section className="rounded-2xl border border-[#EAE6DF] bg-white p-5 shadow-sm md:p-6">
                 <div className="mb-5">
                   <h2 className="text-base font-black text-[#17202A]">
@@ -602,7 +618,9 @@ export default function NewProductPage() {
                     <input
                       value={keywords}
                       onChange={(event) =>
-                        setKeywords(event.target.value)
+                        setKeywords(
+                          event.target.value
+                        )
                       }
                       placeholder="phone, samsung, android, 5g"
                       className="h-11 w-full rounded-xl border border-[#E8E4DE] bg-[#FFFDFC] px-3 text-sm text-[#17202A] outline-none placeholder:text-[#A0A4A8] focus:border-[#FF5A36]"
@@ -621,7 +639,9 @@ export default function NewProductPage() {
                     <input
                       value={imageUrl}
                       onChange={(event) =>
-                        setImageUrl(event.target.value)
+                        setImageUrl(
+                          event.target.value
+                        )
                       }
                       placeholder="https://..."
                       className="h-11 w-full rounded-xl border border-[#E8E4DE] bg-[#FFFDFC] px-3 text-sm text-[#17202A] outline-none placeholder:text-[#A0A4A8] focus:border-[#FF5A36]"
@@ -630,7 +650,6 @@ export default function NewProductPage() {
                 </div>
               </section>
 
-              {/* Actions */}
               <div className="flex flex-col-reverse gap-3 border-t border-[#EAE6DF] pt-5 sm:flex-row sm:justify-end">
                 <Link
                   href={`/admin/businesses/${businessId}`}
@@ -665,5 +684,81 @@ export default function NewProductPage() {
         </section>
       </div>
     </main>
+  );
+}
+
+function PriceField({
+  label,
+  value,
+  onChange,
+}: {
+  label: string;
+  value: string;
+  onChange: (value: string) => void;
+}) {
+  return (
+    <div>
+      <label className="mb-2 block text-sm font-extrabold text-[#17202A]">
+        {label}
+      </label>
+
+      <div className="relative">
+        <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm font-bold text-[#7B828A]">
+          ₦
+        </span>
+
+        <input
+          type="number"
+          min="0"
+          step="1"
+          value={value}
+          onChange={(event) =>
+            onChange(event.target.value)
+          }
+          placeholder="0"
+          className="h-11 w-full rounded-xl border border-[#E8E4DE] bg-[#FFFDFC] pl-8 pr-3 text-sm text-[#17202A] outline-none focus:border-[#FF5A36]"
+        />
+      </div>
+    </div>
+  );
+}
+
+function SelectField({
+  label,
+  value,
+  onChange,
+  options,
+}: {
+  label: string;
+  value: string;
+  onChange: (value: string) => void;
+  options: {
+    value: string;
+    label: string;
+  }[];
+}) {
+  return (
+    <div>
+      <label className="mb-2 block text-sm font-extrabold text-[#17202A]">
+        {label}
+      </label>
+
+      <select
+        value={value}
+        onChange={(event) =>
+          onChange(event.target.value)
+        }
+        className="h-11 w-full rounded-xl border border-[#E8E4DE] bg-[#FFFDFC] px-3 text-sm font-semibold text-[#17202A] outline-none focus:border-[#FF5A36]"
+      >
+        {options.map((option) => (
+          <option
+            key={option.value}
+            value={option.value}
+          >
+            {option.label}
+          </option>
+        ))}
+      </select>
+    </div>
   );
 }

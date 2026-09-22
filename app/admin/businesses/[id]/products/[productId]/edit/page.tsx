@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
+import type { FormEvent } from "react";
 import { useEffect, useState } from "react";
 import {
   ArrowLeft,
@@ -9,6 +10,7 @@ import {
   Package,
   Save,
   Store,
+  Trash2,
 } from "lucide-react";
 
 type Category = {
@@ -23,11 +25,17 @@ type Product = {
   price: number | null;
   priceMin: number | null;
   priceMax: number | null;
-  availability: string;
-  status: string;
+  availability:
+    | "AVAILABLE"
+    | "ASK_SELLER"
+    | "UNAVAILABLE";
+  status:
+    | "ACTIVE"
+    | "INACTIVE"
+    | "PENDING";
   imageUrl: string | null;
   keywords: string[];
-  category?: {
+  category: {
     id: string;
     name: string;
   } | null;
@@ -48,28 +56,61 @@ export default function EditProductPage() {
   const router = useRouter();
 
   const businessId = params.id;
-  const productId = params.productId;
+  const productId =
+    params.productId;
 
-  const [business, setBusiness] = useState<Business | null>(null);
-  const [categories, setCategories] = useState<Category[]>([]);
+  const [business, setBusiness] =
+    useState<Business | null>(null);
 
-  const [loading, setLoading] = useState(true);
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState("");
+  const [categories, setCategories] =
+    useState<Category[]>([]);
 
-  const [name, setName] = useState("");
-  const [description, setDescription] = useState("");
-  const [categoryId, setCategoryId] = useState("");
+  const [loading, setLoading] =
+    useState(true);
 
-  const [price, setPrice] = useState("");
-  const [priceMin, setPriceMin] = useState("");
-  const [priceMax, setPriceMax] = useState("");
+  const [saving, setSaving] =
+    useState(false);
 
-  const [availability, setAvailability] = useState("ASK_SELLER");
-  const [status, setStatus] = useState("ACTIVE");
+  const [error, setError] =
+    useState("");
 
-  const [keywords, setKeywords] = useState("");
-  const [imageUrl, setImageUrl] = useState("");
+  const [name, setName] =
+    useState("");
+
+  const [description, setDescription] =
+    useState("");
+
+  const [categoryId, setCategoryId] =
+    useState("");
+
+  const [price, setPrice] =
+    useState("");
+
+  const [priceMin, setPriceMin] =
+    useState("");
+
+  const [priceMax, setPriceMax] =
+    useState("");
+
+  const [availability, setAvailability] =
+    useState<
+      | "AVAILABLE"
+      | "ASK_SELLER"
+      | "UNAVAILABLE"
+    >("ASK_SELLER");
+
+  const [status, setStatus] =
+    useState<
+      | "ACTIVE"
+      | "INACTIVE"
+      | "PENDING"
+    >("ACTIVE");
+
+  const [keywords, setKeywords] =
+    useState("");
+
+  const [imageUrl, setImageUrl] =
+    useState("");
 
   useEffect(() => {
     async function loadData() {
@@ -77,37 +118,53 @@ export default function EditProductPage() {
         setLoading(true);
         setError("");
 
-        const [businessResponse, categoriesResponse] =
-          await Promise.all([
-            fetch(`/api/admin/businesses/${businessId}`),
-            fetch("/api/categories"),
-          ]);
+        const [
+          businessResponse,
+          categoriesResponse,
+        ] = await Promise.all([
+          fetch(
+            `/api/admin/businesses/${businessId}`
+          ),
+          fetch("/api/categories"),
+        ]);
 
-        const businessData = await businessResponse.json();
-        const categoriesData = await categoriesResponse.json();
+        const businessData =
+          await businessResponse.json();
+
+        const categoriesData =
+          await categoriesResponse.json();
 
         if (!businessResponse.ok) {
           throw new Error(
-            businessData.error || "Unable to load business",
+            businessData.error ||
+              "Unable to load business"
           );
         }
 
         if (!categoriesResponse.ok) {
           throw new Error(
-            categoriesData.error || "Unable to load categories",
+            categoriesData.error ||
+              "Unable to load categories"
           );
         }
 
-        const products = Array.isArray(businessData.products)
-          ? businessData.products
-          : [];
+        const products =
+          Array.isArray(
+            businessData.products
+          )
+            ? businessData.products
+            : [];
 
-        const product = products.find(
-          (item: Product) => item.id === productId,
-        );
+        const product =
+          products.find(
+            (item: Product) =>
+              item.id === productId
+          );
 
         if (!product) {
-          throw new Error("Product not found");
+          throw new Error(
+            "Product not found"
+          );
         }
 
         setBusiness({
@@ -117,66 +174,134 @@ export default function EditProductPage() {
         });
 
         setCategories(
-          Array.isArray(categoriesData)
+          Array.isArray(
+            categoriesData
+          )
             ? categoriesData
-            : categoriesData.categories ?? [],
+            : categoriesData.categories ??
+                []
         );
 
         setName(product.name);
-        setDescription(product.description ?? "");
-        setCategoryId(product.category?.id ?? "");
+
+        setDescription(
+          product.description ?? ""
+        );
+
+        setCategoryId(
+          product.category?.id ?? ""
+        );
 
         setPrice(
           product.price !== null
             ? String(product.price)
-            : "",
+            : ""
         );
 
         setPriceMin(
           product.priceMin !== null
             ? String(product.priceMin)
-            : "",
+            : ""
         );
 
         setPriceMax(
           product.priceMax !== null
             ? String(product.priceMax)
-            : "",
+            : ""
         );
 
-        setAvailability(product.availability);
+        setAvailability(
+          product.availability
+        );
+
         setStatus(product.status);
 
         setKeywords(
-          Array.isArray(product.keywords)
+          Array.isArray(
+            product.keywords
+          )
             ? product.keywords.join(", ")
-            : "",
+            : ""
         );
 
-        setImageUrl(product.imageUrl ?? "");
+        setImageUrl(
+          product.imageUrl ?? ""
+        );
       } catch (err) {
         setError(
           err instanceof Error
             ? err.message
-            : "Unable to load product",
+            : "Unable to load product"
         );
       } finally {
         setLoading(false);
       }
     }
 
-    if (businessId && productId) {
+    if (
+      businessId &&
+      productId
+    ) {
       loadData();
     }
   }, [businessId, productId]);
 
+  async function handleDelete() {
+    const confirmed =
+      window.confirm(
+        "Are you sure you want to delete this product?"
+      );
+
+    if (!confirmed) {
+      return;
+    }
+
+    try {
+      setSaving(true);
+      setError("");
+
+      const response = await fetch(
+        `/api/admin/businesses/${businessId}/products/${productId}`,
+        {
+          method: "DELETE",
+        }
+      );
+
+      const data =
+        await response.json();
+
+      if (!response.ok) {
+        throw new Error(
+          data.error ||
+            "Unable to delete product"
+        );
+      }
+
+      router.push(
+        `/admin/businesses/${businessId}`
+      );
+
+      router.refresh();
+    } catch (err) {
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Unable to delete product"
+      );
+    } finally {
+      setSaving(false);
+    }
+  }
+
   async function handleSubmit(
-    event: React.FormEvent<HTMLFormElement>,
+    event: FormEvent<HTMLFormElement>
   ) {
     event.preventDefault();
 
     if (!name.trim()) {
-      setError("Product name is required.");
+      setError(
+        "Product name is required."
+      );
       return;
     }
 
@@ -186,29 +311,33 @@ export default function EditProductPage() {
         Number(price) < 0)
     ) {
       setError(
-        "Price must be a valid non-negative whole number.",
+        "Price must be a valid non-negative whole number."
       );
       return;
     }
 
     if (
       priceMin &&
-      (!Number.isInteger(Number(priceMin)) ||
+      (!Number.isInteger(
+        Number(priceMin)
+      ) ||
         Number(priceMin) < 0)
     ) {
       setError(
-        "Minimum price must be a valid non-negative whole number.",
+        "Minimum price must be a valid non-negative whole number."
       );
       return;
     }
 
     if (
       priceMax &&
-      (!Number.isInteger(Number(priceMax)) ||
+      (!Number.isInteger(
+        Number(priceMax)
+      ) ||
         Number(priceMax) < 0)
     ) {
       setError(
-        "Maximum price must be a valid non-negative whole number.",
+        "Maximum price must be a valid non-negative whole number."
       );
       return;
     }
@@ -216,10 +345,11 @@ export default function EditProductPage() {
     if (
       priceMin &&
       priceMax &&
-      Number(priceMin) > Number(priceMax)
+      Number(priceMin) >
+        Number(priceMax)
     ) {
       setError(
-        "Minimum price cannot be greater than maximum price.",
+        "Minimum price cannot be greater than maximum price."
       );
       return;
     }
@@ -229,17 +359,19 @@ export default function EditProductPage() {
       setError("");
 
       const response = await fetch(
-        `/api/admin/products/${productId}`,
+        `/api/admin/businesses/${businessId}/products/${productId}`,
         {
           method: "PATCH",
           headers: {
-            "Content-Type": "application/json",
+            "Content-Type":
+              "application/json",
           },
           body: JSON.stringify({
             name: name.trim(),
 
             description:
-              description.trim() || null,
+              description.trim() ||
+              null,
 
             categoryId:
               categoryId || null,
@@ -265,30 +397,38 @@ export default function EditProductPage() {
 
             keywords: keywords
               .split(",")
-              .map((keyword) => keyword.trim())
+              .map((keyword) =>
+                keyword.trim()
+              )
               .filter(Boolean),
 
             imageUrl:
-              imageUrl.trim() || null,
+              imageUrl.trim() ||
+              null,
           }),
-        },
+        }
       );
 
-      const data = await response.json();
+      const data =
+        await response.json();
 
       if (!response.ok) {
         throw new Error(
-          data.error || "Unable to update product",
+          data.error ||
+            "Unable to update product"
         );
       }
 
-      router.push(`/admin/businesses/${businessId}`);
+      router.push(
+        `/admin/businesses/${businessId}`
+      );
+
       router.refresh();
     } catch (err) {
       setError(
         err instanceof Error
           ? err.message
-          : "Unable to update product",
+          : "Unable to update product"
       );
     } finally {
       setSaving(false);
@@ -314,7 +454,8 @@ export default function EditProductPage() {
         <div className="mx-auto max-w-[1500px]">
           <div className="rounded-[22px] border border-[#FF5A36] bg-[#FFFDFC] p-8 shadow-sm">
             <p className="font-bold text-[#9F2D18]">
-              {error || "Business not found."}
+              {error ||
+                "Business not found."}
             </p>
 
             <Link
@@ -333,6 +474,7 @@ export default function EditProductPage() {
   return (
     <main className="min-h-screen bg-[#FFF7ED] p-3 md:p-6">
       <div className="mx-auto flex min-h-[calc(100vh-24px)] max-w-[1500px] overflow-hidden rounded-[22px] border border-[#FF5A36] bg-[#FFFDFC] shadow-[0_10px_30px_rgba(255,90,54,0.08)] md:min-h-[calc(100vh-48px)]">
+
         {/* Sidebar */}
         <aside className="hidden w-[190px] shrink-0 border-r border-[#EAE6DF] bg-[#FCFAF6] md:block">
           <div className="flex h-16 items-center border-b border-[#EAE6DF] px-5">
@@ -440,7 +582,6 @@ export default function EditProductPage() {
               onSubmit={handleSubmit}
               className="space-y-5"
             >
-              {/* Product information */}
               <section className="rounded-2xl border border-[#EAE6DF] bg-white p-5 shadow-sm md:p-6">
                 <div className="mb-5">
                   <h2 className="text-base font-black text-[#17202A]">
@@ -464,7 +605,7 @@ export default function EditProductPage() {
                         setName(event.target.value)
                       }
                       placeholder="e.g. Samsung Galaxy A15"
-                      className="h-11 w-full rounded-xl border border-[#E8E4DE] bg-[#FFFDFC] px-3 text-sm text-[#17202A] outline-none transition placeholder:text-[#A0A4A8] focus:border-[#FF5A36] focus:ring-2 focus:ring-[#FF5A36]/10"
+                      className="h-11 w-full rounded-xl border border-[#E8E4DE] bg-[#FFFDFC] px-3 text-sm text-[#17202A] outline-none transition placeholder:text-[#A0A4A8] focus:border-[#FF5A36]"
                     />
                   </div>
 
@@ -476,11 +617,13 @@ export default function EditProductPage() {
                     <textarea
                       value={description}
                       onChange={(event) =>
-                        setDescription(event.target.value)
+                        setDescription(
+                          event.target.value
+                        )
                       }
                       rows={4}
                       placeholder="Describe the product..."
-                      className="w-full resize-none rounded-xl border border-[#E8E4DE] bg-[#FFFDFC] px-3 py-3 text-sm text-[#17202A] outline-none transition placeholder:text-[#A0A4A8] focus:border-[#FF5A36] focus:ring-2 focus:ring-[#FF5A36]/10"
+                      className="w-full resize-none rounded-xl border border-[#E8E4DE] bg-[#FFFDFC] px-3 py-3 text-sm text-[#17202A] outline-none transition placeholder:text-[#A0A4A8] focus:border-[#FF5A36]"
                     />
                   </div>
 
@@ -492,7 +635,9 @@ export default function EditProductPage() {
                     <select
                       value={categoryId}
                       onChange={(event) =>
-                        setCategoryId(event.target.value)
+                        setCategoryId(
+                          event.target.value
+                        )
                       }
                       className="h-11 w-full rounded-xl border border-[#E8E4DE] bg-[#FFFDFC] px-3 text-sm font-semibold text-[#17202A] outline-none focus:border-[#FF5A36]"
                     >
@@ -500,20 +645,21 @@ export default function EditProductPage() {
                         No category
                       </option>
 
-                      {categories.map((category) => (
-                        <option
-                          key={category.id}
-                          value={category.id}
-                        >
-                          {category.name}
-                        </option>
-                      ))}
+                      {categories.map(
+                        (category) => (
+                          <option
+                            key={category.id}
+                            value={category.id}
+                          >
+                            {category.name}
+                          </option>
+                        )
+                      )}
                     </select>
                   </div>
                 </div>
               </section>
 
-              {/* Pricing */}
               <section className="rounded-2xl border border-[#EAE6DF] bg-white p-5 shadow-sm md:p-6">
                 <div className="mb-5">
                   <h2 className="text-base font-black text-[#17202A]">
@@ -526,53 +672,26 @@ export default function EditProductPage() {
                 </div>
 
                 <div className="grid gap-4 md:grid-cols-3">
-                  {[
-                    {
-                      label: "Exact price",
-                      value: price,
-                      setValue: setPrice,
-                    },
-                    {
-                      label: "Minimum price",
-                      value: priceMin,
-                      setValue: setPriceMin,
-                    },
-                    {
-                      label: "Maximum price",
-                      value: priceMax,
-                      setValue: setPriceMax,
-                    },
-                  ].map((field) => (
-                    <div key={field.label}>
-                      <label className="mb-2 block text-sm font-extrabold text-[#17202A]">
-                        {field.label}
-                      </label>
+                  <PriceField
+                    label="Exact price"
+                    value={price}
+                    onChange={setPrice}
+                  />
 
-                      <div className="relative">
-                        <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm font-bold text-[#7B828A]">
-                          ₦
-                        </span>
+                  <PriceField
+                    label="Minimum price"
+                    value={priceMin}
+                    onChange={setPriceMin}
+                  />
 
-                        <input
-                          type="number"
-                          min="0"
-                          step="1"
-                          value={field.value}
-                          onChange={(event) =>
-                            field.setValue(
-                              event.target.value,
-                            )
-                          }
-                          placeholder="0"
-                          className="h-11 w-full rounded-xl border border-[#E8E4DE] bg-[#FFFDFC] pl-8 pr-3 text-sm text-[#17202A] outline-none focus:border-[#FF5A36]"
-                        />
-                      </div>
-                    </div>
-                  ))}
+                  <PriceField
+                    label="Maximum price"
+                    value={priceMax}
+                    onChange={setPriceMax}
+                  />
                 </div>
               </section>
 
-              {/* Availability */}
               <section className="rounded-2xl border border-[#EAE6DF] bg-white p-5 shadow-sm md:p-6">
                 <div className="mb-5">
                   <h2 className="text-base font-black text-[#17202A]">
@@ -581,63 +700,62 @@ export default function EditProductPage() {
                 </div>
 
                 <div className="grid gap-4 md:grid-cols-2">
-                  <div>
-                    <label className="mb-2 block text-sm font-extrabold text-[#17202A]">
-                      Availability
-                    </label>
+                  <SelectField
+                    label="Availability"
+                    value={availability}
+                    onChange={(value) =>
+                      setAvailability(
+                        value as
+                          | "AVAILABLE"
+                          | "ASK_SELLER"
+                          | "UNAVAILABLE"
+                      )
+                    }
+                    options={[
+                      {
+                        value: "AVAILABLE",
+                        label: "Available",
+                      },
+                      {
+                        value: "ASK_SELLER",
+                        label: "Ask seller",
+                      },
+                      {
+                        value: "UNAVAILABLE",
+                        label: "Unavailable",
+                      },
+                    ]}
+                  />
 
-                    <select
-                      value={availability}
-                      onChange={(event) =>
-                        setAvailability(
-                          event.target.value,
-                        )
-                      }
-                      className="h-11 w-full rounded-xl border border-[#E8E4DE] bg-[#FFFDFC] px-3 text-sm font-semibold text-[#17202A] outline-none focus:border-[#FF5A36]"
-                    >
-                      <option value="AVAILABLE">
-                        Available
-                      </option>
-
-                      <option value="ASK_SELLER">
-                        Ask seller
-                      </option>
-
-                      <option value="UNAVAILABLE">
-                        Unavailable
-                      </option>
-                    </select>
-                  </div>
-
-                  <div>
-                    <label className="mb-2 block text-sm font-extrabold text-[#17202A]">
-                      Status
-                    </label>
-
-                    <select
-                      value={status}
-                      onChange={(event) =>
-                        setStatus(event.target.value)
-                      }
-                      className="h-11 w-full rounded-xl border border-[#E8E4DE] bg-[#FFFDFC] px-3 text-sm font-semibold text-[#17202A] outline-none focus:border-[#FF5A36]"
-                    >
-                      <option value="ACTIVE">
-                        Active
-                      </option>
-
-                      <option value="INACTIVE">
-                        Inactive
-                      </option>
-
-                      <option value="PENDING">
-                        Pending
-                      </option>
-                    </select>
-                  </div>
+                  <SelectField
+                    label="Status"
+                    value={status}
+                    onChange={(value) =>
+                      setStatus(
+                        value as
+                          | "ACTIVE"
+                          | "INACTIVE"
+                          | "PENDING"
+                      )
+                    }
+                    options={[
+                      {
+                        value: "ACTIVE",
+                        label: "Active",
+                      },
+                      {
+                        value: "INACTIVE",
+                        label: "Inactive",
+                      },
+                      {
+                        value: "PENDING",
+                        label: "Pending",
+                      },
+                    ]}
+                  />
                 </div>
               </section>
 
-              {/* Search information */}
               <section className="rounded-2xl border border-[#EAE6DF] bg-white p-5 shadow-sm md:p-6">
                 <div className="mb-5">
                   <h2 className="text-base font-black text-[#17202A]">
@@ -658,15 +776,13 @@ export default function EditProductPage() {
                     <input
                       value={keywords}
                       onChange={(event) =>
-                        setKeywords(event.target.value)
+                        setKeywords(
+                          event.target.value
+                        )
                       }
                       placeholder="phone, samsung, android, 5g"
                       className="h-11 w-full rounded-xl border border-[#E8E4DE] bg-[#FFFDFC] px-3 text-sm text-[#17202A] outline-none placeholder:text-[#A0A4A8] focus:border-[#FF5A36]"
                     />
-
-                    <p className="mt-2 text-xs text-[#8A8F95]">
-                      Separate keywords with commas.
-                    </p>
                   </div>
 
                   <div>
@@ -677,7 +793,9 @@ export default function EditProductPage() {
                     <input
                       value={imageUrl}
                       onChange={(event) =>
-                        setImageUrl(event.target.value)
+                        setImageUrl(
+                          event.target.value
+                        )
                       }
                       placeholder="https://..."
                       className="h-11 w-full rounded-xl border border-[#E8E4DE] bg-[#FFFDFC] px-3 text-sm text-[#17202A] outline-none placeholder:text-[#A0A4A8] focus:border-[#FF5A36]"
@@ -686,40 +804,131 @@ export default function EditProductPage() {
                 </div>
               </section>
 
-              {/* Actions */}
-              <div className="flex flex-col-reverse gap-3 border-t border-[#EAE6DF] pt-5 sm:flex-row sm:justify-end">
-                <Link
-                  href={`/admin/businesses/${businessId}`}
-                  className="inline-flex h-11 items-center justify-center rounded-xl border border-[#E8E4DE] bg-white px-5 text-sm font-extrabold text-[#68707A] transition hover:bg-[#FCFAF6]"
-                >
-                  Cancel
-                </Link>
-
+              <div className="flex flex-col-reverse gap-3 border-t border-[#EAE6DF] pt-5 sm:flex-row sm:items-center sm:justify-between">
                 <button
-                  type="submit"
+                  type="button"
+                  onClick={handleDelete}
                   disabled={saving}
-                  className="inline-flex h-11 items-center justify-center gap-2 rounded-xl bg-[#FF5A36] px-5 text-sm font-extrabold text-white shadow-sm transition hover:bg-[#E94B29] disabled:cursor-not-allowed disabled:opacity-60"
+                  className="inline-flex h-11 items-center justify-center gap-2 rounded-xl border border-red-200 bg-red-50 px-5 text-sm font-extrabold text-red-600 transition hover:bg-red-100 disabled:cursor-not-allowed disabled:opacity-60"
                 >
-                  {saving ? (
-                    <>
-                      <CheckCircle2
-                        size={17}
-                        className="animate-pulse"
-                      />
-                      Saving...
-                    </>
-                  ) : (
-                    <>
-                      <Save size={17} />
-                      Save Changes
-                    </>
-                  )}
+                  <Trash2 size={17} />
+                  Delete Product
                 </button>
+
+                <div className="flex flex-col gap-3 sm:flex-row">
+                  <Link
+                    href={`/admin/businesses/${businessId}`}
+                    className="inline-flex h-11 items-center justify-center rounded-xl border border-[#E8E4DE] bg-white px-5 text-sm font-extrabold text-[#68707A] transition hover:bg-[#FCFAF6]"
+                  >
+                    Cancel
+                  </Link>
+
+                  <button
+                    type="submit"
+                    disabled={saving}
+                    className="inline-flex h-11 items-center justify-center gap-2 rounded-xl bg-[#FF5A36] px-5 text-sm font-extrabold text-white shadow-sm transition hover:bg-[#E94B29] disabled:cursor-not-allowed disabled:opacity-60"
+                  >
+                    {saving ? (
+                      <>
+                        <CheckCircle2
+                          size={17}
+                          className="animate-pulse"
+                        />
+                        Saving...
+                      </>
+                    ) : (
+                      <>
+                        <Save size={17} />
+                        Save Changes
+                      </>
+                    )}
+                  </button>
+                </div>
               </div>
             </form>
           </div>
         </section>
       </div>
     </main>
+  );
+}
+
+function PriceField({
+  label,
+  value,
+  onChange,
+}: {
+  label: string;
+  value: string;
+  onChange: (value: string) => void;
+}) {
+  return (
+    <div>
+      <label className="mb-2 block text-sm font-extrabold text-[#17202A]">
+        {label}
+      </label>
+
+      <div className="relative">
+        <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm font-bold text-[#7B828A]">
+          ₦
+        </span>
+
+        <input
+          type="number"
+          min="0"
+          step="1"
+          value={value}
+          onChange={(event) =>
+            onChange(
+              event.target.value
+            )
+          }
+          placeholder="0"
+          className="h-11 w-full rounded-xl border border-[#E8E4DE] bg-[#FFFDFC] pl-8 pr-3 text-sm text-[#17202A] outline-none focus:border-[#FF5A36]"
+        />
+      </div>
+    </div>
+  );
+}
+
+function SelectField({
+  label,
+  value,
+  onChange,
+  options,
+}: {
+  label: string;
+  value: string;
+  onChange: (value: string) => void;
+  options: {
+    value: string;
+    label: string;
+  }[];
+}) {
+  return (
+    <div>
+      <label className="mb-2 block text-sm font-extrabold text-[#17202A]">
+        {label}
+      </label>
+
+      <select
+        value={value}
+        onChange={(event) =>
+          onChange(
+            event.target.value
+          )
+        }
+        className="h-11 w-full rounded-xl border border-[#E8E4DE] bg-[#FFFDFC] px-3 text-sm font-semibold text-[#17202A] outline-none focus:border-[#FF5A36]"
+      >
+        {options.map((option) => (
+          <option
+            key={option.value}
+            value={option.value}
+          >
+            {option.label}
+          </option>
+        ))}
+      </select>
+    </div>
   );
 }

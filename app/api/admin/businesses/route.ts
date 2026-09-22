@@ -1,4 +1,3 @@
-// app/api/admin/businesses/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import { requireAdmin } from "@/lib/admin-auth";
 import { prisma } from "@/lib/prisma";
@@ -29,6 +28,68 @@ const SOCIAL_PLATFORMS = [
   "DIRECTIONS",
 ] as const;
 
+type BusinessStatus = (typeof BUSINESS_STATUSES)[number];
+type VerificationStatus =
+  (typeof VERIFICATION_STATUSES)[number];
+type Availability = (typeof AVAILABILITIES)[number];
+type SocialPlatform = (typeof SOCIAL_PLATFORMS)[number];
+
+type SocialLinkInput = {
+  platform: string;
+  handle: string;
+};
+
+function isBusinessStatus(
+  value: unknown
+): value is BusinessStatus {
+  return (
+    typeof value === "string" &&
+    BUSINESS_STATUSES.includes(value as BusinessStatus)
+  );
+}
+
+function isVerificationStatus(
+  value: unknown
+): value is VerificationStatus {
+  return (
+    typeof value === "string" &&
+    VERIFICATION_STATUSES.includes(
+      value as VerificationStatus
+    )
+  );
+}
+
+function isAvailability(
+  value: unknown
+): value is Availability {
+  return (
+    typeof value === "string" &&
+    AVAILABILITIES.includes(value as Availability)
+  );
+}
+
+function isSocialPlatform(
+  value: unknown
+): value is SocialPlatform {
+  return (
+    typeof value === "string" &&
+    SOCIAL_PLATFORMS.includes(value as SocialPlatform)
+  );
+}
+
+function isSocialLinkInput(
+  value: unknown
+): value is SocialLinkInput {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    "platform" in value &&
+    "handle" in value &&
+    typeof value.platform === "string" &&
+    typeof value.handle === "string"
+  );
+}
+
 export async function GET(request: NextRequest) {
   const auth = await requireAdmin();
 
@@ -41,82 +102,78 @@ export async function GET(request: NextRequest) {
 
     const q = searchParams.get("q")?.trim() ?? "";
     const status = searchParams.get("status") ?? "";
-    const verification = searchParams.get("verification") ?? "";
+    const verification =
+      searchParams.get("verification") ?? "";
 
-    const businesses = await prisma.business.findMany({
-      where: {
-        ...(status && BUSINESS_STATUSES.includes(status as never)
-          ? {
-              status: status as
-                | "ACTIVE"
-                | "INACTIVE"
-                | "PENDING",
-            }
-          : {}),
+    const businesses =
+      await prisma.business.findMany({
+        where: {
+          ...(isBusinessStatus(status)
+            ? {
+                status,
+              }
+            : {}),
 
-        ...(verification &&
-        VERIFICATION_STATUSES.includes(verification as never)
-          ? {
-              verification:
-                verification as
-                  | "VERIFIED"
-                  | "UNVERIFIED",
-            }
-          : {}),
+          ...(isVerificationStatus(verification)
+            ? {
+                verification,
+              }
+            : {}),
 
-        ...(q
-          ? {
-              OR: [
-                {
-                  name: {
-                    contains: q,
-                    mode: "insensitive",
-                  },
-                },
-                {
-                  ownerName: {
-                    contains: q,
-                    mode: "insensitive",
-                  },
-                },
-                {
-                  location: {
-                    area: {
+          ...(q
+            ? {
+                OR: [
+                  {
+                    name: {
                       contains: q,
                       mode: "insensitive",
                     },
                   },
-                },
-              ],
-            }
-          : {}),
-      },
-
-      orderBy: {
-        onboardedAt: "desc",
-      },
-
-      include: {
-        location: true,
-
-        categories: {
-          include: {
-            category: true,
-          },
+                  {
+                    ownerName: {
+                      contains: q,
+                      mode: "insensitive",
+                    },
+                  },
+                  {
+                    location: {
+                      area: {
+                        contains: q,
+                        mode: "insensitive",
+                      },
+                    },
+                  },
+                ],
+              }
+            : {}),
         },
 
-        products: {
-          where: {
-            status: "ACTIVE",
-          },
-          select: {
-            id: true,
-          },
+        orderBy: {
+          onboardedAt: "desc",
         },
 
-        socialLinks: true,
-      },
-    });
+        include: {
+          location: true,
+
+          categories: {
+            include: {
+              category: true,
+            },
+          },
+
+          products: {
+            where: {
+              status: "ACTIVE",
+            },
+
+            select: {
+              id: true,
+            },
+          },
+
+          socialLinks: true,
+        },
+      });
 
     return NextResponse.json({
       businesses: businesses.map((business) => ({
@@ -124,9 +181,11 @@ export async function GET(request: NextRequest) {
         name: business.name,
         ownerName: business.ownerName,
         description: business.description,
+
         area:
           business.location?.area ??
           "Location not added",
+
         status: business.status,
         verification: business.verification,
         availability: business.availability,
@@ -150,7 +209,10 @@ export async function GET(request: NextRequest) {
       })),
     });
   } catch (error) {
-    console.error("Admin businesses GET error:", error);
+    console.error(
+      "Admin businesses GET error:",
+      error
+    );
 
     return NextResponse.json(
       {
@@ -163,7 +225,9 @@ export async function GET(request: NextRequest) {
   }
 }
 
-export async function POST(request: NextRequest) {
+export async function POST(
+  request: NextRequest
+) {
   const auth = await requireAdmin();
 
   if (!auth.authorized) {
@@ -220,16 +284,13 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const status =
-      body.status ?? "ACTIVE";
-
+    const status = body.status ?? "ACTIVE";
     const verification =
       body.verification ?? "UNVERIFIED";
-
     const availability =
       body.availability ?? "ASK_SELLER";
 
-    if (!BUSINESS_STATUSES.includes(status)) {
+    if (!isBusinessStatus(status)) {
       return NextResponse.json(
         {
           error: "Invalid business status",
@@ -240,7 +301,7 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    if (!VERIFICATION_STATUSES.includes(verification)) {
+    if (!isVerificationStatus(verification)) {
       return NextResponse.json(
         {
           error: "Invalid verification status",
@@ -251,7 +312,7 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    if (!AVAILABILITIES.includes(availability)) {
+    if (!isAvailability(availability)) {
       return NextResponse.json(
         {
           error: "Invalid availability",
@@ -262,37 +323,28 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const categoryNames: string[] = Array.isArray(
-      body.categories
-    )
-      ? body.categories
-          .filter(
-            (category: unknown): category is string =>
-              typeof category === "string"
-          )
-          .map((category: string) => category.trim())
-          .filter(Boolean)
-      : [];
+    const categoryNames: string[] =
+      Array.isArray(body.categories)
+        ? body.categories
+            .filter(
+              (
+                category: unknown
+              ): category is string =>
+                typeof category === "string"
+            )
+            .map((category) => category.trim())
+            .filter(Boolean)
+        : [];
 
-    const socialLinks: {
-      platform: string;
-      handle: string;
-    }[] = Array.isArray(body.socialLinks)
-      ? body.socialLinks.filter(
-          (link: unknown) =>
-            typeof link === "object" &&
-            link !== null &&
-            "platform" in link &&
-            "handle" in link
-        )
-      : [];
+    const socialLinks: SocialLinkInput[] =
+      Array.isArray(body.socialLinks)
+        ? body.socialLinks.filter(
+            isSocialLinkInput
+          )
+        : [];
 
     for (const link of socialLinks) {
-      if (
-        !SOCIAL_PLATFORMS.includes(
-          link.platform as never
-        )
-      ) {
+      if (!isSocialPlatform(link.platform)) {
         return NextResponse.json(
           {
             error: `Invalid social platform: ${link.platform}`,
@@ -306,7 +358,8 @@ export async function POST(request: NextRequest) {
       if (!link.handle.trim()) {
         return NextResponse.json(
           {
-            error: "Social link handle cannot be empty",
+            error:
+              "Social link handle cannot be empty",
           },
           {
             status: 400,
@@ -315,22 +368,47 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    const business = await prisma.$transaction(
-      async (tx) => {
-        const location = await tx.location.create({
-        data: {
-          area,
-          lat:
-          typeof body.lat === "number" && Number.isFinite(body.lat)
-               ?       body.lat
-                  : null,
-    lng:
-      typeof body.lng === "number" && Number.isFinite(body.lng)
+    const latitude =
+      typeof body.lat === "number" &&
+      Number.isFinite(body.lat)
+        ? body.lat
+        : null;
+
+    const longitude =
+      typeof body.lng === "number" &&
+      Number.isFinite(body.lng)
         ? body.lng
-        : null,
-        },
+        : null;
+
+    const business =
+      await prisma.$transaction(async (tx) => {
+        const location =
+          await tx.location.upsert({
+            where: {
+              area,
+            },
+
+            update: {
+              ...(latitude !== null
+                ? {
+                    lat: latitude,
+                  }
+                : {}),
+
+              ...(longitude !== null
+                ? {
+                    long: longitude,
+                  }
+                : {}),
+            },
+
+            create: {
+              area,
+              lat: latitude,
+              long: longitude,
+            },
           });
-        
+
         const categories = [];
 
         for (const categoryName of categoryNames) {
@@ -339,7 +417,9 @@ export async function POST(request: NextRequest) {
               where: {
                 name: categoryName,
               },
+
               update: {},
+
               create: {
                 name: categoryName,
               },
@@ -373,14 +453,9 @@ export async function POST(request: NextRequest) {
                 create: socialLinks.map(
                   (link) => ({
                     platform:
-                      link.platform as
-                        | "WHATSAPP"
-                        | "INSTAGRAM"
-                        | "TIKTOK"
-                        | "FACEBOOK"
-                        | "PHONE"
-                        | "DIRECTIONS",
-                    handle: link.handle.trim(),
+                      link.platform as SocialPlatform,
+                    handle:
+                      link.handle.trim(),
                   })
                 ),
               },
@@ -400,8 +475,7 @@ export async function POST(request: NextRequest) {
           });
 
         return createdBusiness;
-      }
-    );
+      });
 
     return NextResponse.json(
       {
@@ -410,27 +484,32 @@ export async function POST(request: NextRequest) {
           name: business.name,
           ownerName: business.ownerName,
           description: business.description,
+
           area:
             business.location?.area ??
             "Location not added",
+
           status: business.status,
           verification: business.verification,
           availability: business.availability,
           phone: business.phone,
 
-          categories: business.categories.map(
-            (item) => item.category.name
-          ),
+          categories:
+            business.categories.map(
+              (item) => item.category.name
+            ),
 
-          socialLinks: business.socialLinks.map(
-            (link) => ({
-              id: link.id,
-              platform: link.platform,
-              handle: link.handle,
-            })
-          ),
+          socialLinks:
+            business.socialLinks.map(
+              (link) => ({
+                id: link.id,
+                platform: link.platform,
+                handle: link.handle,
+              })
+            ),
 
-          onboardedAt: business.onboardedAt,
+          onboardedAt:
+            business.onboardedAt,
         },
       },
       {
@@ -438,7 +517,10 @@ export async function POST(request: NextRequest) {
       }
     );
   } catch (error) {
-    console.error("Admin businesses POST error:", error);
+    console.error(
+      "Admin businesses POST error:",
+      error
+    );
 
     return NextResponse.json(
       {

@@ -7,6 +7,7 @@ import {
   ChevronDown,
   LayoutDashboard,
   Package,
+  Pencil,
   Search,
   Store,
   X,
@@ -20,14 +21,22 @@ type Product = {
   price: number | null;
   priceMin: number | null;
   priceMax: number | null;
-  availability: "AVAILABLE" | "ASK_SELLER" | "UNAVAILABLE";
-  status: "ACTIVE" | "INACTIVE" | "PENDING";
+  availability:
+    | "AVAILABLE"
+    | "ASK_SELLER"
+    | "UNAVAILABLE";
+  status:
+    | "ACTIVE"
+    | "INACTIVE"
+    | "PENDING";
   imageUrl: string | null;
+
   business: {
     id: string;
     name: string;
     area: string;
   };
+
   category: string | null;
   updatedAt: string;
 };
@@ -50,51 +59,93 @@ const NAV_ITEMS = [
   },
 ];
 
-export default function AdminProductsPage() {
-  const [products, setProducts] = useState<Product[]>([]);
-  const [query, setQuery] = useState("");
-  const [status, setStatus] = useState("");
-  const [availability, setAvailability] = useState("");
+type ProductChanges = {
+  availability?:
+    | "AVAILABLE"
+    | "ASK_SELLER"
+    | "UNAVAILABLE";
 
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState("");
-  const [updatingId, setUpdatingId] = useState<string | null>(null);
+  status?:
+    | "ACTIVE"
+    | "INACTIVE"
+    | "PENDING";
+};
+
+export default function AdminProductsPage() {
+  const [products, setProducts] =
+    useState<Product[]>([]);
+
+  const [query, setQuery] =
+    useState("");
+
+  const [status, setStatus] =
+    useState("");
+
+  const [availability, setAvailability] =
+    useState("");
+
+  const [loading, setLoading] =
+    useState(true);
+
+  const [error, setError] =
+    useState("");
+
+  const [updatingId, setUpdatingId] =
+    useState<string | null>(null);
 
   async function loadProducts() {
     try {
       setLoading(true);
       setError("");
 
-      const params = new URLSearchParams();
+      const params =
+        new URLSearchParams();
 
       if (query.trim()) {
-        params.set("q", query.trim());
+        params.set(
+          "q",
+          query.trim()
+        );
       }
 
       if (status) {
-        params.set("status", status);
+        params.set(
+          "status",
+          status
+        );
       }
 
       if (availability) {
-        params.set("availability", availability);
+        params.set(
+          "availability",
+          availability
+        );
       }
 
       const response = await fetch(
         `/api/admin/products?${params.toString()}`
       );
 
-      const data = await response.json();
+      const data =
+        await response.json();
 
       if (!response.ok) {
         throw new Error(
-          data.error || "Unable to load products"
+          data.error ||
+            "Unable to load products"
         );
       }
 
-      setProducts(data.products);
+      setProducts(
+        Array.isArray(data.products)
+          ? data.products
+          : []
+      );
     } catch (error) {
       console.error(error);
-      setError("We couldn't load the products.");
+      setError(
+        "We couldn't load the products."
+      );
     } finally {
       setLoading(false);
     }
@@ -105,49 +156,65 @@ export default function AdminProductsPage() {
       loadProducts();
     }, 250);
 
-    return () => clearTimeout(timer);
-  }, [query, status, availability]);
+    return () =>
+      clearTimeout(timer);
+  }, [
+    query,
+    status,
+    availability,
+  ]);
 
   async function updateProduct(
-    id: string,
-    changes: Partial<Product>
+    product: Product,
+    changes: ProductChanges
   ) {
     try {
-      setUpdatingId(id);
+      setUpdatingId(product.id);
       setError("");
 
       const response = await fetch(
-        `/api/admin/products/${id}`,
+        `/api/admin/businesses/${product.business.id}/products/${product.id}`,
         {
           method: "PATCH",
           headers: {
-            "Content-Type": "application/json",
+            "Content-Type":
+              "application/json",
           },
-          body: JSON.stringify(changes),
+          body: JSON.stringify(
+            changes
+          ),
         }
       );
 
-      const data = await response.json();
+      const data =
+        await response.json();
 
       if (!response.ok) {
         throw new Error(
-          data.error || "Unable to update product"
+          data.error ||
+            "Unable to update product"
         );
       }
 
       setProducts((current) =>
-        current.map((product) =>
-          product.id === id
+        current.map((item) =>
+          item.id === product.id
             ? {
-                ...product,
-                ...data.product,
+                ...item,
+                ...changes,
+                updatedAt:
+                  data.product
+                    ?.updatedAt ??
+                  item.updatedAt,
               }
-            : product
+            : item
         )
       );
     } catch (error) {
       console.error(error);
-      setError("We couldn't update that product.");
+      setError(
+        "We couldn't update that product."
+      );
     } finally {
       setUpdatingId(null);
     }
@@ -156,6 +223,7 @@ export default function AdminProductsPage() {
   return (
     <main className="min-h-screen bg-[#FFF7ED] px-3 py-3 sm:px-5 sm:py-5">
       <div className="mx-auto flex min-h-[calc(100vh-24px)] max-w-[1500px] overflow-hidden rounded-[22px] border border-[#FF5A36] bg-[#FFFDFC] shadow-sm sm:min-h-[calc(100vh-40px)]">
+
         {/* Sidebar */}
         <aside className="hidden w-[190px] shrink-0 border-r border-[#EAE6DF] bg-[#FCFAF6] lg:block">
           <div className="flex h-[66px] items-center border-b border-[#EAE6DF] px-5">
@@ -270,7 +338,9 @@ export default function AdminProductsPage() {
                   <input
                     value={query}
                     onChange={(event) =>
-                      setQuery(event.target.value)
+                      setQuery(
+                        event.target.value
+                      )
                     }
                     placeholder="Search products or businesses..."
                     className="h-11 w-full rounded-xl border border-[#EAE6DF] bg-[#FCFAF6] pl-10 pr-4 text-sm text-[#17202A] outline-none placeholder:text-[#A39A91] focus:border-[#FF5A36]"
@@ -309,7 +379,9 @@ export default function AdminProductsPage() {
 
                 <button
                   type="button"
-                  onClick={() => setError("")}
+                  onClick={() =>
+                    setError("")
+                  }
                   aria-label="Dismiss error"
                   className="text-[#9F2D18]"
                 >
@@ -342,7 +414,7 @@ export default function AdminProductsPage() {
               <div className="overflow-hidden rounded-2xl border border-[#EAE6DF] bg-white">
                 {/* Desktop */}
                 <div className="hidden overflow-x-auto md:block">
-                  <table className="w-full min-w-[900px]">
+                  <table className="w-full min-w-[950px]">
                     <thead className="border-b border-[#EAE6DF] bg-[#FCFAF6]">
                       <tr>
                         <th className="px-4 py-3 text-left text-[11px] font-bold uppercase tracking-wide text-[#8A8178]">
@@ -366,45 +438,58 @@ export default function AdminProductsPage() {
                         </th>
 
                         <th className="px-4 py-3 text-right text-[11px] font-bold uppercase tracking-wide text-[#8A8178]">
-                          Action
+                          Actions
                         </th>
                       </tr>
                     </thead>
 
                     <tbody className="divide-y divide-[#EAE6DF]">
-                      {products.map((product) => (
-                        <ProductRow
-                          key={product.id}
-                          product={product}
-                          updating={
-                            updatingId === product.id
-                          }
-                          onUpdate={updateProduct}
-                        />
-                      ))}
+                      {products.map(
+                        (product) => (
+                          <ProductRow
+                            key={product.id}
+                            product={product}
+                            updating={
+                              updatingId ===
+                              product.id
+                            }
+                            onUpdate={
+                              updateProduct
+                            }
+                          />
+                        )
+                      )}
                     </tbody>
                   </table>
                 </div>
 
                 {/* Mobile */}
                 <div className="divide-y divide-[#EAE6DF] md:hidden">
-                  {products.map((product) => (
-                    <ProductMobileCard
-                      key={product.id}
-                      product={product}
-                      updating={
-                        updatingId === product.id
-                      }
-                      onUpdate={updateProduct}
-                    />
-                  ))}
+                  {products.map(
+                    (product) => (
+                      <ProductMobileCard
+                        key={product.id}
+                        product={product}
+                        updating={
+                          updatingId ===
+                          product.id
+                        }
+                        onUpdate={
+                          updateProduct
+                        }
+                      />
+                    )
+                  )}
                 </div>
               </div>
             )}
 
             <p className="mt-4 text-xs font-medium text-[#A39A91]">
               {products.length} product
-              {products.length === 1 ? "" : "s"} shown
+              {products.length === 1
+                ? ""
+                : "s"}{" "}
+              shown
             </p>
           </div>
         </section>
@@ -421,8 +506,8 @@ function ProductRow({
   product: Product;
   updating: boolean;
   onUpdate: (
-    id: string,
-    changes: Partial<Product>
+    product: Product,
+    changes: ProductChanges
   ) => void;
 }) {
   return (
@@ -476,12 +561,22 @@ function ProductRow({
       </td>
 
       <td className="px-4 py-4 text-right">
-        <Link
-          href={`/seller/${product.business.id}`}
-          className="rounded-xl border border-[#EAE6DF] bg-[#FCFAF6] px-3 py-2 text-xs font-bold text-[#6F675F] hover:bg-[#FFF0D9]"
-        >
-          View seller
-        </Link>
+        <div className="flex items-center justify-end gap-2">
+          <Link
+            href={`/admin/businesses/${product.business.id}`}
+            className="inline-flex items-center gap-1.5 rounded-xl border border-[#EAE6DF] bg-[#FCFAF6] px-3 py-2 text-xs font-bold text-[#6F675F] transition hover:bg-[#FFF0D9]"
+          >
+            View Business
+          </Link>
+
+          <Link
+            href={`/admin/businesses/${product.business.id}/products/${product.id}/edit`}
+            className="inline-flex items-center gap-1.5 rounded-xl bg-[#FF5A36] px-3 py-2 text-xs font-bold text-white transition hover:bg-[#E94B29]"
+          >
+            <Pencil size={14} />
+            Edit
+          </Link>
+        </div>
       </td>
     </tr>
   );
@@ -495,8 +590,8 @@ function ProductMobileCard({
   product: Product;
   updating: boolean;
   onUpdate: (
-    id: string,
-    changes: Partial<Product>
+    product: Product,
+    changes: ProductChanges
   ) => void;
 }) {
   return (
@@ -533,17 +628,29 @@ function ProductMobileCard({
         />
 
         <Link
-          href={`/seller/${product.business.id}`}
+          href={`/admin/businesses/${product.business.id}`}
           className="rounded-xl border border-[#EAE6DF] bg-[#FCFAF6] px-3 py-2 text-xs font-bold text-[#6F675F]"
         >
-          View seller
+          View Business
+        </Link>
+
+        <Link
+          href={`/admin/businesses/${product.business.id}/products/${product.id}/edit`}
+          className="inline-flex items-center gap-1.5 rounded-xl bg-[#FF5A36] px-3 py-2 text-xs font-bold text-white"
+        >
+          <Pencil size={13} />
+          Edit
         </Link>
       </div>
     </article>
   );
 }
 
-function ProductImage({ product }: { product: Product }) {
+function ProductImage({
+  product,
+}: {
+  product: Product;
+}) {
   if (product.imageUrl) {
     return (
       <img
@@ -561,7 +668,11 @@ function ProductImage({ product }: { product: Product }) {
   );
 }
 
-function Price({ product }: { product: Product }) {
+function Price({
+  product,
+}: {
+  product: Product;
+}) {
   if (product.price != null) {
     return `₦${product.price.toLocaleString()}`;
   }
@@ -592,21 +703,25 @@ function AvailabilityButton({
   product: Product;
   updating: boolean;
   onUpdate: (
-    id: string,
-    changes: Partial<Product>
+    product: Product,
+    changes: ProductChanges
   ) => void;
 }) {
   const next =
-    product.availability === "AVAILABLE"
+    product.availability ===
+    "AVAILABLE"
       ? "ASK_SELLER"
-      : product.availability === "ASK_SELLER"
+      : product.availability ===
+          "ASK_SELLER"
         ? "UNAVAILABLE"
         : "AVAILABLE";
 
   const label =
-    product.availability === "AVAILABLE"
+    product.availability ===
+    "AVAILABLE"
       ? "Available"
-      : product.availability === "ASK_SELLER"
+      : product.availability ===
+          "ASK_SELLER"
         ? "Ask seller"
         : "Unavailable";
 
@@ -615,7 +730,7 @@ function AvailabilityButton({
       type="button"
       disabled={updating}
       onClick={() =>
-        onUpdate(product.id, {
+        onUpdate(product, {
           availability: next,
         })
       }
@@ -635,19 +750,22 @@ function StatusButton({
   product: Product;
   updating: boolean;
   onUpdate: (
-    id: string,
-    changes: Partial<Product>
+    product: Product,
+    changes: ProductChanges
   ) => void;
 }) {
-  const active = product.status === "ACTIVE";
+  const active =
+    product.status === "ACTIVE";
 
   return (
     <button
       type="button"
       disabled={updating}
       onClick={() =>
-        onUpdate(product.id, {
-          status: active ? "INACTIVE" : "ACTIVE",
+        onUpdate(product, {
+          status: active
+            ? "INACTIVE"
+            : "ACTIVE",
         })
       }
       className={`rounded-full px-2.5 py-1 text-[11px] font-bold disabled:opacity-50 ${
@@ -682,15 +800,22 @@ function FilterSelect({
       <select
         value={value}
         onChange={(event) =>
-          onChange(event.target.value)
+          onChange(
+            event.target.value
+          )
         }
         className="h-11 min-w-[155px] appearance-none rounded-xl border border-[#EAE6DF] bg-[#FCFAF6] pl-3 pr-9 text-sm font-medium text-[#6F675F] outline-none focus:border-[#FF5A36]"
       >
-        {options.map(([value, label]) => (
-          <option key={value} value={value}>
-            {label}
-          </option>
-        ))}
+        {options.map(
+          ([value, label]) => (
+            <option
+              key={value}
+              value={value}
+            >
+              {label}
+            </option>
+          )
+        )}
       </select>
 
       <ChevronDown

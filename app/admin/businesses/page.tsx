@@ -5,13 +5,14 @@ import {
   ArrowLeft,
   Check,
   ChevronDown,
-  CircleOff,
+  Eye,
   LayoutDashboard,
   Package,
+  PackagePlus,
+  Plus,
   Search,
   Store,
   X,
-  Plus
 } from "lucide-react";
 import { useEffect, useState } from "react";
 
@@ -85,10 +86,16 @@ export default function AdminBusinessesPage() {
       const data = await response.json();
 
       if (!response.ok) {
-        throw new Error(data.error || "Unable to load businesses");
+        throw new Error(
+          data.error || "Unable to load businesses"
+        );
       }
 
-      setBusinesses(data.businesses);
+      setBusinesses(
+        Array.isArray(data.businesses)
+          ? data.businesses
+          : []
+      );
     } catch (error) {
       console.error(error);
       setError("We couldn't load the businesses.");
@@ -113,26 +120,34 @@ export default function AdminBusinessesPage() {
       setUpdatingId(id);
       setError("");
 
-      const response = await fetch(`/api/admin/businesses/${id}`, {
-        method: "PATCH",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify(changes),
-      });
+      const response = await fetch(
+        `/api/admin/businesses/${id}`,
+        {
+          method: "PATCH",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify(changes),
+        }
+      );
 
       const data = await response.json();
 
       if (!response.ok) {
-        throw new Error(data.error || "Unable to update business");
+        throw new Error(
+          data.error || "Unable to update business"
+        );
       }
+
+      const updatedBusiness =
+        data.business ?? data;
 
       setBusinesses((current) =>
         current.map((business) =>
           business.id === id
             ? {
                 ...business,
-                ...data.business,
+                ...updatedBusiness,
               }
             : business
         )
@@ -216,28 +231,30 @@ export default function AdminBusinessesPage() {
             >
               Marketplace
             </Link>
-            <div className="mb-6 flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
-            <div>
-              <h1 className="text-2xl font-black tracking-tight sm:text-3xl">
-               Businesses
-              </h1>
-
-           <p className="mt-1 text-sm text-[#81776F]">
-                Manage businesses listed on ReMarket.
-           </p>
-             </div>
-
-           <Link
-          href="/admin/businesses/new"
-            className="inline-flex h-10 items-center justify-center gap-2 rounded-xl bg-[#FF5A36] px-4 text-sm font-extrabold text-white shadow-sm transition hover:bg-[#E94B29]"
-             >
-             <Plus size={17} />
-             Add Business
-           </Link>
-            </div>
           </header>
 
           <div className="p-4 sm:p-6">
+            {/* Page heading */}
+            <div className="mb-6 flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
+              <div>
+                <h2 className="text-2xl font-black tracking-tight text-[#17202A] sm:text-3xl">
+                  Businesses
+                </h2>
+
+                <p className="mt-1 text-sm text-[#81776F]">
+                  Manage businesses listed on ReMarket.
+                </p>
+              </div>
+
+              <Link
+                href="/admin/businesses/new"
+                className="inline-flex h-10 items-center justify-center gap-2 rounded-xl bg-[#FF5A36] px-4 text-sm font-extrabold text-white shadow-sm transition hover:bg-[#E94B29]"
+              >
+                <Plus size={17} />
+                Add Business
+              </Link>
+            </div>
+
             {/* Mobile nav */}
             <div className="mb-5 flex gap-2 overflow-x-auto lg:hidden">
               {NAV_ITEMS.map((item) => {
@@ -258,17 +275,6 @@ export default function AdminBusinessesPage() {
                   </Link>
                 );
               })}
-            </div>
-
-            {/* Page heading */}
-            <div className="mb-6">
-              <h2 className="text-2xl font-black tracking-tight text-[#17202A]">
-                Manage businesses
-              </h2>
-
-              <p className="mt-1 text-sm text-[#8A8178]">
-                Search, verify and manage sellers on ReMarket.
-              </p>
             </div>
 
             {/* Filters */}
@@ -355,7 +361,7 @@ export default function AdminBusinessesPage() {
               <div className="overflow-hidden rounded-2xl border border-[#EAE6DF] bg-white">
                 {/* Desktop table */}
                 <div className="hidden overflow-x-auto md:block">
-                  <table className="w-full min-w-[850px]">
+                  <table className="w-full min-w-[1150px]">
                     <thead className="border-b border-[#EAE6DF] bg-[#FCFAF6]">
                       <tr>
                         <th className="px-4 py-3 text-left text-[11px] font-bold uppercase tracking-wide text-[#8A8178]">
@@ -478,12 +484,38 @@ function BusinessRow({
         />
       </td>
 
-      <td className="px-4 py-4 text-right">
-        <AvailabilityButton
-          business={business}
-          updating={updating}
-          onUpdate={onUpdate}
-        />
+      <td className="px-4 py-4">
+        <div className="flex items-center justify-end gap-2">
+          <Link
+            href={`/admin/businesses/${business.id}`}
+            className="inline-flex items-center gap-1.5 rounded-xl border border-[#EAE6DF] bg-[#FCFAF6] px-3 py-2 text-[11px] font-bold text-[#6F675F] transition hover:bg-[#FFF0D9]"
+          >
+            <Eye size={14} />
+            View
+          </Link>
+
+          <Link
+            href={`/admin/businesses/${business.id}/products/new`}
+            className="inline-flex items-center gap-1.5 rounded-xl bg-[#FF5A36] px-3 py-2 text-[11px] font-bold text-white transition hover:bg-[#E94B29]"
+          >
+            <PackagePlus size={14} />
+            Add Product
+          </Link>
+
+          <Link
+            href={`/admin/businesses/${business.id}`}
+            className="inline-flex items-center gap-1.5 rounded-xl border border-[#EAE6DF] bg-white px-3 py-2 text-[11px] font-bold text-[#6F675F] transition hover:bg-[#FCFAF6]"
+          >
+            <Package size={14} />
+            Products
+          </Link>
+
+          <AvailabilityButton
+            business={business}
+            updating={updating}
+            onUpdate={onUpdate}
+          />
+        </div>
       </td>
     </tr>
   );
@@ -530,7 +562,33 @@ function BusinessMobileCard({
         ))}
       </div>
 
-      <div className="mt-4 flex flex-wrap gap-2">
+      <div className="mt-4 grid grid-cols-2 gap-2">
+        <Link
+          href={`/admin/businesses/${business.id}`}
+          className="inline-flex items-center justify-center gap-1.5 rounded-xl border border-[#EAE6DF] bg-[#FCFAF6] px-3 py-2.5 text-[11px] font-bold text-[#6F675F] transition hover:bg-[#FFF0D9]"
+        >
+          <Eye size={14} />
+          View
+        </Link>
+
+        <Link
+          href={`/admin/businesses/${business.id}/products/new`}
+          className="inline-flex items-center justify-center gap-1.5 rounded-xl bg-[#FF5A36] px-3 py-2.5 text-[11px] font-bold text-white transition hover:bg-[#E94B29]"
+        >
+          <PackagePlus size={14} />
+          Add Product
+        </Link>
+
+        <Link
+          href={`/admin/businesses/${business.id}`}
+          className="inline-flex items-center justify-center gap-1.5 rounded-xl border border-[#EAE6DF] bg-white px-3 py-2.5 text-[11px] font-bold text-[#6F675F] transition hover:bg-[#FCFAF6]"
+        >
+          <Package size={14} />
+          Products
+        </Link>
+      </div>
+
+      <div className="mt-3 flex flex-wrap gap-2">
         <VerificationButton
           business={business}
           updating={updating}
