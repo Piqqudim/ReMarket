@@ -709,7 +709,7 @@ export default function ShopPage() {
                 </button>
 
                 {categories
-                  .slice(0, 6)
+                  .slice(0, categories.length)
                   .map(
                     (item) => {
                       const style =
@@ -920,7 +920,7 @@ export default function ShopPage() {
                                 className="overflow-hidden rounded-xl border border-[#E8E4DE] bg-white transition hover:-translate-y-0.5 hover:shadow-md"
                               >
                                 <Link
-                                  href={`/business/${business.id}`}
+                                  href={`/seller/${business.id}`}
                                   className="relative flex h-[116px] items-center justify-center overflow-hidden"
                                   style={{
                                     backgroundColor:
@@ -955,7 +955,7 @@ export default function ShopPage() {
                                   <div className="flex items-start justify-between gap-2">
                                     <div className="min-w-0">
                                       <Link
-                                        href={`/business/${business.id}`}
+                                        href={`/seller/${business.id}`}
                                         className="block truncate text-sm font-bold text-[#17202A] hover:text-[#9F2D18]"
                                       >
                                         {
@@ -1073,7 +1073,7 @@ export default function ShopPage() {
                                   )}
 
                                   <Link
-                                    href={`/business/${business.id}`}
+                                    href={`/seller/${business.id}`}
                                     className="mt-3 flex w-full items-center justify-center gap-2 rounded-lg bg-[#FFF1ED] py-2.5 text-[11px] font-bold text-[#9F2D18]"
                                   >
                                     Browse

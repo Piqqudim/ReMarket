@@ -767,7 +767,7 @@ export default function NearMePage() {
                                 className="overflow-hidden rounded-xl border border-[#E8E4DE] bg-white transition hover:-translate-y-0.5 hover:shadow-md"
                               >
                                 <Link
-                                  href={`/business/${business.id}`}
+                                  href={`/seller/${business.id}`}
                                   className="relative flex h-[110px] items-center justify-center overflow-hidden bg-[#FFE0D6]"
                                 >
                                   {business.imageUrl ? (
@@ -808,7 +808,7 @@ export default function NearMePage() {
                                   <div className="flex items-start justify-between gap-2">
                                     <div className="min-w-0">
                                       <Link
-                                        href={`/business/${business.id}`}
+                                        href={`/seller/${business.id}`}
                                         className="truncate text-sm font-bold text-[#17202A] hover:text-[#9F2D18]"
                                       >
                                         {
@@ -907,7 +907,7 @@ export default function NearMePage() {
                                   )}
 
                                   <Link
-                                    href={`/business/${business.id}`}
+                                    href={`/seller/${business.id}`}
                                     className="mt-3 flex w-full items-center justify-center gap-2 rounded-lg bg-[#FFF1ED] py-2.5 text-[11px] font-bold text-[#9F2D18]"
                                   >
                                     Browse

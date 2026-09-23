@@ -2,7 +2,6 @@
 
 import {
   ReactNode,
-  SyntheticEvent,
   useEffect,
   useState,
 } from "react";
@@ -34,6 +33,13 @@ import {
 } from "lucide-react";
 
 import Link from "next/link";
+
+import {
+  getSavedBusinesses,
+  saveBusiness,
+  removeSavedBusiness,
+  SAVED_BUSINESSES_CHANGED_EVENT,
+} from "@/lib/saved";
 
 const CATEGORY_STYLE: Record<
   string,
@@ -104,6 +110,7 @@ type Business = {
     handle: string;
   }[];
 };
+
 type FeaturedBusiness = {
   id: string;
   name: string;
@@ -139,6 +146,7 @@ type FeaturedBusiness = {
     handle: string;
   }[];
 };
+
 type NearbyBusiness = {
   id: string;
   name: string;
@@ -237,8 +245,62 @@ export default function HomePage() {
   const [nearbyError, setNearbyError] =
     useState("");
 
+  /*
+   * Saved businesses
+   *
+   * We store only the IDs here because the actual
+   * saved business records remain in lib/saved.ts.
+   */
+  const [savedBusinessIds, setSavedBusinessIds] =
+    useState<Set<string>>(new Set());
+
   const router = useRouter();
 
+  /*
+   * Load saved businesses and keep the homepage
+   * synchronized with the global saved-business state.
+   */
+  useEffect(() => {
+    const syncSavedBusinesses = () => {
+      const saved = getSavedBusinesses();
+
+      setSavedBusinessIds(
+        new Set(
+          saved.map(
+            (business) => business.id
+          )
+        )
+      );
+    };
+
+    syncSavedBusinesses();
+
+    window.addEventListener(
+      SAVED_BUSINESSES_CHANGED_EVENT,
+      syncSavedBusinesses
+    );
+
+    window.addEventListener(
+      "storage",
+      syncSavedBusinesses
+    );
+
+    return () => {
+      window.removeEventListener(
+        SAVED_BUSINESSES_CHANGED_EVENT,
+        syncSavedBusinesses
+      );
+
+      window.removeEventListener(
+        "storage",
+        syncSavedBusinesses
+      );
+    };
+  }, []);
+
+  /*
+   * Load homepage data.
+   */
   useEffect(() => {
     let cancelled = false;
 
@@ -257,24 +319,33 @@ export default function HomePage() {
           }),
         ]);
 
-        /* Categories */
+        /*
+         * Categories
+         */
 
         if (categoriesResponse.ok) {
           const categoryData =
             await categoriesResponse.json();
 
           if (
-            Array.isArray(categoryData.categories) &&
+            Array.isArray(
+              categoryData.categories
+            ) &&
             categoryData.categories.length > 0 &&
             !cancelled
           ) {
             setCategories(
-              categoryData.categories.slice(0, categoryData.categories.length)
+              categoryData.categories.slice(
+                0,
+                categoryData.categories.length
+              )
             );
           }
         }
 
-        /* Featured Businesses */
+        /*
+         * Featured Businesses
+         */
 
         if (featuredResponse.ok) {
           const featuredData =
@@ -282,8 +353,13 @@ export default function HomePage() {
 
           if (!cancelled) {
             setFeaturedBusinesses(
-              Array.isArray(featuredData.businesses)
-                ? featuredData.businesses.slice(0, 5)
+              Array.isArray(
+                featuredData.businesses
+              )
+                ? featuredData.businesses.slice(
+                    0,
+                    5
+                  )
                 : []
             );
           }
@@ -310,8 +386,48 @@ export default function HomePage() {
 
   function handleCategory(category: string) {
     router.push(
-      `/shop?category=${encodeURIComponent(category)}`
+      `/shop?category=${encodeURIComponent(
+        category
+      )}`
     );
+  }
+
+  /*
+   * Save / unsave a featured business.
+   */
+  function handleSaveBusiness(
+    event: React.MouseEvent<HTMLButtonElement>,
+    business: FeaturedBusiness,
+    category: string,
+    location: string
+  ) {
+    event.preventDefault();
+    event.stopPropagation();
+
+    const alreadySaved =
+      savedBusinessIds.has(business.id);
+
+    if (alreadySaved) {
+      removeSavedBusiness(
+        business.id
+      );
+
+      return;
+    }
+
+    saveBusiness({
+      id: business.id,
+      name: business.name,
+      area: location,
+      category,
+      verified:
+        business.verification ===
+        "VERIFIED",
+      availability:
+        business.availability,
+      imageUrl:
+        business.imageUrl ?? null,
+    });
   }
 
   const loadNearbyBusinesses = () => {
@@ -319,7 +435,9 @@ export default function HomePage() {
       setNearbyError(
         "Location is not supported by this browser"
       );
+
       setNearbyLocationRequested(true);
+
       return;
     }
 
@@ -352,7 +470,10 @@ export default function HomePage() {
             await response.json();
 
           setNearbyBusiness(
-            (data.businesses ?? []).slice(0, 4)
+            (data.businesses ?? []).slice(
+              0,
+              4
+            )
           );
         } catch (error) {
           console.error(error);
@@ -381,7 +502,9 @@ export default function HomePage() {
     );
   };
 
-  const submit = (event: React.SubmitEvent<HTMLFormElement>) => {
+  const submit = (
+    event: React.FormEvent<HTMLFormElement>
+  ) => {
     event.preventDefault();
 
     const query = q.trim();
@@ -423,8 +546,6 @@ export default function HomePage() {
 
             <nav className="hidden items-center gap-1 md:flex">
               {NAV_ITEMS.map((item) => {
-                const Icon = item.icon;
-
                 return (
                   <button
                     key={item.label}
@@ -459,14 +580,16 @@ export default function HomePage() {
                 <Search className="h-[19px] w-[19px] text-gray-700" />
               </button>
 
-             <button
+              <button
                 type="button"
-                    onClick={() => router.push("/saved")}
-                  className="hidden h-9 w-9 items-center justify-center rounded-full hover:bg-gray-50 sm:flex"
+                onClick={() =>
+                  router.push("/saved")
+                }
+                className="hidden h-9 w-9 items-center justify-center rounded-full hover:bg-gray-50 sm:flex"
                 aria-label="Saved"
-                >
-              <Heart className="h-[19px] w-[19px] text-gray-700" />
-                  </button>
+              >
+                <Heart className="h-[19px] w-[19px] text-gray-700" />
+              </button>
 
               <button
                 type="button"
@@ -522,7 +645,9 @@ export default function HomePage() {
                 <div className="mt-3 space-y-1">
                   {categories.map((category) => {
                     const style =
-                      getCategoryStyle(category.name);
+                      getCategoryStyle(
+                        category.name
+                      );
 
                     return (
                       <button
@@ -583,26 +708,23 @@ export default function HomePage() {
                 <section className="relative min-h-[260px] overflow-hidden rounded-[18px] bg-[#FF5A36] px-6 py-7 text-white shadow-soft sm:min-h-[275px] sm:px-8 sm:py-9 lg:min-h-[275px] lg:px-8">
 
                   <div className="absolute -right-16 -top-24 h-[260px] w-[260px] rounded-full bg-white/5">
-
                     <div className="pointer-events-none absolute right-6 top-7 hidden opacity-90 md:block lg:right-12">
-                      
-                        <div className="relative h-[190px] w-[220px]">
-                          <div className="absolute bottom-3 left-8 h-[110px] w-[105px] rotate-[-8deg] rounded-b-xl bg-white/70" />
+                      <div className="relative h-[190px] w-[220px]">
+                        <div className="absolute bottom-3 left-8 h-[110px] w-[105px] rotate-[-8deg] rounded-b-xl bg-white/70" />
 
-                          <div className="absolute left-[55px] top-3 h-[80px] w-[65px] rounded-t-[40px] border-[10px] border-white/60 border-b-0" />
+                        <div className="absolute left-[55px] top-3 h-[80px] w-[65px] rounded-t-[40px] border-[10px] border-white/60 border-b-0" />
 
-                          <div className="absolute bottom-0 right-3 flex h-[82px] w-[65px] rotate-[8deg] items-center justify-center rounded-[28px_28px_35px_35px] bg-white/40">
-                            <div className="h-10 w-10 rounded-full border-[8px] border-white/90" />
-                          </div>
+                        <div className="absolute bottom-0 right-3 flex h-[82px] w-[65px] rotate-[8deg] items-center justify-center rounded-[28px_28px_35px_35px] bg-white/40">
+                          <div className="h-10 w-10 rounded-full border-[8px] border-white/90" />
+                        </div>
 
-                          <div className="absolute right-0 top-[95px] h-12 w-12 rotate-45 rounded-t-[28px] rounded-br-[28px] bg-white/70">
-                            <div className="absolute left-1/2 top-1/2 h-4 w-4 -translate-x-1/2 -translate-y-1/2 rounded-full bg-[#FF5A36]" />
-                          </div>
+                        <div className="absolute right-0 top-[95px] h-12 w-12 rotate-45 rounded-t-[28px] rounded-br-[28px] bg-white/70">
+                          <div className="absolute left-1/2 top-1/2 h-4 w-4 -translate-x-1/2 -translate-y-1/2 rounded-full bg-[#FF5A36]" />
+                        </div>
 
-                          <div className="absolute right-[105px] top-0 h-4 w-1 rotate-[-35deg] bg-white/70" />
+                        <div className="absolute right-[105px] top-0 h-4 w-1 rotate-[-35deg] bg-white/70" />
 
-                          <div className="absolute right-[130px] top-5 h-3 w-1 rotate-[-50deg] bg-white/70" />
-                        
+                        <div className="absolute right-[130px] top-5 h-3 w-1 rotate-[-50deg] bg-white/70" />
                       </div>
                     </div>
                   </div>
@@ -632,7 +754,9 @@ export default function HomePage() {
                         id="homepage-search"
                         value={q}
                         onChange={(event) =>
-                          setQ(event.target.value)
+                          setQ(
+                            event.target.value
+                          )
                         }
                         placeholder="What are you looking for?"
                         className="min-w-0 flex-1 bg-transparent px-3 text-xs text-gray-800 outline-none placeholder:text-gray-400"
@@ -833,6 +957,7 @@ export default function HomePage() {
                           size={17}
                           className="animate-spin text-[#FF5A36]"
                         />
+
                         Finding businesses near me
                       </div>
                     </div>
@@ -869,32 +994,41 @@ export default function HomePage() {
                   {/* Businesses */}
 
                   {!nearbyLoading &&
-                    nearbyBusinesses.length > 0 && (
+                    nearbyBusinesses.length >
+                      0 && (
                       <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
                         {nearbyBusinesses.map(
                           (business) => (
                             <Link
                               key={business.id}
-                              href={`/business/${business.id}`}
+                              href={`/seller/${business.id}`}
                               className="group rounded-2xl border border-orange-100 bg-white p-4 shadow-card transition hover:-translate-y-0.5 hover:shadow-soft"
                             >
                               <div className="flex items-start justify-between gap-3">
                                 <div className="flex min-w-0 items-center gap-3">
-                                 <div className="h-10 w-10 shrink-0 overflow-hidden rounded-full bg-orange-100">
-                                        {business.imageUrl ? (
-                                  <img
-                                    src={business.imageUrl}
-                                      alt={business.name}
-                                      className="h-full w-full object-cover"
-    />
-                                          ) : (
-                                <div className="flex h-full w-full items-center justify-center text-xs font-bold text-[#9F2D18]">
-                              {business.name
-                                    .slice(0, 2)
-                                    .toUpperCase()}
+                                  <div className="h-10 w-10 shrink-0 overflow-hidden rounded-full bg-orange-100">
+                                    {business.imageUrl ? (
+                                      <img
+                                        src={
+                                          business.imageUrl
+                                        }
+                                        alt={
+                                          business.name
+                                        }
+                                        className="h-full w-full object-cover"
+                                      />
+                                    ) : (
+                                      <div className="flex h-full w-full items-center justify-center text-xs font-bold text-[#9F2D18]">
+                                        {business.name
+                                          .slice(
+                                            0,
+                                            2
+                                          )
+                                          .toUpperCase()}
+                                      </div>
+                                    )}
                                   </div>
-                                 )}
-                                    </div>
+
                                   <div className="min-w-0">
                                     <p className="truncate text-sm font-bold">
                                       {business.name}
@@ -928,7 +1062,8 @@ export default function HomePage() {
                                     </span>
 
                                     <span className="shrink-0">
-                                      {business.distanceKm} km
+                                      {business.distanceKm}{" "}
+                                      km
                                     </span>
                                   </>
                                 )}
@@ -950,7 +1085,8 @@ export default function HomePage() {
                   {/* View All */}
 
                   {!nearbyLoading &&
-                    nearbyBusinesses.length > 0 && (
+                    nearbyBusinesses.length >
+                      0 && (
                       <Link
                         href="/near-me"
                         className="mt-4 flex items-center justify-center gap-2 rounded-xl border border-orange-100 bg-white py-3 text-xs font-semibold text-[#9F2D18] transition hover:bg-orange-50"
@@ -1042,35 +1178,46 @@ export default function HomePage() {
                               business.area ||
                               "Local";
 
+                            const isSaved =
+                              savedBusinessIds.has(
+                                business.id
+                              );
+
                             return (
                               <article
                                 key={business.id}
                                 className="overflow-hidden rounded-xl border border-[#E8E4DE] bg-white transition hover:-translate-y-0.5 hover:shadow-md"
                               >
                                 {/* Business Visual */}
-                                <Link
-                                   href={`/business/${business.id}`}
-                                    className="relative flex h-[92px] items-center justify-center overflow-hidden"
-                                    style={{
-                                       backgroundColor: style.bg,
-                                              }}
-                                              >
-                                   {business.imageUrl ? (
-                             <img
-                                 src={business.imageUrl}
-                            alt={business.name}
-                            className="h-full w-full object-cover"
-                                   />
-                              ) : (
-                           <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-white/75 shadow-sm">
-                              <Store className="h-7 w-7 text-gray-700" />
-                           </div>
-                               )}
 
-                    <span className="absolute right-3 top-3 rounded-full bg-[#DDF5EA] px-2.5 py-1 text-[9px] font-semibold text-[#137A59]">
-                          Active
-                    </span>
-                  </Link>
+                                <Link
+                                  href={`/seller/${business.id}`}
+                                  className="relative flex h-[92px] items-center justify-center overflow-hidden"
+                                  style={{
+                                    backgroundColor:
+                                      style.bg,
+                                  }}
+                                >
+                                  {business.imageUrl ? (
+                                    <img
+                                      src={
+                                        business.imageUrl
+                                      }
+                                      alt={
+                                        business.name
+                                      }
+                                      className="h-full w-full object-cover"
+                                    />
+                                  ) : (
+                                    <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-white/75 shadow-sm">
+                                      <Store className="h-7 w-7 text-gray-700" />
+                                    </div>
+                                  )}
+
+                                  <span className="absolute right-3 top-3 rounded-full bg-[#DDF5EA] px-2.5 py-1 text-[9px] font-semibold text-[#137A59]">
+                                    Active
+                                  </span>
+                                </Link>
 
                                 <div className="p-3.5">
                                   <div className="flex items-start justify-between gap-2">
@@ -1079,7 +1226,9 @@ export default function HomePage() {
                                         href={`/seller/${business.id}`}
                                         className="block truncate text-sm font-bold text-[#17202A]"
                                       >
-                                        {business.name}
+                                        {
+                                          business.name
+                                        }
                                       </Link>
 
                                       <p className="mt-1 truncate text-[10px] text-muted">
@@ -1088,15 +1237,42 @@ export default function HomePage() {
                                       </p>
                                     </div>
 
+                                    {/* Save Button */}
+
                                     <button
                                       type="button"
-                                      aria-label={`Save ${business.name}`}
-                                      onClick={(event) =>
-                                        event.stopPropagation()
+                                      aria-label={
+                                        isSaved
+                                          ? `Remove ${business.name} from saved`
+                                          : `Save ${business.name}`
                                       }
-                                      className="shrink-0 text-gray-500 transition hover:text-[#9F2D18]"
+                                      aria-pressed={
+                                        isSaved
+                                      }
+                                      onClick={(
+                                        event
+                                      ) =>
+                                        handleSaveBusiness(
+                                          event,
+                                          business,
+                                          category,
+                                          location
+                                        )
+                                      }
+                                      className={`shrink-0 transition ${
+                                        isSaved
+                                          ? "text-[#FF5A36]"
+                                          : "text-gray-500 hover:text-[#9F2D18]"
+                                      }`}
                                     >
-                                      <Bookmark className="h-4 w-4" />
+                                      <Bookmark
+                                        className="h-4 w-4"
+                                        fill={
+                                          isSaved
+                                            ? "currentColor"
+                                            : "none"
+                                        }
+                                      />
                                     </button>
                                   </div>
 
@@ -1115,7 +1291,9 @@ export default function HomePage() {
                                       <Package className="h-3 w-3" />
 
                                       <span>
-                                        {business.productCount}{" "}
+                                        {
+                                          business.productCount
+                                        }{" "}
                                         available
                                       </span>
                                     </div>

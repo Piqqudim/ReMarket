@@ -13,88 +13,83 @@ export async function GET(
     params: Promise<{
       id: string;
     }>;
-  }
+  },
 ) {
   try {
-    const { id } =
-      await params;
+    const { id } = await params;
 
     if (!id) {
       return NextResponse.json(
         {
-          error:
-            "Business ID is required",
+          error: "Business ID is required",
         },
         {
           status: 400,
-        }
+        },
       );
     }
 
     const business =
-      await prisma.business.findFirst(
-        {
-          where: {
-            id,
-            status: "ACTIVE",
+      await prisma.business.findFirst({
+        where: {
+          id,
+          status: "ACTIVE",
+        },
+
+        include: {
+          location: true,
+
+          categories: {
+            include: {
+              category: true,
+            },
           },
 
-          include: {
-            location: true,
-
-            categories: {
-              include: {
-                category: true,
-              },
+          products: {
+            where: {
+              status: "ACTIVE",
             },
 
-            products: {
-              where: {
-                status: "ACTIVE",
-              },
+            select: {
+              id: true,
+              name: true,
+              description: true,
+              price: true,
+              priceMin: true,
+              priceMax: true,
+              availability: true,
+              imageUrl: true,
+              keywords: true,
+              updatedAt: true,
 
-              select: {
-                id: true,
-                name: true,
-                description: true,
-                price: true,
-                priceMin: true,
-                priceMax: true,
-                availability: true,
-                imageUrl: true,
-                keywords: true,
-                updatedAt: true,
-
-                images: {
-                  select: {
-                    id: true,
-                    url: true,
-                    publicId: true,
-                    sortOrder: true,
-                    createdAt: true,
-                  },
+              images: {
+                select: {
+                  id: true,
+                  url: true,
+                  publicId: true,
+                  sortOrder: true,
+                  createdAt: true,
                 },
               },
-
-              orderBy: {
-                updatedAt: "desc",
-              },
             },
 
-            socialLinks: true,
+            orderBy: {
+              updatedAt: "desc",
+            },
           },
-        }
-      );
+
+          socialLinks: true,
+        },
+      });
 
     if (!business) {
       return NextResponse.json(
         {
-          error:
-            "Business not found",
+          error: "Business not found",
         },
         {
           status: 404,
-        }
+        },
       );
     }
 
@@ -112,9 +107,19 @@ export async function GET(
       imageUrl:
         business.imageUrl,
 
-      area:
-        business.location?.area ??
-        "Location not added",
+      location: {
+        area:
+          business.location?.area ??
+          "Location not added",
+
+        lat:
+          business.location?.lat ??
+          null,
+
+        long:
+          business.location?.long ??
+          null,
+      },
 
       availability:
         business.availability,
@@ -135,7 +140,7 @@ export async function GET(
       categories:
         business.categories.map(
           (item) =>
-            item.category.name
+            item.category.name,
         ),
 
       products:
@@ -166,38 +171,43 @@ export async function GET(
             keywords:
               product.keywords,
 
-            images:
-              [
-                ...product.images,
-              ]
-                .sort(
-                  (a, b) =>
-                    a.sortOrder -
-                      b.sortOrder ||
-                    a.createdAt.getTime() -
-                      b.createdAt.getTime()
-                )
-                .map(
-                  (image) => ({
-                    id: image.id,
-                    url: image.url,
-                    publicId:
-                      image.publicId,
-                    sortOrder:
-                      image.sortOrder,
-                  })
-                ),
-          })
+            images: [
+              ...product.images,
+            ]
+              .sort(
+                (a, b) =>
+                  a.sortOrder -
+                    b.sortOrder ||
+                  a.createdAt.getTime() -
+                    b.createdAt.getTime(),
+              )
+              .map(
+                (image) => ({
+                  id: image.id,
+
+                  url: image.url,
+
+                  publicId:
+                    image.publicId,
+
+                  sortOrder:
+                    image.sortOrder,
+                }),
+              ),
+          }),
         ),
 
       socialLinks:
         business.socialLinks.map(
           (link) => ({
             id: link.id,
+
             platform:
               link.platform,
-            handle: link.handle,
-          })
+
+            handle:
+              link.handle,
+          }),
         ),
     };
 
@@ -208,7 +218,7 @@ export async function GET(
   } catch (error) {
     console.error(
       "Business API error:",
-      error
+      error,
     );
 
     return NextResponse.json(
@@ -218,7 +228,7 @@ export async function GET(
       },
       {
         status: 500,
-      }
+      },
     );
   }
 }

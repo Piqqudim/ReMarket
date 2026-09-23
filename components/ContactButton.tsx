@@ -1,11 +1,12 @@
 "use client";
 
 import {
-    ExternalLink,
+  ExternalLink,
   MessageCircle,
   Phone,
   Send,
 } from "lucide-react";
+import { trackContactEvent } from "@/lib/contact-event";
 
 type ContactPlatform =
   | "WHATSAPP"
@@ -17,13 +18,15 @@ type ContactPlatform =
 interface ContactButtonProps {
   platform: ContactPlatform | string;
   handle: string;
+  businessId: string;
+  requestId?: string;
   label?: string;
   compact?: boolean;
 }
 
 function buildContactUrl(
   platform: ContactPlatform | string,
-  handle: string
+  handle: string,
 ): string {
   const clean = handle.trim().replace(/^@/, "");
 
@@ -62,7 +65,7 @@ function buildContactUrl(
     case "PHONE":
       return `tel:${clean.replace(
         /[^\d+]/g,
-        ""
+        "",
       )}`;
 
     default:
@@ -114,19 +117,50 @@ function getLabel(platform: string) {
   }
 }
 
+function isTrackablePlatform(
+  platform: string,
+): platform is ContactPlatform {
+  return (
+    platform === "WHATSAPP" ||
+    platform === "INSTAGRAM" ||
+    platform === "TIKTOK" ||
+    platform === "FACEBOOK" ||
+    platform === "PHONE"
+  );
+}
+
 export default function ContactButton({
   platform,
   handle,
+  businessId,
+  requestId,
   label,
   compact = false,
 }: ContactButtonProps) {
   const url = buildContactUrl(
     platform,
-    handle
+    handle,
   );
 
   const Icon = getIcon(platform);
-  const text = label ?? getLabel(platform);
+  const text =
+    label ?? getLabel(platform);
+
+  function handleContact() {
+    if (!businessId) {
+      return;
+    }
+
+    if (!isTrackablePlatform(platform)) {
+      return;
+    }
+
+    void trackContactEvent({
+      businessId,
+      platform,
+      requestId,
+    });
+  }
 
   return (
     <a
@@ -141,6 +175,7 @@ export default function ContactButton({
           ? undefined
           : "noreferrer"
       }
+      onClick={handleContact}
       className={`inline-flex items-center justify-center gap-2 rounded-xl font-semibold transition ${
         compact
           ? "px-3 py-2 text-xs"

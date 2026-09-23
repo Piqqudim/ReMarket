@@ -4,7 +4,7 @@ import {
 } from "next/server";
 
 import { prisma } from "@/lib/prisma";
-import { requireAdmin } from "@/lib/require-admin";
+import { requireAdmin } from "@/lib/admin-auth";
 import {
   Availability,
   BusinessStatus,
@@ -364,12 +364,12 @@ export async function POST(
         ? body.images
             .filter(
               (
-                value
+                value: any
               ): value is string =>
                 typeof value ===
                 "string"
             )
-            .map((value) =>
+            .map((value:any) =>
               value.trim()
             )
             .filter(Boolean)
@@ -424,8 +424,8 @@ export async function POST(
                     create:
                       imageUrls.map(
                         (
-                          url,
-                          index
+                          url:any,
+                          index:any
                         ) => ({
                           url,
                           sortOrder:

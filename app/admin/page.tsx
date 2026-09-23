@@ -4,12 +4,34 @@ import Link from "next/link";
 import {
   ArrowRight,
   ClipboardList,
+  Contact,
   LayoutDashboard,
   Package,
+  Phone,
   Store,
   Users,
+  MapPin,
+  ExternalLink,
 } from "lucide-react";
 import { useEffect, useState } from "react";
+
+type ContactActivity = {
+  WHATSAPP: number;
+  PHONE: number;
+  INSTAGRAM: number;
+  TIKTOK: number;
+  FACEBOOK: number;
+  DIRECTIONS: number;
+};
+
+const DEFAULT_CONTACT_ACTIVITY: ContactActivity = {
+  WHATSAPP: 0,
+  PHONE: 0,
+  INSTAGRAM: 0,
+  TIKTOK: 0,
+  FACEBOOK: 0,
+  DIRECTIONS: 0,
+};
 
 type Overview = {
   stats: {
@@ -17,20 +39,31 @@ type Overview = {
     products: number;
     requests: number;
     matches: number;
+    contacts: number;
   };
+
+  contactActivity: ContactActivity;
+
   recentRequests: {
     id: string;
     requestCode: string;
     query: string;
     status: string;
+    category?: {
+      id: string;
+      name: string;
+    } | null;
     createdAt: string;
+    matchCount: number;
   }[];
+
   recentBusinesses: {
     id: string;
     name: string;
     verification: string;
     status: string;
-    area: string;
+    availability?: string | null;
+    area: string | null;
     onboardedAt: string;
   }[];
 };
@@ -85,8 +118,107 @@ function statusClass(status: string) {
   }
 }
 
+function verificationClass(verification: string) {
+  switch (verification) {
+    case "VERIFIED":
+      return "bg-[#E7F7EF] text-[#287A4B]";
+
+    case "PENDING":
+      return "bg-[#FFF0D9] text-[#9F5A18]";
+
+    case "REJECTED":
+      return "bg-[#FCE8E6] text-[#B42318]";
+
+    default:
+      return "bg-[#F0ECE7] text-[#6F675F]";
+  }
+}
+
+function ContactActivityCard({
+  label,
+  value,
+  icon: Icon,
+}: {
+  label: string;
+  value: number;
+  icon: typeof Contact;
+}) {
+  return (
+    <div className="rounded-2xl border border-[#E8DED3] bg-white p-5">
+      <div className="flex items-center justify-between">
+        <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-[#FFF0E8] text-[#9F2D18]">
+          <Icon className="h-5 w-5" />
+        </div>
+
+        <span className="text-2xl font-semibold text-[#2E241F]">
+          {value}
+        </span>
+      </div>
+
+      <p className="mt-4 text-sm font-medium text-[#6F675F]">
+        {label}
+      </p>
+    </div>
+  );
+}
+
+function StatCard({
+  label,
+  value,
+  icon: Icon,
+  href,
+}: {
+  label: string;
+  value: number;
+  icon: typeof Store;
+  href?: string;
+}) {
+  const content = (
+    <div className="rounded-2xl border border-[#E8DED3] bg-white p-5 transition hover:border-[#D8C9BC]">
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <p className="text-sm font-medium text-[#6F675F]">
+            {label}
+          </p>
+
+          <p className="mt-2 text-3xl font-semibold tracking-tight text-[#2E241F]">
+            {value}
+          </p>
+        </div>
+
+        <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-[#FFF0E8] text-[#9F2D18]">
+          <Icon className="h-5 w-5" />
+        </div>
+      </div>
+
+      {href && (
+        <div className="mt-4 flex items-center gap-1 text-xs font-medium text-[#9F2D18]">
+          View details
+          <ArrowRight className="h-3.5 w-3.5" />
+        </div>
+      )}
+    </div>
+  );
+
+  if (!href) {
+    return content;
+  }
+
+  return (
+    <Link href={href}>
+      {content}
+    </Link>
+  );
+}
+
 export default function AdminPage() {
   const [data, setData] = useState<Overview | null>(null);
+
+  const [contactActivity, setContactActivity] =
+    useState<ContactActivity>(
+      DEFAULT_CONTACT_ACTIVITY,
+    );
+
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
@@ -96,21 +228,42 @@ export default function AdminPage() {
         setLoading(true);
         setError("");
 
-        const response = await fetch("/api/admin/overview");
+        const response = await fetch(
+          "/api/admin/overview",
+          {
+            cache: "no-store",
+          },
+        );
 
         if (!response.ok) {
           const body = await response.text();
-          console.error("Admin overview request failed:", response.status,body);
 
-          throw new Error(`admin overview failed (${response.status,body}): ${body}`);
+          console.error(
+            "Admin overview request failed:",
+            response.status,
+            body,
+          );
+
+          throw new Error(
+            `Admin overview failed (${response.status}): ${body}`,
+          );
         }
 
-        const result: Overview = await response.json();
+        const result: Overview =
+          await response.json();
 
         setData(result);
+
+        setContactActivity(
+          result.contactActivity ??
+            DEFAULT_CONTACT_ACTIVITY,
+        );
       } catch (error) {
         console.error(error);
-        setError("We couldn't load the admin dashboard.");
+
+        setError(
+          "We couldn't load the admin dashboard.",
+        );
       } finally {
         setLoading(false);
       }
@@ -120,303 +273,435 @@ export default function AdminPage() {
   }, []);
 
   return (
-    <main className="min-h-screen bg-[#FFF7ED] px-3 py-3 sm:px-5 sm:py-5">
-      <div className="mx-auto flex min-h-[calc(100vh-24px)] max-w-[1500px] overflow-hidden rounded-[22px] border border-[#FF5A36] bg-[#FFFDFC] shadow-sm sm:min-h-[calc(100vh-40px)]">
+    <div className="min-h-screen bg-[#FAF6EF] text-[#2E241F]">
+      <div className="flex min-h-screen">
         {/* Sidebar */}
-        <aside className="hidden w-[190px] shrink-0 border-r border-[#EAE6DF] bg-[#FCFAF6] lg:block">
-          <div className="flex h-[66px] items-center border-b border-[#EAE6DF] px-5">
-            <Link href="/admin" className="text-xl font-black tracking-tight">
-              <span className="text-[#FF5A36]">Re</span>
-              <span className="text-[#17202A]">Market</span>
-            </Link>
-          </div>
+        <aside className="hidden w-64 shrink-0 border-r border-[#E8DED3] bg-[#FFFDFC] lg:block">
+          <div className="sticky top-0 flex h-screen flex-col">
+            <div className="border-b border-[#E8DED3] px-6 py-6">
+              <Link
+                href="/admin"
+                className="flex items-center gap-3"
+              >
+                <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-[#9F2D18] text-sm font-bold text-white">
+                  R
+                </div>
 
-          <div className="px-3 py-5">
-            <p className="mb-3 px-3 text-[11px] font-bold uppercase tracking-wider text-[#A39A91]">
-              Admin
-            </p>
+                <div>
+                  <p className="font-semibold text-[#2E241F]">
+                    ReMarket
+                  </p>
 
-            <nav className="space-y-1">
-              {ADMIN_NAV.map((item) => {
-                const Icon = item.icon;
+                  <p className="text-xs text-[#8B8178]">
+                    Admin
+                  </p>
+                </div>
+              </Link>
+            </div>
 
-                return (
-                  <Link
-                    key={item.href}
-                    href={item.href}
-                    className={`flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-semibold transition ${
-                      item.href === "/admin"
-                        ? "bg-[#FFE0D6] text-[#9F2D18]"
-                        : "text-[#6F675F] hover:bg-[#FFF0D9]"
-                    }`}
-                  >
-                    <Icon size={18} />
-                    {item.label}
-                  </Link>
-                );
-              })}
+            <nav className="flex-1 px-4 py-6">
+              <p className="mb-3 px-3 text-[11px] font-semibold uppercase tracking-wider text-[#9A9087]">
+                Dashboard
+              </p>
+
+              <div className="space-y-1">
+                {ADMIN_NAV.map((item) => {
+                  const Icon = item.icon;
+                  const active =
+                    item.href === "/admin";
+
+                  return (
+                    <Link
+                      key={item.href}
+                      href={item.href}
+                      className={`flex items-center gap-3 rounded-xl px-3 py-3 text-sm font-medium transition ${
+                        active
+                          ? "bg-[#FFF0E8] text-[#9F2D18]"
+                          : "text-[#6F675F] hover:bg-[#F7F1EB] hover:text-[#2E241F]"
+                      }`}
+                    >
+                      <Icon className="h-4 w-4" />
+
+                      <span>{item.label}</span>
+                    </Link>
+                  );
+                })}
+              </div>
             </nav>
+
+            <div className="border-t border-[#E8DED3] px-6 py-5">
+              <p className="text-xs text-[#9A9087]">
+                ReMarket Admin
+              </p>
+
+              <p className="mt-1 text-sm font-medium text-[#4B4038]">
+                Platform overview
+              </p>
+            </div>
           </div>
         </aside>
 
         {/* Main */}
-        <section className="min-w-0 flex-1">
-          {/* Header */}
-          <header className="flex h-[66px] items-center justify-between border-b border-[#EAE6DF] px-4 sm:px-6">
-            <div>
-              <p className="text-xs font-medium text-[#8A8178]">
-                ReMarket
-              </p>
+        <main className="min-w-0 flex-1">
+          <div className="mx-auto max-w-7xl px-4 py-6 sm:px-6 lg:px-8 lg:py-8">
+            {/* Header */}
+            <div className="mb-8">
+              <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
+                <div>
+                  <p className="text-sm font-medium text-[#9F2D18]">
+                    Admin Dashboard
+                  </p>
 
-              <h1 className="text-lg font-black text-[#17202A]">
-                Admin Dashboard
-              </h1>
-            </div>
+                  <h1 className="mt-1 text-2xl font-semibold tracking-tight text-[#2E241F] sm:text-3xl">
+                    Overview
+                  </h1>
 
-            <Link
-              href="/"
-              className="rounded-xl border border-[#EAE6DF] bg-white px-3 py-2 text-xs font-bold text-[#6F675F] transition hover:bg-[#FCFAF6]"
-            >
-              View marketplace
-            </Link>
-          </header>
-
-          <div className="p-4 sm:p-6">
-            {/* Mobile nav */}
-            <div className="mb-5 flex gap-2 overflow-x-auto lg:hidden">
-              {ADMIN_NAV.map((item) => {
-                const Icon = item.icon;
-
-                return (
-                  <Link
-                    key={item.href}
-                    href={item.href}
-                    className={`flex shrink-0 items-center gap-2 rounded-xl px-3 py-2 text-xs font-bold ${
-                      item.href === "/admin"
-                        ? "bg-[#FF5A36] text-white"
-                        : "bg-[#FCFAF6] text-[#6F675F]"
-                    }`}
-                  >
-                    <Icon size={15} />
-                    {item.label}
-                  </Link>
-                );
-              })}
-            </div>
-
-            {/* Heading */}
-            <div className="mb-6">
-              <p className="text-sm font-medium text-[#8A8178]">
-                Manage what is happening across ReMarket.
-              </p>
-
-              <h2 className="mt-1 text-2xl font-black tracking-tight text-[#17202A]">
-                Good Day 👋
-              </h2>
-            </div>
-
-            {loading && (
-              <div className="rounded-2xl border border-[#EAE6DF] bg-white p-8 text-center">
-                <p className="text-sm font-medium text-[#8A8178]">
-                  Loading dashboard...
-                </p>
+                  <p className="mt-2 max-w-2xl text-sm leading-6 text-[#766C63]">
+                    Monitor businesses, products,
+                    buyer requests, matches, and
+                    seller contact activity across
+                    ReMarket.
+                  </p>
+                </div>
               </div>
-            )}
+            </div>
 
-            {error && !loading && (
-              <div className="rounded-2xl border border-[#F2C7BC] bg-[#FFF0ED] p-5">
-                <p className="text-sm font-semibold text-[#9F2D18]">
+            {/* Error */}
+            {error && (
+              <div className="mb-6 rounded-2xl border border-[#F1C5BF] bg-[#FFF4F2] px-5 py-4">
+                <p className="text-sm font-medium text-[#B42318]">
                   {error}
                 </p>
               </div>
             )}
 
-            {data && !loading && !error && (
-              <>
-                {/* Stats */}
-                <div className="grid grid-cols-2 gap-3 xl:grid-cols-4">
-                  <StatCard
-                    label="Businesses"
-                    value={data.stats.businesses}
-                    icon={Store}
-                  />
-
-                  <StatCard
-                    label="Products"
-                    value={data.stats.products}
-                    icon={Package}
-                  />
-
-                  <StatCard
-                    label="Requests"
-                    value={data.stats.requests}
-                    icon={ClipboardList}
-                  />
-
-                  <StatCard
-                    label="Matches"
-                    value={data.stats.matches}
-                    icon={Users}
-                  />
+            {/* Loading */}
+            {loading ? (
+              <div className="space-y-6">
+                <div className="grid grid-cols-2 gap-4 xl:grid-cols-5">
+                  {Array.from({
+                    length: 5,
+                  }).map((_, index) => (
+                    <div
+                      key={index}
+                      className="h-32 animate-pulse rounded-2xl border border-[#E8DED3] bg-white"
+                    />
+                  ))}
                 </div>
 
-                {/* Recent sections */}
-                <div className="mt-6 grid gap-5 xl:grid-cols-2">
-                  {/* Requests */}
-                  <section className="overflow-hidden rounded-2xl border border-[#EAE6DF] bg-white">
-                    <div className="flex items-center justify-between border-b border-[#EAE6DF] px-4 py-4">
-                      <div>
-                        <h3 className="font-black text-[#17202A]">
-                          Recent Requests
-                        </h3>
+                <div className="h-64 animate-pulse rounded-2xl border border-[#E8DED3] bg-white" />
 
-                        <p className="mt-1 text-xs text-[#8A8178]">
-                          Latest buyer activity
+                <div className="grid gap-6 xl:grid-cols-2">
+                  <div className="h-80 animate-pulse rounded-2xl border border-[#E8DED3] bg-white" />
+
+                  <div className="h-80 animate-pulse rounded-2xl border border-[#E8DED3] bg-white" />
+                </div>
+              </div>
+            ) : data ? (
+              <>
+                {/* Stats */}
+                <section>
+                  <div className="grid grid-cols-2 gap-4 xl:grid-cols-5">
+                    <StatCard
+                      label="Businesses"
+                      value={data.stats.businesses}
+                      icon={Store}
+                      href="/admin/businesses"
+                    />
+
+                    <StatCard
+                      label="Products"
+                      value={data.stats.products}
+                      icon={Package}
+                      href="/admin/products"
+                    />
+
+                    <StatCard
+                      label="Requests"
+                      value={data.stats.requests}
+                      icon={ClipboardList}
+                      href="/admin/requests"
+                    />
+
+                    <StatCard
+                      label="Matches"
+                      value={data.stats.matches}
+                      icon={Users}
+                    />
+
+                    <StatCard
+                      label="Seller contacts"
+                      value={data.stats.contacts}
+                      icon={Contact}
+                    />
+                  </div>
+                </section>
+
+                {/* Contact Activity */}
+                <section className="mt-6">
+                  <div className="mb-4 flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between">
+                    <div>
+                      <h2 className="text-lg font-semibold text-[#2E241F]">
+                        Contact activity
+                      </h2>
+
+                      <p className="text-sm text-[#766C63]">
+                        How buyers are contacting sellers.
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-4 md:grid-cols-3 xl:grid-cols-6">
+                    <ContactActivityCard
+                      label="WhatsApp"
+                      value={
+                        contactActivity.WHATSAPP
+                      }
+                      icon={Contact}
+                    />
+
+                    <ContactActivityCard
+                      label="Phone"
+                      value={
+                        contactActivity.PHONE
+                      }
+                      icon={Phone}
+                    />
+
+                    <ContactActivityCard
+                      label="Instagram"
+                      value={
+                        contactActivity.INSTAGRAM
+                      }
+                      icon={ExternalLink}
+                    />
+
+                    <ContactActivityCard
+                      label="TikTok"
+                      value={
+                        contactActivity.TIKTOK
+                      }
+                      icon={Contact}
+                    />
+
+                    <ContactActivityCard
+                      label="Facebook"
+                      value={
+                        contactActivity.FACEBOOK
+                      }
+                      icon={ExternalLink}
+                    />
+
+                    <ContactActivityCard
+                      label="Directions"
+                      value={
+                        contactActivity.DIRECTIONS
+                      }
+                      icon={MapPin}
+                    />
+                  </div>
+                </section>
+
+                {/* Recent data */}
+                <section className="mt-6 grid gap-6 xl:grid-cols-2">
+                  {/* Recent Requests */}
+                  <div className="rounded-2xl border border-[#E8DED3] bg-white">
+                    <div className="flex items-center justify-between border-b border-[#E8DED3] px-5 py-4">
+                      <div>
+                        <h2 className="font-semibold text-[#2E241F]">
+                          Recent requests
+                        </h2>
+
+                        <p className="mt-1 text-xs text-[#8B8178]">
+                          Latest buyer requests
                         </p>
                       </div>
 
                       <Link
                         href="/admin/requests"
-                        className="flex items-center gap-1 text-xs font-bold text-[#FF5A36]"
+                        className="flex items-center gap-1 text-xs font-medium text-[#9F2D18] hover:underline"
                       >
                         View all
-                        <ArrowRight size={14} />
+                        <ArrowRight className="h-3.5 w-3.5" />
                       </Link>
                     </div>
 
-                    <div className="divide-y divide-[#EAE6DF]">
-                      {data.recentRequests.length === 0 ? (
-                        <EmptyRow text="No requests yet." />
-                      ) : (
-                        data.recentRequests.map((request) => (
-                          <div
-                            key={request.id}
-                            className="flex items-center justify-between gap-4 px-4 py-4"
-                          >
-                            <div className="min-w-0">
-                              <p className="truncate text-sm font-bold text-[#17202A]">
-                                {request.query}
-                              </p>
+                    <div className="divide-y divide-[#E8DED3]">
+                      {data.recentRequests.length ===
+                      0 ? (
+                        <div className="px-5 py-10 text-center">
+                          <ClipboardList className="mx-auto h-8 w-8 text-[#B8AEA5]" />
 
-                              <p className="mt-1 text-xs text-[#8A8178]">
-                                {request.requestCode} ·{" "}
-                                {formatDate(request.createdAt)}
+                          <p className="mt-3 text-sm font-medium text-[#6F675F]">
+                            No requests yet
+                          </p>
+                        </div>
+                      ) : (
+                        data.recentRequests.map(
+                          (request) => (
+                            <div
+                              key={request.id}
+                              className="px-5 py-4"
+                            >
+                              <div className="flex items-start justify-between gap-4">
+                                <div className="min-w-0">
+                                  <p className="truncate text-sm font-semibold text-[#2E241F]">
+                                    {request.query}
+                                  </p>
+
+                                  <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-[#8B8178]">
+                                    <span>
+                                      {
+                                        request.requestCode
+                                      }
+                                    </span>
+
+                                    {request.category
+                                      ?.name && (
+                                      <>
+                                        <span>
+                                          •
+                                        </span>
+
+                                        <span>
+                                          {
+                                            request
+                                              .category
+                                              .name
+                                          }
+                                        </span>
+                                      </>
+                                    )}
+
+                                    <span>
+                                      •
+                                    </span>
+
+                                    <span>
+                                      {
+                                        request.matchCount
+                                      }{" "}
+                                      {request.matchCount ===
+                                      1
+                                        ? "match"
+                                        : "matches"}
+                                    </span>
+                                  </div>
+                                </div>
+
+                                <span
+                                  className={`shrink-0 rounded-full px-2.5 py-1 text-[11px] font-semibold ${statusClass(
+                                    request.status,
+                                  )}`}
+                                >
+                                  {request.status}
+                                </span>
+                              </div>
+
+                              <p className="mt-2 text-xs text-[#9A9087]">
+                                {formatDate(
+                                  request.createdAt,
+                                )}
                               </p>
                             </div>
-
-                            <span
-                              className={`shrink-0 rounded-full px-2.5 py-1 text-[11px] font-bold ${statusClass(
-                                request.status
-                              )}`}
-                            >
-                              {request.status}
-                            </span>
-                          </div>
-                        ))
+                          ),
+                        )
                       )}
                     </div>
-                  </section>
+                  </div>
 
-                  {/* Businesses */}
-                  <section className="overflow-hidden rounded-2xl border border-[#EAE6DF] bg-white">
-                    <div className="flex items-center justify-between border-b border-[#EAE6DF] px-4 py-4">
+                  {/* Recent Businesses */}
+                  <div className="rounded-2xl border border-[#E8DED3] bg-white">
+                    <div className="flex items-center justify-between border-b border-[#E8DED3] px-5 py-4">
                       <div>
-                        <h3 className="font-black text-[#17202A]">
-                          Recent Businesses
-                        </h3>
+                        <h2 className="font-semibold text-[#2E241F]">
+                          Recent businesses
+                        </h2>
 
-                        <p className="mt-1 text-xs text-[#8A8178]">
-                          Latest seller activity
+                        <p className="mt-1 text-xs text-[#8B8178]">
+                          Latest onboarded sellers
                         </p>
                       </div>
 
                       <Link
                         href="/admin/businesses"
-                        className="flex items-center gap-1 text-xs font-bold text-[#FF5A36]"
+                        className="flex items-center gap-1 text-xs font-medium text-[#9F2D18] hover:underline"
                       >
                         View all
-                        <ArrowRight size={14} />
+                        <ArrowRight className="h-3.5 w-3.5" />
                       </Link>
                     </div>
 
-                    <div className="divide-y divide-[#EAE6DF]">
-                      {data.recentBusinesses.length === 0 ? (
-                        <EmptyRow text="No businesses yet." />
-                      ) : (
-                        data.recentBusinesses.map((business) => (
-                          <div
-                            key={business.id}
-                            className="flex items-center justify-between gap-4 px-4 py-4"
-                          >
-                            <div className="min-w-0">
-                              <p className="truncate text-sm font-bold text-[#17202A]">
-                                {business.name}
-                              </p>
+                    <div className="divide-y divide-[#E8DED3]">
+                      {data.recentBusinesses.length ===
+                      0 ? (
+                        <div className="px-5 py-10 text-center">
+                          <Store className="mx-auto h-8 w-8 text-[#B8AEA5]" />
 
-                              <p className="mt-1 text-xs text-[#8A8178]">
-                                {business.area} ·{" "}
-                                {formatDate(business.onboardedAt)}
+                          <p className="mt-3 text-sm font-medium text-[#6F675F]">
+                            No businesses yet
+                          </p>
+                        </div>
+                      ) : (
+                        data.recentBusinesses.map(
+                          (business) => (
+                            <div
+                              key={business.id}
+                              className="px-5 py-4"
+                            >
+                              <div className="flex items-start justify-between gap-4">
+                                <div className="min-w-0">
+                                  <p className="truncate text-sm font-semibold text-[#2E241F]">
+                                    {business.name}
+                                  </p>
+
+                                  <p className="mt-1 text-xs text-[#8B8178]">
+                                    {business.area ??
+                                      "Area not provided"}
+                                  </p>
+                                </div>
+
+                                <div className="flex shrink-0 flex-col items-end gap-1.5">
+                                  <span
+                                    className={`rounded-full px-2.5 py-1 text-[11px] font-semibold ${verificationClass(
+                                      business.verification,
+                                    )}`}
+                                  >
+                                    {
+                                      business.verification
+                                    }
+                                  </span>
+
+                                  <span
+                                    className={`rounded-full px-2.5 py-1 text-[11px] font-semibold ${statusClass(
+                                      business.status,
+                                    )}`}
+                                  >
+                                    {
+                                      business.status
+                                    }
+                                  </span>
+                                </div>
+                              </div>
+
+                              <p className="mt-2 text-xs text-[#9A9087]">
+                                Onboarded{" "}
+                                {formatDate(
+                                  business.onboardedAt,
+                                )}
                               </p>
                             </div>
-
-                            <span
-                              className={`shrink-0 rounded-full px-2.5 py-1 text-[11px] font-bold ${
-                                business.verification === "VERIFIED"
-                                  ? "bg-[#E7F7EF] text-[#287A4B]"
-                                  : "bg-[#FFF0D9] text-[#9F5A18]"
-                              }`}
-                            >
-                              {business.verification}
-                            </span>
-                          </div>
-                        ))
+                          ),
+                        )
                       )}
                     </div>
-                  </section>
-                </div>
+                  </div>
+                </section>
               </>
-            )}
+            ) : null}
           </div>
-        </section>
+        </main>
       </div>
-    </main>
-  );
-}
-
-function StatCard({
-  label,
-  value,
-  icon: Icon,
-}: {
-  label: string;
-  value: number;
-  icon: typeof Store;
-}) {
-  return (
-    <div className="rounded-2xl border border-[#EAE6DF] bg-white p-4 shadow-sm">
-      <div className="flex items-center justify-between">
-        <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-[#FFE0D6] text-[#FF5A36]">
-          <Icon size={19} />
-        </div>
-
-        <span className="text-[11px] font-bold uppercase tracking-wide text-[#A39A91]">
-          Total
-        </span>
-      </div>
-
-      <p className="mt-5 text-2xl font-black text-[#17202A]">
-        {value.toLocaleString()}
-      </p>
-
-      <p className="mt-1 text-sm font-medium text-[#8A8178]">{label}</p>
-    </div>
-  );
-}
-
-function EmptyRow({ text }: { text: string }) {
-  return (
-    <div className="px-4 py-8 text-center">
-      <p className="text-sm font-medium text-[#8A8178]">{text}</p>
     </div>
   );
 }

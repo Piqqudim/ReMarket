@@ -27,6 +27,8 @@ import {
   ExternalLink,
 } from "lucide-react";
 
+import { trackContactEvent } from "@/lib/contact-event";
+
 const NAV_ITEMS = [
   {
     label: "Home",
@@ -78,37 +80,27 @@ type SocialLink = {
   platform: string;
   handle: string;
 };
-
 type Seller = {
   id: string;
   name: string;
-  ownerName?: string | null;
-  description?: string | null;
+  ownerName: string | null;
+  description: string | null;
 
-  area?: string | null;
+  location: {
+    area: string;
+    lat: number | null;
+    long: number | null;
+  };
 
-  availability?:
-    | "AVAILABLE"
-    | "ASK_SELLER"
-    | "UNAVAILABLE";
-
-  verification?:
-    | "VERIFIED"
-    | "UNVERIFIED";
-
-  verified?: boolean;
-
-  category?: string | null;
-
-  categories?: string[];
-
-  productCount?: number;
-
-  products?: Product[];
-
-  socialLinks?: SocialLink[];
+  availability: string;
+  verification: string;
+  verified: boolean;
+  category: string;
+  categories: string[];
+  productCount: number;
+  products: Product[];
+  socialLinks: SocialLink[];
 };
-
 function getInitials(name: string) {
   const words = name
     .trim()
@@ -120,7 +112,9 @@ function getInitials(name: string) {
   }
 
   if (words.length === 1) {
-    return words[0].slice(0, 2).toUpperCase();
+    return words[0]
+      .slice(0, 2)
+      .toUpperCase();
   }
 
   return (
@@ -129,7 +123,9 @@ function getInitials(name: string) {
   ).toUpperCase();
 }
 
-function getCategoryColor(category?: string | null) {
+function getCategoryColor(
+  category?: string | null,
+) {
   if (!category) {
     return "#E4E9EF";
   }
@@ -145,7 +141,10 @@ function formatPrice(product: Product) {
     product.priceMin != null &&
     product.priceMax != null
   ) {
-    if (product.priceMin === product.priceMax) {
+    if (
+      product.priceMin ===
+      product.priceMax
+    ) {
       return `₦${product.priceMin.toLocaleString()}`;
     }
 
@@ -168,7 +167,7 @@ function formatPrice(product: Product) {
 }
 
 function getAvailabilityLabel(
-  availability?: string
+  availability?: string,
 ) {
   switch (availability) {
     case "AVAILABLE":
@@ -183,7 +182,7 @@ function getAvailabilityLabel(
 }
 
 function getAvailabilityStyle(
-  availability?: string
+  availability?: string,
 ) {
   switch (availability) {
     case "AVAILABLE":
@@ -199,23 +198,22 @@ function getAvailabilityStyle(
 
 function buildContactUrl(
   platform: string,
-  handle: string
-) {
-  const clean = handle
-    .trim()
-    .replace(/^@/, "");
-
-  if (!clean) {
-    return "#";
-  }
-
-  if (clean.startsWith("http")) {
-    return clean;
-  }
+  handle: string,
+  latitude?: number | null,
+  longitude?: number | null,
+): string {
+  const clean = handle.trim().replace(/^@/, "");
 
   switch (platform) {
     case "WHATSAPP": {
-      const phone = clean.replace(/\D/g, "");
+      if (!clean) return "#";
+
+      if (clean.startsWith("http")) {
+        return clean;
+      }
+
+      const phone =
+        clean.replace(/\D/g, "");
 
       return phone
         ? `https://wa.me/${phone}`
@@ -223,25 +221,52 @@ function buildContactUrl(
     }
 
     case "INSTAGRAM":
-      return `https://instagram.com/${clean}`;
+      if (!clean) return "#";
+
+      return clean.startsWith("http")
+        ? clean
+        : `https://instagram.com/${clean}`;
 
     case "TIKTOK":
-      return `https://tiktok.com/@${clean}`;
+      if (!clean) return "#";
+
+      return clean.startsWith("http")
+        ? clean
+        : `https://tiktok.com/@${clean}`;
 
     case "FACEBOOK":
-      return `https://facebook.com/${clean}`;
+      if (!clean) return "#";
 
-    case "PHONE":
-      return `tel:${clean.replace(/[^\d+]/g, "")}`;
+      return clean.startsWith("http")
+        ? clean
+        : `https://facebook.com/${clean}`;
 
-    case "DIRECTIONS":
-      return "#";
+    case "PHONE": {
+      if (!clean) return "#";
+
+      const phone =
+        clean.replace(/[^\d+]/g, "");
+
+      return phone
+        ? `tel:${phone}`
+        : "#";
+    }
+
+    case "DIRECTIONS": {
+      if (
+        typeof latitude !== "number" ||
+        typeof longitude !== "number"
+      ) {
+        return "#";
+      }
+
+      return `https://www.google.com/maps/dir/?api=1&destination=${latitude},${longitude}`;
+    }
 
     default:
       return "#";
   }
 }
-
 function ContactIcon({
   platform,
 }: {
@@ -268,6 +293,24 @@ function ContactIcon({
   }
 }
 
+function isTrackableContactPlatform(
+  platform: string,
+): platform is
+  | "WHATSAPP"
+  | "INSTAGRAM"
+  | "TIKTOK"
+  | "FACEBOOK"
+  | "PHONE"
+  | "DIRECTIONS" {
+  return (
+    platform === "WHATSAPP" ||
+    platform === "INSTAGRAM" ||
+    platform === "TIKTOK" ||
+    platform === "FACEBOOK" ||
+    platform === "PHONE" ||
+    platform === "DIRECTIONS"
+  );
+}
 export default function SellerPage() {
   const params = useParams();
 
@@ -305,15 +348,16 @@ export default function SellerPage() {
           {
             cache: "no-store",
             signal: controller.signal,
-          }
+          },
         );
 
-        const data = await response.json();
+        const data =
+          await response.json();
 
         if (!response.ok) {
           throw new Error(
             data?.error ||
-              "Unable to load seller."
+              "Unable to load seller.",
           );
         }
 
@@ -322,47 +366,55 @@ export default function SellerPage() {
 
         if (!business?.id) {
           throw new Error(
-            "Seller information was not found."
+            "Seller information was not found.",
           );
         }
 
         setSeller({
           ...business,
           products:
-            Array.isArray(business.products)
+            Array.isArray(
+              business.products,
+            )
               ? business.products
               : [],
           categories:
-            Array.isArray(business.categories)
+            Array.isArray(
+              business.categories,
+            )
               ? business.categories
               : [],
           socialLinks:
             Array.isArray(
-              business.socialLinks
+              business.socialLinks,
             )
               ? business.socialLinks
               : [],
         });
       } catch (fetchError) {
         if (
-          fetchError instanceof DOMException &&
-          fetchError.name === "AbortError"
+          fetchError instanceof
+            DOMException &&
+          fetchError.name ===
+            "AbortError"
         ) {
           return;
         }
 
         console.error(
           "Seller page error:",
-          fetchError
+          fetchError,
         );
 
         setError(
           fetchError instanceof Error
             ? fetchError.message
-            : "Unable to load seller."
+            : "Unable to load seller.",
         );
       } finally {
-        if (!controller.signal.aborted) {
+        if (
+          !controller.signal.aborted
+        ) {
           setLoading(false);
         }
       }
@@ -375,6 +427,22 @@ export default function SellerPage() {
     };
   }, [id]);
 
+function handleContactClick(
+  platform: string,
+) {
+  if (!seller?.id) {
+    return;
+  }
+
+  if (!isTrackableContactPlatform(platform)) {
+    return;
+  }
+
+  void trackContactEvent({
+    businessId: seller.id,
+    platform,
+  });
+}
   return (
     <main className="min-h-screen bg-[#FFF7ED] p-0 md:p-3">
       <div
@@ -668,478 +736,188 @@ export default function SellerPage() {
             )}
 
             {/* SELLER */}
-            {!loading && !error && seller && (
-              <>
-                {/* SELLER HERO */}
-                <div
-                  className="
-                    overflow-hidden
-                    rounded-[18px]
-                    border
-                    border-[#E8E4DE]
-                    bg-white
-                    shadow-[0_4px_18px_rgba(30,20,10,0.035)]
-                  "
-                >
+            {!loading &&
+              !error &&
+              seller && (
+                <>
+                  {/* SELLER HERO */}
                   <div
-                    className="h-3"
-                    style={{
-                      backgroundColor:
-                        getCategoryColor(
-                          seller.category
-                        ),
-                    }}
-                  />
+                    className="
+                      overflow-hidden
+                      rounded-[18px]
+                      border
+                      border-[#E8E4DE]
+                      bg-white
+                      shadow-[0_4px_18px_rgba(30,20,10,0.035)]
+                    "
+                  >
+                    <div
+                      className="h-3"
+                      style={{
+                        backgroundColor:
+                          getCategoryColor(
+                            seller.category,
+                          ),
+                      }}
+                    />
 
-                  <div className="p-5 sm:p-7">
-                    <div className="flex flex-col gap-5 sm:flex-row sm:items-start sm:justify-between">
-                      <div className="flex min-w-0 gap-4">
-                        {/* Avatar */}
-                        <div
-                          className="
-                            flex
-                            h-16
-                            w-16
-                            shrink-0
-                            items-center
-                            justify-center
-                            rounded-2xl
-                            bg-[#FFE0D6]
-                            text-[18px]
-                            font-black
-                            text-[#9F2D18]
-                            sm:h-20
-                            sm:w-20
-                            sm:text-xl
-                          "
-                        >
-                          {getInitials(
-                            seller.name
-                          )}
-                        </div>
-
-                        <div className="min-w-0">
-                          <div className="flex flex-wrap items-center gap-2">
-                            <h1 className="text-[23px] font-black tracking-tight text-[#17202A] sm:text-[28px]">
-                              {seller.name}
-                            </h1>
-
-                            {(seller.verified ||
-                              seller.verification ===
-                                "VERIFIED") && (
-                              <CheckCircle2
-                                size={18}
-                                className="text-[#FF5A36]"
-                              />
+                    <div className="p-5 sm:p-7">
+                      <div className="flex flex-col gap-5 sm:flex-row sm:items-start sm:justify-between">
+                        <div className="flex min-w-0 gap-4">
+                          {/* Avatar */}
+                          <div
+                            className="
+                              flex
+                              h-16
+                              w-16
+                              shrink-0
+                              items-center
+                              justify-center
+                              rounded-2xl
+                              bg-[#FFE0D6]
+                              text-[18px]
+                              font-black
+                              text-[#9F2D18]
+                              sm:h-20
+                              sm:w-20
+                              sm:text-xl
+                            "
+                          >
+                            {getInitials(
+                              seller.name,
                             )}
                           </div>
 
-                          {seller.ownerName && (
-                            <p className="mt-1 text-[12px] text-[#89817A]">
-                              {seller.ownerName}
-                            </p>
-                          )}
+                          <div className="min-w-0">
+                            <div className="flex flex-wrap items-center gap-2">
+                              <h1 className="text-[23px] font-black tracking-tight text-[#17202A] sm:text-[28px]">
+                                {seller.name}
+                              </h1>
 
-                          <div className="mt-3 flex flex-wrap items-center gap-2">
-                            {seller.category && (
+                              {(seller.verified ||
+                                seller.verification ===
+                                  "VERIFIED") && (
+                                <CheckCircle2
+                                  size={18}
+                                  className="text-[#FF5A36]"
+                                />
+                              )}
+                            </div>
+
+                            {seller.ownerName && (
+                              <p className="mt-1 text-[12px] text-[#89817A]">
+                                {seller.ownerName}
+                              </p>
+                            )}
+
+                            <div className="mt-3 flex flex-wrap items-center gap-2">
+                              {seller.category && (
+                                <span
+                                  className="
+                                    rounded-full
+                                    px-2.5
+                                    py-1
+                                    text-[10px]
+                                    font-bold
+                                    text-[#514B46]
+                                  "
+                                  style={{
+                                    backgroundColor:
+                                      getCategoryColor(
+                                        seller.category,
+                                      ),
+                                  }}
+                                >
+                                  {seller.category}
+                                </span>
+                              )}
+
                               <span
-                                className="
+                                className={`
                                   rounded-full
                                   px-2.5
                                   py-1
                                   text-[10px]
                                   font-bold
-                                  text-[#514B46]
-                                "
-                                style={{
-                                  backgroundColor:
-                                    getCategoryColor(
-                                      seller.category
-                                    ),
-                                }}
-                              >
-                                {seller.category}
-                              </span>
-                            )}
-
-                            <span
-                              className={`
-                                rounded-full
-                                px-2.5
-                                py-1
-                                text-[10px]
-                                font-bold
-                                ${getAvailabilityStyle(
-                                  seller.availability
-                                )}
-                              `}
-                            >
-                              {getAvailabilityLabel(
-                                seller.availability
-                              )}
-                            </span>
-
-                            {seller.verification ===
-                              "VERIFIED" && (
-                              <span className="rounded-full bg-[#E4F7EC] px-2.5 py-1 text-[10px] font-bold text-[#237A48]">
-                                Verified
-                              </span>
-                            )}
-                          </div>
-                        </div>
-                      </div>
-
-                      <div className="flex items-center gap-2">
-                        <button
-                          type="button"
-                          className="
-                            flex
-                            h-10
-                            w-10
-                            items-center
-                            justify-center
-                            rounded-xl
-                            border
-                            border-[#E5E0D9]
-                            bg-white
-                            text-[#746D67]
-                            transition
-                            hover:border-[#FFB39F]
-                            hover:text-[#FF5A36]
-                          "
-                          aria-label="Save seller"
-                        >
-                          <Heart size={18} />
-                        </button>
-                      </div>
-                    </div>
-
-                    {/* Location */}
-                    {seller.area && (
-                      <div className="mt-5 flex items-center gap-2 text-[12px] font-medium text-[#77716C]">
-                        <MapPin
-                          size={15}
-                          className="text-[#FF5A36]"
-                        />
-                        {seller.area}
-                      </div>
-                    )}
-
-                    {/* Description */}
-                    {seller.description && (
-                      <p className="mt-4 max-w-[800px] text-[13px] leading-6 text-[#68615C]">
-                        {seller.description}
-                      </p>
-                    )}
-                  </div>
-                </div>
-
-                {/* CONTENT */}
-                <div className="mt-5 grid gap-5 lg:grid-cols-[minmax(0,1fr)_300px]">
-                  {/* PRODUCTS */}
-                  <div
-                    className="
-                      rounded-[18px]
-                      border
-                      border-[#E8E4DE]
-                      bg-white
-                      p-5
-                      shadow-[0_4px_18px_rgba(30,20,10,0.035)]
-                    "
-                  >
-                    <div className="mb-5 flex items-center justify-between">
-                      <div>
-                        <h2 className="text-[17px] font-black text-[#17202A]">
-                          Products
-                        </h2>
-
-                        <p className="mt-1 text-[11px] text-[#8B847E]">
-                          {seller.products?.length ??
-                            seller.productCount ??
-                            0}{" "}
-                          items listed
-                        </p>
-                      </div>
-
-                      <Package
-                        size={20}
-                        className="text-[#FF5A36]"
-                      />
-                    </div>
-
-                    {seller.products &&
-                    seller.products.length > 0 ? (
-                      <div className="grid gap-3 sm:grid-cols-2">
-                        {seller.products.map(
-                          (product) => (
-                            <div
-                              key={product.id}
-                              className="
-                                overflow-hidden
-                                rounded-[15px]
-                                border
-                                border-[#E8E4DE]
-                                bg-[#FFFDFC]
-                                transition
-                                hover:-translate-y-0.5
-                                hover:shadow-sm
-                              "
-                            >
-                              {/* Product image */}
-                              {product.imageUrl ? (
-                                <img
-                                  src={
-                                    product.imageUrl
-                                  }
-                                  alt={
-                                    product.name
-                                  }
-                                  className="
-                                    h-40
-                                    w-full
-                                    object-cover
-                                  "
-                                />
-                              ) : (
-                                <div
-                                  className="
-                                    flex
-                                    h-28
-                                    items-center
-                                    justify-center
-                                  "
-                                  style={{
-                                    backgroundColor:
-                                      getCategoryColor(
-                                        seller.category
-                                      ),
-                                  }}
-                                >
-                                  <Package
-                                    size={27}
-                                    className="text-[#9F2D18]"
-                                  />
-                                </div>
-                              )}
-
-                              <div className="p-4">
-                                <div className="flex items-start justify-between gap-3">
-                                  <h3 className="text-[13px] font-bold text-[#2E2925]">
-                                    {product.name}
-                                  </h3>
-
-                                  <span
-                                    className={`
-                                      shrink-0
-                                      rounded-full
-                                      px-2
-                                      py-1
-                                      text-[9px]
-                                      font-bold
-                                      ${getAvailabilityStyle(
-                                        product.availability
-                                      )}
-                                    `}
-                                  >
-                                    {getAvailabilityLabel(
-                                      product.availability
-                                    )}
-                                  </span>
-                                </div>
-
-                                {product.description && (
-                                  <p className="mt-2 line-clamp-2 text-[11px] leading-5 text-[#878079]">
-                                    {
-                                      product.description
-                                    }
-                                  </p>
-                                )}
-
-                                <div className="mt-4 text-[13px] font-black text-[#9F2D18]">
-                                  {formatPrice(
-                                    product
+                                  ${getAvailabilityStyle(
+                                    seller.availability,
                                   )}
-                                </div>
-                              </div>
-                            </div>
-                          )
-                        )}
-                      </div>
-                    ) : (
-                      <div
-                        className="
-                          rounded-xl
-                          border
-                          border-dashed
-                          border-[#DDD6CE]
-                          bg-[#FCFAF6]
-                          px-5
-                          py-10
-                          text-center
-                        "
-                      >
-                        <Package
-                          size={25}
-                          className="mx-auto text-[#AAA29B]"
-                        />
+                                `}
+                              >
+                                {getAvailabilityLabel(
+                                  seller.availability,
+                                )}
+                              </span>
 
-                        <p className="mt-3 text-[12px] font-bold text-[#625B55]">
-                          No products listed yet
-                        </p>
-
-                        <p className="mt-1 text-[11px] text-[#928A83]">
-                          Contact the seller to ask
-                          what they currently have.
-                        </p>
-                      </div>
-                    )}
-                  </div>
-
-                  {/* CONTACT */}
-                  <aside className="space-y-4">
-                    <div
-                      className="
-                        rounded-[18px]
-                        bg-[#FFF0D9]
-                        p-5
-                      "
-                    >
-                      <h2 className="text-[15px] font-black text-[#17202A]">
-                        Contact seller
-                      </h2>
-
-                      <p className="mt-1 text-[11px] leading-5 text-[#7E7771]">
-                        Reach out directly using
-                        their available contact
-                        channels.
-                      </p>
-
-                      <div className="mt-4 space-y-2">
-                        {seller.socialLinks &&
-                        seller.socialLinks.length >
-                          0 ? (
-                          seller.socialLinks.map(
-                            (link) => {
-                              const url =
-                                buildContactUrl(
-                                  link.platform,
-                                  link.handle
-                                );
-
-                              return (
-                                <a
-                                  key={link.id}
-                                  href={url}
-                                  target={
-                                    link.platform ===
-                                    "PHONE"
-                                      ? undefined
-                                      : "_blank"
-                                  }
-                                  rel={
-                                    link.platform ===
-                                    "PHONE"
-                                      ? undefined
-                                      : "noreferrer"
-                                  }
-                                  className="
-                                    flex
-                                    items-center
-                                    justify-between
-                                    rounded-xl
-                                    border
-                                    border-[#F0D7B3]
-                                    bg-white
-                                    px-3
-                                    py-3
-                                    text-[11px]
-                                    font-bold
-                                    text-[#514B46]
-                                    transition
-                                    hover:border-[#FFB39F]
-                                    hover:text-[#FF5A36]
-                                  "
-                                >
-                                  <span className="flex items-center gap-2">
-                                    <ContactIcon
-                                      platform={
-                                        link.platform
-                                      }
-                                    />
-
-                                    {link.platform ===
-                                    "WHATSAPP"
-                                      ? "WhatsApp"
-                                      : link.platform ===
-                                          "INSTAGRAM"
-                                        ? "Instagram"
-                                        : link.platform ===
-                                            "TIKTOK"
-                                          ? "TikTok"
-                                          : link.platform ===
-                                              "FACEBOOK"
-                                            ? "Facebook"
-                                            : link.platform ===
-                                                "PHONE"
-                                              ? "Phone"
-                                              : link.platform}
-                                  </span>
-
-                                  <ExternalLink
-                                    size={13}
-                                  />
-                                </a>
-                              );
-                            }
-                          )
-                        ) : (
-                          <div className="rounded-xl bg-white/70 px-3 py-3 text-[11px] leading-5 text-[#817970]">
-                            No contact details have
-                            been added yet.
-                          </div>
-                        )}
-                      </div>
-                    </div>
-
-                    {/* Categories */}
-                    {seller.categories &&
-                      seller.categories.length >
-                        0 && (
-                        <div
-                          className="
-                            rounded-[18px]
-                            border
-                            border-[#E8E4DE]
-                            bg-[#FCFAF6]
-                            p-5
-                          "
-                        >
-                          <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-[#A29B94]">
-                            Categories
-                          </p>
-
-                          <div className="mt-3 flex flex-wrap gap-2">
-                            {seller.categories.map(
-                              (item) => (
-                                <span
-                                  key={item}
-                                  className="rounded-full px-2.5 py-1 text-[10px] font-bold text-[#514B46]"
-                                  style={{
-                                    backgroundColor:
-                                      getCategoryColor(
-                                        item
-                                      ),
-                                  }}
-                                >
-                                  {item}
+                              {seller.verification ===
+                                "VERIFIED" && (
+                                <span className="rounded-full bg-[#E4F7EC] px-2.5 py-1 text-[10px] font-bold text-[#237A48]">
+                                  Verified
                                 </span>
-                              )
-                            )}
+                              )}
+                            </div>
                           </div>
                         </div>
-                      )}
 
-                    {/* Request */}
+                        <div className="flex items-center gap-2">
+                          <button
+                            type="button"
+                            className="
+                              flex
+                              h-10
+                              w-10
+                              items-center
+                              justify-center
+                              rounded-xl
+                              border
+                              border-[#E5E0D9]
+                              bg-white
+                              text-[#746D67]
+                              transition
+                              hover:border-[#FFB39F]
+                              hover:text-[#FF5A36]
+                            "
+                            aria-label="Save seller"
+                          >
+                            <Heart size={18} />
+                          </button>
+                        </div>
+                      </div>
+
+                      {seller.location.lat !== null &&
+                    seller.location.long !== null && (
+                          <a
+                        href={buildContactUrl(
+                        "DIRECTIONS",
+                               "",
+                      seller.location.lat,
+                     seller.location.long,
+                        )}
+               target="_blank"
+                rel="noreferrer"
+            onClick={() =>
+              handleContactClick(
+              "DIRECTIONS",
+                    )
+                   }
+                className="..."
+                    >
+                <MapPin className="h-4 w-4" />
+                  <span>Directions</span>
+                      </a>
+                      )}
+                      {/* Description */}
+                      {seller.description && (
+                        <p className="mt-4 max-w-[800px] text-[13px] leading-6 text-[#68615C]">
+                          {seller.description}
+                        </p>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* CONTENT */}
+                  <div className="mt-5 grid gap-5 lg:grid-cols-[minmax(0,1fr)_300px]">
+                    {/* PRODUCTS */}
                     <div
                       className="
                         rounded-[18px]
@@ -1147,44 +925,355 @@ export default function SellerPage() {
                         border-[#E8E4DE]
                         bg-white
                         p-5
+                        shadow-[0_4px_18px_rgba(30,20,10,0.035)]
                       "
                     >
-                      <p className="text-[12px] font-bold text-[#3D3834]">
-                        Can't find what you need?
-                      </p>
+                      <div className="mb-5 flex items-center justify-between">
+                        <div>
+                          <h2 className="text-[17px] font-black text-[#17202A]">
+                            Products
+                          </h2>
 
-                      <p className="mt-1 text-[11px] leading-5 text-[#888079]">
-                        Send a request and let
-                        ReMarket help you find it.
-                      </p>
+                          <p className="mt-1 text-[11px] text-[#8B847E]">
+                            {seller.products
+                              ?.length ??
+                              seller.productCount ??
+                              0}{" "}
+                            items listed
+                          </p>
+                        </div>
 
-                      <Link
-                        href="/my-requests"
+                        <Package
+                          size={20}
+                          className="text-[#FF5A36]"
+                        />
+                      </div>
+
+                      {seller.products &&
+                      seller.products.length >
+                        0 ? (
+                        <div className="grid gap-3 sm:grid-cols-2">
+                          {seller.products.map(
+                            (product) => (
+                              <div
+                                key={product.id}
+                                className="
+                                  overflow-hidden
+                                  rounded-[15px]
+                                  border
+                                  border-[#E8E4DE]
+                                  bg-[#FFFDFC]
+                                  transition
+                                  hover:-translate-y-0.5
+                                  hover:shadow-sm
+                                "
+                              >
+                                {product.imageUrl ? (
+                                  <img
+                                    src={
+                                      product.imageUrl
+                                    }
+                                    alt={
+                                      product.name
+                                    }
+                                    className="
+                                      h-40
+                                      w-full
+                                      object-cover
+                                    "
+                                  />
+                                ) : (
+                                  <div
+                                    className="
+                                      flex
+                                      h-28
+                                      items-center
+                                      justify-center
+                                    "
+                                    style={{
+                                      backgroundColor:
+                                        getCategoryColor(
+                                          seller.category,
+                                        ),
+                                    }}
+                                  >
+                                    <Package
+                                      size={27}
+                                      className="text-[#9F2D18]"
+                                    />
+                                  </div>
+                                )}
+
+                                <div className="p-4">
+                                  <div className="flex items-start justify-between gap-3">
+                                    <h3 className="text-[13px] font-bold text-[#2E2925]">
+                                      {
+                                        product.name
+                                      }
+                                    </h3>
+
+                                    <span
+                                      className={`
+                                        shrink-0
+                                        rounded-full
+                                        px-2
+                                        py-1
+                                        text-[9px]
+                                        font-bold
+                                        ${getAvailabilityStyle(
+                                          product.availability,
+                                        )}
+                                      `}
+                                    >
+                                      {getAvailabilityLabel(
+                                        product.availability,
+                                      )}
+                                    </span>
+                                  </div>
+
+                                  {product.description && (
+                                    <p className="mt-2 line-clamp-2 text-[11px] leading-5 text-[#878079]">
+                                      {
+                                        product.description
+                                      }
+                                    </p>
+                                  )}
+
+                                  <div className="mt-4 text-[13px] font-black text-[#9F2D18]">
+                                    {formatPrice(
+                                      product,
+                                    )}
+                                  </div>
+                                </div>
+                              </div>
+                            ),
+                          )}
+                        </div>
+                      ) : (
+                        <div
+                          className="
+                            rounded-xl
+                            border
+                            border-dashed
+                            border-[#DDD6CE]
+                            bg-[#FCFAF6]
+                            px-5
+                            py-10
+                            text-center
+                          "
+                        >
+                          <Package
+                            size={25}
+                            className="mx-auto text-[#AAA29B]"
+                          />
+
+                          <p className="mt-3 text-[12px] font-bold text-[#625B55]">
+                            No products listed yet
+                          </p>
+
+                          <p className="mt-1 text-[11px] text-[#928A83]">
+                            Contact the seller to ask
+                            what they currently have.
+                          </p>
+                        </div>
+                      )}
+                    </div>
+
+                    {/* CONTACT */}
+                    <aside className="space-y-4">
+                      <div
                         className="
-                          mt-4
-                          flex
-                          w-full
-                          items-center
-                          justify-center
-                          gap-2
-                          rounded-xl
-                          bg-[#FF5A36]
-                          px-4
-                          py-2.5
-                          text-[11px]
-                          font-bold
-                          text-white
-                          transition
-                          hover:bg-[#E94E2C]
+                          rounded-[18px]
+                          bg-[#FFF0D9]
+                          p-5
                         "
                       >
-                        Request something
-                      </Link>
-                    </div>
-                  </aside>
-                </div>
-              </>
-            )}
+                        <h2 className="text-[15px] font-black text-[#17202A]">
+                          Contact seller
+                        </h2>
+
+                        <p className="mt-1 text-[11px] leading-5 text-[#7E7771]">
+                          Reach out directly using
+                          their available contact
+                          channels.
+                        </p>
+
+                        <div className="mt-4 space-y-2">
+                          {seller.socialLinks &&
+                          seller.socialLinks.length >
+                            0 ? (
+                            seller.socialLinks.map(
+                              (link) => {
+                                const url =
+                                  buildContactUrl(
+                                    link.platform,
+                                    link.handle,
+                                  );
+
+                                return (
+                                  <a
+                                    key={link.id}
+                                    href={url}
+                                    target={
+                                      link.platform ===
+                                      "PHONE"
+                                        ? undefined
+                                        : "_blank"
+                                    }
+                                    rel={
+                                      link.platform ===
+                                      "PHONE"
+                                        ? undefined
+                                        : "noreferrer"
+                                    }
+                                    onClick={() =>
+                                      handleContactClick(
+                                        link.platform,
+                                      )
+                                    }
+                                    className="
+                                      flex
+                                      items-center
+                                      justify-between
+                                      rounded-xl
+                                      border
+                                      border-[#F0D7B3]
+                                      bg-white
+                                      px-3
+                                      py-3
+                                      text-[11px]
+                                      font-bold
+                                      text-[#514B46]
+                                      transition
+                                      hover:border-[#FFB39F]
+                                      hover:text-[#FF5A36]
+                                    "
+                                  >
+                                    <span className="flex items-center gap-2">
+                                      <ContactIcon
+                                        platform={
+                                          link.platform
+                                        }
+                                      />
+
+                                      {link.platform ===
+                                      "WHATSAPP"
+                                        ? "WhatsApp"
+                                        : link.platform ===
+                                            "INSTAGRAM"
+                                          ? "Instagram"
+                                          : link.platform ===
+                                              "TIKTOK"
+                                            ? "TikTok"
+                                            : link.platform ===
+                                                "FACEBOOK"
+                                              ? "Facebook"
+                                              : link.platform ===
+                                                  "PHONE"
+                                                ? "Phone"
+                                                : link.platform}
+                                    </span>
+
+                                    <ExternalLink
+                                      size={13}
+                                    />
+                                  </a>
+                                );
+                              },
+                            )
+                          ) : (
+                            <div className="rounded-xl bg-white/70 px-3 py-3 text-[11px] leading-5 text-[#817970]">
+                              No contact details have
+                              been added yet.
+                            </div>
+                          )}
+                        </div>
+                      </div>
+
+                      {/* Categories */}
+                      {seller.categories &&
+                        seller.categories.length >
+                          0 && (
+                          <div
+                            className="
+                              rounded-[18px]
+                              border
+                              border-[#E8E4DE]
+                              bg-[#FCFAF6]
+                              p-5
+                            "
+                          >
+                            <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-[#A29B94]">
+                              Categories
+                            </p>
+
+                            <div className="mt-3 flex flex-wrap gap-2">
+                              {seller.categories.map(
+                                (item) => (
+                                  <span
+                                    key={item}
+                                    className="rounded-full px-2.5 py-1 text-[10px] font-bold text-[#514B46]"
+                                    style={{
+                                      backgroundColor:
+                                        getCategoryColor(
+                                          item,
+                                        ),
+                                    }}
+                                  >
+                                    {item}
+                                  </span>
+                                ),
+                              )}
+                            </div>
+                          </div>
+                        )}
+
+                      {/* Request */}
+                      <div
+                        className="
+                          rounded-[18px]
+                          border
+                          border-[#E8E4DE]
+                          bg-white
+                          p-5
+                        "
+                      >
+                        <p className="text-[12px] font-bold text-[#3D3834]">
+                          Can't find what you need?
+                        </p>
+
+                        <p className="mt-1 text-[11px] leading-5 text-[#888079]">
+                          Send a request and let
+                          ReMarket help you find it.
+                        </p>
+
+                        <Link
+                          href="/my-requests"
+                          className="
+                            mt-4
+                            flex
+                            w-full
+                            items-center
+                            justify-center
+                            gap-2
+                            rounded-xl
+                            bg-[#FF5A36]
+                            px-4
+                            py-2.5
+                            text-[11px]
+                            font-bold
+                            text-white
+                            transition
+                            hover:bg-[#E94E2C]
+                          "
+                        >
+                          Request something
+                        </Link>
+                      </div>
+                    </aside>
+                  </div>
+                </>
+              )}
           </section>
         </div>
 

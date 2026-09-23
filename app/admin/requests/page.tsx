@@ -1,16 +1,19 @@
 "use client";
 
-import Link from "next/link";
 import {
-  ArrowLeft,
-  ChevronDown,
   ClipboardList,
-  LayoutDashboard,
+  Home,
   Package,
   Search,
   Store,
+  Users,
   X,
+  CheckCircle2,
+  Clock3,
+  Phone,
+  MapPin,
 } from "lucide-react";
+import Link from "next/link";
 import { useEffect, useState } from "react";
 
 type RequestStatus =
@@ -21,37 +24,57 @@ type RequestStatus =
   | "UNFULFILLED"
   | "CLOSED";
 
-type RequestMatch = {
+type BusinessMatch = {
   id: string;
   score: number;
+  addedManually: boolean;
   business: {
     id: string;
     name: string;
-    area: string;
+    area: string | null;
+    verification: "VERIFIED" | "UNVERIFIED";
     verified: boolean;
+    status: "ACTIVE" | "INACTIVE" | "PENDING";
   };
 };
 
-type BuyerRequest = {
+type AdminRequest = {
   id: string;
   requestCode: string;
   query: string;
-  category: string | null;
+  category: {
+    id: string;
+    name: string;
+  } | null;
   budget: number | null;
   locationArea: string | null;
   quantity: number | null;
   description: string | null;
+  imageUrl: string | null;
   status: RequestStatus;
   buyerContact: string;
   createdAt: string;
-  matches: RequestMatch[];
+  matches: BusinessMatch[];
 };
+
+const STATUS_OPTIONS: {
+  value: "" | RequestStatus;
+  label: string;
+}[] = [
+  { value: "", label: "All statuses" },
+  { value: "NEW", label: "New" },
+  { value: "MATCHED", label: "Matched" },
+  { value: "CONTACTED", label: "Contacted" },
+  { value: "FULFILLED", label: "Fulfilled" },
+  { value: "UNFULFILLED", label: "Unfulfilled" },
+  { value: "CLOSED", label: "Closed" },
+];
 
 const NAV_ITEMS = [
   {
     label: "Overview",
     href: "/admin",
-    icon: LayoutDashboard,
+    icon: Home,
   },
   {
     label: "Businesses",
@@ -70,22 +93,65 @@ const NAV_ITEMS = [
   },
 ];
 
-const STATUSES: RequestStatus[] = [
-  "NEW",
-  "MATCHED",
-  "CONTACTED",
-  "FULFILLED",
-  "UNFULFILLED",
-  "CLOSED",
-];
+function getStatusClass(status: RequestStatus) {
+  switch (status) {
+    case "NEW":
+      return "bg-blue-50 text-blue-700 border-blue-200";
+
+    case "MATCHED":
+      return "bg-purple-50 text-purple-700 border-purple-200";
+
+    case "CONTACTED":
+      return "bg-orange-50 text-orange-700 border-orange-200";
+
+    case "FULFILLED":
+      return "bg-green-50 text-green-700 border-green-200";
+
+    case "UNFULFILLED":
+      return "bg-red-50 text-red-700 border-red-200";
+
+    case "CLOSED":
+      return "bg-gray-100 text-gray-700 border-gray-200";
+
+    default:
+      return "bg-gray-100 text-gray-700 border-gray-200";
+  }
+}
+
+function getStatusLabel(status: RequestStatus) {
+  switch (status) {
+    case "NEW":
+      return "New";
+    case "MATCHED":
+      return "Matched";
+    case "CONTACTED":
+      return "Contacted";
+    case "FULFILLED":
+      return "Fulfilled";
+    case "UNFULFILLED":
+      return "Unfulfilled";
+    case "CLOSED":
+      return "Closed";
+    default:
+      return status;
+  }
+}
+
+function formatDate(date: string) {
+  return new Intl.DateTimeFormat("en-NG", {
+    dateStyle: "medium",
+    timeStyle: "short",
+  }).format(new Date(date));
+}
 
 export default function AdminRequestsPage() {
-  const [requests, setRequests] = useState<BuyerRequest[]>([]);
-  const [query, setQuery] = useState("");
-  const [status, setStatus] = useState("");
-
+  const [requests, setRequests] = useState<AdminRequest[]>([]);
+  const [search, setSearch] = useState("");
+  const [status, setStatus] = useState<"" | RequestStatus>("");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [selectedRequest, setSelectedRequest] =
+    useState<AdminRequest | null>(null);
   const [updatingId, setUpdatingId] = useState<string | null>(null);
 
   async function loadRequests() {
@@ -95,8 +161,8 @@ export default function AdminRequestsPage() {
 
       const params = new URLSearchParams();
 
-      if (query.trim()) {
-        params.set("q", query.trim());
+      if (search.trim()) {
+        params.set("q", search.trim());
       }
 
       if (status) {
@@ -104,112 +170,414 @@ export default function AdminRequestsPage() {
       }
 
       const response = await fetch(
-        `/api/admin/requests?${params.toString()}`
+        `/api/admin/requests?${params.toString()}`,
+        {
+          cache: "no-store",
+        },
       );
 
       const data = await response.json();
 
       if (!response.ok) {
-        throw new Error(
-          data.error || "Unable to load requests"
-        );
+        throw new Error(data.error || "Unable to load requests");
       }
 
-      setRequests(data.requests);
-    } catch (error) {
-      console.error(error);
-      setError("We couldn't load the requests.");
+      setRequests(data.requests ?? []);
+    } catch (err) {
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Unable to load requests",
+      );
     } finally {
       setLoading(false);
     }
   }
 
   useEffect(() => {
-    const timer = setTimeout(() => {
-      loadRequests();
-    }, 250);
+    loadRequests();
+  }, [status]);
 
-    return () => clearTimeout(timer);
-  }, [query, status]);
+  async function handleSearch(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    await loadRequests();
+  }
 
-  async function updateRequest(
-    id: string,
-    nextStatus: RequestStatus
+  async function updateStatus(
+    requestId: string,
+    newStatus: RequestStatus,
   ) {
     try {
-      setUpdatingId(id);
+      setUpdatingId(requestId);
       setError("");
 
       const response = await fetch(
-        `/api/admin/requests/${id}`,
+        `/api/admin/requests/${requestId}`,
         {
           method: "PATCH",
           headers: {
             "Content-Type": "application/json",
           },
           body: JSON.stringify({
-            status: nextStatus,
+            status: newStatus,
           }),
-        }
+        },
       );
 
       const data = await response.json();
 
       if (!response.ok) {
         throw new Error(
-          data.error || "Unable to update request"
+          data.error || "Unable to update request",
         );
       }
 
+      const updatedRequest = data.request as AdminRequest;
+
       setRequests((current) =>
-        current.map((request) =>
-          request.id === id
-            ? {
-                ...request,
-                ...data.request,
-              }
-            : request
-        )
+        current.map((item) =>
+          item.id === requestId ? updatedRequest : item,
+        ),
       );
-    } catch (error) {
-      console.error(error);
-      setError("We couldn't update that request.");
+
+      setSelectedRequest((current) =>
+        current?.id === requestId ? updatedRequest : current,
+      );
+    } catch (err) {
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Unable to update request",
+      );
     } finally {
       setUpdatingId(null);
     }
   }
 
   return (
-    <main className="min-h-screen bg-[#FFF7ED] px-3 py-3 sm:px-5 sm:py-5">
-      <div className="mx-auto flex min-h-[calc(100vh-24px)] max-w-[1500px] overflow-hidden rounded-[22px] border border-[#FF5A36] bg-[#FFFDFC] shadow-sm sm:min-h-[calc(100vh-40px)]">
-        {/* Sidebar */}
-        <aside className="hidden w-[190px] shrink-0 border-r border-[#EAE6DF] bg-[#FCFAF6] lg:block">
-          <div className="flex h-[66px] items-center border-b border-[#EAE6DF] px-5">
-            <Link
-              href="/admin"
-              className="text-xl font-black tracking-tight"
-            >
-              <span className="text-[#FF5A36]">Re</span>
-              <span className="text-[#17202A]">Market</span>
-            </Link>
-          </div>
+    <main className="min-h-screen bg-[#FFF7ED] text-[#17202A]">
+      <div className="mx-auto flex min-h-screen w-full max-w-[1500px] flex-col overflow-hidden border-x border-[#FF5A36] bg-[#FFFDFC] shadow-sm lg:my-4 lg:min-h-[calc(100vh-2rem)] lg:rounded-[22px] lg:border">
+        {/* Header */}
+        <header className="flex h-16 shrink-0 items-center justify-between border-b border-[#EAE6DF] bg-white px-4 lg:px-6">
+          <Link
+            href="/admin"
+            className="flex items-center gap-2"
+          >
+            <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-[#FF5A36] text-sm font-black text-white">
+              R
+            </div>
 
-          <nav className="space-y-1 p-3">
-            <p className="mb-3 px-3 pt-2 text-[11px] font-bold uppercase tracking-wider text-[#A39A91]">
-              Admin
-            </p>
+            <div>
+              <div className="text-base font-black tracking-tight">
+                ReMarket
+              </div>
+              <div className="text-[11px] font-medium text-gray-500">
+                Admin
+              </div>
+            </div>
+          </Link>
 
+          <Link
+            href="/"
+            className="rounded-xl border border-[#EAE6DF] px-3 py-2 text-sm font-semibold text-gray-700 transition hover:bg-[#FFF7ED]"
+          >
+            View marketplace
+          </Link>
+        </header>
+
+        <div className="flex min-h-0 flex-1">
+          {/* Desktop sidebar */}
+          <aside className="hidden w-[190px] shrink-0 border-r border-[#EAE6DF] bg-[#FCFAF6] p-3 lg:block">
+            <nav className="space-y-1">
+              {NAV_ITEMS.map((item) => {
+                const Icon = item.icon;
+                const active =
+                  item.href === "/admin/requests";
+
+                return (
+                  <Link
+                    key={item.href}
+                    href={item.href}
+                    className={`flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-semibold transition ${
+                      active
+                        ? "bg-[#FFE0D6] text-[#9F2D18]"
+                        : "text-gray-600 hover:bg-white"
+                    }`}
+                  >
+                    <Icon size={18} />
+                    {item.label}
+                  </Link>
+                );
+              })}
+            </nav>
+          </aside>
+
+          {/* Main */}
+          <section className="min-w-0 flex-1 overflow-y-auto p-4 pb-24 lg:p-6 lg:pb-6">
+            <div className="mb-6">
+              <div className="flex items-start justify-between gap-4">
+                <div>
+                  <p className="mb-1 text-sm font-semibold text-[#FF5A36]">
+                    Admin
+                  </p>
+
+                  <h1 className="text-2xl font-black tracking-tight">
+                    Requests
+                  </h1>
+
+                  <p className="mt-1 text-sm text-gray-500">
+                    Manage buyer requests and their matched businesses.
+                  </p>
+                </div>
+
+                <div className="hidden rounded-2xl bg-[#FFF0D9] px-4 py-3 sm:block">
+                  <div className="text-xs font-semibold text-gray-500">
+                    Total requests
+                  </div>
+                  <div className="mt-1 text-xl font-black">
+                    {requests.length}
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Error */}
+            {error && (
+              <div className="mb-4 flex items-center justify-between gap-3 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+                <span>{error}</span>
+
+                <button
+                  type="button"
+                  onClick={() => setError("")}
+                  className="shrink-0"
+                >
+                  <X size={17} />
+                </button>
+              </div>
+            )}
+
+            {/* Filters */}
+            <div className="mb-5 rounded-2xl border border-[#EAE6DF] bg-white p-4">
+              <form
+                onSubmit={handleSearch}
+                className="flex flex-col gap-3 lg:flex-row"
+              >
+                <div className="relative flex-1">
+                  <Search
+                    size={18}
+                    className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400"
+                  />
+
+                  <input
+                    value={search}
+                    onChange={(event) =>
+                      setSearch(event.target.value)
+                    }
+                    placeholder="Search request code, item, contact..."
+                    className="w-full rounded-xl border border-[#E8E4DE] bg-[#FFFDFC] py-3 pl-10 pr-3 text-sm outline-none transition focus:border-[#FF5A36]"
+                  />
+                </div>
+
+                <select
+                  value={status}
+                  onChange={(event) =>
+                    setStatus(
+                      event.target.value as "" | RequestStatus,
+                    )
+                  }
+                  className="rounded-xl border border-[#E8E4DE] bg-[#FFFDFC] px-3 py-3 text-sm font-medium outline-none focus:border-[#FF5A36]"
+                >
+                  {STATUS_OPTIONS.map((option) => (
+                    <option
+                      key={option.value}
+                      value={option.value}
+                    >
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+
+                <button
+                  type="submit"
+                  className="rounded-xl bg-[#FF5A36] px-5 py-3 text-sm font-bold text-white transition hover:bg-[#e94d2c]"
+                >
+                  Search
+                </button>
+              </form>
+            </div>
+
+            {/* Requests */}
+            {loading ? (
+              <div className="rounded-2xl border border-[#EAE6DF] bg-white p-10 text-center">
+                <div className="mx-auto mb-3 h-7 w-7 animate-spin rounded-full border-2 border-[#FF5A36] border-t-transparent" />
+                <p className="text-sm text-gray-500">
+                  Loading requests...
+                </p>
+              </div>
+            ) : requests.length === 0 ? (
+              <div className="rounded-2xl border border-dashed border-[#EAE6DF] bg-white p-10 text-center">
+                <ClipboardList
+                  size={32}
+                  className="mx-auto mb-3 text-gray-400"
+                />
+
+                <h2 className="font-bold">
+                  No requests found
+                </h2>
+
+                <p className="mt-1 text-sm text-gray-500">
+                  Try another search or status filter.
+                </p>
+              </div>
+            ) : (
+              <div className="space-y-3">
+                {requests.map((item) => (
+                  <article
+                    key={item.id}
+                    className="rounded-2xl border border-[#EAE6DF] bg-white p-4 transition hover:shadow-sm"
+                  >
+                    <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
+                      <div className="min-w-0 flex-1">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span className="rounded-lg bg-[#FFF0D9] px-2.5 py-1 text-xs font-black text-[#9F2D18]">
+                            {item.requestCode}
+                          </span>
+
+                          <span
+                            className={`rounded-lg border px-2.5 py-1 text-xs font-bold ${getStatusClass(
+                              item.status,
+                            )}`}
+                          >
+                            {getStatusLabel(item.status)}
+                          </span>
+
+                          {item.category && (
+                            <span className="rounded-lg bg-gray-100 px-2.5 py-1 text-xs font-semibold text-gray-600">
+                              {item.category.name}
+                            </span>
+                          )}
+                        </div>
+
+                        <h2 className="mt-3 text-lg font-black">
+                          {item.query}
+                        </h2>
+
+                        {item.description && (
+                          <p className="mt-1 line-clamp-2 text-sm text-gray-500">
+                            {item.description}
+                          </p>
+                        )}
+
+                        <div className="mt-4 flex flex-wrap gap-x-5 gap-y-2 text-xs text-gray-500">
+                          {item.budget !== null && (
+                            <span>
+                              Budget: ₦
+                              {item.budget.toLocaleString()}
+                            </span>
+                          )}
+
+                          {item.quantity !== null && (
+                            <span>
+                              Quantity: {item.quantity}
+                            </span>
+                          )}
+
+                          {item.locationArea && (
+                            <span className="inline-flex items-center gap-1">
+                              <MapPin size={13} />
+                              {item.locationArea}
+                            </span>
+                          )}
+
+                          <span>
+                            {formatDate(item.createdAt)}
+                          </span>
+                        </div>
+                      </div>
+
+                      <div className="flex shrink-0 flex-col gap-2 sm:flex-row xl:flex-col">
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setSelectedRequest(item)
+                          }
+                          className="rounded-xl border border-[#E8E4DE] px-4 py-2.5 text-sm font-bold text-gray-700 transition hover:bg-[#FFF7ED]"
+                        >
+                          View details
+                        </button>
+
+                        <select
+                          value={item.status}
+                          disabled={updatingId === item.id}
+                          onChange={(event) =>
+                            updateStatus(
+                              item.id,
+                              event.target.value as RequestStatus,
+                            )
+                          }
+                          className="rounded-xl border border-[#E8E4DE] bg-white px-3 py-2.5 text-sm font-semibold outline-none focus:border-[#FF5A36]"
+                        >
+                          {STATUS_OPTIONS.filter(
+                            (option) => option.value !== "",
+                          ).map((option) => (
+                            <option
+                              key={option.value}
+                              value={option.value}
+                            >
+                              {option.label}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                    </div>
+
+                    {/* Matches */}
+                    {item.matches.length > 0 && (
+                      <div className="mt-4 border-t border-[#F0ECE6] pt-4">
+                        <div className="mb-2 flex items-center gap-2 text-xs font-bold text-gray-500">
+                          <Users size={14} />
+                          {item.matches.length} matched{" "}
+                          {item.matches.length === 1
+                            ? "business"
+                            : "businesses"}
+                        </div>
+
+                        <div className="flex flex-wrap gap-2">
+                          {item.matches.slice(0, 5).map((match) => (
+                            <Link
+                              key={match.id}
+                              href={`/admin/businesses/${match.business.id}`}
+                              className="rounded-xl border border-[#EAE6DF] bg-[#FCFAF6] px-3 py-2 text-xs font-semibold transition hover:border-[#FF5A36]"
+                            >
+                              {match.business.name}
+                            </Link>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </article>
+                ))}
+              </div>
+            )}
+          </section>
+        </div>
+
+        {/* Mobile bottom nav */}
+        <nav className="fixed bottom-0 left-0 right-0 z-40 border-t border-[#EAE6DF] bg-white px-2 py-2 lg:hidden">
+          <div className="mx-auto flex max-w-[600px] justify-around">
             {NAV_ITEMS.map((item) => {
               const Icon = item.icon;
+              const active =
+                item.href === "/admin/requests";
 
               return (
                 <Link
                   key={item.href}
                   href={item.href}
-                  className={`flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-semibold transition ${
-                    item.href === "/admin/requests"
+                  className={`flex min-w-[70px] flex-col items-center gap-1 rounded-xl px-3 py-2 text-[11px] font-semibold ${
+                    active
                       ? "bg-[#FFE0D6] text-[#9F2D18]"
-                      : "text-[#6F675F] hover:bg-[#FFF0D9]"
+                      : "text-gray-500"
                   }`}
                 >
                   <Icon size={18} />
@@ -217,416 +585,191 @@ export default function AdminRequestsPage() {
                 </Link>
               );
             })}
-          </nav>
-        </aside>
+          </div>
+        </nav>
+      </div>
 
-        {/* Main */}
-        <section className="min-w-0 flex-1">
-          <header className="flex h-[66px] items-center justify-between border-b border-[#EAE6DF] px-4 sm:px-6">
-            <div className="flex items-center gap-3">
-              <Link
-                href="/admin"
-                className="flex h-9 w-9 items-center justify-center rounded-xl bg-[#FCFAF6] text-[#6F675F] lg:hidden"
-                aria-label="Back to admin"
-              >
-                <ArrowLeft size={17} />
-              </Link>
-
+      {/* Request details modal */}
+      {selectedRequest && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-4">
+          <div className="max-h-[90vh] w-full max-w-2xl overflow-y-auto rounded-3xl bg-white shadow-xl">
+            <div className="sticky top-0 flex items-center justify-between border-b border-[#EAE6DF] bg-white px-5 py-4">
               <div>
-                <p className="text-xs font-medium text-[#8A8178]">
-                  Admin
-                </p>
-
-                <h1 className="text-lg font-black text-[#17202A]">
-                  Requests
-                </h1>
-              </div>
-            </div>
-
-            <Link
-              href="/"
-              className="rounded-xl border border-[#EAE6DF] bg-white px-3 py-2 text-xs font-bold text-[#6F675F] transition hover:bg-[#FCFAF6]"
-            >
-              Marketplace
-            </Link>
-          </header>
-
-          <div className="p-4 sm:p-6">
-            {/* Mobile navigation */}
-            <div className="mb-5 flex gap-2 overflow-x-auto lg:hidden">
-              {NAV_ITEMS.map((item) => {
-                const Icon = item.icon;
-
-                return (
-                  <Link
-                    key={item.href}
-                    href={item.href}
-                    className={`flex shrink-0 items-center gap-2 rounded-xl px-3 py-2 text-xs font-bold ${
-                      item.href === "/admin/requests"
-                        ? "bg-[#FF5A36] text-white"
-                        : "bg-[#FCFAF6] text-[#6F675F]"
-                    }`}
-                  >
-                    <Icon size={15} />
-                    {item.label}
-                  </Link>
-                );
-              })}
-            </div>
-
-            {/* Heading */}
-            <div className="mb-6">
-              <h2 className="text-2xl font-black tracking-tight text-[#17202A]">
-                Buyer requests
-              </h2>
-
-              <p className="mt-1 text-sm text-[#8A8178]">
-                Monitor requests and see which businesses were matched.
-              </p>
-            </div>
-
-            {/* Filters */}
-            <div className="mb-5 rounded-2xl border border-[#EAE6DF] bg-white p-3">
-              <div className="flex flex-col gap-3 lg:flex-row">
-                <div className="relative min-w-0 flex-1">
-                  <Search
-                    size={17}
-                    className="absolute left-3 top-1/2 -translate-y-1/2 text-[#A39A91]"
-                  />
-
-                  <input
-                    value={query}
-                    onChange={(event) =>
-                      setQuery(event.target.value)
-                    }
-                    placeholder="Search request code, item or contact..."
-                    className="h-11 w-full rounded-xl border border-[#EAE6DF] bg-[#FCFAF6] pl-10 pr-4 text-sm text-[#17202A] outline-none placeholder:text-[#A39A91] focus:border-[#FF5A36]"
-                  />
+                <div className="text-xs font-bold text-[#FF5A36]">
+                  {selectedRequest.requestCode}
                 </div>
 
-                <FilterSelect
-                  value={status}
-                  onChange={setStatus}
-                  options={[
-                    ["", "All statuses"],
-                    ...STATUSES.map((item) => [
-                      item,
-                      formatStatus(item),
-                    ] as [string, string]),
-                  ]}
-                />
+                <h2 className="mt-1 text-lg font-black">
+                  Request details
+                </h2>
               </div>
-            </div>
 
-            {error && (
-              <div className="mb-5 flex items-center justify-between rounded-2xl border border-[#F2C7BC] bg-[#FFF0ED] px-4 py-3">
-                <p className="text-sm font-semibold text-[#9F2D18]">
-                  {error}
-                </p>
-
-                <button
-                  type="button"
-                  onClick={() => setError("")}
-                  aria-label="Dismiss error"
-                  className="text-[#9F2D18]"
-                >
-                  <X size={17} />
-                </button>
-              </div>
-            )}
-
-            {loading ? (
-              <div className="rounded-2xl border border-[#EAE6DF] bg-white p-10 text-center">
-                <p className="text-sm font-medium text-[#8A8178]">
-                  Loading requests...
-                </p>
-              </div>
-            ) : requests.length === 0 ? (
-              <div className="rounded-2xl border border-[#EAE6DF] bg-white p-10 text-center">
-                <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-2xl bg-[#FFF0C7] text-[#9F5A18]">
-                  <ClipboardList size={22} />
-                </div>
-
-                <h3 className="mt-4 font-black text-[#17202A]">
-                  No requests found
-                </h3>
-
-                <p className="mt-1 text-sm text-[#8A8178]">
-                  Try changing your search or status filter.
-                </p>
-              </div>
-            ) : (
-              <div className="space-y-4">
-                {requests.map((request) => (
-                  <RequestCard
-                    key={request.id}
-                    request={request}
-                    updating={
-                      updatingId === request.id
-                    }
-                    onUpdate={updateRequest}
-                  />
-                ))}
-              </div>
-            )}
-
-            <p className="mt-4 text-xs font-medium text-[#A39A91]">
-              {requests.length} request
-              {requests.length === 1 ? "" : "s"} shown
-            </p>
-          </div>
-        </section>
-      </div>
-    </main>
-  );
-}
-
-function RequestCard({
-  request,
-  updating,
-  onUpdate,
-}: {
-  request: BuyerRequest;
-  updating: boolean;
-  onUpdate: (
-    id: string,
-    status: RequestStatus
-  ) => void;
-}) {
-  return (
-    <article className="rounded-2xl border border-[#EAE6DF] bg-white p-4 sm:p-5">
-      <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-        <div className="min-w-0">
-          <div className="flex flex-wrap items-center gap-2">
-            <span className="rounded-lg bg-[#FFE0D6] px-2.5 py-1 text-xs font-black text-[#9F2D18]">
-              {request.requestCode}
-            </span>
-
-            <StatusBadge status={request.status} />
-          </div>
-
-          <h3 className="mt-3 text-lg font-black text-[#17202A]">
-            {request.query}
-          </h3>
-
-          <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-[#8A8178]">
-            {request.category && (
-              <span>{request.category}</span>
-            )}
-
-            {request.locationArea && (
-              <span>{request.locationArea}</span>
-            )}
-
-            {request.quantity != null && (
-              <span>
-                Qty: {request.quantity}
-              </span>
-            )}
-
-            {request.budget != null && (
-              <span>
-                Budget: ₦
-                {request.budget.toLocaleString()}
-              </span>
-            )}
-          </div>
-        </div>
-
-        <StatusSelect
-          value={request.status}
-          disabled={updating}
-          onChange={(value) =>
-            onUpdate(request.id, value)
-          }
-        />
-      </div>
-
-      {request.description && (
-        <div className="mt-4 rounded-xl bg-[#FCFAF6] p-3">
-          <p className="text-xs font-bold text-[#8A8178]">
-            Details
-          </p>
-
-          <p className="mt-1 text-sm leading-6 text-[#6F675F]">
-            {request.description}
-          </p>
-        </div>
-      )}
-
-      <div className="mt-4 flex flex-col gap-4 border-t border-[#EAE6DF] pt-4 sm:flex-row sm:items-start sm:justify-between">
-        <div>
-          <p className="text-[11px] font-bold uppercase tracking-wide text-[#A39A91]">
-            Buyer contact
-          </p>
-
-          <p className="mt-1 text-sm font-semibold text-[#17202A]">
-            {request.buyerContact}
-          </p>
-        </div>
-
-        <div className="sm:text-right">
-          <p className="text-[11px] font-bold uppercase tracking-wide text-[#A39A91]">
-            Created
-          </p>
-
-          <p className="mt-1 text-sm text-[#6F675F]">
-            {new Date(
-              request.createdAt
-            ).toLocaleString()}
-          </p>
-        </div>
-      </div>
-
-      {/* Matches */}
-      <div className="mt-4 border-t border-[#EAE6DF] pt-4">
-        <div className="flex items-center justify-between">
-          <p className="text-sm font-black text-[#17202A]">
-            Matched businesses
-          </p>
-
-          <span className="rounded-full bg-[#FCFAF6] px-2.5 py-1 text-[11px] font-bold text-[#6F675F]">
-            {request.matches.length}
-          </span>
-        </div>
-
-        {request.matches.length === 0 ? (
-          <p className="mt-3 text-sm text-[#A39A91]">
-            No businesses matched yet.
-          </p>
-        ) : (
-          <div className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
-            {request.matches.map((match) => (
-              <Link
-                key={match.id}
-                href={`/seller/${match.business.id}`}
-                className="rounded-xl border border-[#EAE6DF] bg-[#FCFAF6] p-3 transition hover:border-[#FF5A36]"
+              <button
+                type="button"
+                onClick={() => setSelectedRequest(null)}
+                className="rounded-xl p-2 text-gray-500 hover:bg-gray-100"
               >
-                <div className="flex items-center justify-between gap-2">
-                  <p className="truncate text-sm font-bold text-[#17202A]">
-                    {match.business.name}
+                <X size={20} />
+              </button>
+            </div>
+
+            <div className="space-y-5 p-5">
+              <div>
+                <p className="text-xs font-bold uppercase tracking-wide text-gray-400">
+                  Request
+                </p>
+
+                <p className="mt-1 text-xl font-black">
+                  {selectedRequest.query}
+                </p>
+              </div>
+
+              <div className="grid gap-3 sm:grid-cols-2">
+                <div className="rounded-xl bg-[#FCFAF6] p-3">
+                  <div className="text-xs font-semibold text-gray-400">
+                    Status
+                  </div>
+
+                  <div
+                    className={`mt-2 inline-flex rounded-lg border px-2.5 py-1 text-xs font-bold ${getStatusClass(
+                      selectedRequest.status,
+                    )}`}
+                  >
+                    {getStatusLabel(selectedRequest.status)}
+                  </div>
+                </div>
+
+                <div className="rounded-xl bg-[#FCFAF6] p-3">
+                  <div className="text-xs font-semibold text-gray-400">
+                    Buyer contact
+                  </div>
+
+                  <div className="mt-2 flex items-center gap-2 text-sm font-bold">
+                    <Phone size={15} />
+                    {selectedRequest.buyerContact}
+                  </div>
+                </div>
+
+                {selectedRequest.budget !== null && (
+                  <div className="rounded-xl bg-[#FCFAF6] p-3">
+                    <div className="text-xs font-semibold text-gray-400">
+                      Budget
+                    </div>
+
+                    <div className="mt-2 text-sm font-bold">
+                      ₦
+                      {selectedRequest.budget.toLocaleString()}
+                    </div>
+                  </div>
+                )}
+
+                {selectedRequest.quantity !== null && (
+                  <div className="rounded-xl bg-[#FCFAF6] p-3">
+                    <div className="text-xs font-semibold text-gray-400">
+                      Quantity
+                    </div>
+
+                    <div className="mt-2 text-sm font-bold">
+                      {selectedRequest.quantity}
+                    </div>
+                  </div>
+                )}
+
+                {selectedRequest.locationArea && (
+                  <div className="rounded-xl bg-[#FCFAF6] p-3 sm:col-span-2">
+                    <div className="text-xs font-semibold text-gray-400">
+                      Location
+                    </div>
+
+                    <div className="mt-2 flex items-center gap-2 text-sm font-bold">
+                      <MapPin size={15} />
+                      {selectedRequest.locationArea}
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {selectedRequest.description && (
+                <div>
+                  <p className="text-xs font-bold uppercase tracking-wide text-gray-400">
+                    Description
                   </p>
 
-                  {match.business.verified && (
-                    <span className="shrink-0 text-[10px] font-bold text-[#FF5A36]">
-                      Verified
-                    </span>
-                  )}
+                  <p className="mt-2 rounded-xl bg-[#FCFAF6] p-4 text-sm leading-6 text-gray-700">
+                    {selectedRequest.description}
+                  </p>
+                </div>
+              )}
+
+              <div>
+                <div className="flex items-center justify-between">
+                  <p className="text-xs font-bold uppercase tracking-wide text-gray-400">
+                    Matched businesses
+                  </p>
+
+                  <span className="text-xs font-semibold text-gray-400">
+                    {selectedRequest.matches.length}
+                  </span>
                 </div>
 
-                <p className="mt-1 text-xs text-[#8A8178]">
-                  {match.business.area}
-                </p>
+                {selectedRequest.matches.length === 0 ? (
+                  <div className="mt-2 rounded-xl bg-[#FCFAF6] p-4 text-sm text-gray-500">
+                    No businesses matched this request yet.
+                  </div>
+                ) : (
+                  <div className="mt-2 space-y-2">
+                    {selectedRequest.matches.map((match) => (
+                      <div
+                        key={match.id}
+                        className="flex items-center justify-between gap-3 rounded-xl border border-[#EAE6DF] p-3"
+                      >
+                        <div className="min-w-0">
+                          <Link
+                            href={`/admin/businesses/${match.business.id}`}
+                            className="font-bold hover:text-[#FF5A36]"
+                          >
+                            {match.business.name}
+                          </Link>
 
-                <p className="mt-2 text-[11px] font-bold text-[#FF5A36]">
-                  Match score: {match.score}
-                </p>
-              </Link>
-            ))}
+                          <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-gray-500">
+                            {match.business.area && (
+                              <span>{match.business.area}</span>
+                            )}
+
+                            {match.business.verified && (
+                              <span className="inline-flex items-center gap-1 text-green-600">
+                                <CheckCircle2 size={12} />
+                                Verified
+                              </span>
+                            )}
+                          </div>
+                        </div>
+
+                        <div className="shrink-0 text-right">
+                          <div className="text-sm font-black">
+                            {match.score}
+                          </div>
+
+                          <div className="text-[10px] font-semibold text-gray-400">
+                            match score
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              <div className="border-t border-[#EAE6DF] pt-4">
+                <div className="flex items-center gap-2 text-xs text-gray-400">
+                  <Clock3 size={14} />
+                  Created {formatDate(selectedRequest.createdAt)}
+                </div>
+              </div>
+            </div>
           </div>
-        )}
-      </div>
-    </article>
+        </div>
+      )}
+    </main>
   );
-}
-
-function StatusBadge({
-  status,
-}: {
-  status: RequestStatus;
-}) {
-  const classes: Record<RequestStatus, string> = {
-    NEW: "bg-[#FFF0C7] text-[#9F5A18]",
-    MATCHED: "bg-[#DDF5EA] text-[#287A4B]",
-    CONTACTED: "bg-[#E7E5FF] text-[#554DA8]",
-    FULFILLED: "bg-[#DDF5EA] text-[#287A4B]",
-    UNFULFILLED: "bg-[#FFE0D6] text-[#9F2D18]",
-    CLOSED: "bg-[#F0ECE7] text-[#6F675F]",
-  };
-
-  return (
-    <span
-      className={`rounded-full px-2.5 py-1 text-[11px] font-bold ${classes[status]}`}
-    >
-      {formatStatus(status)}
-    </span>
-  );
-}
-
-function StatusSelect({
-  value,
-  disabled,
-  onChange,
-}: {
-  value: RequestStatus;
-  disabled: boolean;
-  onChange: (value: RequestStatus) => void;
-}) {
-  return (
-    <div className="relative shrink-0">
-      <select
-        value={value}
-        disabled={disabled}
-        onChange={(event) =>
-          onChange(
-            event.target.value as RequestStatus
-          )
-        }
-        className="h-10 appearance-none rounded-xl border border-[#EAE6DF] bg-[#FCFAF6] pl-3 pr-9 text-xs font-bold text-[#6F675F] outline-none focus:border-[#FF5A36] disabled:opacity-50"
-      >
-        {STATUSES.map((status) => (
-          <option key={status} value={status}>
-            {formatStatus(status)}
-          </option>
-        ))}
-      </select>
-
-      <ChevronDown
-        size={14}
-        className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-[#8A8178]"
-      />
-    </div>
-  );
-}
-
-function FilterSelect({
-  value,
-  onChange,
-  options,
-}: {
-  value: string;
-  onChange: (value: string) => void;
-  options: [string, string][];
-}) {
-  return (
-    <div className="relative">
-      <select
-        value={value}
-        onChange={(event) =>
-          onChange(event.target.value)
-        }
-        className="h-11 min-w-[155px] appearance-none rounded-xl border border-[#EAE6DF] bg-[#FCFAF6] pl-3 pr-9 text-sm font-medium text-[#6F675F] outline-none focus:border-[#FF5A36]"
-      >
-        {options.map(([value, label]) => (
-          <option key={value} value={value}>
-            {label}
-          </option>
-        ))}
-      </select>
-
-      <ChevronDown
-        size={15}
-        className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-[#8A8178]"
-      />
-    </div>
-  );
-}
-
-function formatStatus(status: RequestStatus) {
-  return status
-    .toLowerCase()
-    .replace("_", " ")
-    .replace(/^\w/, (character) =>
-      character.toUpperCase()
-    );
 }
