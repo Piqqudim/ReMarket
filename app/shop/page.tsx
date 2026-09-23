@@ -1,23 +1,23 @@
-// app/shop/page.tsx
 "use client";
 
 import {
   useEffect,
   useState,
-  type ReactNode,
-} from "react";
 
-import Link from "next/link";
-import { useRouter, useSearchParams } from "next/navigation";
+} from "react";
 
 import {
   Home,
   ShoppingBag,
   ClipboardList,
   Heart,
-  Search,
+  UserCircle,
+  Store,
   MapPin,
-  ChevronRight,
+  Search,
+  Bookmark,
+  Package,
+  ArrowRight,
   Shirt,
   Plug,
   Utensils,
@@ -25,113 +25,122 @@ import {
   Layers3,
   Briefcase,
   MoreHorizontal,
-  Store,
-  Bookmark,
-  CheckCircle2,
-  Loader2,
-  SlidersHorizontal,
-  X,
 } from "lucide-react";
 
-/* -------------------------------------------------------------------------- */
-/* Types                                                                      */
-/* -------------------------------------------------------------------------- */
+import Link from "next/link";
+import { useRouter, useSearchParams } from "next/navigation";
+
+import {
+  getSavedBusinesses,
+  isBusinessSaved,
+  saveBusiness,
+  removeSavedBusiness,
+  SAVED_BUSINESSES_CHANGED_EVENT,
+} from "@/lib/saved";
 
 type Category = {
   id: string;
   name: string;
 };
 
+type ProductImage = {
+  id: string;
+  url: string;
+  publicId: string | null;
+  sortOrder: number;
+};
+
 type Product = {
   id: string;
   name: string;
-  description?: string | null;
-  price?: number | null;
-  priceMin?: number | null;
-  priceMax?: number | null;
-  availability?: string;
-  imageUrl?: string | null;
+  description: string | null;
+  price: number | null;
+  priceMin: number | null;
+  priceMax: number | null;
+  availability:
+    | "AVAILABLE"
+    | "ASK_SELLER"
+    | "UNAVAILABLE";
+  imageUrl: string | null;
+  keywords: string[];
+  images: ProductImage[];
 };
 
 type Business = {
   id: string;
   name: string;
-  location?: {
-    area?: string | null;
-    address?: string | null;
-  } | null;
-  categories?: {
-    category: {
-      id: string;
-      name: string;
-    };
-  }[];
-  products?: Product[];
-  verification?: string;
-  availability?: string;
-};
+  ownerName?: string | null;
+  description: string | null;
+  imageUrl: string | null;
 
-/* -------------------------------------------------------------------------- */
-/* ReMarket category styling                                                  */
-/* -------------------------------------------------------------------------- */
+  location: {
+    id: string;
+    area: string;
+    lat: number | null;
+    long: number | null;
+  } | null;
+
+  area?: string;
+
+  availability:
+    | "AVAILABLE"
+    | "ASK_SELLER"
+    | "UNAVAILABLE";
+
+  verification:
+    | "VERIFIED"
+    | "UNVERIFIED";
+
+  categories: {
+    category: Category;
+  }[];
+
+  products: Product[];
+
+  socialLinks: {
+    id: string;
+    platform: string;
+    handle: string;
+  }[];
+};
 
 const CATEGORY_STYLE: Record<
   string,
   {
     bg: string;
-    icon: ReactNode;
+    icon: React.ReactNode;
   }
 > = {
   Fashion: {
     bg: "#FFE0D6",
-    icon: <Shirt className="h-6 w-6" />,
+    icon: <Shirt className="h-5 w-5" />,
   },
 
   Electronics: {
     bg: "#DDF5EA",
-    icon: <Plug className="h-6 w-6" />,
+    icon: <Plug className="h-5 w-5" />,
   },
 
   Food: {
     bg: "#FFF0C7",
-    icon: <Utensils className="h-6 w-6" />,
+    icon: <Utensils className="h-5 w-5" />,
   },
 
   Beauty: {
     bg: "#E7E5FF",
-    icon: <Sparkles className="h-6 w-6" />,
+    icon: <Sparkles className="h-5 w-5" />,
   },
 
   Textiles: {
     bg: "#F9DCE8",
-    icon: <Layers3 className="h-6 w-6" />,
+    icon: <Layers3 className="h-5 w-5" />,
   },
 
   Services: {
     bg: "#E4E9EF",
-    icon: <Briefcase className="h-6 w-6" />,
+    icon: <Briefcase className="h-5 w-5" />,
   },
 };
-
-function getCategoryStyle(name?: string) {
-  if (!name) {
-    return {
-      bg: "#F1F1F1",
-      icon: <MoreHorizontal className="h-6 w-6" />,
-    };
-  }
-
-  return (
-    CATEGORY_STYLE[name] ?? {
-      bg: "#F1F1F1",
-      icon: <MoreHorizontal className="h-6 w-6" />,
-    }
-  );
-}
-
-/* -------------------------------------------------------------------------- */
-/* Navigation                                                                 */
-/* -------------------------------------------------------------------------- */
 
 const NAV_ITEMS = [
   {
@@ -156,733 +165,979 @@ const NAV_ITEMS = [
   },
 ];
 
-/* -------------------------------------------------------------------------- */
-/* Helpers                                                                    */
-/* -------------------------------------------------------------------------- */
-
-function formatPrice(product: Product) {
-  const min = product.priceMin ?? product.price;
-  const max = product.priceMax ?? product.price;
-
-  if (min == null && max == null) {
-    return "Ask seller";
-  }
-
-  if (min != null && max != null && min !== max) {
-    return `₦${min.toLocaleString()} - ₦${max.toLocaleString()}`;
-  }
-
-  return `₦${(min ?? max)!.toLocaleString()}`;
+function getCategoryStyle(
+  name: string
+) {
+  return (
+    CATEGORY_STYLE[name] ?? {
+      bg: "#EEF1F4",
+      icon: (
+        <MoreHorizontal className="h-5 w-5" />
+      ),
+    }
+  );
 }
 
-function getInitials(name: string) {
-  return name
-    .trim()
-    .split(/\s+/)
-    .slice(0, 2)
-    .map((word) => word[0]?.toUpperCase())
-    .join("");
+function getProductImage(
+  product: Product
+): string | null {
+  return (
+    product.images?.[0]?.url ??
+    product.imageUrl ??
+    null
+  );
 }
 
-/* -------------------------------------------------------------------------- */
-/* Page                                                                       */
-/* -------------------------------------------------------------------------- */
+function formatPrice(
+  product: Product
+): string {
+  if (
+    product.price !== null
+  ) {
+    return `₦${product.price.toLocaleString()}`;
+  }
+
+  if (
+    product.priceMin !==
+      null &&
+    product.priceMax !==
+      null
+  ) {
+    return `₦${product.priceMin.toLocaleString()} - ₦${product.priceMax.toLocaleString()}`;
+  }
+
+  if (
+    product.priceMin !==
+    null
+  ) {
+    return `From ₦${product.priceMin.toLocaleString()}`;
+  }
+
+  if (
+    product.priceMax !==
+    null
+  ) {
+    return `Up to ₦${product.priceMax.toLocaleString()}`;
+  }
+
+  return "Ask seller";
+}
 
 export default function ShopPage() {
-  const router = useRouter();
-  const searchParams = useSearchParams();
+  const router =
+    useRouter();
 
-  const initialQuery = searchParams.get("q") ?? "";
-  const initialCategory = searchParams.get("category") ?? "";
+  const searchParams =
+    useSearchParams();
 
-  const [query, setQuery] = useState(initialQuery);
-  const [categories, setCategories] = useState<Category[]>([]);
-  const [businesses, setBusinesses] = useState<Business[]>([]);
+  const initialQuery =
+    searchParams.get("q") ??
+    "";
 
-  const [activeCategory, setActiveCategory] =
+  const initialCategory =
+    searchParams.get(
+      "category"
+    ) ?? "";
+
+  const [query, setQuery] =
+    useState(initialQuery);
+
+  const [category, setCategory] =
     useState(initialCategory);
 
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState("");
+  const [categories, setCategories] =
+    useState<Category[]>(
+      []
+    );
 
-  const [showCategories, setShowCategories] = useState(false);
+  const [businesses, setBusinesses] =
+    useState<Business[]>(
+      []
+    );
 
-  /* ------------------------------------------------------------------------ */
-  /* Load categories                                                          */
-  /* ------------------------------------------------------------------------ */
+  const [loading, setLoading] =
+    useState(true);
+
+  const [error, setError] =
+    useState("");
+
+  const [savedBusinesses, setSavedBusinesses] =
+    useState<
+      Record<string, boolean>
+    >({});
 
   useEffect(() => {
-    let cancelled = false;
+    setQuery(initialQuery);
+    setCategory(initialCategory);
+  }, [
+    initialQuery,
+    initialCategory,
+  ]);
 
-    async function loadCategories() {
-      try {
-        const response = await fetch("/api/categories", {
-          cache: "no-store",
-        });
+  useEffect(() => {
+    function syncSaved() {
+      const saved =
+        getSavedBusinesses();
 
-        if (!response.ok) {
-          throw new Error("Unable to load categories");
-        }
+      const next: Record<
+        string,
+        boolean
+      > = {};
 
-        const data = await response.json();
-
-        if (!cancelled) {
-          setCategories(
-            Array.isArray(data.categories)
-              ? data.categories
-              : []
-          );
-        }
-      } catch {
-        if (!cancelled) {
-          setCategories([]);
-        }
+      for (const business of saved) {
+        next[business.id] = true;
       }
+
+      setSavedBusinesses(next);
     }
 
-    loadCategories();
+    syncSaved();
+
+    window.addEventListener(
+      SAVED_BUSINESSES_CHANGED_EVENT,
+      syncSaved
+    );
 
     return () => {
-      cancelled = true;
+      window.removeEventListener(
+        SAVED_BUSINESSES_CHANGED_EVENT,
+        syncSaved
+      );
     };
   }, []);
 
-  /* ------------------------------------------------------------------------ */
-  /* Load businesses                                                          */
-  /* ------------------------------------------------------------------------ */
-
   useEffect(() => {
-    const controller = new AbortController();
+    const controller =
+      new AbortController();
 
-    async function loadShop() {
-      setLoading(true);
-      setError("");
-
+    async function loadCategories() {
       try {
-        const params = new URLSearchParams();
-
-        if (query.trim()) {
-          params.set("q", query.trim());
-        }
-
-        if (activeCategory) {
-          params.set("category", activeCategory);
-        }
-
-        const response = await fetch(
-          `/api/browse?${params.toString()}`,
-          {
-            cache: "no-store",
-            signal: controller.signal,
-          }
-        );
+        const response =
+          await fetch(
+            "/api/categories",
+            {
+              cache:
+                "no-store",
+              signal:
+                controller.signal,
+            }
+          );
 
         if (!response.ok) {
-          throw new Error("Unable to load shop");
+          throw new Error(
+            "Unable to load categories."
+          );
         }
 
-        const data = await response.json();
+        const data =
+          await response.json();
 
-        setBusinesses(
-          Array.isArray(data.businesses)
-            ? data.businesses
+        setCategories(
+          Array.isArray(
+            data.categories
+          )
+            ? data.categories
             : []
         );
-      } catch (err) {
-        if ((err as Error).name === "AbortError") {
+      } catch (error) {
+        if (
+          error instanceof DOMException &&
+          error.name ===
+            "AbortError"
+        ) {
           return;
         }
 
-        setError(
-          "We couldn't load the shop right now."
+        console.error(
+          "Shop categories error:",
+          error
         );
-      } finally {
-        setLoading(false);
       }
     }
 
-    loadShop();
+    void loadCategories();
 
     return () => {
       controller.abort();
     };
-  }, [query, activeCategory]);
+  }, []);
 
-  /* ------------------------------------------------------------------------ */
-  /* Search                                                                   */
-  /* ------------------------------------------------------------------------ */
+  useEffect(() => {
+    const controller =
+      new AbortController();
 
-  function handleSearch(event: React.SubmitEvent<HTMLFormElement>) {
+    async function loadBusinesses() {
+      setLoading(true);
+      setError("");
+
+      try {
+        const params =
+          new URLSearchParams();
+
+        if (
+          initialQuery.trim()
+        ) {
+          params.set(
+            "q",
+            initialQuery.trim()
+          );
+        }
+
+        if (initialCategory) {
+          params.set(
+            "category",
+            initialCategory
+          );
+        }
+
+        const response =
+          await fetch(
+            `/api/browse?${params.toString()}`,
+            {
+              cache:
+                "no-store",
+              signal:
+                controller.signal,
+            }
+          );
+
+        const data =
+          await response.json();
+
+        if (!response.ok) {
+          throw new Error(
+            typeof data?.error ===
+              "string"
+              ? data.error
+              : "Unable to load businesses."
+          );
+        }
+
+        setBusinesses(
+          Array.isArray(
+            data.businesses
+          )
+            ? data.businesses
+            : []
+        );
+      } catch (error) {
+        if (
+          error instanceof DOMException &&
+          error.name ===
+            "AbortError"
+        ) {
+          return;
+        }
+
+        console.error(
+          "Shop loading error:",
+          error
+        );
+
+        setError(
+          error instanceof Error
+            ? error.message
+            : "Unable to load businesses."
+        );
+      } finally {
+        if (
+          !controller.signal.aborted
+        ) {
+          setLoading(false);
+        }
+      }
+    }
+
+    void loadBusinesses();
+
+    return () => {
+      controller.abort();
+    };
+  }, [
+    initialQuery,
+    initialCategory,
+  ]);
+
+  function submitSearch(
+    event: React.SubmitEvent<HTMLFormElement>
+  ) {
     event.preventDefault();
 
-    const params = new URLSearchParams();
+    const params =
+      new URLSearchParams();
 
     if (query.trim()) {
-      params.set("q", query.trim());
-    }
-
-    if (activeCategory) {
-      params.set("category", activeCategory);
-    }
-
-    router.push(
-      params.toString()
-        ? `/shop?${params.toString()}`
-        : "/shop"
-    );
-  }
-
-  /* ------------------------------------------------------------------------ */
-  /* Category selection                                                       */
-  /* ------------------------------------------------------------------------ */
-
-  function selectCategory(category: string) {
-    setActiveCategory(category);
-
-    const params = new URLSearchParams();
-
-    if (query.trim()) {
-      params.set("q", query.trim());
+      params.set(
+        "q",
+        query.trim()
+      );
     }
 
     if (category) {
-      params.set("category", category);
+      params.set(
+        "category",
+        category
+      );
     }
 
+    const queryString =
+      params.toString();
+
     router.push(
-      params.toString()
-        ? `/shop?${params.toString()}`
+      queryString
+        ? `/shop?${queryString}`
         : "/shop"
     );
   }
 
+  function selectCategory(
+    nextCategory: string
+  ) {
+    setCategory(nextCategory);
+
+    const params =
+      new URLSearchParams();
+
+    if (query.trim()) {
+      params.set(
+        "q",
+        query.trim()
+      );
+    }
+
+    if (nextCategory) {
+      params.set(
+        "category",
+        nextCategory
+      );
+    }
+
+    const queryString =
+      params.toString();
+
+    router.push(
+      queryString
+        ? `/shop?${queryString}`
+        : "/shop"
+    );
+  }
+
+  function toggleSaved(
+    business: Business
+  ) {
+    if (
+      isBusinessSaved(
+        business.id
+      )
+    ) {
+      removeSavedBusiness(
+        business.id
+      );
+      return;
+    }
+
+    const categoryName =
+      business.categories?.[0]
+        ?.category?.name ??
+      "Services";
+
+    saveBusiness({
+      id: business.id,
+      name: business.name,
+      area:
+        business.location
+          ?.area ??
+        business.area ??
+        "Local",
+      category:
+        categoryName,
+      verified:
+        business.verification ===
+        "VERIFIED",
+      availability:
+        business.availability,
+      imageUrl:
+        business.imageUrl,
+    });
+  }
+
   return (
-    <main className="min-h-screen bg-[#FFF7ED] px-2 py-2 sm:px-4 sm:py-4">
-      <div className="mx-auto flex min-h-screen max-w-[1500px] flex-col overflow-hidden rounded-[22px] border border-[#FF5A36] bg-[#FFFDFC] shadow-[0_12px_40px_rgba(159,45,24,0.08)]">
-        {/* ---------------------------------------------------------------- */}
-        {/* Header                                                           */}
-        {/* ---------------------------------------------------------------- */}
+    <main className="min-h-screen bg-[#FFF7ED]">
+      <div className="mx-auto min-h-screen w-full max-w-[1500px] px-3 py-3 sm:px-5 sm:py-5">
+        <div className="min-h-[calc(100vh-24px)] overflow-hidden rounded-[18px] border border-[#FF5A36] bg-[#FFFDFC] shadow-sm sm:rounded-[22px] lg:min-h-[calc(100vh-40px)]">
 
-        <header className="flex h-[66px] shrink-0 items-center justify-between border-b border-[#EAE6DF] bg-white px-4 sm:px-6">
-          <Link
-            href="/"
-            className="flex items-center gap-2"
-          >
-            <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-[#FF5A36] text-sm font-black text-white">
-              R
-            </div>
-
-            <div className="hidden sm:block">
-              <div className="text-[17px] font-extrabold tracking-tight text-[#17202A]">
-                ReMarket
+          <header className="flex h-[64px] items-center justify-between border-b border-[#EAE6DF] bg-white px-4 sm:px-6 lg:h-[66px]">
+            <Link
+              href="/"
+              className="flex items-center gap-2.5"
+            >
+              <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-[#FF5A36] text-white">
+                <Store className="h-5 w-5" />
               </div>
 
-              <div className="text-[10px] font-medium text-[#8A8178]">
-                Find it nearby
-              </div>
-            </div>
-          </Link>
-
-          <nav className="hidden items-center gap-7 lg:flex">
-            {NAV_ITEMS.map((item) => {
-              const Icon = item.icon;
-              const active = item.href === "/shop";
-
-              return (
-                <Link
-                  key={item.href}
-                  href={item.href}
-                  className={`flex items-center gap-2 text-sm font-semibold transition ${
-                    active
-                      ? "text-[#FF5A36]"
-                      : "text-[#6F6A64] hover:text-[#17202A]"
-                  }`}
-                >
-                  <Icon className="h-4 w-4" />
-                  {item.label}
-                </Link>
-              );
-            })}
-          </nav>
-
-          <Link
-            href="/request"
-            className="rounded-xl bg-[#FF5A36] px-3 py-2 text-xs font-bold text-white transition hover:bg-[#E94D2C] sm:px-4 sm:text-sm"
-          >
-            Request something
-          </Link>
-        </header>
-
-        <div className="flex min-h-0 flex-1">
-          {/* -------------------------------------------------------------- */}
-          {/* Sidebar                                                        */}
-          {/* -------------------------------------------------------------- */}
-
-          <aside className="hidden w-[190px] shrink-0 border-r border-[#EAE6DF] bg-[#FCFAF6] p-4 lg:block">
-            <div className="space-y-1">
-              {NAV_ITEMS.map((item) => {
-                const Icon = item.icon;
-                const active = item.href === "/shop";
-
-                return (
-                  <Link
-                    key={item.href}
-                    href={item.href}
-                    className={`flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-semibold transition ${
-                      active
-                        ? "bg-[#FFE0D6] text-[#9F2D18]"
-                        : "text-[#6F6A64] hover:bg-white hover:text-[#17202A]"
-                    }`}
-                  >
-                    <Icon className="h-[18px] w-[18px]" />
-                    {item.label}
-                  </Link>
-                );
-              })}
-            </div>
-
-            <div className="my-5 h-px bg-[#EAE6DF]" />
-
-            <div className="mb-3 px-3 text-[10px] font-bold uppercase tracking-[0.12em] text-[#9A9188]">
-              Categories
-            </div>
-
-            <div className="space-y-1">
-              {categories.slice(0, categories.length).map((category) => {
-                const style = getCategoryStyle(category.name);
-                const active =
-                  activeCategory === category.name;
-
-                return (
-                  <button
-                    key={category.id}
-                    onClick={() =>
-                      selectCategory(
-                        active ? "" : category.name
-                      )
-                    }
-                    className={`flex w-full items-center gap-3 rounded-xl px-3 py-2 text-left text-xs font-semibold transition ${
-                      active
-                        ? "bg-white text-[#9F2D18]"
-                        : "text-[#6F6A64] hover:bg-white"
-                    }`}
-                  >
-                    <span
-                      className="flex h-7 w-7 items-center justify-center rounded-lg"
-                      style={{ backgroundColor: style.bg }}
-                    >
-                      {style.icon}
-                    </span>
-
-                    <span>{category.name}</span>
-                  </button>
-                );
-              })}
-            </div>
-          </aside>
-
-          {/* -------------------------------------------------------------- */}
-          {/* Main                                                           */}
-          {/* -------------------------------------------------------------- */}
-
-          <section className="min-w-0 flex-1 overflow-y-auto p-4 pb-24 sm:p-6 lg:p-7 lg:pb-7">
-            {/* Page heading */}
-
-            <div className="mb-5 flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
               <div>
-                <div className="mb-1 flex items-center gap-2 text-xs font-semibold text-[#FF5A36]">
-                  <ShoppingBag className="h-4 w-4" />
-                  Local shop
-                </div>
+                <p className="text-sm font-bold">
+                  ReMarket
+                </p>
 
-                <h1 className="text-2xl font-extrabold tracking-tight text-[#17202A] sm:text-3xl">
-                  Shop nearby
-                </h1>
-
-                <p className="mt-1 text-sm text-[#817970]">
-                  Discover products and local businesses around you.
+                <p className="text-[10px] text-muted">
+                  Find it nearby
                 </p>
               </div>
+            </Link>
+
+            <nav className="hidden items-center gap-1 md:flex">
+              {NAV_ITEMS.map(
+                (item) => (
+                  <button
+                    key={
+                      item.label
+                    }
+                    type="button"
+                    onClick={() =>
+                      router.push(
+                        item.href
+                      )
+                    }
+                    className="rounded-xl px-4 py-2 text-xs font-semibold text-gray-700 hover:bg-gray-50"
+                  >
+                    {
+                      item.label
+                    }
+                  </button>
+                )
+              )}
+            </nav>
+
+            <div className="flex items-center gap-2 sm:gap-3">
+              <button
+                type="button"
+                onClick={() =>
+                  router.push(
+                    "/saved"
+                  )
+                }
+                className="hidden h-9 w-9 items-center justify-center rounded-full hover:bg-gray-50 sm:flex"
+                aria-label="Saved"
+              >
+                <Heart className="h-[19px] w-[19px] text-gray-700" />
+              </button>
 
               <button
-                onClick={() =>
-                  setShowCategories((value) => !value)
-                }
-                className="inline-flex items-center justify-center gap-2 rounded-xl border border-[#E8E4DE] bg-white px-4 py-2.5 text-sm font-bold text-[#4D4843] transition hover:border-[#FF5A36] hover:text-[#9F2D18] lg:hidden"
+                type="button"
+                className="hidden h-9 w-9 items-center justify-center rounded-full bg-gray-100 sm:flex"
+                aria-label="Profile"
               >
-                <SlidersHorizontal className="h-4 w-4" />
-                Categories
+                <UserCircle className="h-6 w-6 text-gray-700" />
+              </button>
+
+              <button
+                type="button"
+                onClick={() =>
+                  router.push(
+                    "/request"
+                  )
+                }
+                className="rounded-xl bg-[#FF5A36] px-3.5 py-2.5 text-[11px] font-bold text-white sm:px-4 sm:text-xs"
+              >
+                Request something
               </button>
             </div>
+          </header>
 
-            {/* Search */}
-
-            <form
-              onSubmit={handleSearch}
-              className="mb-5 flex items-center gap-2 rounded-2xl border border-[#E8E4DE] bg-white p-2 shadow-[0_4px_18px_rgba(23,32,42,0.04)]"
-            >
-              <Search className="ml-2 h-5 w-5 shrink-0 text-[#8C847C]" />
-
-              <input
-                value={query}
-                onChange={(event) =>
-                  setQuery(event.target.value)
-                }
-                placeholder="Search products or businesses..."
-                className="min-w-0 flex-1 bg-transparent px-2 py-2 text-sm text-[#17202A] outline-none placeholder:text-[#AAA29A]"
-              />
-
-              {query && (
-                <button
-                  type="button"
-                  onClick={() => {
-                    setQuery("");
-                    router.push(
-                      activeCategory
-                        ? `/shop?category=${encodeURIComponent(
-                            activeCategory
-                          )}`
-                        : "/shop"
-                    );
-                  }}
-                  className="rounded-lg p-2 text-[#8C847C] transition hover:bg-[#FFF7ED] hover:text-[#17202A]"
-                  aria-label="Clear search"
-                >
-                  <X className="h-4 w-4" />
-                </button>
-              )}
-
-              <button
-                type="submit"
-                className="rounded-xl bg-[#FF5A36] px-4 py-2.5 text-sm font-bold text-white transition hover:bg-[#E94D2C]"
-              >
-                Search
-              </button>
-            </form>
-
-            {/* Mobile categories */}
-
-            {showCategories && (
-              <div className="mb-5 rounded-2xl border border-[#E8E4DE] bg-white p-4 lg:hidden">
-                <div className="mb-3 text-xs font-bold uppercase tracking-[0.1em] text-[#8C847C]">
-                  Browse categories
-                </div>
-
-                <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
-                  <button
-                    onClick={() => {
-                      selectCategory("");
-                      setShowCategories(false);
-                    }}
-                    className={`rounded-xl border px-3 py-2.5 text-left text-sm font-semibold ${
-                      !activeCategory
-                        ? "border-[#FF5A36] bg-[#FFE0D6] text-[#9F2D18]"
-                        : "border-[#E8E4DE] text-[#625C56]"
-                    }`}
-                  >
-                    All
-                  </button>
-
-                  {categories.slice(0, categories.length).map((category) => {
-                    const style = getCategoryStyle(
-                      category.name
-                    );
+          <div className="flex">
+            <aside className="hidden w-[190px] shrink-0 border-r border-[#EAE6DF] bg-[#FCFAF6] px-3 py-5 lg:block">
+              <nav className="space-y-1">
+                {NAV_ITEMS.map(
+                  (item) => {
+                    const Icon =
+                      item.icon;
 
                     return (
                       <button
-                        key={category.id}
-                        onClick={() => {
-                          selectCategory(category.name);
-                          setShowCategories(false);
-                        }}
-                        className={`flex items-center gap-2 rounded-xl border px-3 py-2.5 text-left text-sm font-semibold ${
-                          activeCategory === category.name
-                            ? "border-[#FF5A36] text-[#9F2D18]"
-                            : "border-[#E8E4DE] text-[#625C56]"
+                        key={
+                          item.label
+                        }
+                        type="button"
+                        onClick={() =>
+                          router.push(
+                            item.href
+                          )
+                        }
+                        className={`flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-sm font-medium ${
+                          item.label ===
+                          "Shop"
+                            ? "bg-white text-[#9F2D18]"
+                            : "text-gray-700"
                         }`}
-                        style={{
-                          backgroundColor:
-                            activeCategory === category.name
-                              ? style.bg
-                              : "#FFFFFF",
-                        }}
                       >
-                        <span
-                          className="flex h-7 w-7 items-center justify-center rounded-lg"
-                          style={{
-                            backgroundColor: style.bg,
-                          }}
-                        >
-                          {style.icon}
-                        </span>
-
-                        {category.name}
+                        <Icon className="h-[18px] w-[18px]" />
+                        {
+                          item.label
+                        }
                       </button>
                     );
-                  })}
-                </div>
-              </div>
-            )}
+                  }
+                )}
+              </nav>
 
-            {/* Active category */}
+              <div className="my-5 h-px bg-[#E7E2DB]" />
 
-            {(activeCategory || query) && (
-              <div className="mb-5 flex flex-wrap items-center gap-2">
-                <span className="text-xs font-semibold text-[#8A8178]">
-                  Showing:
-                </span>
+              <p className="px-3 text-[10px] font-bold uppercase tracking-[0.12em] text-gray-400">
+                Categories
+              </p>
 
-                {query && (
-                  <span className="rounded-full bg-[#FFF0D9] px-3 py-1.5 text-xs font-bold text-[#9F2D18]">
-                    “{query}”
+              <div className="mt-3 space-y-1">
+                <button
+                  type="button"
+                  onClick={() =>
+                    selectCategory(
+                      ""
+                    )
+                  }
+                  className={`flex w-full items-center gap-3 rounded-xl px-3 py-2 text-left text-xs font-medium ${
+                    !category
+                      ? "bg-white text-[#9F2D18]"
+                      : "text-gray-700 hover:bg-white"
+                  }`}
+                >
+                  <span className="flex h-7 w-7 items-center justify-center rounded-full bg-gray-100">
+                    <Store className="h-4 w-4 text-gray-500" />
                   </span>
-                )}
 
-                {activeCategory && (
-                  <button
-                    onClick={() => selectCategory("")}
-                    className="rounded-full bg-[#FFE0D6] px-3 py-1.5 text-xs font-bold text-[#9F2D18]"
-                  >
-                    {activeCategory} ×
-                  </button>
-                )}
+                  All
+                </button>
+
+                {categories
+                  .slice(0, 6)
+                  .map(
+                    (item) => {
+                      const style =
+                        getCategoryStyle(
+                          item.name
+                        );
+
+                      const active =
+                        category ===
+                        item.name;
+
+                      return (
+                        <button
+                          key={
+                            item.id
+                          }
+                          type="button"
+                          onClick={() =>
+                            selectCategory(
+                              item.name
+                            )
+                          }
+                          className={`flex w-full items-center gap-3 rounded-xl px-3 py-2 text-left ${
+                            active
+                              ? "bg-white text-[#9F2D18]"
+                              : "text-gray-700 hover:bg-white"
+                          }`}
+                        >
+                          <span
+                            className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full"
+                            style={{
+                              backgroundColor:
+                                style.bg,
+                            }}
+                          >
+                            <span className="scale-[0.65]">
+                              {
+                                style.icon
+                              }
+                            </span>
+                          </span>
+
+                          <span className="truncate text-xs font-medium">
+                            {
+                              item.name
+                            }
+                          </span>
+                        </button>
+                      );
+                    }
+                  )}
               </div>
-            )}
+            </aside>
 
-            {/* Results heading */}
-
-            <div className="mb-4 flex items-center justify-between">
-              <div>
-                <h2 className="text-lg font-extrabold tracking-tight text-[#17202A]">
-                  {activeCategory
-                    ? `${activeCategory} businesses`
-                    : "Businesses near you"}
-                </h2>
-
-                {!loading && (
-                  <p className="mt-0.5 text-xs text-[#8C847C]">
-                    {businesses.length}{" "}
-                    {businesses.length === 1
-                      ? "business"
-                      : "businesses"}{" "}
-                    found
+            <div className="min-w-0 flex-1">
+              <div className="px-4 pb-24 pt-4 sm:px-6 sm:pt-6 lg:px-6 lg:pb-8">
+                <section className="rounded-[18px] bg-[#FF5A36] px-5 py-6 text-white sm:px-7 sm:py-7">
+                  <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-white/75">
+                    Shop ReMarket
                   </p>
-                )}
-              </div>
 
-              <div className="hidden items-center gap-1 text-xs font-semibold text-[#8C847C] sm:flex">
-                <Store className="h-4 w-4" />
-                Local sellers
+                  <h1 className="mt-2 text-[26px] font-bold sm:text-[30px]">
+                    Find local sellers
+                  </h1>
+
+                  <p className="mt-2 max-w-[560px] text-xs leading-5 text-white/80 sm:text-sm">
+                    Discover real businesses and what they sell.
+                  </p>
+
+                  <form
+                    onSubmit={
+                      submitSearch
+                    }
+                    className="mt-5 flex h-[48px] max-w-[720px] items-center rounded-full bg-white p-1.5"
+                  >
+                    <Search className="ml-3 h-[18px] w-[18px] text-gray-500" />
+
+                    <input
+                      value={query}
+                      onChange={(
+                        event
+                      ) =>
+                        setQuery(
+                          event.target
+                            .value
+                        )
+                      }
+                      placeholder="What are you looking for?"
+                      className="min-w-0 flex-1 bg-transparent px-3 text-xs text-gray-800 outline-none placeholder:text-gray-400"
+                    />
+
+                    <button
+                      type="submit"
+                      className="rounded-full bg-[#FF5A36] px-5 py-2.5 text-xs font-bold text-white"
+                    >
+                      Search
+                    </button>
+                  </form>
+                </section>
+
+                <section className="mt-5">
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <div>
+                      <h2 className="text-lg font-bold text-[#17202A]">
+                        {category
+                          ? category
+                          : "All businesses"}
+                      </h2>
+
+                      <p className="mt-0.5 text-xs text-muted">
+                        {loading
+                          ? "Loading businesses..."
+                          : `${businesses.length} ${
+                              businesses.length ===
+                              1
+                                ? "business"
+                                : "businesses"
+                            }`}
+                      </p>
+                    </div>
+                  </div>
+                </section>
+
+                <section className="mt-4">
+                  {error && (
+                    <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-xs text-red-700">
+                      {error}
+                    </div>
+                  )}
+
+                  {loading && (
+                    <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+                      {[
+                        1,
+                        2,
+                        3,
+                        4,
+                      ].map(
+                        (item) => (
+                          <div
+                            key={
+                              item
+                            }
+                            className="h-[250px] animate-pulse rounded-xl border border-[#E8E4DE] bg-white"
+                          />
+                        )
+                      )}
+                    </div>
+                  )}
+
+                  {!loading &&
+                    !error &&
+                    businesses.length ===
+                      0 && (
+                      <div className="rounded-xl border border-[#E8E4DE] bg-white px-5 py-12 text-center">
+                        <Search className="mx-auto h-8 w-8 text-gray-300" />
+
+                        <p className="mt-3 text-sm font-semibold text-gray-700">
+                          No businesses found
+                        </p>
+
+                        <p className="mt-1 text-xs text-gray-400">
+                          Try another search or category.
+                        </p>
+                      </div>
+                    )}
+
+                  {!loading &&
+                    !error &&
+                    businesses.length >
+                      0 && (
+                      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+                        {businesses.map(
+                          (business) => {
+                            const categoryName =
+                              business.categories?.[0]
+                                ?.category?.name ??
+                              "Services";
+
+                            const style =
+                              getCategoryStyle(
+                                categoryName
+                              );
+
+                            const saved =
+                              Boolean(
+                                savedBusinesses[
+                                  business.id
+                                ]
+                              );
+
+                            const product =
+                              business.products?.[0] ??
+                              null;
+
+                            const productImage =
+                              product
+                                ? getProductImage(
+                                    product
+                                  )
+                                : null;
+
+                            return (
+                              <article
+                                key={
+                                  business.id
+                                }
+                                className="overflow-hidden rounded-xl border border-[#E8E4DE] bg-white transition hover:-translate-y-0.5 hover:shadow-md"
+                              >
+                                <Link
+                                  href={`/business/${business.id}`}
+                                  className="relative flex h-[116px] items-center justify-center overflow-hidden"
+                                  style={{
+                                    backgroundColor:
+                                      style.bg,
+                                  }}
+                                >
+                                  {business.imageUrl ? (
+                                    <img
+                                      src={
+                                        business.imageUrl
+                                      }
+                                      alt={
+                                        business.name
+                                      }
+                                      className="absolute inset-0 h-full w-full object-cover"
+                                    />
+                                  ) : (
+                                    <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-white/75">
+                                      <Store className="h-7 w-7 text-gray-700" />
+                                    </div>
+                                  )}
+
+                                  <span className="absolute right-3 top-3 rounded-full bg-[#DDF5EA] px-2.5 py-1 text-[9px] font-semibold text-[#137A59]">
+                                    {business.availability ===
+                                    "AVAILABLE"
+                                      ? "Available"
+                                      : "Active"}
+                                  </span>
+                                </Link>
+
+                                <div className="p-3.5">
+                                  <div className="flex items-start justify-between gap-2">
+                                    <div className="min-w-0">
+                                      <Link
+                                        href={`/business/${business.id}`}
+                                        className="block truncate text-sm font-bold text-[#17202A] hover:text-[#9F2D18]"
+                                      >
+                                        {
+                                          business.name
+                                        }
+                                      </Link>
+
+                                      <p className="mt-1 flex items-center gap-1 text-[10px] text-muted">
+                                        <span>
+                                          {
+                                            categoryName
+                                          }
+                                        </span>
+
+                                        <span>
+                                          ·
+                                        </span>
+
+                                        <span className="flex min-w-0 items-center gap-1 truncate">
+                                          <MapPin className="h-3 w-3 shrink-0" />
+                                          {
+                                            business
+                                              .location
+                                              ?.area ??
+                                            "Local"
+                                          }
+                                        </span>
+                                      </p>
+                                    </div>
+
+                                    <button
+                                      type="button"
+                                      aria-label={
+                                        saved
+                                          ? `Remove ${business.name} from saved businesses`
+                                          : `Save ${business.name}`
+                                      }
+                                      aria-pressed={
+                                        saved
+                                      }
+                                      onClick={(
+                                        event
+                                      ) => {
+                                        event.preventDefault();
+                                        event.stopPropagation();
+
+                                        toggleSaved(
+                                          business
+                                        );
+                                      }}
+                                      className={`shrink-0 ${
+                                        saved
+                                          ? "text-[#9F2D18]"
+                                          : "text-gray-500 hover:text-[#9F2D18]"
+                                      }`}
+                                    >
+                                      <Bookmark
+                                        className="h-4 w-4"
+                                        fill={
+                                          saved
+                                            ? "currentColor"
+                                            : "none"
+                                        }
+                                      />
+                                    </button>
+                                  </div>
+
+                                  <div className="mt-3 flex items-center justify-between">
+                                    <div className="flex items-center gap-1">
+                                      <Package className="h-4 w-4 text-gray-400" />
+
+                                      <span className="text-[10px] font-semibold text-gray-600">
+                                        {
+                                          business.products.length
+                                        }{" "}
+                                        products
+                                      </span>
+                                    </div>
+                                  </div>
+
+                                  {product && (
+                                    <div className="mt-3 border-t border-[#F0ECE6] pt-3">
+                                      <div className="flex items-center gap-2.5">
+                                        {productImage ? (
+                                          <img
+                                            src={
+                                              productImage
+                                            }
+                                            alt={
+                                              product.name
+                                            }
+                                            className="h-10 w-10 rounded-lg object-cover"
+                                          />
+                                        ) : (
+                                          <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-[#FCFAF6] text-gray-400">
+                                            <Package className="h-4 w-4" />
+                                          </div>
+                                        )}
+
+                                        <div className="min-w-0">
+                                          <p className="truncate text-[10px] font-semibold text-gray-600">
+                                            {
+                                              product.name
+                                            }
+                                          </p>
+
+                                          <p className="mt-1 text-[10px] text-gray-400">
+                                            {formatPrice(
+                                              product
+                                            )}
+                                          </p>
+                                        </div>
+                                      </div>
+                                    </div>
+                                  )}
+
+                                  <Link
+                                    href={`/business/${business.id}`}
+                                    className="mt-3 flex w-full items-center justify-center gap-2 rounded-lg bg-[#FFF1ED] py-2.5 text-[11px] font-bold text-[#9F2D18]"
+                                  >
+                                    Browse
+                                    <ArrowRight className="h-3.5 w-3.5" />
+                                  </Link>
+                                </div>
+                              </article>
+                            );
+                          }
+                        )}
+                      </div>
+                    )}
+                </section>
+
+                <footer className="mt-7 flex items-center justify-center gap-3 text-[10px] text-gray-400">
+                  <span className="h-px w-16 bg-gray-200" />
+                  <span>
+                    ReMarket · Find it nearby
+                  </span>
+                  <span className="h-px w-16 bg-gray-200" />
+                </footer>
               </div>
             </div>
+          </div>
 
-            {/* Loading */}
+          <nav className="fixed bottom-0 left-0 right-0 z-50 border-t border-gray-200 bg-white/95 px-2 pb-[max(6px,safe-area-inset-bottom)] pt-1.5 backdrop-blur lg:hidden">
+            <div className="mx-auto grid max-w-md grid-cols-4">
+              {NAV_ITEMS.map(
+                (item) => {
+                  const Icon =
+                    item.icon;
 
-            {loading && (
-              <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
-                {[1, 2, 3, 4, 5, 6].map((item) => (
-                  <div
-                    key={item}
-                    className="h-[280px] animate-pulse rounded-2xl border border-[#EAE6DF] bg-white"
-                  />
-                ))}
-              </div>
-            )}
+                  return (
+                    <button
+                      key={
+                        item.label
+                      }
+                      type="button"
+                      onClick={() =>
+                        router.push(
+                          item.href
+                        )
+                      }
+                      className={`flex flex-col items-center justify-center gap-1 rounded-xl py-2 ${
+                        item.label ===
+                        "Shop"
+                          ? "text-[#9F2D18]"
+                          : "text-gray-500"
+                      }`}
+                    >
+                      <Icon className="h-[19px] w-[19px]" />
 
-            {/* Error */}
-
-            {!loading && error && (
-              <div className="rounded-2xl border border-[#E8E4DE] bg-white p-8 text-center">
-                <div className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-full bg-[#FFE0D6] text-[#9F2D18]">
-                  <Store className="h-6 w-6" />
-                </div>
-
-                <h3 className="font-bold text-[#17202A]">
-                  Something went wrong
-                </h3>
-
-                <p className="mt-1 text-sm text-[#817970]">
-                  {error}
-                </p>
-              </div>
-            )}
-
-            {/* Empty */}
-
-            {!loading &&
-              !error &&
-              businesses.length === 0 && (
-                <div className="rounded-2xl border border-[#E8E4DE] bg-white px-6 py-12 text-center">
-                  <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-full bg-[#FFE0D6] text-[#9F2D18]">
-                    <Search className="h-6 w-6" />
-                  </div>
-
-                  <h3 className="text-lg font-extrabold text-[#17202A]">
-                    Nothing found yet
-                  </h3>
-
-                  <p className="mx-auto mt-1 max-w-md text-sm text-[#817970]">
-                    Try another search or browse a different
-                    category.
-                  </p>
-
-                  <button
-                    onClick={() => {
-                      setQuery("");
-                      setActiveCategory("");
-                      router.push("/shop");
-                    }}
-                    className="mt-5 rounded-xl bg-[#FF5A36] px-4 py-2.5 text-sm font-bold text-white transition hover:bg-[#E94D2C]"
-                  >
-                    Browse everything
-                  </button>
-                </div>
+                      <span className="text-[9px] font-medium">
+                        {
+                          item.label
+                        }
+                      </span>
+                    </button>
+                  );
+                }
               )}
-
-            {/* Business grid */}
-
-            {!loading &&
-              !error &&
-              businesses.length > 0 && (
-                <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
-                  {businesses.map((business) => {
-                    const category =
-                      business.categories?.[0]?.category
-                        ?.name ?? "Other";
-
-                    const style =
-                      getCategoryStyle(category);
-
-                    const productCount =
-                      business.products?.length ?? 0;
-
-                    const verified =
-                      business.verification ===
-                      "VERIFIED";
-
-                    return (
-                      <article
-                        key={business.id}
-                        className="group overflow-hidden rounded-2xl border border-[#EAE6DF] bg-white transition hover:-translate-y-0.5 hover:border-[#FFB29E] hover:shadow-[0_10px_30px_rgba(159,45,24,0.08)]"
-                      >
-                        {/* Category header */}
-
-                        <div
-                          className="relative flex h-[92px] items-center justify-between px-5"
-                          style={{
-                            backgroundColor: style.bg,
-                          }}
-                        >
-                          <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-white/80 text-[#9F2D18]">
-                            {style.icon}
-                          </div>
-
-                          <div className="flex items-center gap-2">
-                            <span className="rounded-full bg-white/80 px-2.5 py-1 text-[10px] font-extrabold uppercase tracking-wide text-[#9F2D18]">
-                              Active
-                            </span>
-
-                            <button
-                              type="button"
-                              aria-label={`Save ${business.name}`}
-                              className="flex h-8 w-8 items-center justify-center rounded-full bg-white/80 text-[#776F68] transition hover:bg-white hover:text-[#FF5A36]"
-                            >
-                              <Bookmark className="h-4 w-4" />
-                            </button>
-                          </div>
-                        </div>
-
-                        {/* Content */}
-
-                        <div className="p-5">
-                          <div className="mb-3 flex items-start gap-3">
-                            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-[#FFF0D9] text-xs font-extrabold text-[#9F2D18]">
-                              {getInitials(
-                                business.name
-                              )}
-                            </div>
-
-                            <div className="min-w-0 flex-1">
-                              <div className="flex items-center gap-1.5">
-                                <h3 className="truncate text-[15px] font-extrabold text-[#17202A]">
-                                  {business.name}
-                                </h3>
-
-                                {verified && (
-                                  <CheckCircle2 className="h-4 w-4 shrink-0 fill-[#FF5A36] text-white" />
-                                )}
-                              </div>
-
-                              <p className="mt-0.5 text-xs font-semibold text-[#8A8178]">
-                                {category}
-                              </p>
-                            </div>
-                          </div>
-
-                          <div className="mb-4 space-y-2">
-                            <div className="flex items-center gap-2 text-xs text-[#756D65]">
-                              <MapPin className="h-3.5 w-3.5 text-[#FF5A36]" />
-
-                              <span className="truncate">
-                                {business.location?.area ??
-                                  "Location not added"}
-                              </span>
-                            </div>
-
-                            <div className="flex items-center gap-2 text-xs text-[#756D65]">
-                              <ShoppingBag className="h-3.5 w-3.5 text-[#FF5A36]" />
-
-                              <span>
-                                {productCount}{" "}
-                                {productCount === 1
-                                  ? "product"
-                                  : "products"}
-                              </span>
-                            </div>
-                          </div>
-
-                          <Link
-                            href={`/seller/${business.id}`}
-                            className="flex w-full items-center justify-between rounded-xl border border-[#E8E4DE] bg-[#FFFDFC] px-3.5 py-2.5 text-xs font-extrabold text-[#4D4843] transition hover:border-[#FF5A36] hover:bg-[#FFE0D6] hover:text-[#9F2D18]"
-                          >
-                            <span>View seller</span>
-
-                            <ChevronRight className="h-4 w-4 transition-transform group-hover:translate-x-0.5" />
-                          </Link>
-                        </div>
-                      </article>
-                    );
-                  })}
-                </div>
-              )}
-          </section>
+            </div>
+          </nav>
         </div>
-
-        {/* ---------------------------------------------------------------- */}
-        {/* Mobile bottom navigation                                        */}
-        {/* ---------------------------------------------------------------- */}
-
-        <nav className="fixed bottom-3 left-1/2 z-40 flex w-[calc(100%-24px)] max-w-md -translate-x-1/2 items-center justify-around rounded-2xl border border-[#E8E4DE] bg-white/95 p-2 shadow-[0_10px_35px_rgba(23,32,42,0.12)] backdrop-blur lg:hidden">
-          {NAV_ITEMS.map((item) => {
-            const Icon = item.icon;
-            const active = item.href === "/shop";
-
-            return (
-              <Link
-                key={item.href}
-                href={item.href}
-                className={`flex min-w-[64px] flex-col items-center gap-1 rounded-xl px-3 py-2 text-[10px] font-bold ${
-                  active
-                    ? "bg-[#FFE0D6] text-[#9F2D18]"
-                    : "text-[#827A72]"
-                }`}
-              >
-                <Icon className="h-[18px] w-[18px]" />
-                {item.label}
-              </Link>
-            );
-          })}
-        </nav>
       </div>
     </main>
   );

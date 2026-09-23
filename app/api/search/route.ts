@@ -1,373 +1,542 @@
-// app/api/search/route.ts
-
-import { NextRequest, NextResponse } from "next/server";
+import {
+  NextRequest,
+  NextResponse,
+} from "next/server";
 
 import { prisma } from "@/lib/prisma";
+
 import {
   findMatches,
   parseQuery,
 } from "@/lib/matching";
-import { Availability, VerificationStatus } from "@prisma/client";
 
-/* -------------------------------------------------------------------------- */
-/* Helpers                                                                    */
-/* -------------------------------------------------------------------------- */
+import {
+  Availability,
+  VerificationStatus,
+} from "@prisma/client";
 
-function clean(value: string | null) {
+function clean(
+  value: string | null
+): string {
   return value?.trim() ?? "";
 }
 
-function parseOptionalInt(value: string | null) {
-  if (!value) return null;
+function parseOptionalInt(
+  value: string | null
+): number | null {
+  if (!value) {
+    return null;
+  }
 
-  const number = Number(value);
+  const number =
+    Number(value);
 
-  if (!Number.isFinite(number)) {
+  if (
+    !Number.isFinite(number)
+  ) {
     return null;
   }
 
   return Math.floor(number);
 }
 
-function parseBoolean(value: string | null) {
-  if (value === "true") return true;
-  if (value === "false") return false;
+function parseBoolean(
+  value: string | null
+): boolean | null {
+  if (
+    value === "true"
+  ) {
+    return true;
+  }
+
+  if (
+    value === "false"
+  ) {
+    return false;
+  }
 
   return null;
 }
 
-/* -------------------------------------------------------------------------- */
-/* GET                                                                        */
-/* -------------------------------------------------------------------------- */
+function parseAvailability(
+  value: string
+): Availability | null {
+  if (
+    value ===
+      Availability.AVAILABLE ||
+    value ===
+      Availability.ASK_SELLER ||
+    value ===
+      Availability.UNAVAILABLE
+  ) {
+    return value;
+  }
 
-export async function GET(request: NextRequest) {
+  return null;
+}
+
+export async function GET(
+  request: NextRequest
+) {
   try {
-    const { searchParams } = new URL(request.url);
-
-    const q = clean(searchParams.get("q"));
-    const category = clean(searchParams.get("category"));
-    const location = clean(searchParams.get("location"));
-
-    const minPrice = parseOptionalInt(
-      searchParams.get("minPrice")
+    const {
+      searchParams,
+    } = new URL(
+      request.url
     );
 
-    const maxPrice = parseOptionalInt(
-      searchParams.get("maxPrice")
+    const q = clean(
+      searchParams.get("q")
     );
 
-    const availability = clean(
-      searchParams.get("availability")
-    );
+    const category =
+      clean(
+        searchParams.get(
+          "category"
+        )
+      );
 
-    const verifiedOnly = parseBoolean(
-      searchParams.get("verified")
-    );
+    const location =
+      clean(
+        searchParams.get(
+          "location"
+        )
+      );
 
-    /* ---------------------------------------------------------------------- */
-    /* Validate price range                                                   */
-    /* ---------------------------------------------------------------------- */
+    const minPrice =
+      parseOptionalInt(
+        searchParams.get(
+          "minPrice"
+        )
+      );
+
+    const maxPrice =
+      parseOptionalInt(
+        searchParams.get(
+          "maxPrice"
+        )
+      );
+
+    const availabilityValue =
+      clean(
+        searchParams.get(
+          "availability"
+        )
+      );
+
+    const availability =
+      parseAvailability(
+        availabilityValue
+      );
+
+    const verifiedOnly =
+      parseBoolean(
+        searchParams.get(
+          "verified"
+        )
+      );
 
     const validMinPrice =
-      minPrice !== null && minPrice >= 0
+      minPrice !== null &&
+      minPrice >= 0
         ? minPrice
         : null;
 
     const validMaxPrice =
-      maxPrice !== null && maxPrice >= 0
+      maxPrice !== null &&
+      maxPrice >= 0
         ? maxPrice
         : null;
 
-    /* ---------------------------------------------------------------------- */
-    /* Build base business query                                              */
-    /* ---------------------------------------------------------------------- */
+    const businesses =
+      await prisma.business.findMany(
+        {
+          where: {
+            status: "ACTIVE",
 
-    const businesses = await prisma.business.findMany({
-      where: {
-        status: "ACTIVE",
+            ...(category
+              ? {
+                  categories: {
+                    some: {
+                      category: {
+                        name: {
+                          equals:
+                            category,
+                          mode: "insensitive",
+                        },
+                      },
+                    },
+                  },
+                }
+              : {}),
 
-        ...(category
-          ? {
-              categories: {
-                some: {
-                  category: {
-                    name: {
-                      equals: category,
+            ...(location
+              ? {
+                  location: {
+                    area: {
+                      contains:
+                        location,
                       mode: "insensitive",
                     },
                   },
-                },
-              },
-            }
-          : {}),
+                }
+              : {}),
 
-        ...(location
-          ? {
-              location: {
-                area: {
-                  contains: location,
-                  mode: "insensitive",
-                },
-              },
-            }
-          : {}),
+            ...(availability
+              ? {
+                  availability,
+                }
+              : {}),
 
-        ...(availability
-          ? {
-              availability:Availability.AVAILABLE
-                
-            }
-          : {}),
+            ...(verifiedOnly ===
+            true
+              ? {
+                  verification:
+                    VerificationStatus.VERIFIED,
+                }
+              : {}),
+          },
 
-        ...(verifiedOnly === true
-          ? {
-              verification: VerificationStatus.VERIFIED,
-            }
-          : {}),
-      },
-
-      include: {
-        location: true,
-
-        categories: {
           include: {
-            category: true,
-          },
-        },
+            location: true,
 
-        products: {
-          where: {
-            status: "ACTIVE",
-          },
+            categories: {
+              include: {
+                category: true,
+              },
+            },
 
-          select: {
-            id: true,
-            name: true,
-            description: true,
-            price: true,
-            priceMin: true,
-            priceMax: true,
-            availability: true,
-            imageUrl: true,
-            keywords: true,
-            category: true,
+            products: {
+              where: {
+                status: "ACTIVE",
+              },
+
+              select: {
+                id: true,
+                name: true,
+                description: true,
+                price: true,
+                priceMin: true,
+                priceMax: true,
+                availability: true,
+                imageUrl: true,
+                keywords: true,
+                category: true,
+
+                images: {
+                  select: {
+                    id: true,
+                    url: true,
+                    publicId: true,
+                    sortOrder: true,
+                    createdAt: true,
+                  },
+
+                  orderBy: [
+                    {
+                      sortOrder:
+                        "asc",
+                    },
+                    {
+                      createdAt:
+                        "asc",
+                    },
+                  ],
+                },
+              },
+
+              orderBy: {
+                updatedAt: "desc",
+              },
+            },
+
+            socialLinks: true,
           },
 
           orderBy: {
-            updatedAt: "desc",
+            onboardedAt: "desc",
           },
-        },
-
-        socialLinks: true,
-      },
-
-      orderBy: {
-        onboardedAt: "desc",
-      },
-    });
-
-    /* ---------------------------------------------------------------------- */
-    /* Filter businesses by product price                                     */
-    /* ---------------------------------------------------------------------- */
-
-    const priceFiltered = businesses.filter((business) => {
-      /*
-       * If no price filter exists, don't remove anything.
-       */
-      if (
-        validMinPrice === null &&
-        validMaxPrice === null
-      ) {
-        return true;
-      }
-
-      /*
-       * A business matches a price filter if at least one
-       * active product overlaps the requested price range.
-       */
-      return business.products.some((product) => {
-        const productMin =
-          product.priceMin ?? product.price;
-
-        const productMax =
-          product.priceMax ?? product.price;
-
-        /*
-         * Product has no known price.
-         * We don't exclude it when a price filter is supplied.
-         */
-        if (
-          productMin === null &&
-          productMax === null
-        ) {
-          return true;
         }
+      );
 
-        /*
-         * Under minimum requested price.
-         */
-        if (
-          validMinPrice !== null &&
-          productMax !== null &&
-          productMax < validMinPrice
-        ) {
-          return false;
+    const priceFiltered =
+      businesses.filter(
+        (business) => {
+          if (
+            validMinPrice ===
+              null &&
+            validMaxPrice ===
+              null
+          ) {
+            return true;
+          }
+
+          return business.products.some(
+            (product) => {
+              const productMin =
+                product.priceMin ??
+                product.price;
+
+              const productMax =
+                product.priceMax ??
+                product.price;
+
+              if (
+                productMin ===
+                  null &&
+                productMax ===
+                  null
+              ) {
+                return true;
+              }
+
+              if (
+                validMinPrice !==
+                  null &&
+                productMax !==
+                  null &&
+                productMax <
+                  validMinPrice
+              ) {
+                return false;
+              }
+
+              if (
+                validMaxPrice !==
+                  null &&
+                productMin !==
+                  null &&
+                productMin >
+                  validMaxPrice
+              ) {
+                return false;
+              }
+
+              return true;
+            }
+          );
         }
+      );
 
-        /*
-         * Above maximum requested price.
-         */
-        if (
-          validMaxPrice !== null &&
-          productMin !== null &&
-          productMin > validMaxPrice
-        ) {
-          return false;
-        }
-
-        return true;
-      });
-    });
-
-    /* ---------------------------------------------------------------------- */
-    /* Text search                                                             */
-    /* ---------------------------------------------------------------------- */
-
-    let results = priceFiltered;
+    let results =
+      priceFiltered;
 
     if (q) {
-      /*
-       * Use the existing matching engine.
-       *
-       * This is important because:
-       *
-       * "bread"
-       *
-       * should search:
-       * - business name
-       * - product name
-       * - product description
-       * - product keywords
-       * - category
-       */
-      const parsed = parseQuery(q, location);
+      const parsed =
+        parseQuery(
+          q,
+          location
+        );
 
-      const matches = await findMatches(parsed);
+      const matches =
+        await findMatches(
+          parsed
+        );
 
-      /*
-       * Convert matching IDs into a score lookup.
-       */
-      const scoreMap = new Map<string, number>();
+      const scoreMap =
+        new Map<
+          string,
+          number
+        >();
 
       for (const match of matches) {
-        scoreMap.set(match.business.id, match.score);
+        scoreMap.set(
+          match.business.id,
+          match.score
+        );
       }
 
-      /*
-       * Keep only businesses that actually matched.
-       */
-      results = results
-        .filter((business) =>
-          scoreMap.has(business.id)
-        )
-        .sort((a, b) => {
-          const scoreA = scoreMap.get(a.id) ?? 0;
-          const scoreB = scoreMap.get(b.id) ?? 0;
+      results =
+        results
+          .filter(
+            (business) =>
+              scoreMap.has(
+                business.id
+              )
+          )
+          .sort(
+            (a, b) => {
+              const scoreA =
+                scoreMap.get(
+                  a.id
+                ) ?? 0;
 
-          return scoreB - scoreA;
-        });
+              const scoreB =
+                scoreMap.get(
+                  b.id
+                ) ?? 0;
+
+              return (
+                scoreB -
+                scoreA
+              );
+            }
+          );
     }
 
-    /* ---------------------------------------------------------------------- */
-    /* Shape response for ReMarket frontend                                   */
-    /* ---------------------------------------------------------------------- */
+    const formattedBusinesses =
+      results.map(
+        (business) => ({
+          id: business.id,
 
-    const formattedBusinesses = results.map(
-      (business) => ({
-        id: business.id,
+          name: business.name,
 
-        name: business.name,
+          ownerName:
+            business.ownerName,
 
-        ownerName: business.ownerName,
+          description:
+            business.description,
 
-        description: business.description,
+          imageUrl:
+            business.imageUrl,
 
-        location: business.location
-          ? {
-              area: business.location.area,
-            }
-          : null,
+          location:
+            business.location
+              ? {
+                  area:
+                    business
+                      .location
+                      .area,
+                }
+              : null,
 
-        area:
-          business.location?.area ??
-          "Location not added",
+          area:
+            business.location
+              ?.area ??
+            "Location not added",
 
-        availability: business.availability,
+          availability:
+            business.availability,
 
-        verification: business.verification,
+          verification:
+            business.verification,
 
-        verified:
-          business.verification === "VERIFIED",
+          verified:
+            business.verification ===
+            VerificationStatus.VERIFIED,
 
-        category:
-          business.categories?.[0]?.category?.name ??
-          "Other",
+          category:
+            business
+              .categories?.[0]
+              ?.category?.name ??
+            "Other",
 
-        categories:
-          business.categories.map(
-            (item) => item.category.name
-          ),
+          categories:
+            business.categories.map(
+              (item) =>
+                item.category.name
+            ),
 
-        productCount:
-          business.products.length,
+          productCount:
+            business.products.length,
 
-        products: business.products,
+          products:
+            business.products.map(
+              (product) => ({
+                id:
+                  product.id,
 
-        socialLinks:
-          business.socialLinks,
-      })
-    );
+                name:
+                  product.name,
 
-    /* ---------------------------------------------------------------------- */
-    /* Record search                                                          */
-    /* ---------------------------------------------------------------------- */
+                description:
+                  product.description,
+
+                price:
+                  product.price,
+
+                priceMin:
+                  product.priceMin,
+
+                priceMax:
+                  product.priceMax,
+
+                availability:
+                  product.availability,
+
+                imageUrl:
+                  product.imageUrl,
+
+                keywords:
+                  product.keywords,
+
+                category:
+                  product.category,
+
+                images:
+                  product.images.map(
+                    (image) => ({
+                      id:
+                        image.id,
+
+                      url:
+                        image.url,
+
+                      publicId:
+                        image.publicId,
+
+                      sortOrder:
+                        image.sortOrder,
+                    })
+                  ),
+              })
+            ),
+
+          socialLinks:
+            business.socialLinks,
+        })
+      );
 
     try {
-      await prisma.searchEvent.create({
-        data: {
-          query: q || "*",
-          category: category || null,
-          location: location || null,
-          resultCount: formattedBusinesses.length,
-        },
-      });
+      await prisma.searchEvent.create(
+        {
+          data: {
+            query:
+              q || "*",
+
+            category:
+              category || null,
+
+            location:
+              location || null,
+
+            resultCount:
+              formattedBusinesses.length,
+          },
+        }
+      );
     } catch (eventError) {
-      /*
-       * Search analytics should never break the actual search.
-       */
       console.error(
         "Search event error:",
         eventError
       );
     }
 
-    /* ---------------------------------------------------------------------- */
-    /* Response                                                               */
-    /* ---------------------------------------------------------------------- */
-
     return NextResponse.json({
-      businesses: formattedBusinesses,
-      total: formattedBusinesses.length,
+      businesses:
+        formattedBusinesses,
+
+      total:
+        formattedBusinesses.length,
 
       query: q,
 
       filters: {
-        category: category || null,
-        location: location || null,
-        minPrice: validMinPrice,
-        maxPrice: validMaxPrice,
+        category:
+          category || null,
+
+        location:
+          location || null,
+
+        minPrice:
+          validMinPrice,
+
+        maxPrice:
+          validMaxPrice,
+
         availability:
           availability || null,
+
         verified:
           verifiedOnly === true,
       },

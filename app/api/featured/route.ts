@@ -51,30 +51,31 @@ export async function GET() {
       take: 4,
     });
 
-    const featured = businesses.map((business) => ({
-      id: business.id,
-      name: business.name,
-      ownerName: business.ownerName,
-      description: business.description,
+  const featured = businesses.map((business) => ({
+  id: business.id,
+  name: business.name,
+  ownerName: business.ownerName,
+  description: business.description,
+  imageUrl: business.imageUrl,
 
-      area: business.location?.area ?? "Location not added",
+  area: business.location?.area ?? "Location not added",
 
-      availability: business.availability,
-      verification: business.verification,
+  availability: business.availability,
+  verification: business.verification,
 
-      category:
-        business.categories[0]?.category.name ?? "Other",
+  category:
+    business.categories[0]?.category.name ?? "Other",
 
-      categories: business.categories.map(
-        (item) => item.category.name
-      ),
+  categories: business.categories.map(
+    (item) => item.category.name
+  ),
 
-      productCount: business.products.length,
+  productCount: business.products.length,
 
-      products: business.products,
+  products: business.products,
 
-      socialLinks: business.socialLinks,
-    }));
+  socialLinks: business.socialLinks,
+}));
 
     return NextResponse.json({
       businesses: featured,

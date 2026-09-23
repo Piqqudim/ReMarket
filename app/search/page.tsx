@@ -1,11 +1,9 @@
-// app/search/page.tsx
-
 "use client";
 
 import {
   useEffect,
   useState,
-  type SubmitEvent,
+  type FormEvent,
 } from "react";
 
 import {
@@ -22,7 +20,6 @@ import {
   X,
   ChevronDown,
   Check,
-  Loader2,
   Package,
   Bookmark,
   Star,
@@ -36,7 +33,18 @@ import {
 } from "lucide-react";
 
 import Link from "next/link";
-import { useRouter, useSearchParams } from "next/navigation";
+import {
+  useRouter,
+  useSearchParams,
+} from "next/navigation";
+
+import {
+  getSavedBusinesses,
+  isBusinessSaved,
+  saveBusiness,
+  removeSavedBusiness,
+  SAVED_BUSINESSES_CHANGED_EVENT,
+} from "@/lib/saved";
 
 const CATEGORY_STYLE: Record<
   string,
@@ -47,38 +55,57 @@ const CATEGORY_STYLE: Record<
 > = {
   Fashion: {
     bg: "#FFE0D6",
-    icon: <Shirt className="h-5 w-5" />,
+    icon: (
+      <Shirt className="h-5 w-5" />
+    ),
   },
 
   Electronics: {
     bg: "#DDF5EA",
-    icon: <Plug className="h-5 w-5" />,
+    icon: (
+      <Plug className="h-5 w-5" />
+    ),
   },
 
   Food: {
     bg: "#FFF0C7",
-    icon: <Utensils className="h-5 w-5" />,
+    icon: (
+      <Utensils className="h-5 w-5" />
+    ),
   },
 
   Beauty: {
     bg: "#E7E5FF",
-    icon: <Sparkles className="h-5 w-5" />,
+    icon: (
+      <Sparkles className="h-5 w-5" />
+    ),
   },
 
   Textiles: {
     bg: "#F9DCE8",
-    icon: <Layers3 className="h-5 w-5" />,
+    icon: (
+      <Layers3 className="h-5 w-5" />
+    ),
   },
 
   Services: {
     bg: "#E4E9EF",
-    icon: <Briefcase className="h-5 w-5" />,
+    icon: (
+      <Briefcase className="h-5 w-5" />
+    ),
   },
 };
 
 type Category = {
   id: string;
   name: string;
+};
+
+type ProductImage = {
+  id: string;
+  url: string;
+  publicId?: string | null;
+  sortOrder: number;
 };
 
 type Product = {
@@ -92,13 +119,14 @@ type Product = {
     | "ASK_SELLER"
     | "UNAVAILABLE";
   imageUrl: string | null;
+  images?: ProductImage[];
 };
 
 type Business = {
   id: string;
   name: string;
-
   description: string | null;
+  imageUrl: string | null;
 
   location: {
     area?: string | null;
@@ -154,11 +182,15 @@ const NAV_ITEMS = [
   },
 ];
 
-function getCategoryStyle(name: string) {
+function getCategoryStyle(
+  name: string
+) {
   return (
     CATEGORY_STYLE[name] ?? {
       bg: "#EEF1F4",
-      icon: <MoreHorizontal className="h-5 w-5" />,
+      icon: (
+        <MoreHorizontal className="h-5 w-5" />
+      ),
     }
   );
 }
@@ -166,43 +198,73 @@ function getCategoryStyle(name: string) {
 function formatPrice(
   product: Product
 ): string {
-  if (product.price != null) {
+  if (
+    product.price !==
+    null
+  ) {
     return `₦${product.price.toLocaleString()}`;
   }
 
   if (
-    product.priceMin != null &&
-    product.priceMax != null
+    product.priceMin !==
+      null &&
+    product.priceMax !==
+      null
   ) {
     return `₦${product.priceMin.toLocaleString()} - ₦${product.priceMax.toLocaleString()}`;
   }
 
-  if (product.priceMin != null) {
+  if (
+    product.priceMin !==
+    null
+  ) {
     return `From ₦${product.priceMin.toLocaleString()}`;
   }
 
-  if (product.priceMax != null) {
+  if (
+    product.priceMax !==
+    null
+  ) {
     return `Up to ₦${product.priceMax.toLocaleString()}`;
   }
 
   return "Ask seller";
 }
 
+function getProductImage(
+  product: Product
+): string | null {
+  return (
+    product.images?.[0]
+      ?.url ??
+    product.imageUrl ??
+    null
+  );
+}
+
 export default function SearchPage() {
-  const router = useRouter();
-  const searchParams = useSearchParams();
+  const router =
+    useRouter();
+
+  const searchParams =
+    useSearchParams();
 
   const urlQuery =
-    searchParams.get("q") ?? "";
+    searchParams.get("q") ??
+    "";
 
   const [query, setQuery] =
     useState(urlQuery);
 
   const [categories, setCategories] =
-    useState<Category[]>([]);
+    useState<Category[]>(
+      []
+    );
 
   const [businesses, setBusinesses] =
-    useState<Business[]>([]);
+    useState<Business[]>(
+      []
+    );
 
   const [loading, setLoading] =
     useState(true);
@@ -215,37 +277,89 @@ export default function SearchPage() {
 
   const [category, setCategory] =
     useState(
-      searchParams.get("category") ?? ""
+      searchParams.get(
+        "category"
+      ) ?? ""
     );
 
   const [location, setLocation] =
     useState(
-      searchParams.get("location") ?? ""
+      searchParams.get(
+        "location"
+      ) ?? ""
     );
 
   const [minPrice, setMinPrice] =
     useState(
-      searchParams.get("minPrice") ?? ""
+      searchParams.get(
+        "minPrice"
+      ) ?? ""
     );
 
   const [maxPrice, setMaxPrice] =
     useState(
-      searchParams.get("maxPrice") ?? ""
+      searchParams.get(
+        "maxPrice"
+      ) ?? ""
     );
 
   const [availability, setAvailability] =
     useState(
-      searchParams.get("availability") ?? ""
+      searchParams.get(
+        "availability"
+      ) ?? ""
     );
 
   const [verified, setVerified] =
     useState(
-      searchParams.get("verified") === "true"
+      searchParams.get(
+        "verified"
+      ) === "true"
     );
+
+  const [savedBusinesses, setSavedBusinesses] =
+    useState<
+      Record<string, boolean>
+    >({});
 
   useEffect(() => {
     setQuery(urlQuery);
   }, [urlQuery]);
+
+  useEffect(() => {
+    function syncSavedBusinesses() {
+      const saved =
+        getSavedBusinesses();
+
+      const nextState: Record<
+        string,
+        boolean
+      > = {};
+
+      for (const business of saved) {
+        nextState[business.id] =
+          true;
+      }
+
+      setSavedBusinesses(
+        nextState
+      );
+    }
+
+    syncSavedBusinesses();
+
+    window.addEventListener(
+      SAVED_BUSINESSES_CHANGED_EVENT,
+      syncSavedBusinesses
+    );
+
+    return () => {
+      window.removeEventListener(
+        SAVED_BUSINESSES_CHANGED_EVENT,
+        syncSavedBusinesses
+      );
+    };
+  }, []);
 
   useEffect(() => {
     const controller =
@@ -253,13 +367,16 @@ export default function SearchPage() {
 
     async function loadCategories() {
       try {
-        const response = await fetch(
-          "/api/categories",
-          {
-            cache: "no-store",
-            signal: controller.signal,
-          }
-        );
+        const response =
+          await fetch(
+            "/api/categories",
+            {
+              cache:
+                "no-store",
+              signal:
+                controller.signal,
+            }
+          );
 
         if (!response.ok) {
           throw new Error(
@@ -271,14 +388,17 @@ export default function SearchPage() {
           await response.json();
 
         setCategories(
-          Array.isArray(data.categories)
+          Array.isArray(
+            data.categories
+          )
             ? data.categories
             : []
         );
       } catch (error) {
         if (
           error instanceof DOMException &&
-          error.name === "AbortError"
+          error.name ===
+            "AbortError"
         ) {
           return;
         }
@@ -290,7 +410,7 @@ export default function SearchPage() {
       }
     }
 
-    loadCategories();
+    void loadCategories();
 
     return () => {
       controller.abort();
@@ -309,29 +429,43 @@ export default function SearchPage() {
         const params =
           new URLSearchParams();
 
-        if (urlQuery.trim()) {
-          params.set("q", urlQuery.trim());
+        if (
+          urlQuery.trim()
+        ) {
+          params.set(
+            "q",
+            urlQuery.trim()
+          );
         }
 
         if (category) {
-          params.set("category", category);
+          params.set(
+            "category",
+            category
+          );
         }
 
-        if (location.trim()) {
+        if (
+          location.trim()
+        ) {
           params.set(
             "location",
             location.trim()
           );
         }
 
-        if (minPrice.trim()) {
+        if (
+          minPrice.trim()
+        ) {
           params.set(
             "minPrice",
             minPrice.trim()
           );
         }
 
-        if (maxPrice.trim()) {
+        if (
+          maxPrice.trim()
+        ) {
           params.set(
             "maxPrice",
             maxPrice.trim()
@@ -352,13 +486,16 @@ export default function SearchPage() {
           );
         }
 
-        const response = await fetch(
-          `/api/search?${params.toString()}`,
-          {
-            cache: "no-store",
-            signal: controller.signal,
-          }
-        );
+        const response =
+          await fetch(
+            `/api/search?${params.toString()}`,
+            {
+              cache:
+                "no-store",
+              signal:
+                controller.signal,
+            }
+          );
 
         if (!response.ok) {
           throw new Error(
@@ -369,9 +506,14 @@ export default function SearchPage() {
         const data =
           await response.json();
 
-        if (!controller.signal.aborted) {
+        if (
+          !controller.signal
+            .aborted
+        ) {
           setBusinesses(
-            Array.isArray(data.businesses)
+            Array.isArray(
+              data.businesses
+            )
               ? data.businesses
               : []
           );
@@ -379,7 +521,8 @@ export default function SearchPage() {
       } catch (error) {
         if (
           error instanceof DOMException &&
-          error.name === "AbortError"
+          error.name ===
+            "AbortError"
         ) {
           return;
         }
@@ -393,13 +536,16 @@ export default function SearchPage() {
           "We couldn't complete your search right now."
         );
       } finally {
-        if (!controller.signal.aborted) {
+        if (
+          !controller.signal
+            .aborted
+        ) {
           setLoading(false);
         }
       }
     }
 
-    loadSearchResults();
+    void loadSearchResults();
 
     return () => {
       controller.abort();
@@ -414,74 +560,7 @@ export default function SearchPage() {
     verified,
   ]);
 
-  function submitSearch(
-    event: SubmitEvent
-  ) {
-    event.preventDefault();
-
-    const trimmed =
-      query.trim();
-
-    const params =
-      new URLSearchParams();
-
-    if (trimmed) {
-      params.set("q", trimmed);
-    }
-
-    if (category) {
-      params.set(
-        "category",
-        category
-      );
-    }
-
-    if (location.trim()) {
-      params.set(
-        "location",
-        location.trim()
-      );
-    }
-
-    if (minPrice.trim()) {
-      params.set(
-        "minPrice",
-        minPrice.trim()
-      );
-    }
-
-    if (maxPrice.trim()) {
-      params.set(
-        "maxPrice",
-        maxPrice.trim()
-      );
-    }
-
-    if (availability) {
-      params.set(
-        "availability",
-        availability
-      );
-    }
-
-    if (verified) {
-      params.set(
-        "verified",
-        "true"
-      );
-    }
-
-    const queryString =
-      params.toString();
-
-    router.push(
-      queryString
-        ? `/search?${queryString}`
-        : "/search"
-    );
-  }
-
-  function applyFilters() {
+  function createSearchParams() {
     const params =
       new URLSearchParams();
 
@@ -499,21 +578,27 @@ export default function SearchPage() {
       );
     }
 
-    if (location.trim()) {
+    if (
+      location.trim()
+    ) {
       params.set(
         "location",
         location.trim()
       );
     }
 
-    if (minPrice.trim()) {
+    if (
+      minPrice.trim()
+    ) {
       params.set(
         "minPrice",
         minPrice.trim()
       );
     }
 
-    if (maxPrice.trim()) {
+    if (
+      maxPrice.trim()
+    ) {
       params.set(
         "maxPrice",
         maxPrice.trim()
@@ -534,8 +619,38 @@ export default function SearchPage() {
       );
     }
 
+    return params;
+  }
+
+  function submitSearch(
+    event: React.SubmitEvent<HTMLFormElement>
+  ) {
+    event.preventDefault();
+
+    const params =
+      createSearchParams();
+
+    const queryString =
+      params.toString();
+
     router.push(
-      `/search?${params.toString()}`
+      queryString
+        ? `/search?${queryString}`
+        : "/search"
+    );
+  }
+
+  function applyFilters() {
+    const params =
+      createSearchParams();
+
+    const queryString =
+      params.toString();
+
+    router.push(
+      queryString
+        ? `/search?${queryString}`
+        : "/search"
     );
 
     setShowFilters(false);
@@ -559,13 +674,55 @@ export default function SearchPage() {
       );
     }
 
+    const queryString =
+      params.toString();
+
     router.push(
-      params.toString()
-        ? `/search?${params.toString()}`
+      queryString
+        ? `/search?${queryString}`
         : "/search"
     );
 
     setShowFilters(false);
+  }
+
+  function toggleSaved(
+    business: Business
+  ) {
+    if (
+      isBusinessSaved(
+        business.id
+      )
+    ) {
+      removeSavedBusiness(
+        business.id
+      );
+
+      return;
+    }
+
+    const categoryName =
+      business.categories?.[0]
+        ?.category?.name ??
+      "Services";
+
+    saveBusiness({
+      id: business.id,
+      name: business.name,
+      area:
+        business.location
+          ?.area ??
+        "Local",
+      category:
+        categoryName,
+      verified:
+        business.verification ===
+        "VERIFIED",
+      availability:
+        business.availability,
+      imageUrl:
+        business.imageUrl,
+    });
   }
 
   const activeFilterCount =
@@ -581,14 +738,12 @@ export default function SearchPage() {
       <div className="mx-auto min-h-screen w-full max-w-[1500px] px-3 py-3 sm:px-5 sm:py-5">
         <div className="min-h-[calc(100vh-24px)] overflow-hidden rounded-[18px] border border-[#FF5A36] bg-[#FFFDFC] shadow-sm sm:rounded-[22px] lg:min-h-[calc(100vh-40px)]">
 
-          {/* HEADER */}
-
-          <header className="flex h-[64px] items-center justify-between border-b border-[#EAE6DF] bg-white px-4 sm:px-6 lg:h-[66px] lg:px-6">
+          <header className="flex h-[64px] items-center justify-between border-b border-[#EAE6DF] bg-white px-4 sm:px-6 lg:h-[66px]">
             <Link
               href="/"
               className="flex items-center gap-2.5"
             >
-              <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-[#FF5A36] text-white shadow-sm">
+              <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-[#FF5A36] text-white">
                 <Store className="h-5 w-5" />
               </div>
 
@@ -603,13 +758,13 @@ export default function SearchPage() {
               </div>
             </Link>
 
-            {/* DESKTOP NAV */}
-
             <nav className="hidden items-center gap-1 md:flex">
-              {NAV_ITEMS.map((item) => {
-                return (
+              {NAV_ITEMS.map(
+                (item) => (
                   <button
-                    key={item.label}
+                    key={
+                      item.label
+                    }
                     type="button"
                     onClick={() =>
                       router.push(
@@ -618,19 +773,21 @@ export default function SearchPage() {
                     }
                     className="rounded-xl px-4 py-2 text-xs font-semibold text-gray-700 transition hover:bg-gray-50"
                   >
-                    {item.label}
+                    {
+                      item.label
+                    }
                   </button>
-                );
-              })}
+                )
+              )}
             </nav>
-
-            {/* RIGHT */}
 
             <div className="flex items-center gap-2 sm:gap-3">
               <button
                 type="button"
                 onClick={() =>
-                  router.push("/")
+                  router.push(
+                    "/"
+                  )
                 }
                 className="hidden h-9 w-9 items-center justify-center rounded-full hover:bg-gray-50 sm:flex"
                 aria-label="Home"
@@ -640,6 +797,11 @@ export default function SearchPage() {
 
               <button
                 type="button"
+                onClick={() =>
+                  router.push(
+                    "/saved"
+                  )
+                }
                 className="hidden h-9 w-9 items-center justify-center rounded-full hover:bg-gray-50 sm:flex"
                 aria-label="Saved"
               >
@@ -669,9 +831,6 @@ export default function SearchPage() {
           </header>
 
           <div className="flex">
-
-            {/* SIDEBAR */}
-
             <aside className="hidden w-[190px] shrink-0 border-r border-[#EAE6DF] bg-[#FCFAF6] px-3 py-5 lg:block">
               <nav className="space-y-1">
                 {NAV_ITEMS.map(
@@ -681,7 +840,9 @@ export default function SearchPage() {
 
                     return (
                       <button
-                        key={item.label}
+                        key={
+                          item.label
+                        }
                         type="button"
                         onClick={() =>
                           router.push(
@@ -697,7 +858,9 @@ export default function SearchPage() {
                       >
                         <Icon className="h-[18px] w-[18px]" />
                         <span>
-                          {item.label}
+                          {
+                            item.label
+                          }
                         </span>
                       </button>
                     );
@@ -780,12 +943,8 @@ export default function SearchPage() {
               </div>
             </aside>
 
-            {/* CONTENT */}
-
             <div className="min-w-0 flex-1">
               <div className="px-4 pb-24 pt-4 sm:px-6 sm:pt-6 lg:px-6 lg:pb-8">
-
-                {/* SEARCH */}
 
                 <section className="rounded-[18px] bg-[#FF5A36] px-5 py-6 text-white shadow-soft sm:px-7 sm:py-7">
                   <div className="max-w-[720px]">
@@ -811,9 +970,12 @@ export default function SearchPage() {
 
                       <input
                         value={query}
-                        onChange={(event) =>
+                        onChange={(
+                          event
+                        ) =>
                           setQuery(
-                            event.target.value
+                            event.target
+                              .value
                           )
                         }
                         placeholder="What are you looking for?"
@@ -829,8 +991,6 @@ export default function SearchPage() {
                     </form>
                   </div>
                 </section>
-
-                {/* SEARCH TOOLBAR */}
 
                 <section className="mt-5">
                   <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
@@ -874,8 +1034,6 @@ export default function SearchPage() {
                     </button>
                   </div>
 
-                  {/* ACTIVE FILTERS */}
-
                   {activeFilterCount >
                     0 && (
                     <div className="mt-3 flex flex-wrap gap-2">
@@ -889,7 +1047,10 @@ export default function SearchPage() {
                           }
                           className="flex items-center gap-1.5 rounded-full bg-[#FFE0D6] px-3 py-1.5 text-[10px] font-semibold text-[#9F2D18]"
                         >
-                          {category}
+                          {
+                            category
+                          }
+
                           <X className="h-3 w-3" />
                         </button>
                       )}
@@ -904,7 +1065,10 @@ export default function SearchPage() {
                           }
                           className="flex items-center gap-1.5 rounded-full bg-[#E9EDF0] px-3 py-1.5 text-[10px] font-semibold text-gray-700"
                         >
-                          {location}
+                          {
+                            location
+                          }
+
                           <X className="h-3 w-3" />
                         </button>
                       )}
@@ -942,9 +1106,9 @@ export default function SearchPage() {
                           "AVAILABLE"
                             ? "Available"
                             : availability ===
-                              "ASK_SELLER"
-                            ? "Ask seller"
-                            : "Unavailable"}
+                                "ASK_SELLER"
+                              ? "Ask seller"
+                              : "Unavailable"}
 
                           <X className="h-3 w-3" />
                         </button>
@@ -961,14 +1125,13 @@ export default function SearchPage() {
                           className="flex items-center gap-1.5 rounded-full bg-[#E7E5FF] px-3 py-1.5 text-[10px] font-semibold text-[#62559B]"
                         >
                           Verified
+
                           <X className="h-3 w-3" />
                         </button>
                       )}
                     </div>
                   )}
                 </section>
-
-                {/* RESULTS */}
 
                 <section className="mt-5">
                   {loading && (
@@ -981,37 +1144,42 @@ export default function SearchPage() {
                       ].map(
                         (item) => (
                           <div
-                            key={item}
-                            className="h-[220px] animate-pulse rounded-xl border border-[#E8E4DE] bg-white"
+                            key={
+                              item
+                            }
+                            className="h-[240px] animate-pulse rounded-xl border border-[#E8E4DE] bg-white"
                           />
                         )
                       )}
                     </div>
                   )}
 
-                  {!loading && error && (
-                    <div className="rounded-xl border border-[#E8E4DE] bg-white px-5 py-12 text-center">
-                      <Search className="mx-auto h-8 w-8 text-gray-300" />
+                  {!loading &&
+                    error && (
+                      <div className="rounded-xl border border-[#E8E4DE] bg-white px-5 py-12 text-center">
+                        <Search className="mx-auto h-8 w-8 text-gray-300" />
 
-                      <p className="mt-3 text-sm font-semibold text-gray-700">
-                        Search unavailable
-                      </p>
+                        <p className="mt-3 text-sm font-semibold text-gray-700">
+                          Search unavailable
+                        </p>
 
-                      <p className="mt-1 text-xs text-gray-400">
-                        {error}
-                      </p>
+                        <p className="mt-1 text-xs text-gray-400">
+                          {
+                            error
+                          }
+                        </p>
 
-                      <button
-                        type="button"
-                        onClick={() =>
-                          window.location.reload()
-                        }
-                        className="mt-4 rounded-xl bg-[#FF5A36] px-4 py-2.5 text-xs font-semibold text-white"
-                      >
-                        Try again
-                      </button>
-                    </div>
-                  )}
+                        <button
+                          type="button"
+                          onClick={() =>
+                            window.location.reload()
+                          }
+                          className="mt-4 rounded-xl bg-[#FF5A36] px-4 py-2.5 text-xs font-semibold text-white"
+                        >
+                          Try again
+                        </button>
+                      </div>
+                    )}
 
                   {!loading &&
                     !error &&
@@ -1038,6 +1206,7 @@ export default function SearchPage() {
                           className="mt-4 inline-flex items-center gap-2 rounded-xl bg-[#FF5A36] px-4 py-2.5 text-xs font-semibold text-white"
                         >
                           Adjust filters
+
                           <SlidersHorizontal className="h-3.5 w-3.5" />
                         </button>
                       </div>
@@ -1062,12 +1231,23 @@ export default function SearchPage() {
                                 category
                               );
 
-                            const location =
-                              business.location
-                                ?.area ??
-                              business.location
-                                ?.address ??
-                              "Local";
+                            const saved =
+                              Boolean(
+                                savedBusinesses[
+                                  business.id
+                                ]
+                              );
+
+                            const firstProduct =
+                              business.products?.[0] ??
+                              null;
+
+                            const productImage =
+                              firstProduct
+                                ? getProductImage(
+                                    firstProduct
+                                  )
+                                : null;
 
                             return (
                               <article
@@ -1077,16 +1257,28 @@ export default function SearchPage() {
                                 className="overflow-hidden rounded-xl border border-[#E8E4DE] bg-white transition hover:-translate-y-0.5 hover:shadow-md"
                               >
                                 <Link
-                                  href={`/seller/${business.id}`}
-                                  className="relative flex h-[92px] items-center justify-center"
+                                  href={`/business/${business.id}`}
+                                  className="relative flex h-[92px] items-center justify-center overflow-hidden"
                                   style={{
                                     backgroundColor:
                                       style.bg,
                                   }}
                                 >
-                                  <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-white/75 shadow-sm">
-                                    <Store className="h-7 w-7 text-gray-700" />
-                                  </div>
+                                  {business.imageUrl ? (
+                                    <img
+                                      src={
+                                        business.imageUrl
+                                      }
+                                      alt={
+                                        business.name
+                                      }
+                                      className="absolute inset-0 h-full w-full object-cover"
+                                    />
+                                  ) : (
+                                    <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-white/75 shadow-sm">
+                                      <Store className="h-7 w-7 text-gray-700" />
+                                    </div>
+                                  )}
 
                                   <span className="absolute right-3 top-3 rounded-full bg-[#DDF5EA] px-2.5 py-1 text-[9px] font-semibold text-[#137A59]">
                                     {business.availability ===
@@ -1100,7 +1292,7 @@ export default function SearchPage() {
                                   <div className="flex items-start justify-between gap-2">
                                     <div className="min-w-0">
                                       <Link
-                                        href={`/seller/${business.id}`}
+                                        href={`/business/${business.id}`}
                                         className="block truncate text-sm font-bold text-[#17202A] hover:text-[#9F2D18]"
                                       >
                                         {
@@ -1116,13 +1308,16 @@ export default function SearchPage() {
                                         </span>
 
                                         <span>
-                                          .
+                                          ·
                                         </span>
 
                                         <span className="flex min-w-0 items-center gap-1 truncate">
                                           <MapPin className="h-3 w-3 shrink-0" />
+
                                           {
-                                            location
+                                            business.location
+                                              ?.area ??
+                                            "Local"
                                           }
                                         </span>
                                       </p>
@@ -1130,10 +1325,38 @@ export default function SearchPage() {
 
                                     <button
                                       type="button"
-                                      aria-label={`Save ${business.name}`}
-                                      className="shrink-0 text-gray-500 transition hover:text-[#9F2D18]"
+                                      aria-label={
+                                        saved
+                                          ? `Remove ${business.name} from saved businesses`
+                                          : `Save ${business.name}`
+                                      }
+                                      aria-pressed={
+                                        saved
+                                      }
+                                      onClick={(
+                                        event
+                                      ) => {
+                                        event.preventDefault();
+                                        event.stopPropagation();
+
+                                        toggleSaved(
+                                          business
+                                        );
+                                      }}
+                                      className={`shrink-0 transition ${
+                                        saved
+                                          ? "text-[#9F2D18]"
+                                          : "text-gray-500 hover:text-[#9F2D18]"
+                                      }`}
                                     >
-                                      <Bookmark className="h-4 w-4" />
+                                      <Bookmark
+                                        className="h-4 w-4"
+                                        fill={
+                                          saved
+                                            ? "currentColor"
+                                            : "none"
+                                        }
+                                      />
                                     </button>
                                   </div>
 
@@ -1160,35 +1383,50 @@ export default function SearchPage() {
                                     </div>
                                   </div>
 
-                                  {business
-                                    .products
-                                    ?.length >
-                                    0 && (
+                                  {firstProduct && (
                                     <div className="mt-3 border-t border-[#F0ECE6] pt-3">
-                                      <p className="truncate text-[10px] font-semibold text-gray-600">
-                                        {
-                                          business
-                                            .products[0]
-                                            .name
-                                        }
-                                      </p>
+                                      <div className="flex items-center gap-2.5">
+                                        {productImage ? (
+                                          <div className="h-10 w-10 shrink-0 overflow-hidden rounded-lg border border-[#ECE7E0] bg-[#FCFAF6]">
+                                            <img
+                                              src={
+                                                productImage
+                                              }
+                                              alt={
+                                                firstProduct.name
+                                              }
+                                              className="h-full w-full object-cover"
+                                            />
+                                          </div>
+                                        ) : (
+                                          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-[#FCFAF6] text-gray-400">
+                                            <Package className="h-4 w-4" />
+                                          </div>
+                                        )}
 
-                                      <p className="mt-1 text-[10px] text-gray-400">
-                                        {
-                                          formatPrice(
-                                            business
-                                              .products[0]
-                                          )
-                                        }
-                                      </p>
+                                        <div className="min-w-0">
+                                          <p className="truncate text-[10px] font-semibold text-gray-600">
+                                            {
+                                              firstProduct.name
+                                            }
+                                          </p>
+
+                                          <p className="mt-1 text-[10px] text-gray-400">
+                                            {formatPrice(
+                                              firstProduct
+                                            )}
+                                          </p>
+                                        </div>
+                                      </div>
                                     </div>
                                   )}
 
                                   <Link
-                                    href={`/seller/${business.id}`}
+                                    href={`/business/${business.id}`}
                                     className="mt-3 flex w-full items-center justify-center gap-2 rounded-lg bg-[#FFF1ED] py-2.5 text-[11px] font-bold text-[#9F2D18] transition hover:bg-[#FFE6DF]"
                                   >
                                     Browse
+
                                     <ArrowRight className="h-3.5 w-3.5" />
                                   </Link>
                                 </div>
@@ -1213,20 +1451,20 @@ export default function SearchPage() {
             </div>
           </div>
 
-          {/* FILTER PANEL */}
-
           {showFilters && (
             <div className="fixed inset-0 z-[60]">
               <button
                 type="button"
                 aria-label="Close filters"
                 onClick={() =>
-                  setShowFilters(false)
+                  setShowFilters(
+                    false
+                  )
                 }
                 className="absolute inset-0 bg-black/20 backdrop-blur-[1px]"
               />
 
-              <div className="absolute bottom-0 left-0 right-0 max-h-[88vh] overflow-y-auto rounded-t-[24px] border-t border-[#E8E4DE] bg-[#FFFDFC] p-5 shadow-2xl sm:left-auto sm:bottom-4 sm:right-4 sm:top-4 sm:w-[380px] sm:rounded-[22px] sm:border">
+              <div className="absolute bottom-0 left-0 right-0 max-h-[88vh] overflow-y-auto rounded-t-[24px] border-t border-[#E8E4DE] bg-[#FFFDFC] p-5 shadow-2xl sm:bottom-4 sm:left-auto sm:right-4 sm:top-4 sm:w-[380px] sm:rounded-[22px] sm:border">
                 <div className="flex items-center justify-between">
                   <div>
                     <h2 className="text-base font-bold text-[#17202A]">
@@ -1251,8 +1489,6 @@ export default function SearchPage() {
                     <X className="h-4 w-4" />
                   </button>
                 </div>
-
-                {/* CATEGORY */}
 
                 <div className="mt-6">
                   <label className="text-xs font-bold text-gray-700">
@@ -1297,7 +1533,9 @@ export default function SearchPage() {
                                   style.bg,
                               }}
                             >
-                              {style.icon}
+                              {
+                                style.icon
+                              }
                             </span>
 
                             <span className="truncate">
@@ -1316,8 +1554,6 @@ export default function SearchPage() {
                   </div>
                 </div>
 
-                {/* LOCATION */}
-
                 <div className="mt-5">
                   <label className="text-xs font-bold text-gray-700">
                     Location
@@ -1327,19 +1563,22 @@ export default function SearchPage() {
                     <MapPin className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" />
 
                     <input
-                      value={location}
-                      onChange={(event) =>
+                      value={
+                        location
+                      }
+                      onChange={(
+                        event
+                      ) =>
                         setLocation(
-                          event.target.value
+                          event.target
+                            .value
                         )
                       }
                       placeholder="e.g. Ikeja"
-                      className="h-11 w-full rounded-xl border border-[#E8E4DE] bg-white pl-10 pr-3 text-xs outline-none transition focus:border-[#FF9B82] focus:ring-4 focus:ring-[#FF5A36]/10"
+                      className="h-11 w-full rounded-xl border border-[#E8E4DE] bg-white pl-10 pr-3 text-xs outline-none focus:border-[#FF9B82]"
                     />
                   </div>
                 </div>
-
-                {/* PRICE */}
 
                 <div className="mt-5">
                   <label className="text-xs font-bold text-gray-700">
@@ -1348,32 +1587,40 @@ export default function SearchPage() {
 
                   <div className="mt-2 grid grid-cols-2 gap-2">
                     <input
-                      value={minPrice}
-                      onChange={(event) =>
+                      value={
+                        minPrice
+                      }
+                      onChange={(
+                        event
+                      ) =>
                         setMinPrice(
-                          event.target.value
+                          event.target
+                            .value
                         )
                       }
                       inputMode="numeric"
                       placeholder="Min price"
-                      className="h-11 rounded-xl border border-[#E8E4DE] bg-white px-3 text-xs outline-none transition focus:border-[#FF9B82] focus:ring-4 focus:ring-[#FF5A36]/10"
+                      className="h-11 rounded-xl border border-[#E8E4DE] bg-white px-3 text-xs outline-none focus:border-[#FF9B82]"
                     />
 
                     <input
-                      value={maxPrice}
-                      onChange={(event) =>
+                      value={
+                        maxPrice
+                      }
+                      onChange={(
+                        event
+                      ) =>
                         setMaxPrice(
-                          event.target.value
+                          event.target
+                            .value
                         )
                       }
                       inputMode="numeric"
                       placeholder="Max price"
-                      className="h-11 rounded-xl border border-[#E8E4DE] bg-white px-3 text-xs outline-none transition focus:border-[#FF9B82] focus:ring-4 focus:ring-[#FF5A36]/10"
+                      className="h-11 rounded-xl border border-[#E8E4DE] bg-white px-3 text-xs outline-none focus:border-[#FF9B82]"
                     />
                   </div>
                 </div>
-
-                {/* AVAILABILITY */}
 
                 <div className="mt-5">
                   <label className="text-xs font-bold text-gray-700">
@@ -1385,12 +1632,15 @@ export default function SearchPage() {
                       value={
                         availability
                       }
-                      onChange={(event) =>
+                      onChange={(
+                        event
+                      ) =>
                         setAvailability(
-                          event.target.value
+                          event.target
+                            .value
                         )
                       }
-                      className="h-11 w-full appearance-none rounded-xl border border-[#E8E4DE] bg-white px-3 pr-9 text-xs text-gray-700 outline-none transition focus:border-[#FF9B82] focus:ring-4 focus:ring-[#FF5A36]/10"
+                      className="h-11 w-full appearance-none rounded-xl border border-[#E8E4DE] bg-white px-3 pr-9 text-xs text-gray-700 outline-none focus:border-[#FF9B82]"
                     >
                       <option value="">
                         Any availability
@@ -1413,8 +1663,6 @@ export default function SearchPage() {
                   </div>
                 </div>
 
-                {/* VERIFIED */}
-
                 <button
                   type="button"
                   onClick={() =>
@@ -1422,7 +1670,7 @@ export default function SearchPage() {
                       !verified
                     )
                   }
-                  className={`mt-5 flex w-full items-center justify-between rounded-xl border px-4 py-3 transition ${
+                  className={`mt-5 flex w-full items-center justify-between rounded-xl border px-4 py-3 ${
                     verified
                       ? "border-[#BFE7D0] bg-[#F0FBF5]"
                       : "border-[#E8E4DE] bg-white"
@@ -1451,14 +1699,14 @@ export default function SearchPage() {
                   </div>
 
                   <div
-                    className={`h-5 w-9 rounded-full p-0.5 transition ${
+                    className={`h-5 w-9 rounded-full p-0.5 ${
                       verified
                         ? "bg-[#FF5A36]"
                         : "bg-gray-200"
                     }`}
                   >
                     <div
-                      className={`h-4 w-4 rounded-full bg-white shadow-sm transition ${
+                      className={`h-4 w-4 rounded-full bg-white shadow-sm ${
                         verified
                           ? "translate-x-4"
                           : "translate-x-0"
@@ -1467,15 +1715,13 @@ export default function SearchPage() {
                   </div>
                 </button>
 
-                {/* ACTIONS */}
-
                 <div className="mt-6 flex gap-2 border-t border-[#EAE6DF] pt-5">
                   <button
                     type="button"
                     onClick={
                       clearFilters
                     }
-                    className="flex-1 rounded-xl border border-[#E8E4DE] bg-white py-3 text-xs font-bold text-gray-700 transition hover:bg-gray-50"
+                    className="flex-1 rounded-xl border border-[#E8E4DE] bg-white py-3 text-xs font-bold text-gray-700"
                   >
                     Clear
                   </button>
@@ -1485,7 +1731,7 @@ export default function SearchPage() {
                     onClick={
                       applyFilters
                     }
-                    className="flex-[1.5] rounded-xl bg-[#FF5A36] py-3 text-xs font-bold text-white transition hover:opacity-90"
+                    className="flex-[1.5] rounded-xl bg-[#FF5A36] py-3 text-xs font-bold text-white"
                   >
                     Apply filters
                   </button>
@@ -1493,8 +1739,6 @@ export default function SearchPage() {
               </div>
             </div>
           )}
-
-          {/* MOBILE NAV */}
 
           <nav className="fixed bottom-0 left-0 right-0 z-50 border-t border-gray-200 bg-white/95 px-2 pb-[max(6px,safe-area-inset-bottom)] pt-1.5 backdrop-blur lg:hidden">
             <div className="mx-auto grid max-w-md grid-cols-4">
@@ -1505,7 +1749,9 @@ export default function SearchPage() {
 
                   return (
                     <button
-                      key={item.label}
+                      key={
+                        item.label
+                      }
                       type="button"
                       onClick={() =>
                         router.push(
@@ -1522,7 +1768,9 @@ export default function SearchPage() {
                       <Icon className="h-[19px] w-[19px]" />
 
                       <span className="text-[9px] font-medium">
-                        {item.label}
+                        {
+                          item.label
+                        }
                       </span>
                     </button>
                   );

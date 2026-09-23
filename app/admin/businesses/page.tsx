@@ -26,7 +26,10 @@ type Business = {
   verification: "VERIFIED" | "UNVERIFIED";
   availability: "AVAILABLE" | "ASK_SELLER" | "UNAVAILABLE";
   phone: string | null;
-  categories: string[];
+  categories: {
+    id: string;
+    name: string;
+  }[];
   productCount: number;
   onboardedAt: string;
 };
@@ -163,7 +166,6 @@ export default function AdminBusinessesPage() {
   return (
     <main className="min-h-screen bg-[#FFF7ED] px-3 py-3 sm:px-5 sm:py-5">
       <div className="mx-auto flex min-h-[calc(100vh-24px)] max-w-[1500px] overflow-hidden rounded-[22px] border border-[#FF5A36] bg-[#FFFDFC] shadow-sm sm:min-h-[calc(100vh-40px)]">
-        {/* Sidebar */}
         <aside className="hidden w-[190px] shrink-0 border-r border-[#EAE6DF] bg-[#FCFAF6] lg:block">
           <div className="flex h-[66px] items-center border-b border-[#EAE6DF] px-5">
             <Link
@@ -201,9 +203,7 @@ export default function AdminBusinessesPage() {
           </nav>
         </aside>
 
-        {/* Main */}
         <section className="min-w-0 flex-1">
-          {/* Header */}
           <header className="flex h-[66px] items-center justify-between border-b border-[#EAE6DF] px-4 sm:px-6">
             <div className="flex items-center gap-3">
               <Link
@@ -234,7 +234,6 @@ export default function AdminBusinessesPage() {
           </header>
 
           <div className="p-4 sm:p-6">
-            {/* Page heading */}
             <div className="mb-6 flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
               <div>
                 <h2 className="text-2xl font-black tracking-tight text-[#17202A] sm:text-3xl">
@@ -255,7 +254,6 @@ export default function AdminBusinessesPage() {
               </Link>
             </div>
 
-            {/* Mobile nav */}
             <div className="mb-5 flex gap-2 overflow-x-auto lg:hidden">
               {NAV_ITEMS.map((item) => {
                 const Icon = item.icon;
@@ -277,7 +275,6 @@ export default function AdminBusinessesPage() {
               })}
             </div>
 
-            {/* Filters */}
             <div className="mb-5 rounded-2xl border border-[#EAE6DF] bg-white p-3">
               <div className="flex flex-col gap-3 lg:flex-row">
                 <div className="relative min-w-0 flex-1">
@@ -336,7 +333,6 @@ export default function AdminBusinessesPage() {
               </div>
             )}
 
-            {/* Businesses */}
             {loading ? (
               <div className="rounded-2xl border border-[#EAE6DF] bg-white p-10 text-center">
                 <p className="text-sm font-medium text-[#8A8178]">
@@ -359,7 +355,6 @@ export default function AdminBusinessesPage() {
               </div>
             ) : (
               <div className="overflow-hidden rounded-2xl border border-[#EAE6DF] bg-white">
-                {/* Desktop table */}
                 <div className="hidden overflow-x-auto md:block">
                   <table className="w-full min-w-[1150px]">
                     <thead className="border-b border-[#EAE6DF] bg-[#FCFAF6]">
@@ -405,7 +400,6 @@ export default function AdminBusinessesPage() {
                   </table>
                 </div>
 
-                {/* Mobile cards */}
                 <div className="divide-y divide-[#EAE6DF] md:hidden">
                   {businesses.map((business) => (
                     <BusinessMobileCard
@@ -550,17 +544,18 @@ function BusinessMobileCard({
           {business.productCount} products
         </span>
       </div>
-
-      <div className="mt-4 flex flex-wrap gap-2">
-        {business.categories.slice(0, 3).map((category) => (
-          <span
-            key={category}
-            className="rounded-full bg-[#FCFAF6] px-2.5 py-1 text-[11px] font-medium text-[#6F675F]"
-          >
-            {category}
-          </span>
-        ))}
-      </div>
+<div className="mt-4 flex flex-wrap gap-2">
+  {business.categories
+    .slice(0, 3)
+    .map((category, index) => (
+      <span
+        key={`${category.id}-${category.name}-${index}`}
+        className="rounded-full bg-[#FCFAF6] px-2.5 py-1 text-[11px] font-medium text-[#6F675F]"
+      >
+        {category.name}
+      </span>
+    ))}
+</div>
 
       <div className="mt-4 grid grid-cols-2 gap-2">
         <Link
@@ -623,7 +618,8 @@ function VerificationButton({
     changes: Partial<Business>
   ) => void;
 }) {
-  const verified = business.verification === "VERIFIED";
+  const verified =
+    business.verification === "VERIFIED";
 
   return (
     <button
@@ -666,7 +662,8 @@ function StatusButton({
     changes: Partial<Business>
   ) => void;
 }) {
-  const active = business.status === "ACTIVE";
+  const active =
+    business.status === "ACTIVE";
 
   return (
     <button
@@ -674,7 +671,9 @@ function StatusButton({
       disabled={updating}
       onClick={() =>
         onUpdate(business.id, {
-          status: active ? "INACTIVE" : "ACTIVE",
+          status: active
+            ? "INACTIVE"
+            : "ACTIVE",
         })
       }
       className={`rounded-full px-2.5 py-1 text-[11px] font-bold transition disabled:cursor-not-allowed disabled:opacity-50 ${
@@ -744,14 +743,21 @@ function FilterSelect({
     <div className="relative">
       <select
         value={value}
-        onChange={(event) => onChange(event.target.value)}
+        onChange={(event) =>
+          onChange(event.target.value)
+        }
         className="h-11 min-w-[155px] appearance-none rounded-xl border border-[#EAE6DF] bg-[#FCFAF6] pl-3 pr-9 text-sm font-medium text-[#6F675F] outline-none focus:border-[#FF5A36]"
       >
-        {options.map(([optionValue, label]) => (
-          <option key={optionValue} value={optionValue}>
-            {label}
-          </option>
-        ))}
+        {options.map(
+          ([optionValue, label]) => (
+            <option
+              key={optionValue}
+              value={optionValue}
+            >
+              {label}
+            </option>
+          )
+        )}
       </select>
 
       <ChevronDown

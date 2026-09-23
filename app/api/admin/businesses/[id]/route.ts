@@ -1,86 +1,137 @@
-import { NextRequest, NextResponse } from "next/server";
-import { requireAdmin } from "@/lib/admin-auth";
-import { prisma } from "@/lib/prisma";
+import {
+  NextRequest,
+  NextResponse,
+} from "next/server";
 
-type RouteContext = {
-  params: Promise<{ id: string }>;
-};
+import { prisma } from "@/lib/prisma";
+import { requireAdmin } from "@/lib/admin-auth";
+
+import {
+  Availability,
+  BusinessStatus,
+  VerificationStatus,
+} from "@prisma/client";
+
+function cleanString(
+  value: unknown
+): string {
+  return typeof value === "string"
+    ? value.trim()
+    : "";
+}
+
+function nullableString(
+  value: unknown
+): string | null {
+  const cleaned =
+    cleanString(value);
+
+  return cleaned || null;
+}
+
+function isAvailability(
+  value: unknown
+): value is Availability {
+  return (
+    value === Availability.AVAILABLE ||
+    value ===
+      Availability.ASK_SELLER ||
+    value ===
+      Availability.UNAVAILABLE
+  );
+}
+
+function isBusinessStatus(
+  value: unknown
+): value is BusinessStatus {
+  return (
+    value === BusinessStatus.ACTIVE ||
+    value === BusinessStatus.INACTIVE ||
+    value === BusinessStatus.PENDING
+  );
+}
+
+function isVerificationStatus(
+  value: unknown
+): value is VerificationStatus {
+  return (
+    value ===
+      VerificationStatus.VERIFIED ||
+    value ===
+      VerificationStatus.UNVERIFIED
+  );
+}
+
+/* -------------------------------------------------------------------------- */
+/* GET                                                                        */
+/* -------------------------------------------------------------------------- */
 
 export async function GET(
-  _request: NextRequest,
-  { params }: RouteContext
-) {
-  const auth = await requireAdmin();
-
-  if (!auth.authorized) {
-    return auth.response;
+  request: NextRequest,
+  {
+    params,
+  }: {
+    params: Promise<{
+      id: string;
+    }>;
   }
-
+) {
   try {
-    const { id } = await params;
+    await requireAdmin();
 
-    if (!id) {
-      return NextResponse.json(
-        {
-          error:
-            "Business ID is required",
-        },
-        {
-          status: 400,
-        }
-      );
-    }
+    const { id } =
+      await params;
 
     const business =
-      await prisma.business.findUnique({
-        where: {
-          id,
-        },
-
-        include: {
-          location: true,
-
-          categories: {
-            include: {
-              category: true,
-            },
+      await prisma.business.findUnique(
+        {
+          where: {
+            id,
           },
 
-          products: {
-            orderBy: {
-              updatedAt: "desc",
-            },
+          include: {
+            location: true,
 
-            select: {
-              id: true,
-              name: true,
-              description: true,
-              price: true,
-              priceMin: true,
-              priceMax: true,
-              availability: true,
-              status: true,
-              imageUrl: true,
-              keywords: true,
-              updatedAt: true,
-
-              category: {
-                select: {
-                  id: true,
-                  name: true,
-                },
+            categories: {
+              include: {
+                category: true,
               },
             },
-          },
 
-          socialLinks: true,
-        },
-      });
+            products: {
+              include: {
+                category: true,
+
+                images: {
+                  orderBy: [
+                    {
+                      sortOrder:
+                        "asc",
+                    },
+                    {
+                      createdAt:
+                        "asc",
+                    },
+                  ],
+                },
+              },
+
+              orderBy: {
+                updatedAt:
+                  "desc",
+              },
+            },
+
+            socialLinks: true,
+          },
+        }
+      );
 
     if (!business) {
       return NextResponse.json(
         {
-          error: "Business not found",
+          error:
+            "Business not found.",
         },
         {
           status: 404,
@@ -89,75 +140,7 @@ export async function GET(
     }
 
     return NextResponse.json({
-      id: business.id,
-      name: business.name,
-      ownerName:
-        business.ownerName,
-      description:
-        business.description,
-      phone: business.phone,
-
-      area:
-        business.location?.area ??
-        "Location not added",
-
-      lat:
-        business.location?.lat ??
-        null,
-
-      lng:
-        business.location?.long ??
-        null,
-
-      status: business.status,
-      verification:
-        business.verification,
-      availability:
-        business.availability,
-
-      categories:
-        business.categories.map(
-          (item) =>
-            item.category.name
-        ),
-
-      products:
-        business.products.map(
-          (product) => ({
-            id: product.id,
-            name: product.name,
-            description:
-              product.description,
-            price: product.price,
-            priceMin:
-              product.priceMin,
-            priceMax:
-              product.priceMax,
-            availability:
-              product.availability,
-            status: product.status,
-            imageUrl:
-              product.imageUrl,
-            keywords:
-              product.keywords,
-            category:
-              product.category,
-            updatedAt:
-              product.updatedAt,
-          })
-        ),
-
-      socialLinks:
-        business.socialLinks.map(
-          (link) => ({
-            id: link.id,
-            platform: link.platform,
-            handle: link.handle,
-          })
-        ),
-
-      onboardedAt:
-        business.onboardedAt,
+      business,
     });
   } catch (error) {
     console.error(
@@ -168,7 +151,7 @@ export async function GET(
     return NextResponse.json(
       {
         error:
-          "Unable to load business",
+          "Unable to load business.",
       },
       {
         status: 500,
@@ -177,44 +160,44 @@ export async function GET(
   }
 }
 
+/* -------------------------------------------------------------------------- */
+/* PATCH                                                                      */
+/* -------------------------------------------------------------------------- */
+
 export async function PATCH(
   request: NextRequest,
-  { params }: RouteContext
-) {
-  const auth = await requireAdmin();
-
-  if (!auth.authorized) {
-    return auth.response;
+  {
+    params,
+  }: {
+    params: Promise<{
+      id: string;
+    }>;
   }
-
+) {
   try {
-    const { id } = await params;
+    await requireAdmin();
 
-    if (!id) {
+    const { id } =
+      await params;
+
+    const existing =
+      await prisma.business.findUnique(
+        {
+          where: {
+            id,
+          },
+
+          select: {
+            id: true,
+          },
+        }
+      );
+
+    if (!existing) {
       return NextResponse.json(
         {
           error:
-            "Business ID is required",
-        },
-        {
-          status: 400,
-        }
-      );
-    }
-
-    const body = await request.json();
-
-    const existingBusiness =
-      await prisma.business.findUnique({
-        where: {
-          id,
-        },
-      });
-
-    if (!existingBusiness) {
-      return NextResponse.json(
-        {
-          error: "Business not found",
+            "Business not found.",
         },
         {
           status: 404,
@@ -222,34 +205,34 @@ export async function PATCH(
       );
     }
 
+    const body =
+      await request.json();
+
     const data: {
       name?: string;
       ownerName?: string | null;
       description?: string | null;
       phone?: string | null;
-      status?:
-        | "ACTIVE"
-        | "INACTIVE"
-        | "PENDING";
-      verification?:
-        | "VERIFIED"
-        | "UNVERIFIED";
-      availability?:
-        | "AVAILABLE"
-        | "ASK_SELLER"
-        | "UNAVAILABLE";
+      imageUrl?: string | null;
+      availability?: Availability;
+      status?: BusinessStatus;
+      verification?: VerificationStatus;
     } = {};
 
-    if (body.name !== undefined) {
-      if (
-        typeof body.name !==
-          "string" ||
-        !body.name.trim()
-      ) {
+    if (
+      body.name !==
+      undefined
+    ) {
+      const name =
+        cleanString(
+          body.name
+        );
+
+      if (!name) {
         return NextResponse.json(
           {
             error:
-              "Business name cannot be empty",
+              "Business name is required.",
           },
           {
             status: 400,
@@ -257,94 +240,62 @@ export async function PATCH(
         );
       }
 
-      data.name =
-        body.name.trim();
+      data.name = name;
     }
 
-    if (body.ownerName !== undefined) {
+    if (
+      body.ownerName !==
+      undefined
+    ) {
       data.ownerName =
-        typeof body.ownerName ===
-          "string" &&
-        body.ownerName.trim()
-          ? body.ownerName.trim()
-          : null;
+        nullableString(
+          body.ownerName
+        );
     }
 
-    if (body.description !== undefined) {
+    if (
+      body.description !==
+      undefined
+    ) {
       data.description =
-        typeof body.description ===
-          "string" &&
-        body.description.trim()
-          ? body.description.trim()
-          : null;
+        nullableString(
+          body.description
+        );
     }
 
-    if (body.phone !== undefined) {
+    if (
+      body.phone !==
+      undefined
+    ) {
       data.phone =
-        typeof body.phone ===
-          "string" &&
-        body.phone.trim()
-          ? body.phone.trim()
-          : null;
-    }
-
-    if (body.status !== undefined) {
-      if (
-        ![
-          "ACTIVE",
-          "INACTIVE",
-          "PENDING",
-        ].includes(body.status)
-      ) {
-        return NextResponse.json(
-          {
-            error:
-              "Invalid business status",
-          },
-          {
-            status: 400,
-          }
+        nullableString(
+          body.phone
         );
-      }
-
-      data.status =
-        body.status;
     }
 
-    if (body.verification !== undefined) {
-      if (
-        ![
-          "VERIFIED",
-          "UNVERIFIED",
-        ].includes(body.verification)
-      ) {
-        return NextResponse.json(
-          {
-            error:
-              "Invalid verification status",
-          },
-          {
-            status: 400,
-          }
+    if (
+      body.imageUrl !==
+      undefined
+    ) {
+      data.imageUrl =
+        nullableString(
+          body.imageUrl
         );
-      }
-
-      data.verification =
-        body.verification;
     }
 
-    if (body.availability !== undefined) {
+    if (
+      body.availability !==
+      undefined
+    ) {
       if (
-        ![
-          "AVAILABLE",
-          "ASK_SELLER",
-          "UNAVAILABLE",
-        ].includes(body.availability)
+        !isAvailability(
+          body.availability
+        )
       ) {
         return NextResponse.json(
           {
             error:
-              "Invalid availability",
+              "Invalid availability.",
           },
           {
             status: 400,
@@ -356,124 +307,103 @@ export async function PATCH(
         body.availability;
     }
 
+    if (
+      body.status !==
+      undefined
+    ) {
+      if (
+        !isBusinessStatus(
+          body.status
+        )
+      ) {
+        return NextResponse.json(
+          {
+            error:
+              "Invalid business status.",
+          },
+          {
+            status: 400,
+          }
+        );
+      }
+
+      data.status =
+        body.status;
+    }
+
+    if (
+      body.verification !==
+      undefined
+    ) {
+      if (
+        !isVerificationStatus(
+          body.verification
+        )
+      ) {
+        return NextResponse.json(
+          {
+            error:
+              "Invalid verification status.",
+          },
+          {
+            status: 400,
+          }
+        );
+      }
+
+      data.verification =
+        body.verification;
+    }
+
     const business =
-      await prisma.business.update({
-        where: {
-          id,
-        },
-
-        data,
-
-        include: {
-          location: true,
-
-          categories: {
-            include: {
-              category: true,
-            },
+      await prisma.business.update(
+        {
+          where: {
+            id,
           },
 
-          products: {
-            select: {
-              id: true,
-              name: true,
-              description: true,
-              price: true,
-              priceMin: true,
-              priceMax: true,
-              availability: true,
-              status: true,
-              imageUrl: true,
-              keywords: true,
-              updatedAt: true,
+          data,
 
-              category: {
-                select: {
-                  id: true,
-                  name: true,
-                },
+          include: {
+            location: true,
+
+            categories: {
+              include: {
+                category: true,
               },
             },
 
-            orderBy: {
-              updatedAt: "desc",
-            },
-          },
+            products: {
+              include: {
+                category: true,
 
-          socialLinks: true,
-        },
-      });
+                images: {
+                  orderBy: [
+                    {
+                      sortOrder:
+                        "asc",
+                    },
+                    {
+                      createdAt:
+                        "asc",
+                    },
+                  ],
+                },
+              },
+
+              orderBy: {
+                updatedAt:
+                  "desc",
+              },
+            },
+
+            socialLinks: true,
+          },
+        }
+      );
 
     return NextResponse.json({
-      id: business.id,
-      name: business.name,
-      ownerName:
-        business.ownerName,
-      description:
-        business.description,
-      phone: business.phone,
-
-      area:
-        business.location?.area ??
-        "Location not added",
-
-      lat:
-        business.location?.lat ??
-        null,
-
-      lng:
-        business.location?.long ??
-        null,
-
-      status: business.status,
-      verification:
-        business.verification,
-      availability:
-        business.availability,
-
-      categories:
-        business.categories.map(
-          (item) =>
-            item.category.name
-        ),
-
-      products:
-        business.products.map(
-          (product) => ({
-            id: product.id,
-            name: product.name,
-            description:
-              product.description,
-            price: product.price,
-            priceMin:
-              product.priceMin,
-            priceMax:
-              product.priceMax,
-            availability:
-              product.availability,
-            status: product.status,
-            imageUrl:
-              product.imageUrl,
-            keywords:
-              product.keywords,
-            category:
-              product.category,
-            updatedAt:
-              product.updatedAt,
-          })
-        ),
-
-      socialLinks:
-        business.socialLinks.map(
-          (link) => ({
-            id: link.id,
-            platform: link.platform,
-            handle: link.handle,
-          })
-        ),
-
-      onboardedAt:
-        business.onboardedAt,
+      business,
     });
   } catch (error) {
     console.error(
@@ -484,7 +414,7 @@ export async function PATCH(
     return NextResponse.json(
       {
         error:
-          "Unable to update business",
+          "Unable to update business.",
       },
       {
         status: 500,

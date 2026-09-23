@@ -104,12 +104,12 @@ type Business = {
     handle: string;
   }[];
 };
-
 type FeaturedBusiness = {
   id: string;
   name: string;
   ownerName?: string | null;
   description?: string | null;
+  imageUrl?: string | null;
   area: string;
   availability:
     | "AVAILABLE"
@@ -139,7 +139,6 @@ type FeaturedBusiness = {
     handle: string;
   }[];
 };
-
 type NearbyBusiness = {
   id: string;
   name: string;
@@ -149,6 +148,7 @@ type NearbyBusiness = {
   productCount: number;
   verified: boolean;
   availability?: string;
+  imageUrl?: string | null;
 };
 
 const DEFAULT_CATEGORIES: Category[] = [
@@ -459,13 +459,14 @@ export default function HomePage() {
                 <Search className="h-[19px] w-[19px] text-gray-700" />
               </button>
 
-              <button
+             <button
                 type="button"
-                className="hidden h-9 w-9 items-center justify-center rounded-full hover:bg-gray-50 sm:flex"
+                    onClick={() => router.push("/saved")}
+                  className="hidden h-9 w-9 items-center justify-center rounded-full hover:bg-gray-50 sm:flex"
                 aria-label="Saved"
-              >
-                <Heart className="h-[19px] w-[19px] text-gray-700" />
-              </button>
+                >
+              <Heart className="h-[19px] w-[19px] text-gray-700" />
+                  </button>
 
               <button
                 type="button"
@@ -584,7 +585,7 @@ export default function HomePage() {
                   <div className="absolute -right-16 -top-24 h-[260px] w-[260px] rounded-full bg-white/5">
 
                     <div className="pointer-events-none absolute right-6 top-7 hidden opacity-90 md:block lg:right-12">
-                      <div className="pointer-events-none absolute right-6 top-7 hidden opacity-90 md:block lg:right-12">
+                      
                         <div className="relative h-[190px] w-[220px]">
                           <div className="absolute bottom-3 left-8 h-[110px] w-[105px] rotate-[-8deg] rounded-b-xl bg-white/70" />
 
@@ -601,7 +602,7 @@ export default function HomePage() {
                           <div className="absolute right-[105px] top-0 h-4 w-1 rotate-[-35deg] bg-white/70" />
 
                           <div className="absolute right-[130px] top-5 h-3 w-1 rotate-[-50deg] bg-white/70" />
-                        </div>
+                        
                       </div>
                     </div>
                   </div>
@@ -874,17 +875,26 @@ export default function HomePage() {
                           (business) => (
                             <Link
                               key={business.id}
-                              href={`/seller/${business.id}`}
+                              href={`/business/${business.id}`}
                               className="group rounded-2xl border border-orange-100 bg-white p-4 shadow-card transition hover:-translate-y-0.5 hover:shadow-soft"
                             >
                               <div className="flex items-start justify-between gap-3">
                                 <div className="flex min-w-0 items-center gap-3">
-                                  <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-orange-100 text-xs font-bold text-[#9F2D18]">
-                                    {business.name
-                                      .slice(0, 2)
-                                      .toUpperCase()}
+                                 <div className="h-10 w-10 shrink-0 overflow-hidden rounded-full bg-orange-100">
+                                        {business.imageUrl ? (
+                                  <img
+                                    src={business.imageUrl}
+                                      alt={business.name}
+                                      className="h-full w-full object-cover"
+    />
+                                          ) : (
+                                <div className="flex h-full w-full items-center justify-center text-xs font-bold text-[#9F2D18]">
+                              {business.name
+                                    .slice(0, 2)
+                                    .toUpperCase()}
                                   </div>
-
+                                 )}
+                                    </div>
                                   <div className="min-w-0">
                                     <p className="truncate text-sm font-bold">
                                       {business.name}
@@ -1038,23 +1048,29 @@ export default function HomePage() {
                                 className="overflow-hidden rounded-xl border border-[#E8E4DE] bg-white transition hover:-translate-y-0.5 hover:shadow-md"
                               >
                                 {/* Business Visual */}
-
                                 <Link
-                                  href={`/seller/${business.id}`}
-                                  className="relative flex h-[92px] items-center justify-center"
-                                  style={{
-                                    backgroundColor:
-                                      style.bg,
-                                  }}
-                                >
-                                  <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-white/75 shadow-sm">
-                                    <Store className="h-7 w-7 text-gray-700" />
-                                  </div>
+                                   href={`/business/${business.id}`}
+                                    className="relative flex h-[92px] items-center justify-center overflow-hidden"
+                                    style={{
+                                       backgroundColor: style.bg,
+                                              }}
+                                              >
+                                   {business.imageUrl ? (
+                             <img
+                                 src={business.imageUrl}
+                            alt={business.name}
+                            className="h-full w-full object-cover"
+                                   />
+                              ) : (
+                           <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-white/75 shadow-sm">
+                              <Store className="h-7 w-7 text-gray-700" />
+                           </div>
+                               )}
 
-                                  <span className="absolute right-3 top-3 rounded-full bg-[#DDF5EA] px-2.5 py-1 text-[9px] font-semibold text-[#137A59]">
-                                    Active
-                                  </span>
-                                </Link>
+                    <span className="absolute right-3 top-3 rounded-full bg-[#DDF5EA] px-2.5 py-1 text-[9px] font-semibold text-[#137A59]">
+                          Active
+                    </span>
+                  </Link>
 
                                 <div className="p-3.5">
                                   <div className="flex items-start justify-between gap-2">

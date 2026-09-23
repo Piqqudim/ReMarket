@@ -1,26 +1,95 @@
 "use client";
 
-import {
-  useCallback,
+import React, {
   useEffect,
   useState,
 } from "react";
-
-import Link from "next/link";
 
 import {
   Home,
   ShoppingBag,
   ClipboardList,
   Heart,
-  Search,
+  UserCircle,
+  Store,
   MapPin,
   Navigation,
-  Store,
-  CheckCircle2,
+  Loader2,
+  Bookmark,
   Package,
-  RefreshCw,
+  ArrowRight,
+  Search,
 } from "lucide-react";
+
+import Link from "next/link";
+import { useRouter } from "next/navigation";
+
+import {
+  getSavedBusinesses,
+  isBusinessSaved,
+  saveBusiness,
+  removeSavedBusiness,
+  SAVED_BUSINESSES_CHANGED_EVENT,
+} from "@/lib/saved";
+
+type ProductImage = {
+  id: string;
+  url: string;
+  publicId: string | null;
+  sortOrder: number;
+};
+
+type Product = {
+  id: string;
+  name: string;
+  description: string | null;
+  price: number | null;
+  priceMin: number | null;
+  priceMax: number | null;
+  availability:
+    | "AVAILABLE"
+    | "ASK_SELLER"
+    | "UNAVAILABLE";
+  imageUrl: string | null;
+  keywords: string[];
+  images: ProductImage[];
+};
+
+type Business = {
+  id: string;
+  name: string;
+  ownerName: string | null;
+  description: string | null;
+  imageUrl: string | null;
+  area: string;
+  location: {
+    id: string;
+    area: string;
+    lat: number | null;
+    long: number | null;
+  } | null;
+  availability:
+    | "AVAILABLE"
+    | "ASK_SELLER"
+    | "UNAVAILABLE";
+  verification:
+    | "VERIFIED"
+    | "UNVERIFIED";
+  verified: boolean;
+  categories: {
+    category: {
+      id: string;
+      name: string;
+    };
+  }[];
+  products: Product[];
+  socialLinks: {
+    id: string;
+    platform: string;
+    handle: string;
+  }[];
+  distanceKm: number | null;
+};
 
 const NAV_ITEMS = [
   {
@@ -45,1021 +114,874 @@ const NAV_ITEMS = [
   },
 ];
 
-const CATEGORY_COLORS: Record<string, string> = {
-  Fashion: "#FFE0D6",
-  Electronics: "#DDF5EA",
-  Food: "#FFF0C7",
-  Beauty: "#E7E5FF",
-  Textiles: "#F9DCE8",
-  Services: "#E4E9EF",
-};
+function formatPrice(
+  product: Product
+): string {
+  if (
+    product.price !== null
+  ) {
+    return `₦${product.price.toLocaleString()}`;
+  }
 
-type Business = {
-  id: string;
-  name: string;
-  area?: string | null;
-  distanceKm?: number | null;
-  category?: string | null;
-  productCount?: number;
-  verified?: boolean;
-  verification?: string;
-  availability?:
-    | "AVAILABLE"
-    | "ASK_SELLER"
-    | "UNAVAILABLE";
-};
+  if (
+    product.priceMin !==
+      null &&
+    product.priceMax !==
+      null
+  ) {
+    return `₦${product.priceMin.toLocaleString()} - ₦${product.priceMax.toLocaleString()}`;
+  }
 
-function getCategoryColor(
-  category?: string | null
-) {
+  if (
+    product.priceMin !==
+    null
+  ) {
+    return `From ₦${product.priceMin.toLocaleString()}`;
+  }
+
+  if (
+    product.priceMax !==
+    null
+  ) {
+    return `Up to ₦${product.priceMax.toLocaleString()}`;
+  }
+
+  return "Ask seller";
+}
+
+function getProductImage(
+  product: Product
+): string | null {
   return (
-    CATEGORY_COLORS[category ?? ""] ??
-    "#E4E9EF"
+    product.images?.[0]?.url ??
+    product.imageUrl ??
+    null
   );
 }
 
-function getAvailabilityLabel(
-  availability?: string
-) {
-  switch (availability) {
-    case "AVAILABLE":
-      return "Available";
-
-    case "UNAVAILABLE":
-      return "Unavailable";
-
-    default:
-      return "Ask seller";
-  }
-}
-
-function getAvailabilityStyle(
-  availability?: string
-) {
-  switch (availability) {
-    case "AVAILABLE":
-      return "bg-[#E4F7EC] text-[#237A48]";
-
-    case "UNAVAILABLE":
-      return "bg-[#F3ECEA] text-[#8B6960]";
-
-    default:
-      return "bg-[#FFF0D9] text-[#9F2D18]";
-  }
-}
-
-function getInitials(name: string) {
-  const words = name
-    .trim()
-    .split(/\s+/)
-    .filter(Boolean);
-
-  if (words.length === 0) {
-    return "RM";
-  }
-
-  if (words.length === 1) {
-    return words[0]
-      .slice(0, 2)
-      .toUpperCase();
-  }
-
-  return (
-    words[0][0] +
-    words[words.length - 1][0]
-  ).toUpperCase();
-}
-
 export default function NearMePage() {
+  const router =
+    useRouter();
+
+  const [area, setArea] =
+    useState("");
+
   const [businesses, setBusinesses] =
     useState<Business[]>([]);
 
-  const [loading, setLoading] =
-    useState(true);
+  const [mode, setMode] =
+    useState<
+      "none" | "area" | "gps"
+    >("none");
 
-  const [locationLoading, setLocationLoading] =
+  const [loading, setLoading] =
+    useState(false);
+
+  const [locating, setLocating] =
     useState(false);
 
   const [error, setError] =
     useState("");
 
-  const [locationMode, setLocationMode] =
-    useState<"gps" | "area">("gps");
+  const [savedBusinesses, setSavedBusinesses] =
+    useState<
+      Record<string, boolean>
+    >({});
 
-  const [area, setArea] = useState("");
+  function syncSavedBusinesses() {
+    const saved =
+      getSavedBusinesses();
 
-  const [searchArea, setSearchArea] =
-    useState("");
+    const next: Record<
+      string,
+      boolean
+    > = {};
 
-  const [locationDenied, setLocationDenied] =
-    useState(false);
+    for (const business of saved) {
+      next[business.id] = true;
+    }
 
-  const fetchNearby = useCallback(
-    async (
-      latitude?: number,
-      longitude?: number,
-      selectedArea?: string
-    ) => {
-      try {
-        setLoading(true);
-        setError("");
+    setSavedBusinesses(next);
+  }
 
-        const params = new URLSearchParams();
+  useEffect(() => {
+    syncSavedBusinesses();
 
-        if (
-          latitude !== undefined &&
-          longitude !== undefined
-        ) {
-          params.set(
-            "lat",
-            String(latitude)
-          );
+    window.addEventListener(
+      SAVED_BUSINESSES_CHANGED_EVENT,
+      syncSavedBusinesses
+    );
 
-          params.set(
-            "lng",
-            String(longitude)
-          );
-        }
+    return () => {
+      window.removeEventListener(
+        SAVED_BUSINESSES_CHANGED_EVENT,
+        syncSavedBusinesses
+      );
+    };
+  }, []);
 
-        if (selectedArea?.trim()) {
-          params.set(
-            "area",
-            selectedArea.trim()
-          );
-        }
+  async function loadByArea(
+    selectedArea: string
+  ) {
+    const trimmedArea =
+      selectedArea.trim();
 
-        const response = await fetch(
+    if (!trimmedArea) {
+      setBusinesses([]);
+      setMode("none");
+      return;
+    }
+
+    setLoading(true);
+    setError("");
+
+    try {
+      const params =
+        new URLSearchParams();
+
+      params.set(
+        "area",
+        trimmedArea
+      );
+
+      const response =
+        await fetch(
           `/api/near-me?${params.toString()}`,
           {
             cache: "no-store",
           }
         );
 
-        const data = await response.json();
+      const data =
+        await response.json();
 
-        if (!response.ok) {
-          throw new Error(
-            data?.error ||
-              "Unable to find nearby businesses."
-          );
-        }
-
-        setBusinesses(
-          Array.isArray(data?.businesses)
-            ? data.businesses
-            : []
+      if (!response.ok) {
+        throw new Error(
+          typeof data?.error ===
+            "string"
+            ? data.error
+            : "Unable to load nearby businesses."
         );
-      } catch (fetchError) {
-        console.error(
-          "Near Me error:",
-          fetchError
-        );
-
-        setError(
-          fetchError instanceof Error
-            ? fetchError.message
-            : "Unable to find nearby businesses."
-        );
-
-        setBusinesses([]);
-      } finally {
-        setLoading(false);
       }
-    },
-    []
-  );
 
-  const requestLocation = useCallback(() => {
-    if (
-      typeof window === "undefined" ||
-      !navigator.geolocation
-    ) {
-      setLocationDenied(true);
-      setLocationMode("area");
+      setBusinesses(
+        Array.isArray(
+          data.businesses
+        )
+          ? data.businesses
+          : []
+      );
+
+      setMode(
+        data.mode ===
+          "area"
+          ? "area"
+          : "none"
+      );
+    } catch (error) {
+      console.error(
+        "Area near-me error:",
+        error
+      );
+
+      setBusinesses([]);
+      setMode("none");
+
+      setError(
+        error instanceof Error
+          ? error.message
+          : "Unable to load nearby businesses."
+      );
+    } finally {
       setLoading(false);
-      return;
     }
+  }
 
-    setLocationLoading(true);
-    setLocationDenied(false);
-    setError("");
-
-    navigator.geolocation.getCurrentPosition(
-      (position) => {
-        setLocationLoading(false);
-        setLocationMode("gps");
-
-        fetchNearby(
-          position.coords.latitude,
-          position.coords.longitude
-        );
-      },
-      (geoError) => {
-        console.warn(
-          "Geolocation unavailable:",
-          geoError
-        );
-
-        setLocationLoading(false);
-        setLocationDenied(true);
-        setLocationMode("area");
-        setLoading(false);
-
-        /*
-         * Important:
-         * Do NOT treat location failure as
-         * a fatal page error.
-         */
-      },
-      {
-        enableHighAccuracy: false,
-        timeout: 10000,
-        maximumAge: 300000,
-      }
-    );
-  }, [fetchNearby]);
-
-  useEffect(() => {
-    requestLocation();
-  }, [requestLocation]);
-
-  function handleAreaSubmit(
+  function submitArea(
     event: React.SubmitEvent<HTMLFormElement>
   ) {
     event.preventDefault();
 
-    const value = searchArea.trim();
+    void loadByArea(area);
+  }
 
-    if (!value) {
+  function useCurrentLocation() {
+    if (
+      !navigator.geolocation
+    ) {
+      setError(
+        "Location services are not available in this browser."
+      );
       return;
     }
 
-    setArea(value);
-    setLocationMode("area");
+    setLocating(true);
+    setError("");
 
-    fetchNearby(undefined, undefined, value);
+    navigator.geolocation.getCurrentPosition(
+      async (position) => {
+        try {
+          const params =
+            new URLSearchParams();
+
+          params.set(
+            "lat",
+            String(
+              position.coords
+                .latitude
+            )
+          );
+
+          params.set(
+            "lng",
+            String(
+              position.coords
+                .longitude
+            )
+          );
+
+          const response =
+            await fetch(
+              `/api/near-me?${params.toString()}`,
+              {
+                cache:
+                  "no-store",
+              }
+            );
+
+          const data =
+            await response.json();
+
+          if (!response.ok) {
+            throw new Error(
+              typeof data?.error ===
+                "string"
+                ? data.error
+                : "Unable to find businesses near you."
+            );
+          }
+
+          setBusinesses(
+            Array.isArray(
+              data.businesses
+            )
+              ? data.businesses
+              : []
+          );
+
+          setMode(
+            data.mode ===
+              "gps"
+              ? "gps"
+              : "none"
+          );
+        } catch (error) {
+          console.error(
+            "GPS near-me error:",
+            error
+          );
+
+          setBusinesses([]);
+          setMode("none");
+
+          setError(
+            error instanceof Error
+              ? error.message
+              : "Unable to find businesses near you."
+          );
+        } finally {
+          setLocating(false);
+        }
+      },
+      (geoError) => {
+        console.error(
+          "Geolocation error:",
+          geoError
+        );
+
+        setLocating(false);
+
+        setError(
+          "We couldn't access your current location. Enter an area instead."
+        );
+      },
+      {
+        enableHighAccuracy: true,
+        timeout: 10000,
+        maximumAge: 60000,
+      }
+    );
+  }
+
+  function toggleSaved(
+    business: Business
+  ) {
+    if (
+      isBusinessSaved(
+        business.id
+      )
+    ) {
+      removeSavedBusiness(
+        business.id
+      );
+      return;
+    }
+
+    const category =
+      business.categories?.[0]
+        ?.category?.name ??
+      "Services";
+
+    saveBusiness({
+      id: business.id,
+      name: business.name,
+      area:
+        business.area ??
+        "Local",
+      category,
+      verified:
+        business.verified,
+      availability:
+        business.availability,
+      imageUrl:
+        business.imageUrl,
+    });
   }
 
   return (
-    <main className="min-h-screen bg-[#FFF7ED] p-0 md:p-3">
-      <div
-        className="
-          mx-auto
-          min-h-screen
-          max-w-[1500px]
-          overflow-hidden
-          border-[#FF5A36]
-          bg-[#FFFDFC]
-          shadow-[0_8px_30px_rgba(159,45,24,0.06)]
-          md:min-h-[calc(100vh-24px)]
-          md:rounded-[22px]
-          md:border
-        "
-      >
-        {/* HEADER */}
-        <header
-          className="
-            flex
-            h-[66px]
-            items-center
-            justify-between
-            border-b
-            border-[#EAE6DF]
-            bg-white
-            px-4
-            md:px-6
-          "
-        >
-          <Link
-            href="/"
-            className="flex items-center gap-2"
-          >
-            <div
-              className="
-                flex
-                h-9
-                w-9
-                items-center
-                justify-center
-                rounded-xl
-                bg-[#FF5A36]
-                text-white
-              "
+    <main className="min-h-screen bg-[#FFF7ED]">
+      <div className="mx-auto min-h-screen w-full max-w-[1500px] px-3 py-3 sm:px-5 sm:py-5">
+        <div className="min-h-[calc(100vh-24px)] overflow-hidden rounded-[18px] border border-[#FF5A36] bg-[#FFFDFC] shadow-sm sm:rounded-[22px] lg:min-h-[calc(100vh-40px)]">
+
+          <header className="flex h-[64px] items-center justify-between border-b border-[#EAE6DF] bg-white px-4 sm:px-6 lg:h-[66px]">
+            <Link
+              href="/"
+              className="flex items-center gap-2.5"
             >
-              <Search
-                size={19}
-                strokeWidth={2.5}
-              />
-            </div>
-
-            <div className="hidden sm:block">
-              <div className="text-[17px] font-black tracking-tight text-[#17202A]">
-                ReMarket
+              <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-[#FF5A36] text-white">
+                <Store className="h-5 w-5" />
               </div>
 
-              <div className="text-[10px] font-medium text-[#8C8580]">
-                Find it nearby
+              <div>
+                <p className="text-sm font-bold">
+                  ReMarket
+                </p>
+
+                <p className="text-[10px] text-muted">
+                  Find it nearby
+                </p>
               </div>
-            </div>
-          </Link>
+            </Link>
 
-          <nav className="hidden items-center gap-7 md:flex">
-            {NAV_ITEMS.map((item) => {
-              const Icon = item.icon;
-
-              return (
-                <Link
-                  key={item.href}
-                  href={item.href}
-                  className="
-                    flex
-                    items-center
-                    gap-2
-                    text-[13px]
-                    font-semibold
-                    text-[#68615C]
-                    transition
-                    hover:text-[#FF5A36]
-                  "
-                >
-                  <Icon size={17} />
-                  {item.label}
-                </Link>
-              );
-            })}
-          </nav>
-
-          <Link
-            href="/my-requests"
-            className="
-              rounded-xl
-              bg-[#FF5A36]
-              px-3
-              py-2
-              text-[12px]
-              font-bold
-              text-white
-              transition
-              hover:bg-[#E94E2C]
-              sm:px-4
-            "
-          >
-            Request something
-          </Link>
-        </header>
-
-        <div className="flex">
-          {/* SIDEBAR */}
-          <aside
-            className="
-              hidden
-              w-[190px]
-              shrink-0
-              border-r
-              border-[#EAE6DF]
-              bg-[#FCFAF6]
-              px-3
-              py-5
-              md:block
-            "
-          >
-            <div className="mb-5 px-2">
-              <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-[#A29B94]">
-                Browse
-              </p>
-            </div>
-
-            <nav className="space-y-1">
-              {NAV_ITEMS.map((item) => {
-                const Icon = item.icon;
-
-                return (
-                  <Link
-                    key={item.href}
-                    href={item.href}
-                    className="
-                      flex
-                      items-center
-                      gap-3
-                      rounded-xl
-                      px-3
-                      py-2.5
-                      text-[13px]
-                      font-semibold
-                      text-[#68615C]
-                      transition
-                      hover:bg-[#FFF0E9]
-                      hover:text-[#FF5A36]
-                    "
+            <nav className="hidden items-center gap-1 md:flex">
+              {NAV_ITEMS.map(
+                (item) => (
+                  <button
+                    key={
+                      item.label
+                    }
+                    type="button"
+                    onClick={() =>
+                      router.push(
+                        item.href
+                      )
+                    }
+                    className="rounded-xl px-4 py-2 text-xs font-semibold text-gray-700 hover:bg-gray-50"
                   >
-                    <Icon size={17} />
-                    {item.label}
-                  </Link>
-                );
-              })}
+                    {
+                      item.label
+                    }
+                  </button>
+                )
+              )}
             </nav>
 
-            <div className="my-5 border-t border-[#E8E4DE]" />
+            <div className="flex items-center gap-2 sm:gap-3">
+              <button
+                type="button"
+                onClick={() =>
+                  router.push(
+                    "/saved"
+                  )
+                }
+                className="hidden h-9 w-9 items-center justify-center rounded-full hover:bg-gray-50 sm:flex"
+                aria-label="Saved"
+              >
+                <Heart className="h-[19px] w-[19px] text-gray-700" />
+              </button>
 
-            <Link
-              href="/near-me"
-              className="
-                flex
-                items-center
-                gap-3
-                rounded-xl
-                bg-[#FFF0E9]
-                px-3
-                py-2.5
-                text-[13px]
-                font-bold
-                text-[#FF5A36]
-              "
-            >
-              <MapPin size={17} />
-              Near You
-            </Link>
+              <button
+                type="button"
+                className="hidden h-9 w-9 items-center justify-center rounded-full bg-gray-100 sm:flex"
+                aria-label="Profile"
+              >
+                <UserCircle className="h-6 w-6 text-gray-700" />
+              </button>
 
-            <Link
-              href="/shop"
-              className="
-                mt-1
-                flex
-                items-center
-                gap-3
-                rounded-xl
-                px-3
-                py-2.5
-                text-[13px]
-                font-semibold
-                text-[#68615C]
-                transition
-                hover:bg-white
-                hover:text-[#FF5A36]
-              "
-            >
-              <Store size={17} />
-              All sellers
-            </Link>
-          </aside>
-
-          {/* MAIN */}
-          <section
-            className="
-              min-w-0
-              flex-1
-              px-4
-              py-5
-              pb-24
-              sm:px-6
-              md:px-8
-              md:py-7
-              md:pb-8
-            "
-          >
-            {/* HEADING */}
-            <div className="mb-6">
-              <div className="mb-3 inline-flex items-center gap-2 rounded-full bg-[#FFE8E0] px-3 py-1.5">
-                <MapPin
-                  size={13}
-                  className="text-[#FF5A36]"
-                />
-
-                <span className="text-[11px] font-bold text-[#9F2D18]">
-                  Near You
-                </span>
-              </div>
-
-              <h1 className="text-[28px] font-black tracking-tight text-[#17202A] sm:text-[34px]">
-                Find it nearby
-              </h1>
-
-              <p className="mt-2 max-w-[650px] text-[13px] leading-6 text-[#77716C]">
-                Discover local businesses and
-                products around you.
-              </p>
+              <button
+                type="button"
+                onClick={() =>
+                  router.push(
+                    "/request"
+                  )
+                }
+                className="rounded-xl bg-[#FF5A36] px-3.5 py-2.5 text-[11px] font-bold text-white sm:px-4 sm:text-xs"
+              >
+                Request something
+              </button>
             </div>
+          </header>
 
-            {/* LOCATION CONTROL */}
-            <div
-              className="
-                mb-6
-                rounded-[18px]
-                border
-                border-[#E8E4DE]
-                bg-white
-                p-4
-                shadow-[0_4px_18px_rgba(30,20,10,0.035)]
-                sm:p-5
-              "
-            >
-              <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-                <div className="flex items-start gap-3">
-                  <div
-                    className="
-                      flex
-                      h-10
-                      w-10
-                      shrink-0
-                      items-center
-                      justify-center
-                      rounded-xl
-                      bg-[#FFE0D6]
-                      text-[#FF5A36]
-                    "
-                  >
-                    <MapPin size={19} />
-                  </div>
+          <div className="flex">
+            <aside className="hidden w-[190px] shrink-0 border-r border-[#EAE6DF] bg-[#FCFAF6] px-3 py-5 lg:block">
+              <nav className="space-y-1">
+                {NAV_ITEMS.map(
+                  (item) => {
+                    const Icon =
+                      item.icon;
 
-                  <div>
-                    <p className="text-[12px] font-bold text-[#3D3834]">
-                      {locationMode === "gps"
-                        ? "Using your location"
-                        : area
-                          ? `Showing results around ${area}`
-                          : "Choose your area"}
-                    </p>
+                    return (
+                      <button
+                        key={
+                          item.label
+                        }
+                        type="button"
+                        onClick={() =>
+                          router.push(
+                            item.href
+                          )
+                        }
+                        className={`flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-sm font-medium ${
+                          item.label ===
+                          "Shop"
+                            ? "bg-white text-[#9F2D18]"
+                            : "text-gray-700"
+                        }`}
+                      >
+                        <Icon className="h-[18px] w-[18px]" />
+                        {
+                          item.label
+                        }
+                      </button>
+                    );
+                  }
+                )}
+              </nav>
+            </aside>
 
-                    <p className="mt-1 text-[11px] leading-5 text-[#89817A]">
-                      {locationMode === "gps"
-                        ? "We'll use your location to find nearby sellers."
-                        : "You can search by area if location access isn't available."}
-                    </p>
-                  </div>
-                </div>
+            <div className="min-w-0 flex-1">
+              <div className="px-4 pb-24 pt-4 sm:px-6 sm:pt-6 lg:px-6 lg:pb-8">
 
-                <button
-                  type="button"
-                  onClick={requestLocation}
-                  disabled={locationLoading}
-                  className="
-                    inline-flex
-                    h-10
-                    items-center
-                    justify-center
-                    gap-2
-                    rounded-xl
-                    border
-                    border-[#FFB39F]
-                    bg-white
-                    px-4
-                    text-[11px]
-                    font-bold
-                    text-[#FF5A36]
-                    transition
-                    hover:bg-[#FFF4F0]
-                    disabled:cursor-not-allowed
-                    disabled:opacity-60
-                  "
-                >
-                  {locationLoading ? (
-                    <RefreshCw
-                      size={15}
-                      className="animate-spin"
-                    />
-                  ) : (
-                    <Navigation size={15} />
-                  )}
+                <section className="rounded-[18px] bg-[#FF5A36] px-5 py-6 text-white shadow-soft sm:px-7 sm:py-7">
+                  <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-white/75">
+                    Near You
+                  </p>
 
-                  {locationLoading
-                    ? "Getting location..."
-                    : "Use my location"}
-                </button>
-              </div>
+                  <h1 className="mt-2 text-[26px] font-bold leading-tight sm:text-[30px]">
+                    Find local businesses nearby
+                  </h1>
 
-              {/* AREA FALLBACK */}
-              {(locationDenied ||
-                locationMode === "area") && (
-                <div className="mt-4 border-t border-[#EAE6DF] pt-4">
-                  <p className="mb-2 text-[11px] font-bold text-[#514B46]">
-                    Search by area instead
+                  <p className="mt-2 max-w-[560px] text-xs leading-5 text-white/80 sm:text-sm">
+                    Search by area or use your current location to discover businesses around you.
                   </p>
 
                   <form
-                    onSubmit={handleAreaSubmit}
-                    className="flex flex-col gap-2 sm:flex-row"
+                    onSubmit={
+                      submitArea
+                    }
+                    className="mt-5 flex h-[48px] max-w-[720px] items-center rounded-full bg-white p-1.5"
                   >
-                    <div className="relative flex-1">
-                      <MapPin
-                        size={15}
-                        className="
-                          absolute
-                          left-3
-                          top-1/2
-                          -translate-y-1/2
-                          text-[#A49C95]
-                        "
-                      />
+                    <MapPin className="ml-3 h-[18px] w-[18px] text-gray-500" />
 
-                      <input
-                        value={searchArea}
-                        onChange={(event) =>
-                          setSearchArea(
-                            event.target.value
-                          )
-                        }
-                        placeholder="e.g. Yaba, Ikeja, Surulere"
-                        className="
-                          h-11
-                          w-full
-                          rounded-xl
-                          border
-                          border-[#E3DED7]
-                          bg-[#FFFDFC]
-                          pl-9
-                          pr-4
-                          text-[12px]
-                          outline-none
-                          transition
-                          placeholder:text-[#AAA39D]
-                          focus:border-[#FF5A36]
-                          focus:ring-4
-                          focus:ring-[#FF5A36]/10
-                        "
-                      />
-                    </div>
+                    <input
+                      value={area}
+                      onChange={(
+                        event
+                      ) =>
+                        setArea(
+                          event.target
+                            .value
+                        )
+                      }
+                      placeholder="Enter an area, e.g. Ogba"
+                      className="min-w-0 flex-1 bg-transparent px-3 text-xs text-gray-800 outline-none placeholder:text-gray-400"
+                    />
 
                     <button
                       type="submit"
-                      className="
-                        h-11
-                        rounded-xl
-                        bg-[#FF5A36]
-                        px-5
-                        text-[11px]
-                        font-bold
-                        text-white
-                        transition
-                        hover:bg-[#E94E2C]
-                      "
+                      disabled={
+                        loading
+                      }
+                      className="rounded-full bg-[#FF5A36] px-5 py-2.5 text-xs font-bold text-white disabled:opacity-60"
                     >
-                      Find nearby
+                      Search
                     </button>
                   </form>
-                </div>
-              )}
-            </div>
 
-            {/* ERROR */}
-            {error && (
-              <div
-                className="
-                  mb-5
-                  rounded-xl
-                  border
-                  border-[#F0C9BF]
-                  bg-[#FFF1ED]
-                  px-4
-                  py-3
-                  text-[12px]
-                  font-medium
-                  text-[#9F2D18]
-                "
-              >
-                {error}
-              </div>
-            )}
-
-            {/* RESULTS HEADER */}
-            <div className="mb-4 flex items-end justify-between">
-              <div>
-                <h2 className="text-[17px] font-black text-[#17202A]">
-                  Local sellers
-                </h2>
-
-                {!loading && (
-                  <p className="mt-1 text-[11px] text-[#8B847E]">
-                    {businesses.length}{" "}
-                    {businesses.length === 1
-                      ? "seller"
-                      : "sellers"}{" "}
-                    found
-                  </p>
-                )}
-              </div>
-            </div>
-
-            {/* LOADING */}
-            {loading && (
-              <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
-                {[1, 2, 3, 4, 5, 6].map(
-                  (item) => (
-                    <div
-                      key={item}
-                      className="
-                        h-[245px]
-                        animate-pulse
-                        rounded-[18px]
-                        bg-[#F3EEE8]
-                      "
-                    />
-                  )
-                )}
-              </div>
-            )}
-
-            {/* EMPTY */}
-            {!loading &&
-              !error &&
-              businesses.length === 0 && (
-                <div
-                  className="
-                    rounded-[18px]
-                    border
-                    border-dashed
-                    border-[#DDD6CE]
-                    bg-[#FCFAF6]
-                    px-5
-                    py-14
-                    text-center
-                  "
-                >
-                  <div
-                    className="
-                      mx-auto
-                      flex
-                      h-14
-                      w-14
-                      items-center
-                      justify-center
-                      rounded-full
-                      bg-[#FFE0D6]
-                      text-[#FF5A36]
-                    "
+                  <button
+                    type="button"
+                    onClick={
+                      useCurrentLocation
+                    }
+                    disabled={
+                      locating
+                    }
+                    className="mt-3 inline-flex items-center gap-2 rounded-xl bg-white/15 px-3.5 py-2.5 text-[11px] font-bold text-white backdrop-blur transition hover:bg-white/20 disabled:opacity-60"
                   >
-                    <Store size={25} />
-                  </div>
+                    {locating ? (
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                    ) : (
+                      <Navigation className="h-4 w-4" />
+                    )}
 
-                  <h3 className="mt-4 text-[15px] font-black text-[#17202A]">
-                    No sellers found here yet
-                  </h3>
+                    {locating
+                      ? "Finding you..."
+                      : "Use my current location"}
+                  </button>
+                </section>
 
-                  <p className="mx-auto mt-2 max-w-[430px] text-[12px] leading-5 text-[#888079]">
-                    Try another area or browse all
-                    sellers on ReMarket.
-                  </p>
+                <section className="mt-5">
+                  <div className="flex items-center justify-between gap-3">
+                    <div>
+                      <h2 className="text-lg font-bold text-[#17202A]">
+                        {mode ===
+                        "gps"
+                          ? "Businesses near you"
+                          : mode ===
+                              "area"
+                            ? `Businesses around ${area.trim()}`
+                            : "Nearby businesses"}
+                      </h2>
 
-                  <div className="mt-5 flex flex-col justify-center gap-2 sm:flex-row">
-                    <button
-                      type="button"
-                      onClick={requestLocation}
-                      className="
-                        inline-flex
-                        items-center
-                        justify-center
-                        gap-2
-                        rounded-xl
-                        bg-[#FF5A36]
-                        px-4
-                        py-2.5
-                        text-[11px]
-                        font-bold
-                        text-white
-                      "
-                    >
-                      <Navigation size={14} />
-                      Try my location
-                    </button>
+                      <p className="mt-0.5 text-xs text-muted">
+                        {loading
+                          ? "Finding local businesses..."
+                          : businesses.length
+                            ? `${businesses.length} ${
+                                businesses.length ===
+                                1
+                                  ? "business"
+                                  : "businesses"
+                              } found`
+                            : "Choose an area or use your current location"}
+                      </p>
+                    </div>
 
-                    <Link
-                      href="/shop"
-                      className="
-                        inline-flex
-                        items-center
-                        justify-center
-                        gap-2
-                        rounded-xl
-                        border
-                        border-[#E2DCD5]
-                        bg-white
-                        px-4
-                        py-2.5
-                        text-[11px]
-                        font-bold
-                        text-[#5E5751]
-                      "
-                    >
-                      <ShoppingBag size={14} />
-                      Browse all sellers
-                    </Link>
-                  </div>
-                </div>
-              )}
-
-            {/* RESULTS */}
-            {!loading &&
-              businesses.length > 0 && (
-                <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
-                  {businesses.map(
-                    (business) => (
-                      <Link
-                        key={business.id}
-                        href={`/seller/${business.id}`}
-                        className="
-                          group
-                          overflow-hidden
-                          rounded-[18px]
-                          border
-                          border-[#E8E4DE]
-                          bg-white
-                          shadow-[0_4px_18px_rgba(30,20,10,0.035)]
-                          transition
-                          hover:-translate-y-0.5
-                          hover:shadow-[0_8px_25px_rgba(30,20,10,0.07)]
-                        "
+                    {mode !==
+                      "none" && (
+                      <button
+                        type="button"
+                        onClick={() =>
+                          router.push(
+                            "/shop"
+                          )
+                        }
+                        className="inline-flex items-center gap-1 text-[11px] font-bold text-[#9F2D18]"
                       >
-                        {/* CATEGORY HEADER */}
-                        <div
-                          className="h-20 p-4"
-                          style={{
-                            backgroundColor:
-                              getCategoryColor(
-                                business.category
-                              ),
-                          }}
-                        >
-                          <div className="flex items-start justify-between">
-                            <div
-                              className="
-                                flex
-                                h-11
-                                w-11
-                                items-center
-                                justify-center
-                                rounded-xl
-                                bg-white/70
-                                text-[13px]
-                                font-black
-                                text-[#9F2D18]
-                              "
-                            >
-                              {getInitials(
-                                business.name
-                              )}
-                            </div>
+                        Browse all
+                        <ArrowRight className="h-3.5 w-3.5" />
+                      </button>
+                    )}
+                  </div>
 
-                            <span
-                              className={`
-                                rounded-full
-                                px-2.5
-                                py-1
-                                text-[9px]
-                                font-bold
-                                ${getAvailabilityStyle(
-                                  business.availability
-                                )}
-                              `}
-                            >
-                              {getAvailabilityLabel(
-                                business.availability
-                              )}
-                            </span>
-                          </div>
-                        </div>
-
-                        {/* BODY */}
-                        <div className="p-4">
-                          <div className="flex items-start justify-between gap-3">
-                            <div className="min-w-0">
-                              <div className="flex items-center gap-1.5">
-                                <h3 className="truncate text-[14px] font-black text-[#2E2925]">
-                                  {business.name}
-                                </h3>
-
-                                {(business.verified ||
-                                  business.verification ===
-                                    "VERIFIED") && (
-                                  <CheckCircle2
-                                    size={14}
-                                    className="shrink-0 text-[#FF5A36]"
-                                  />
-                                )}
-                              </div>
-
-                              <p className="mt-1 text-[11px] font-medium text-[#8B847E]">
-                                {business.category ??
-                                  "Local business"}
-                              </p>
-                            </div>
-                          </div>
-
-                          <div className="mt-4 space-y-2">
-                            {business.area && (
-                              <div className="flex items-center gap-2 text-[11px] text-[#716A64]">
-                                <MapPin
-                                  size={14}
-                                  className="shrink-0 text-[#FF5A36]"
-                                />
-
-                                <span className="truncate">
-                                  {business.area}
-                                </span>
-                              </div>
-                            )}
-
-                            {business.distanceKm !=
-                              null && (
-                              <div className="flex items-center gap-2 text-[11px] font-semibold text-[#716A64]">
-                                <Navigation
-                                  size={14}
-                                  className="shrink-0 text-[#FF5A36]"
-                                />
-
-                                {business.distanceKm.toFixed(
-                                  1
-                                )}{" "}
-                                km away
-                              </div>
-                            )}
-
-                            <div className="flex items-center gap-2 text-[11px] text-[#716A64]">
-                              <Package
-                                size={14}
-                                className="shrink-0 text-[#FF5A36]"
-                              />
-
-                              {business.productCount ??
-                                0}{" "}
-                              products
-                            </div>
-                          </div>
-
-                          <div
-                            className="
-                              mt-4
-                              flex
-                              items-center
-                              justify-between
-                              border-t
-                              border-[#EEE9E3]
-                              pt-3
-                            "
-                          >
-                            <span className="text-[10px] font-bold text-[#FF5A36]">
-                              View seller
-                            </span>
-
-                            <span className="text-[11px] text-[#A29A93] transition group-hover:translate-x-0.5 group-hover:text-[#FF5A36]">
-                              →
-                            </span>
-                          </div>
-                        </div>
-                      </Link>
-                    )
+                  {error && (
+                    <div className="mt-4 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-xs text-red-700">
+                      {error}
+                    </div>
                   )}
-                </div>
-              )}
-          </section>
-        </div>
 
-        {/* MOBILE NAV */}
-        <nav
-          className="
-            fixed
-            bottom-0
-            left-0
-            right-0
-            z-40
-            border-t
-            border-[#EAE6DF]
-            bg-white/95
-            px-3
-            py-2
-            backdrop-blur
-            md:hidden
-          "
-        >
-          <div className="mx-auto flex max-w-md items-center justify-around">
-            {NAV_ITEMS.map((item) => {
-              const Icon = item.icon;
+                  {loading && (
+                    <div className="mt-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+                      {[
+                        1,
+                        2,
+                        3,
+                        4,
+                      ].map(
+                        (item) => (
+                          <div
+                            key={
+                              item
+                            }
+                            className="h-[240px] animate-pulse rounded-xl border border-[#E8E4DE] bg-white"
+                          />
+                        )
+                      )}
+                    </div>
+                  )}
 
-              return (
-                <Link
-                  key={item.href}
-                  href={item.href}
-                  className="
-                    flex
-                    min-w-[64px]
-                    flex-col
-                    items-center
-                    gap-1
-                    rounded-xl
-                    px-2
-                    py-1.5
-                    text-[9px]
-                    font-bold
-                    text-[#8A837D]
-                    transition
-                    hover:text-[#FF5A36]
-                  "
-                >
-                  <Icon size={18} />
-                  {item.label}
-                </Link>
-              );
-            })}
+                  {!loading &&
+                    !error &&
+                    businesses.length ===
+                      0 &&
+                    mode !==
+                      "none" && (
+                      <div className="mt-5 rounded-xl border border-[#E8E4DE] bg-white px-5 py-12 text-center">
+                        <Search className="mx-auto h-8 w-8 text-gray-300" />
+
+                        <p className="mt-3 text-sm font-semibold text-gray-700">
+                          No nearby businesses found
+                        </p>
+
+                        <p className="mt-1 text-xs text-gray-400">
+                          Try another area.
+                        </p>
+                      </div>
+                    )}
+
+                  {!loading &&
+                    !error &&
+                    businesses.length >
+                      0 && (
+                      <div className="mt-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+                        {businesses.map(
+                          (business) => {
+                            const category =
+                              business.categories?.[0]
+                                ?.category?.name ??
+                              "Services";
+
+                            const saved =
+                              Boolean(
+                                savedBusinesses[
+                                  business.id
+                                ]
+                              );
+
+                            const product =
+                              business.products?.[0] ??
+                              null;
+
+                            const productImage =
+                              product
+                                ? getProductImage(
+                                    product
+                                  )
+                                : null;
+
+                            return (
+                              <article
+                                key={
+                                  business.id
+                                }
+                                className="overflow-hidden rounded-xl border border-[#E8E4DE] bg-white transition hover:-translate-y-0.5 hover:shadow-md"
+                              >
+                                <Link
+                                  href={`/business/${business.id}`}
+                                  className="relative flex h-[110px] items-center justify-center overflow-hidden bg-[#FFE0D6]"
+                                >
+                                  {business.imageUrl ? (
+                                    <img
+                                      src={
+                                        business.imageUrl
+                                      }
+                                      alt={
+                                        business.name
+                                      }
+                                      className="absolute inset-0 h-full w-full object-cover"
+                                    />
+                                  ) : (
+                                    <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-white/80">
+                                      <Store className="h-7 w-7 text-gray-700" />
+                                    </div>
+                                  )}
+
+                                  {business.distanceKm !==
+                                    null && (
+                                    <span className="absolute left-3 top-3 rounded-full bg-white/90 px-2.5 py-1 text-[9px] font-bold text-[#9F2D18] shadow-sm">
+                                      {
+                                        business.distanceKm
+                                      }{" "}
+                                      km
+                                    </span>
+                                  )}
+
+                                  <span className="absolute right-3 top-3 rounded-full bg-[#DDF5EA] px-2.5 py-1 text-[9px] font-semibold text-[#137A59]">
+                                    {business.availability ===
+                                    "AVAILABLE"
+                                      ? "Available"
+                                      : "Active"}
+                                  </span>
+                                </Link>
+
+                                <div className="p-3.5">
+                                  <div className="flex items-start justify-between gap-2">
+                                    <div className="min-w-0">
+                                      <Link
+                                        href={`/business/${business.id}`}
+                                        className="truncate text-sm font-bold text-[#17202A] hover:text-[#9F2D18]"
+                                      >
+                                        {
+                                          business.name
+                                        }
+                                      </Link>
+
+                                      <p className="mt-1 flex items-center gap-1 text-[10px] text-muted">
+                                        <span>
+                                          {
+                                            category
+                                          }
+                                        </span>
+
+                                        <span>
+                                          ·
+                                        </span>
+
+                                        <span className="flex min-w-0 items-center gap-1 truncate">
+                                          <MapPin className="h-3 w-3 shrink-0" />
+                                          {
+                                            business.area
+                                          }
+                                        </span>
+                                      </p>
+                                    </div>
+
+                                    <button
+                                      type="button"
+                                      aria-label={
+                                        saved
+                                          ? `Remove ${business.name} from saved businesses`
+                                          : `Save ${business.name}`
+                                      }
+                                      aria-pressed={
+                                        saved
+                                      }
+                                      onClick={(
+                                        event
+                                      ) => {
+                                        event.preventDefault();
+                                        event.stopPropagation();
+                                        toggleSaved(
+                                          business
+                                        );
+                                      }}
+                                      className={`shrink-0 ${
+                                        saved
+                                          ? "text-[#9F2D18]"
+                                          : "text-gray-500"
+                                      }`}
+                                    >
+                                      <Bookmark
+                                        className="h-4 w-4"
+                                        fill={
+                                          saved
+                                            ? "currentColor"
+                                            : "none"
+                                        }
+                                      />
+                                    </button>
+                                  </div>
+
+                                  {product && (
+                                    <div className="mt-3 flex items-center gap-2.5 border-t border-[#F0ECE6] pt-3">
+                                      {productImage ? (
+                                        <img
+                                          src={
+                                            productImage
+                                          }
+                                          alt={
+                                            product.name
+                                          }
+                                          className="h-10 w-10 rounded-lg object-cover"
+                                        />
+                                      ) : (
+                                        <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-[#FCFAF6] text-gray-400">
+                                          <Package className="h-4 w-4" />
+                                        </div>
+                                      )}
+
+                                      <div className="min-w-0">
+                                        <p className="truncate text-[10px] font-semibold text-gray-600">
+                                          {
+                                            product.name
+                                          }
+                                        </p>
+
+                                        <p className="mt-1 text-[10px] text-gray-400">
+                                          {formatPrice(
+                                            product
+                                          )}
+                                        </p>
+                                      </div>
+                                    </div>
+                                  )}
+
+                                  <Link
+                                    href={`/business/${business.id}`}
+                                    className="mt-3 flex w-full items-center justify-center gap-2 rounded-lg bg-[#FFF1ED] py-2.5 text-[11px] font-bold text-[#9F2D18]"
+                                  >
+                                    Browse
+                                    <ArrowRight className="h-3.5 w-3.5" />
+                                  </Link>
+                                </div>
+                              </article>
+                            );
+                          }
+                        )}
+                      </div>
+                    )}
+
+                  {mode ===
+                    "none" &&
+                    !loading && (
+                      <div className="mt-5 rounded-xl border border-[#E8E4DE] bg-white px-5 py-12 text-center">
+                        <MapPin className="mx-auto h-8 w-8 text-gray-300" />
+
+                        <p className="mt-3 text-sm font-semibold text-gray-700">
+                          Tell us where you are
+                        </p>
+
+                        <p className="mt-1 text-xs leading-5 text-gray-400">
+                          Enter an area or use your current location to discover local businesses.
+                        </p>
+                      </div>
+                    )}
+                </section>
+
+                <footer className="mt-7 flex items-center justify-center gap-3 text-[10px] text-gray-400">
+                  <span className="h-px w-16 bg-gray-200" />
+                  <span>
+                    ReMarket · Find it nearby
+                  </span>
+                  <span className="h-px w-16 bg-gray-200" />
+                </footer>
+              </div>
+            </div>
           </div>
-        </nav>
+
+          <nav className="fixed bottom-0 left-0 right-0 z-50 border-t border-gray-200 bg-white/95 px-2 pb-[max(6px,safe-area-inset-bottom)] pt-1.5 backdrop-blur lg:hidden">
+            <div className="mx-auto grid max-w-md grid-cols-4">
+              {NAV_ITEMS.map(
+                (item) => {
+                  const Icon =
+                    item.icon;
+
+                  return (
+                    <button
+                      key={
+                        item.label
+                      }
+                      type="button"
+                      onClick={() =>
+                        router.push(
+                          item.href
+                        )
+                      }
+                      className="flex flex-col items-center justify-center gap-1 rounded-xl py-2 text-gray-500"
+                    >
+                      <Icon className="h-[19px] w-[19px]" />
+                      <span className="text-[9px] font-medium">
+                        {
+                          item.label
+                        }
+                      </span>
+                    </button>
+                  );
+                }
+              )}
+            </div>
+          </nav>
+        </div>
       </div>
     </main>
   );
