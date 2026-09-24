@@ -3,6 +3,7 @@
 import {
   useEffect,
   useState,
+  Suspense
 } from "react";
 
 import {
@@ -241,7 +242,7 @@ function getProductImage(
   );
 }
 
-export default function SearchPage() {
+function SearchPageContent() {
   const router =
     useRouter();
 
@@ -1781,4 +1782,21 @@ export default function SearchPage() {
       </div>
     </main>
   );
+}
+export default function SearchPage(){
+  return(
+    <Suspense
+      fallback={
+        <main className="min-h-screen bg-[#FFF7ED]">
+          <div className="mx-auto flex min-h-screen w-full max-w-[1500px] items-center justify-center px-3 py-3 sm:px-5 sm:py-5">
+            <div className="rounded-xl border border-[#E8E4DE] bg-white px-5 py-4 text-xs text-gray-500 shadow-sm">
+              Loading search...
+            </div>
+          </div>
+        </main>
+      }
+      >
+        <SearchPageContent/>
+      </Suspense>
+  )
 }

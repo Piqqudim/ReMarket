@@ -66,7 +66,7 @@ export async function GET(
                   select: {
                     area: true,
                     lat: true,
-                    lng: true,
+                    long: true,
                   },
                 },
                 socialLinks: {
@@ -116,7 +116,7 @@ export async function GET(
             phone: match.business.phone,
             area: match.business.location?.area ?? null,
             lat: match.business.location?.lat ?? null,
-            lng: match.business.location?.lng ?? null,
+            long: match.business.location?.long ?? null,
             verification: match.business.verification,
             verified: match.business.verification === "VERIFIED",
             status: match.business.status,

@@ -3,6 +3,7 @@
 import {
   useEffect,
   useState,
+  Suspense
 
 } from "react";
 
@@ -223,7 +224,7 @@ function formatPrice(
   return "Ask seller";
 }
 
-export default function ShopPage() {
+ function ShopPageContent() {
   const router =
     useRouter();
 
@@ -1141,4 +1142,21 @@ export default function ShopPage() {
       </div>
     </main>
   );
+}
+export default function ShopPage(){
+  return(
+    <Suspense
+      fallback={
+        <main className="min-h-screen bg-[#FFF7ED]">
+          <div className="mx-auto flex min-h-screen w-full max-w-[1500px] items-center justify-center px-3 py-3 sm:px-5 sm:py-5">
+            <div className="rounded-xl border border-[#E8E4DE] bg-white px-5 py-4 text-xs text-gray-500 shadow-sm">
+              Loading shops...
+            </div>
+          </div>
+        </main>
+      }
+      >
+        <ShopPageContent/>
+      </Suspense>
+  )
 }
