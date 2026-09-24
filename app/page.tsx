@@ -190,7 +190,9 @@ function getCategoryStyle(name: string) {
   return (
     CATEGORY_STYLE[name] ?? {
       bg: "#EEF1F4",
-      icon: <MoreHorizontal className="h-6 w-6" />,
+      icon: (
+        <MoreHorizontal className="h-6 w-6" />
+      ),
     }
   );
 }
@@ -245,21 +247,17 @@ export default function HomePage() {
   const [nearbyError, setNearbyError] =
     useState("");
 
-  /*
-   * Saved businesses
-   *
-   * We store only the IDs here because the actual
-   * saved business records remain in lib/saved.ts.
-   */
   const [savedBusinessIds, setSavedBusinessIds] =
     useState<Set<string>>(new Set());
 
   const router = useRouter();
 
   /*
-   * Load saved businesses and keep the homepage
-   * synchronized with the global saved-business state.
+   * -----------------------------------------
+   * SAVED BUSINESSES
+   * -----------------------------------------
    */
+
   useEffect(() => {
     const syncSavedBusinesses = () => {
       const saved = getSavedBusinesses();
@@ -299,8 +297,11 @@ export default function HomePage() {
   }, []);
 
   /*
-   * Load homepage data.
+   * -----------------------------------------
+   * LOAD HOMEPAGE DATA
+   * -----------------------------------------
    */
+
   useEffect(() => {
     let cancelled = false;
 
@@ -335,16 +336,13 @@ export default function HomePage() {
             !cancelled
           ) {
             setCategories(
-              categoryData.categories.slice(
-                0,
-                categoryData.categories.length
-              )
+              categoryData.categories
             );
           }
         }
 
         /*
-         * Featured Businesses
+         * Featured businesses
          */
 
         if (featuredResponse.ok) {
@@ -384,7 +382,15 @@ export default function HomePage() {
     };
   }, []);
 
-  function handleCategory(category: string) {
+  /*
+   * -----------------------------------------
+   * CATEGORY
+   * -----------------------------------------
+   */
+
+  function handleCategory(
+    category: string
+  ) {
     router.push(
       `/shop?category=${encodeURIComponent(
         category
@@ -393,8 +399,11 @@ export default function HomePage() {
   }
 
   /*
-   * Save / unsave a featured business.
+   * -----------------------------------------
+   * SAVE / UNSAVE BUSINESS
+   * -----------------------------------------
    */
+
   function handleSaveBusiness(
     event: React.MouseEvent<HTMLButtonElement>,
     business: FeaturedBusiness,
@@ -430,6 +439,12 @@ export default function HomePage() {
     });
   }
 
+  /*
+   * -----------------------------------------
+   * FIND NEARBY BUSINESSES
+   * -----------------------------------------
+   */
+
   const loadNearbyBusinesses = () => {
     if (!navigator.geolocation) {
       setNearbyError(
@@ -444,6 +459,12 @@ export default function HomePage() {
     setNearbyLocationRequested(true);
     setNearbyLoading(true);
     setNearbyError("");
+
+    /*
+     * Clear previous nearby results before
+     * starting a new search.
+     */
+    setNearbyBusiness([]);
 
     navigator.geolocation.getCurrentPosition(
       async (position) => {
@@ -469,14 +490,30 @@ export default function HomePage() {
           const data =
             await response.json();
 
+          /*
+           * IMPORTANT:
+           *
+           * An empty businesses array is NOT
+           * an error.
+           *
+           * It means GPS worked but there are
+           * currently no businesses nearby.
+           */
           setNearbyBusiness(
-            (data.businesses ?? []).slice(
-              0,
-              4
+            Array.isArray(
+              data.businesses
             )
+              ? data.businesses.slice(
+                  0,
+                  4
+                )
+              : []
           );
         } catch (error) {
-          console.error(error);
+          console.error(
+            "Failed to load nearby businesses:",
+            error
+          );
 
           setNearbyError(
             "We couldn't load nearby sellers right now"
@@ -486,7 +523,12 @@ export default function HomePage() {
         }
       },
 
-      () => {
+      (error) => {
+        console.error(
+          "Geolocation error:",
+          error
+        );
+
         setNearbyError(
           "Allow location access to discover sellers near you"
         );
@@ -501,6 +543,12 @@ export default function HomePage() {
       }
     );
   };
+
+  /*
+   * -----------------------------------------
+   * SEARCH
+   * -----------------------------------------
+   */
 
   const submit = (
     event: React.FormEvent<HTMLFormElement>
@@ -545,20 +593,18 @@ export default function HomePage() {
             {/* Desktop Navigation */}
 
             <nav className="hidden items-center gap-1 md:flex">
-              {NAV_ITEMS.map((item) => {
-                return (
-                  <button
-                    key={item.label}
-                    type="button"
-                    onClick={() =>
-                      router.push(item.href)
-                    }
-                    className="rounded-xl px-4 py-2 text-xs font-semibold text-gray-700 transition hover:bg-gray-50"
-                  >
-                    {item.label}
-                  </button>
-                );
-              })}
+              {NAV_ITEMS.map((item) => (
+                <button
+                  key={item.label}
+                  type="button"
+                  onClick={() =>
+                    router.push(item.href)
+                  }
+                  className="rounded-xl px-4 py-2 text-xs font-semibold text-gray-700 transition hover:bg-gray-50"
+                >
+                  {item.label}
+                </button>
+              ))}
             </nav>
 
             {/* Right Action */}
@@ -611,7 +657,7 @@ export default function HomePage() {
             </div>
           </header>
 
-          {/* Left SideBar */}
+          {/* Left Sidebar */}
 
           <div className="flex">
             <aside className="hidden w-[190px] shrink-0 border-r border-[#EAE6DF] bg-[#FCFAF6] px-3 py-5 lg:block">
@@ -706,7 +752,6 @@ export default function HomePage() {
                 {/* Hero */}
 
                 <section className="relative min-h-[260px] overflow-hidden rounded-[18px] bg-[#FF5A36] px-6 py-7 text-white shadow-soft sm:min-h-[275px] sm:px-8 sm:py-9 lg:min-h-[275px] lg:px-8">
-
                   <div className="absolute -right-16 -top-24 h-[260px] w-[260px] rounded-full bg-white/5">
                     <div className="pointer-events-none absolute right-6 top-7 hidden opacity-90 md:block lg:right-12">
                       <div className="relative h-[190px] w-[220px]">
@@ -741,7 +786,7 @@ export default function HomePage() {
                     </h1>
 
                     <p className="mt-3 max-w-[470px] text-xs leading-5 text-white/85 sm:text-sm">
-                      Search sellers,discover products and connect with people nearby without the hassle.
+                      Search sellers, discover products and connect with people nearby without the hassle.
                     </p>
 
                     <form
@@ -833,8 +878,6 @@ export default function HomePage() {
                       );
                     })}
 
-                    {/* More */}
-
                     <button
                       type="button"
                       onClick={() =>
@@ -904,18 +947,18 @@ export default function HomePage() {
                       </p>
                     </div>
 
-                    {nearbyBusinesses.length > 0 && (
-                      <Link
-                        href="/near-me"
-                        className="flex items-center gap-1 text-xs font-semibold text-[#9F2D18]"
-                      >
-                        View All
-                        <ArrowRight size={14} />
-                      </Link>
-                    )}
+                    {/* ALWAYS SHOW VIEW ALL */}
+
+                    <Link
+                      href="/near-me"
+                      className="flex shrink-0 items-center gap-1 text-xs font-semibold text-[#9F2D18]"
+                    >
+                      View All
+                      <ArrowRight size={14} />
+                    </Link>
                   </div>
 
-                  {/* Location Button */}
+                  {/* Initial state */}
 
                   {!nearbyLocationRequested &&
                     !nearbyLoading && (
@@ -931,7 +974,7 @@ export default function HomePage() {
                             </p>
 
                             <p className="mt-1 text-xs leading-5 text-muted">
-                              Allow location access to see local seller closest to you
+                              Allow location access to see local sellers closest to you.
                             </p>
                           </div>
 
@@ -988,6 +1031,45 @@ export default function HomePage() {
                           Open Near Me
                           <ArrowRight size={14} />
                         </Link>
+                      </div>
+                    )}
+
+                  {/* SUCCESSFUL SEARCH BUT NO BUSINESSES */}
+
+                  {!nearbyLoading &&
+                    nearbyLocationRequested &&
+                    !nearbyError &&
+                    nearbyBusinesses.length ===
+                      0 && (
+                      <div className="mt-4 rounded-2xl border border-orange-100 bg-white p-6 text-center shadow-card">
+                        <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-2xl bg-orange-50 text-[#FF5A36]">
+                          <MapPin size={21} />
+                        </div>
+
+                        <p className="mt-3 text-sm font-bold">
+                          No businesses found near you yet
+                        </p>
+
+                        <p className="mx-auto mt-1 max-w-[380px] text-xs leading-5 text-muted">
+                          We don't have businesses registered around your current location yet. You can explore all businesses or search for another area.
+                        </p>
+
+                        <div className="mt-4 flex flex-col justify-center gap-2 sm:flex-row">
+                          <Link
+                            href="/near-me"
+                            className="inline-flex items-center justify-center gap-2 rounded-xl bg-[#FF5A36] px-4 py-2.5 text-xs font-semibold text-white transition hover:opacity-90"
+                          >
+                            Open Near Me
+                            <ArrowRight size={14} />
+                          </Link>
+
+                          <Link
+                            href="/shop"
+                            className="inline-flex items-center justify-center gap-2 rounded-xl border border-[#E8E4DE] bg-white px-4 py-2.5 text-xs font-semibold text-[#9F2D18] transition hover:bg-orange-50"
+                          >
+                            Browse all businesses
+                          </Link>
+                        </div>
                       </div>
                     )}
 
@@ -1058,11 +1140,13 @@ export default function HomePage() {
                                   null && (
                                   <>
                                     <span className="text-gray-300">
-                                      .
+                                      ·
                                     </span>
 
                                     <span className="shrink-0">
-                                      {business.distanceKm}{" "}
+                                      {
+                                        business.distanceKm
+                                      }{" "}
                                       km
                                     </span>
                                   </>
@@ -1070,7 +1154,9 @@ export default function HomePage() {
                               </div>
 
                               <div className="mt-2 text-[11px] text-muted">
-                                {business.productCount}{" "}
+                                {
+                                  business.productCount
+                                }{" "}
                                 {business.productCount ===
                                 1
                                   ? "product"
@@ -1082,7 +1168,7 @@ export default function HomePage() {
                       </div>
                     )}
 
-                  {/* View All */}
+                  {/* Explore all */}
 
                   {!nearbyLoading &&
                     nearbyBusinesses.length >
@@ -1237,7 +1323,7 @@ export default function HomePage() {
                                       </p>
                                     </div>
 
-                                    {/* Save Button */}
+                                    {/* Save */}
 
                                     <button
                                       type="button"
@@ -1330,7 +1416,7 @@ export default function HomePage() {
             </div>
           </div>
 
-          {/* Mobile Button Navigation */}
+          {/* Mobile Navigation */}
 
           <nav className="fixed bottom-0 left-0 right-0 z-50 border-t border-gray-200 bg-white/95 px-2 pb-[max(6px,safe-area-inset-bottom)] pt-1.5 backdrop-blur lg:hidden">
             <div className="mx-auto grid max-w-md grid-cols-4">
