@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import {
+  AlertTriangle,
   ArrowLeft,
   Check,
   ChevronDown,
@@ -10,8 +11,10 @@ import {
   Package,
   PackagePlus,
   Plus,
+  RotateCcw,
   Search,
   Store,
+  Trash2,
   X,
 } from "lucide-react";
 import { useEffect, useState } from "react";
@@ -32,7 +35,10 @@ type Business = {
   }[];
   productCount: number;
   onboardedAt: string;
+  deletedAt: string | null;
 };
+
+type DeletionFilter = "ALL" | "ACTIVE" | "DELETED";
 
 const NAV_ITEMS = [
   {
@@ -57,11 +63,24 @@ export default function AdminBusinessesPage() {
   const [query, setQuery] = useState("");
   const [status, setStatus] = useState("");
   const [verification, setVerification] = useState("");
+  const [deletionFilter, setDeletionFilter] =
+    useState<DeletionFilter>("ALL");
 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [success, setSuccess] = useState("");
 
-  const [updatingId, setUpdatingId] = useState<string | null>(null);
+  const [updatingId, setUpdatingId] =
+    useState<string | null>(null);
+
+  const [deletingId, setDeletingId] =
+    useState<string | null>(null);
+
+  const [restoringId, setRestoringId] =
+    useState<string | null>(null);
+
+  const [confirmDeleteBusiness, setConfirmDeleteBusiness] =
+    useState<Business | null>(null);
 
   async function loadBusinesses() {
     try {
@@ -82,8 +101,14 @@ export default function AdminBusinessesPage() {
         params.set("verification", verification);
       }
 
+      params.set("deleted", deletionFilter);
+
       const response = await fetch(
-        `/api/admin/businesses?${params.toString()}`
+        `/api/admin/businesses?${params.toString()}`,
+        {
+          method: "GET",
+          cache: "no-store",
+        }
       );
 
       const data = await response.json();
@@ -113,7 +138,12 @@ export default function AdminBusinessesPage() {
     }, 250);
 
     return () => clearTimeout(timer);
-  }, [query, status, verification]);
+  }, [
+    query,
+    status,
+    verification,
+    deletionFilter,
+  ]);
 
   async function updateBusiness(
     id: string,
@@ -122,6 +152,7 @@ export default function AdminBusinessesPage() {
     try {
       setUpdatingId(id);
       setError("");
+      setSuccess("");
 
       const response = await fetch(
         `/api/admin/businesses/${id}`,
@@ -155,13 +186,179 @@ export default function AdminBusinessesPage() {
             : business
         )
       );
+
+      setSuccess("Business updated successfully.");
+
+      window.setTimeout(() => {
+        setSuccess("");
+      }, 2500);
     } catch (error) {
       console.error(error);
-      setError("We couldn't update that business.");
+      setError(
+        "We couldn't update that business."
+      );
     } finally {
       setUpdatingId(null);
     }
   }
+
+  async function deleteBusiness(
+    business: Business
+  ) {
+    try {
+      setDeletingId(business.id);
+      setError("");
+      setSuccess("");
+
+      const response = await fetch(
+        `/api/admin/businesses/${business.id}`,
+        {
+          method: "DELETE",
+        }
+      );
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(
+          data.error || "Unable to delete business"
+        );
+      }
+
+      /*
+       * We keep the item in local state so the
+       * admin can immediately see it as deleted
+       * when viewing ALL businesses.
+       */
+      setBusinesses((current) =>
+        current.map((item) =>
+          item.id === business.id
+            ? {
+                ...item,
+                deletedAt:
+                  data.business?.deletedAt ??
+                  new Date().toISOString(),
+              }
+            : item
+        )
+      );
+
+      setConfirmDeleteBusiness(null);
+      setSuccess(
+        `${business.name} was moved to deleted businesses.`
+      );
+
+      /*
+       * If the current filter is ACTIVE,
+       * the deleted business should disappear
+       * immediately.
+       */
+      if (deletionFilter === "ACTIVE") {
+        setBusinesses((current) =>
+          current.filter(
+            (item) => item.id !== business.id
+          )
+        );
+      }
+
+      window.setTimeout(() => {
+        setSuccess("");
+      }, 3000);
+    } catch (error) {
+      console.error(error);
+      setError(
+        error instanceof Error
+          ? error.message
+          : "We couldn't delete that business."
+      );
+    } finally {
+      setDeletingId(null);
+    }
+  }
+
+  async function restoreBusiness(
+    business: Business
+  ) {
+    try {
+      setRestoringId(business.id);
+      setError("");
+      setSuccess("");
+
+      const response = await fetch(
+        `/api/admin/businesses/${business.id}`,
+        {
+          method: "PATCH",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            restore: true,
+          }),
+        }
+      );
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(
+          data.error ||
+            "Unable to restore business"
+        );
+      }
+
+      const restoredBusiness =
+        data.business ?? data;
+
+      setBusinesses((current) =>
+        current.map((item) =>
+          item.id === business.id
+            ? {
+                ...item,
+                ...restoredBusiness,
+                deletedAt: null,
+              }
+            : item
+        )
+      );
+
+      setSuccess(
+        `${business.name} was restored successfully.`
+      );
+
+      /*
+       * If viewing DELETED only, the restored
+       * business should disappear immediately.
+       */
+      if (deletionFilter === "DELETED") {
+        setBusinesses((current) =>
+          current.filter(
+            (item) => item.id !== business.id
+          )
+        );
+      }
+
+      window.setTimeout(() => {
+        setSuccess("");
+      }, 3000);
+    } catch (error) {
+      console.error(error);
+      setError(
+        error instanceof Error
+          ? error.message
+          : "We couldn't restore that business."
+      );
+    } finally {
+      setRestoringId(null);
+    }
+  }
+
+  const activeCount = businesses.filter(
+    (business) => !business.deletedAt
+  ).length;
+
+  const deletedCount = businesses.filter(
+    (business) => Boolean(business.deletedAt)
+  ).length;
 
   return (
     <main className="min-h-screen bg-[#FFF7ED] px-3 py-3 sm:px-5 sm:py-5">
@@ -172,8 +369,12 @@ export default function AdminBusinessesPage() {
               href="/admin"
               className="text-xl font-black tracking-tight"
             >
-              <span className="text-[#FF5A36]">Re</span>
-              <span className="text-[#17202A]">Market</span>
+              <span className="text-[#FF5A36]">
+                Re
+              </span>
+              <span className="text-[#17202A]">
+                Market
+              </span>
             </Link>
           </div>
 
@@ -190,7 +391,8 @@ export default function AdminBusinessesPage() {
                   key={item.href}
                   href={item.href}
                   className={`flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-semibold transition ${
-                    item.href === "/admin/businesses"
+                    item.href ===
+                    "/admin/businesses"
                       ? "bg-[#FFE0D6] text-[#9F2D18]"
                       : "text-[#6F675F] hover:bg-[#FFF0D9]"
                   }`}
@@ -241,7 +443,8 @@ export default function AdminBusinessesPage() {
                 </h2>
 
                 <p className="mt-1 text-sm text-[#81776F]">
-                  Manage businesses listed on ReMarket.
+                  Manage businesses listed on
+                  ReMarket.
                 </p>
               </div>
 
@@ -254,6 +457,53 @@ export default function AdminBusinessesPage() {
               </Link>
             </div>
 
+            <div className="mb-5 flex flex-wrap gap-2">
+              <SummaryPill
+                label="All"
+                count={
+                  deletionFilter === "ALL"
+                    ? businesses.length
+                    : undefined
+                }
+                active={
+                  deletionFilter === "ALL"
+                }
+                onClick={() =>
+                  setDeletionFilter("ALL")
+                }
+              />
+
+              <SummaryPill
+                label="Active"
+                count={
+                  deletionFilter === "ACTIVE"
+                    ? activeCount
+                    : undefined
+                }
+                active={
+                  deletionFilter === "ACTIVE"
+                }
+                onClick={() =>
+                  setDeletionFilter("ACTIVE")
+                }
+              />
+
+              <SummaryPill
+                label="Deleted"
+                count={
+                  deletionFilter === "DELETED"
+                    ? deletedCount
+                    : undefined
+                }
+                active={
+                  deletionFilter === "DELETED"
+                }
+                onClick={() =>
+                  setDeletionFilter("DELETED")
+                }
+              />
+            </div>
+
             <div className="mb-5 flex gap-2 overflow-x-auto lg:hidden">
               {NAV_ITEMS.map((item) => {
                 const Icon = item.icon;
@@ -263,7 +513,8 @@ export default function AdminBusinessesPage() {
                     key={item.href}
                     href={item.href}
                     className={`flex shrink-0 items-center gap-2 rounded-xl px-3 py-2 text-xs font-bold ${
-                      item.href === "/admin/businesses"
+                      item.href ===
+                      "/admin/businesses"
                         ? "bg-[#FF5A36] text-white"
                         : "bg-[#FCFAF6] text-[#6F675F]"
                     }`}
@@ -286,7 +537,9 @@ export default function AdminBusinessesPage() {
                   <input
                     value={query}
                     onChange={(event) =>
-                      setQuery(event.target.value)
+                      setQuery(
+                        event.target.value
+                      )
                     }
                     placeholder="Search businesses..."
                     className="h-11 w-full rounded-xl border border-[#EAE6DF] bg-[#FCFAF6] pl-10 pr-4 text-sm text-[#17202A] outline-none transition placeholder:text-[#A39A91] focus:border-[#FF5A36]"
@@ -294,12 +547,29 @@ export default function AdminBusinessesPage() {
                 </div>
 
                 <FilterSelect
+                  value={deletionFilter}
+                  onChange={(value) =>
+                    setDeletionFilter(
+                      value as DeletionFilter
+                    )
+                  }
+                  options={[
+                    ["ALL", "All businesses"],
+                    ["ACTIVE", "Active"],
+                    ["DELETED", "Deleted"],
+                  ]}
+                />
+
+                <FilterSelect
                   value={status}
                   onChange={setStatus}
                   options={[
                     ["", "All status"],
                     ["ACTIVE", "Active"],
-                    ["INACTIVE", "Inactive"],
+                    [
+                      "INACTIVE",
+                      "Inactive",
+                    ],
                     ["PENDING", "Pending"],
                   ]}
                 />
@@ -308,13 +578,34 @@ export default function AdminBusinessesPage() {
                   value={verification}
                   onChange={setVerification}
                   options={[
-                    ["", "All verification"],
-                    ["VERIFIED", "Verified"],
-                    ["UNVERIFIED", "Unverified"],
+                    [
+                      "",
+                      "All verification",
+                    ],
+                    [
+                      "VERIFIED",
+                      "Verified",
+                    ],
+                    [
+                      "UNVERIFIED",
+                      "Unverified",
+                    ],
                   ]}
                 />
               </div>
             </div>
+
+            {success && (
+              <div className="mb-5 flex items-center gap-3 rounded-2xl border border-[#BFE3CE] bg-[#EEF9F2] px-4 py-3">
+                <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-[#D9F1E3] text-[#287A4B]">
+                  <Check size={15} />
+                </div>
+
+                <p className="text-sm font-semibold text-[#287A4B]">
+                  {success}
+                </p>
+              </div>
+            )}
 
             {error && (
               <div className="mb-5 flex items-center justify-between gap-3 rounded-2xl border border-[#F2C7BC] bg-[#FFF0ED] px-4 py-3">
@@ -324,7 +615,9 @@ export default function AdminBusinessesPage() {
 
                 <button
                   type="button"
-                  onClick={() => setError("")}
+                  onClick={() =>
+                    setError("")
+                  }
                   className="text-[#9F2D18]"
                   aria-label="Dismiss error"
                 >
@@ -342,21 +635,32 @@ export default function AdminBusinessesPage() {
             ) : businesses.length === 0 ? (
               <div className="rounded-2xl border border-[#EAE6DF] bg-white p-10 text-center">
                 <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-2xl bg-[#FFE0D6] text-[#FF5A36]">
-                  <Store size={22} />
+                  {deletionFilter ===
+                  "DELETED" ? (
+                    <Trash2 size={22} />
+                  ) : (
+                    <Store size={22} />
+                  )}
                 </div>
 
                 <h3 className="mt-4 font-black text-[#17202A]">
-                  No businesses found
+                  {deletionFilter ===
+                  "DELETED"
+                    ? "No deleted businesses"
+                    : "No businesses found"}
                 </h3>
 
                 <p className="mt-1 text-sm text-[#8A8178]">
-                  Try changing your search or filters.
+                  {deletionFilter ===
+                  "DELETED"
+                    ? "Businesses you soft-delete will appear here."
+                    : "Try changing your search or filters."}
                 </p>
               </div>
             ) : (
               <div className="overflow-hidden rounded-2xl border border-[#EAE6DF] bg-white">
                 <div className="hidden overflow-x-auto md:block">
-                  <table className="w-full min-w-[1150px]">
+                  <table className="w-full min-w-[1250px]">
                     <thead className="border-b border-[#EAE6DF] bg-[#FCFAF6]">
                       <tr>
                         <th className="px-4 py-3 text-left text-[11px] font-bold uppercase tracking-wide text-[#8A8178]">
@@ -386,42 +690,109 @@ export default function AdminBusinessesPage() {
                     </thead>
 
                     <tbody className="divide-y divide-[#EAE6DF]">
-                      {businesses.map((business) => (
-                        <BusinessRow
-                          key={business.id}
-                          business={business}
-                          updating={
-                            updatingId === business.id
-                          }
-                          onUpdate={updateBusiness}
-                        />
-                      ))}
+                      {businesses.map(
+                        (business) => (
+                          <BusinessRow
+                            key={business.id}
+                            business={business}
+                            updating={
+                              updatingId ===
+                              business.id
+                            }
+                            deleting={
+                              deletingId ===
+                              business.id
+                            }
+                            restoring={
+                              restoringId ===
+                              business.id
+                            }
+                            onUpdate={
+                              updateBusiness
+                            }
+                            onDelete={() =>
+                              setConfirmDeleteBusiness(
+                                business
+                              )
+                            }
+                            onRestore={() =>
+                              restoreBusiness(
+                                business
+                              )
+                            }
+                          />
+                        )
+                      )}
                     </tbody>
                   </table>
                 </div>
 
                 <div className="divide-y divide-[#EAE6DF] md:hidden">
-                  {businesses.map((business) => (
-                    <BusinessMobileCard
-                      key={business.id}
-                      business={business}
-                      updating={
-                        updatingId === business.id
-                      }
-                      onUpdate={updateBusiness}
-                    />
-                  ))}
+                  {businesses.map(
+                    (business) => (
+                      <BusinessMobileCard
+                        key={business.id}
+                        business={business}
+                        updating={
+                          updatingId ===
+                          business.id
+                        }
+                        deleting={
+                          deletingId ===
+                          business.id
+                        }
+                        restoring={
+                          restoringId ===
+                          business.id
+                        }
+                        onUpdate={
+                          updateBusiness
+                        }
+                        onDelete={() =>
+                          setConfirmDeleteBusiness(
+                            business
+                          )
+                        }
+                        onRestore={() =>
+                          restoreBusiness(
+                            business
+                          )
+                        }
+                      />
+                    )
+                  )}
                 </div>
               </div>
             )}
 
             <p className="mt-4 text-xs font-medium text-[#A39A91]">
               {businesses.length} business
-              {businesses.length === 1 ? "" : "es"} shown
+              {businesses.length === 1
+                ? ""
+                : "es"}{" "}
+              shown
             </p>
           </div>
         </section>
       </div>
+
+      {confirmDeleteBusiness && (
+        <DeleteConfirmationModal
+          business={confirmDeleteBusiness}
+          loading={
+            deletingId ===
+            confirmDeleteBusiness.id
+          }
+          onCancel={() =>
+            setConfirmDeleteBusiness(null)
+          }
+          onConfirm={() =>
+            deleteBusiness(
+              confirmDeleteBusiness
+            )
+          }
+        />
+      )}
     </main>
   );
 }
@@ -429,22 +800,46 @@ export default function AdminBusinessesPage() {
 function BusinessRow({
   business,
   updating,
+  deleting,
+  restoring,
   onUpdate,
+  onDelete,
+  onRestore,
 }: {
   business: Business;
   updating: boolean;
+  deleting: boolean;
+  restoring: boolean;
   onUpdate: (
     id: string,
     changes: Partial<Business>
   ) => void;
+  onDelete: () => void;
+  onRestore: () => void;
 }) {
+  const deleted = Boolean(
+    business.deletedAt
+  );
+
   return (
-    <tr>
+    <tr
+      className={
+        deleted
+          ? "bg-[#FFFBF8]"
+          : undefined
+      }
+    >
       <td className="px-4 py-4">
         <div>
-          <p className="font-bold text-[#17202A]">
-            {business.name}
-          </p>
+          <div className="flex items-center gap-2">
+            <p className="font-bold text-[#17202A]">
+              {business.name}
+            </p>
+
+            {deleted && (
+              <DeletedBadge />
+            )}
+          </div>
 
           {business.ownerName && (
             <p className="mt-1 text-xs text-[#8A8178]">
@@ -465,17 +860,27 @@ function BusinessRow({
       <td className="px-4 py-4">
         <VerificationButton
           business={business}
-          updating={updating}
+          updating={
+            updating || deleted
+          }
           onUpdate={onUpdate}
         />
       </td>
 
       <td className="px-4 py-4">
-        <StatusButton
-          business={business}
-          updating={updating}
-          onUpdate={onUpdate}
-        />
+        <div className="flex flex-wrap items-center gap-2">
+          <StatusButton
+            business={business}
+            updating={
+              updating || deleted
+            }
+            onUpdate={onUpdate}
+          />
+
+          {deleted && (
+            <DeletedBadge />
+          )}
+        </div>
       </td>
 
       <td className="px-4 py-4">
@@ -488,13 +893,15 @@ function BusinessRow({
             View
           </Link>
 
-          <Link
-            href={`/admin/businesses/${business.id}/products/new`}
-            className="inline-flex items-center gap-1.5 rounded-xl bg-[#FF5A36] px-3 py-2 text-[11px] font-bold text-white transition hover:bg-[#E94B29]"
-          >
-            <PackagePlus size={14} />
-            Add Product
-          </Link>
+          {!deleted && (
+            <Link
+              href={`/admin/businesses/${business.id}/products/new`}
+              className="inline-flex items-center gap-1.5 rounded-xl bg-[#FF5A36] px-3 py-2 text-[11px] font-bold text-white transition hover:bg-[#E94B29]"
+            >
+              <PackagePlus size={14} />
+              Add Product
+            </Link>
+          )}
 
           <Link
             href={`/admin/businesses/${business.id}`}
@@ -504,11 +911,52 @@ function BusinessRow({
             Products
           </Link>
 
-          <AvailabilityButton
-            business={business}
-            updating={updating}
-            onUpdate={onUpdate}
-          />
+          {!deleted && (
+            <>
+              <AvailabilityButton
+                business={business}
+                updating={
+                  updating ||
+                  deleting
+                }
+                onUpdate={onUpdate}
+              />
+
+              <button
+                type="button"
+                disabled={
+                  updating ||
+                  deleting ||
+                  restoring
+                }
+                onClick={onDelete}
+                className="inline-flex items-center gap-1.5 rounded-xl border border-[#F2C7BC] bg-[#FFF5F2] px-3 py-2 text-[11px] font-bold text-[#9F2D18] transition hover:bg-[#FFE9E3] disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                <Trash2 size={14} />
+                {deleting
+                  ? "Deleting..."
+                  : "Delete"}
+              </button>
+            </>
+          )}
+
+          {deleted && (
+            <button
+              type="button"
+              disabled={
+                updating ||
+                deleting ||
+                restoring
+              }
+              onClick={onRestore}
+              className="inline-flex items-center gap-1.5 rounded-xl bg-[#E7F7EF] px-3 py-2 text-[11px] font-bold text-[#287A4B] transition hover:bg-[#D8F1E3] disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              <RotateCcw size={14} />
+              {restoring
+                ? "Restoring..."
+                : "Restore"}
+            </button>
+          )}
         </div>
       </td>
     </tr>
@@ -518,22 +966,44 @@ function BusinessRow({
 function BusinessMobileCard({
   business,
   updating,
+  deleting,
+  restoring,
   onUpdate,
+  onDelete,
+  onRestore,
 }: {
   business: Business;
   updating: boolean;
+  deleting: boolean;
+  restoring: boolean;
   onUpdate: (
     id: string,
     changes: Partial<Business>
   ) => void;
+  onDelete: () => void;
+  onRestore: () => void;
 }) {
+  const deleted = Boolean(
+    business.deletedAt
+  );
+
   return (
-    <article className="p-4">
+    <article
+      className={`p-4 ${
+        deleted ? "bg-[#FFFBF8]" : ""
+      }`}
+    >
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
-          <h3 className="truncate font-black text-[#17202A]">
-            {business.name}
-          </h3>
+          <div className="flex items-center gap-2">
+            <h3 className="truncate font-black text-[#17202A]">
+              {business.name}
+            </h3>
+
+            {deleted && (
+              <DeletedBadge />
+            )}
+          </div>
 
           <p className="mt-1 text-xs text-[#8A8178]">
             {business.area}
@@ -544,18 +1014,52 @@ function BusinessMobileCard({
           {business.productCount} products
         </span>
       </div>
-<div className="mt-4 flex flex-wrap gap-2">
-  {business.categories
-    .slice(0, 3)
-    .map((category, index) => (
-      <span
-        key={`${category.id}-${category.name}-${index}`}
-        className="rounded-full bg-[#FCFAF6] px-2.5 py-1 text-[11px] font-medium text-[#6F675F]"
-      >
-        {category.name}
-      </span>
-    ))}
-</div>
+
+      <div className="mt-4 flex flex-wrap gap-2">
+        {business.categories
+          .slice(0, 3)
+          .map((category, index) => (
+            <span
+              key={`${category.id}-${category.name}-${index}`}
+              className="rounded-full bg-[#FCFAF6] px-2.5 py-1 text-[11px] font-medium text-[#6F675F]"
+            >
+              {category.name}
+            </span>
+          ))}
+      </div>
+
+      <div className="mt-4 flex flex-wrap gap-2">
+        <VerificationButton
+          business={business}
+          updating={
+            updating || deleted
+          }
+          onUpdate={onUpdate}
+        />
+
+        <StatusButton
+          business={business}
+          updating={
+            updating || deleted
+          }
+          onUpdate={onUpdate}
+        />
+
+        {deleted && (
+          <DeletedBadge />
+        )}
+
+        {!deleted && (
+          <AvailabilityButton
+            business={business}
+            updating={
+              updating ||
+              deleting
+            }
+            onUpdate={onUpdate}
+          />
+        )}
+      </div>
 
       <div className="mt-4 grid grid-cols-2 gap-2">
         <Link
@@ -566,13 +1070,15 @@ function BusinessMobileCard({
           View
         </Link>
 
-        <Link
-          href={`/admin/businesses/${business.id}/products/new`}
-          className="inline-flex items-center justify-center gap-1.5 rounded-xl bg-[#FF5A36] px-3 py-2.5 text-[11px] font-bold text-white transition hover:bg-[#E94B29]"
-        >
-          <PackagePlus size={14} />
-          Add Product
-        </Link>
+        {!deleted && (
+          <Link
+            href={`/admin/businesses/${business.id}/products/new`}
+            className="inline-flex items-center justify-center gap-1.5 rounded-xl bg-[#FF5A36] px-3 py-2.5 text-[11px] font-bold text-white transition hover:bg-[#E94B29]"
+          >
+            <PackagePlus size={14} />
+            Add Product
+          </Link>
+        )}
 
         <Link
           href={`/admin/businesses/${business.id}`}
@@ -581,26 +1087,42 @@ function BusinessMobileCard({
           <Package size={14} />
           Products
         </Link>
-      </div>
 
-      <div className="mt-3 flex flex-wrap gap-2">
-        <VerificationButton
-          business={business}
-          updating={updating}
-          onUpdate={onUpdate}
-        />
+        {!deleted && (
+          <button
+            type="button"
+            disabled={
+              updating ||
+              deleting ||
+              restoring
+            }
+            onClick={onDelete}
+            className="inline-flex items-center justify-center gap-1.5 rounded-xl border border-[#F2C7BC] bg-[#FFF5F2] px-3 py-2.5 text-[11px] font-bold text-[#9F2D18] transition hover:bg-[#FFE9E3] disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            <Trash2 size={14} />
+            {deleting
+              ? "Deleting..."
+              : "Delete"}
+          </button>
+        )}
 
-        <StatusButton
-          business={business}
-          updating={updating}
-          onUpdate={onUpdate}
-        />
-
-        <AvailabilityButton
-          business={business}
-          updating={updating}
-          onUpdate={onUpdate}
-        />
+        {deleted && (
+          <button
+            type="button"
+            disabled={
+              updating ||
+              deleting ||
+              restoring
+            }
+            onClick={onRestore}
+            className="inline-flex items-center justify-center gap-1.5 rounded-xl bg-[#E7F7EF] px-3 py-2.5 text-[11px] font-bold text-[#287A4B] transition hover:bg-[#D8F1E3] disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            <RotateCcw size={14} />
+            {restoring
+              ? "Restoring..."
+              : "Restore"}
+          </button>
+        )}
       </div>
     </article>
   );
@@ -619,7 +1141,8 @@ function VerificationButton({
   ) => void;
 }) {
   const verified =
-    business.verification === "VERIFIED";
+    business.verification ===
+    "VERIFIED";
 
   return (
     <button
@@ -700,18 +1223,22 @@ function AvailabilityButton({
   ) => void;
 }) {
   const next =
-    business.availability === "AVAILABLE"
+    business.availability ===
+    "AVAILABLE"
       ? "ASK_SELLER"
-      : business.availability === "ASK_SELLER"
-        ? "UNAVAILABLE"
-        : "AVAILABLE";
+      : business.availability ===
+        "ASK_SELLER"
+      ? "UNAVAILABLE"
+      : "AVAILABLE";
 
   const label =
-    business.availability === "AVAILABLE"
+    business.availability ===
+    "AVAILABLE"
       ? "Available"
-      : business.availability === "ASK_SELLER"
-        ? "Ask seller"
-        : "Unavailable";
+      : business.availability ===
+        "ASK_SELLER"
+      ? "Ask seller"
+      : "Unavailable";
 
   return (
     <button
@@ -730,6 +1257,46 @@ function AvailabilityButton({
   );
 }
 
+function DeletedBadge() {
+  return (
+    <span className="inline-flex items-center gap-1 rounded-full bg-[#FFF0ED] px-2.5 py-1 text-[10px] font-bold text-[#9F2D18]">
+      <Trash2 size={10} />
+      Deleted
+    </span>
+  );
+}
+
+function SummaryPill({
+  label,
+  count,
+  active,
+  onClick,
+}: {
+  label: string;
+  count?: number;
+  active: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={`rounded-full px-3 py-1.5 text-xs font-bold transition ${
+        active
+          ? "bg-[#FF5A36] text-white"
+          : "bg-[#FCFAF6] text-[#6F675F] hover:bg-[#FFF0D9]"
+      }`}
+    >
+      {label}
+      {typeof count === "number" && (
+        <span className="ml-1 opacity-80">
+          {count}
+        </span>
+      )}
+    </button>
+  );
+}
+
 function FilterSelect({
   value,
   onChange,
@@ -744,7 +1311,9 @@ function FilterSelect({
       <select
         value={value}
         onChange={(event) =>
-          onChange(event.target.value)
+          onChange(
+            event.target.value
+          )
         }
         className="h-11 min-w-[155px] appearance-none rounded-xl border border-[#EAE6DF] bg-[#FCFAF6] pl-3 pr-9 text-sm font-medium text-[#6F675F] outline-none focus:border-[#FF5A36]"
       >
@@ -764,6 +1333,67 @@ function FilterSelect({
         size={15}
         className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-[#8A8178]"
       />
+    </div>
+  );
+}
+
+function DeleteConfirmationModal({
+  business,
+  loading,
+  onCancel,
+  onConfirm,
+}: {
+  business: Business;
+  loading: boolean;
+  onCancel: () => void;
+  onConfirm: () => void;
+}) {
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-[#17202A]/30 p-4 backdrop-blur-[2px]">
+      <div className="w-full max-w-md rounded-2xl border border-[#EAE6DF] bg-[#FFFDFC] p-5 shadow-xl">
+        <div className="flex items-start gap-3">
+          <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-[#FFF0ED] text-[#FF5A36]">
+            <AlertTriangle size={21} />
+          </div>
+
+          <div className="min-w-0">
+            <h3 className="text-lg font-black text-[#17202A]">
+              Delete business?
+            </h3>
+
+            <p className="mt-1 text-sm leading-6 text-[#6F675F]">
+              <span className="font-bold text-[#17202A]">
+                {business.name}
+              </span>{" "}
+              will be removed from customer-facing
+              ReMarket results. Its data will remain
+              in the system and can be restored later.
+            </p>
+          </div>
+        </div>
+
+        <div className="mt-5 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+          <button
+            type="button"
+            disabled={loading}
+            onClick={onCancel}
+            className="h-10 rounded-xl border border-[#EAE6DF] bg-[#FCFAF6] px-4 text-sm font-bold text-[#6F675F] transition hover:bg-[#FFF0D9] disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            Cancel
+          </button>
+
+          <button
+            type="button"
+            disabled={loading}
+            onClick={onConfirm}
+            className="h-10 rounded-xl bg-[#FF5A36] px-4 text-sm font-extrabold text-white transition hover:bg-[#E94B29] disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            {loading
+              ? "Deleting..."
+              : "Delete business"}
+          </button>
+        </div>
+      </div>
     </div>
   );
 }

@@ -1,11 +1,4 @@
-import {
-  NextRequest,
-  NextResponse,
-} from "next/server";
-
-import { prisma } from "@/lib/prisma";
-import { requireAdmin } from "@/lib/admin-auth";
-
+import { NextRequest, NextResponse } from "next/server";
 import {
   Availability,
   BusinessStatus,
@@ -13,64 +6,53 @@ import {
   VerificationStatus,
 } from "@prisma/client";
 
-function cleanString(
-  value: unknown
-): string {
-  return typeof value === "string"
-    ? value.trim()
-    : "";
+import { prisma } from "@/lib/prisma";
+import { requireAdmin } from "@/lib/admin-auth";
+
+function cleanString(value: unknown): string {
+  return typeof value === "string" ? value.trim() : "";
 }
 
-function nullableString(
-  value: unknown
-): string | null {
-  const cleaned =
-    cleanString(value);
-
-  return cleaned || null;
+function nullableString(value: unknown): string | null {
+  const valueString = cleanString(value);
+  return valueString || null;
 }
 
 function parseOptionalInt(
   value: unknown
-): number | null {
+): number | null | undefined {
   if (
-    value === null ||
     value === undefined ||
+    value === null ||
     value === ""
   ) {
     return null;
   }
 
-  const parsed =
-    Number(value);
+  const parsed = Number(value);
 
-  if (
-    !Number.isFinite(parsed)
-  ) {
-    return null;
+  if (!Number.isInteger(parsed)) {
+    return undefined;
   }
 
-  return Math.floor(parsed);
+  return parsed;
 }
 
 function parseOptionalFloat(
   value: unknown
-): number | null {
+): number | null | undefined {
   if (
-    value === null ||
     value === undefined ||
+    value === null ||
     value === ""
   ) {
     return null;
   }
 
-  const parsed =
-    Number(value);
+  const parsed = Number(value);
 
-  if (
-    !Number.isFinite(parsed)
-  ) {
-    return null;
+  if (!Number.isFinite(parsed)) {
+    return undefined;
   }
 
   return parsed;
@@ -80,11 +62,9 @@ function isAvailability(
   value: unknown
 ): value is Availability {
   return (
-    value === Availability.AVAILABLE ||
-    value ===
-      Availability.ASK_SELLER ||
-    value ===
-      Availability.UNAVAILABLE
+    value === "AVAILABLE" ||
+    value === "ASK_SELLER" ||
+    value === "UNAVAILABLE"
   );
 }
 
@@ -92,9 +72,9 @@ function isBusinessStatus(
   value: unknown
 ): value is BusinessStatus {
   return (
-    value === BusinessStatus.ACTIVE ||
-    value === BusinessStatus.INACTIVE ||
-    value === BusinessStatus.PENDING
+    value === "ACTIVE" ||
+    value === "INACTIVE" ||
+    value === "PENDING"
   );
 }
 
@@ -102,10 +82,8 @@ function isVerificationStatus(
   value: unknown
 ): value is VerificationStatus {
   return (
-    value ===
-      VerificationStatus.VERIFIED ||
-    value ===
-      VerificationStatus.UNVERIFIED
+    value === "VERIFIED" ||
+    value === "UNVERIFIED"
   );
 }
 
@@ -113,24 +91,124 @@ function isSocialPlatform(
   value: unknown
 ): value is SocialPlatform {
   return (
-    value === SocialPlatform.WHATSAPP ||
-    value === SocialPlatform.INSTAGRAM ||
-    value === SocialPlatform.TIKTOK ||
-    value === SocialPlatform.FACEBOOK ||
-    value === SocialPlatform.PHONE ||
-    value === SocialPlatform.DIRECTIONS
+    value === "WHATSAPP" ||
+    value === "INSTAGRAM" ||
+    value === "TIKTOK" ||
+    value === "FACEBOOK" ||
+    value === "PHONE" ||
+    value === "DIRECTIONS"
   );
 }
 
-function parseIdArray(
+function normalizeWhatsApp(
+  value: string
+): string {
+  const trimmed = value.trim();
+
+  if (!trimmed) {
+    return "";
+  }
+
+  const digits = trimmed.replace(
+    /\D/g,
+    ""
+  );
+
+  if (!digits) {
+    return "";
+  }
+
+  if (digits.startsWith("234")) {
+    return `+${digits}`;
+  }
+
+  if (digits.startsWith("0")) {
+    return `+234${digits.slice(1)}`;
+  }
+
+  return trimmed;
+}
+
+type ParsedSocialLink = {
+  platform: SocialPlatform;
+  handle: string;
+};
+
+function parseSocialLinks(
+  value: unknown
+): ParsedSocialLink[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  const result: ParsedSocialLink[] = [];
+  const seen =
+    new Set<SocialPlatform>();
+
+  for (const item of value) {
+    if (
+      !item ||
+      typeof item !== "object"
+    ) {
+      continue;
+    }
+
+    const record =
+      item as Record<string, unknown>;
+
+    if (
+      !isSocialPlatform(
+        record.platform
+      )
+    ) {
+      continue;
+    }
+
+    let handle =
+      cleanString(record.handle);
+
+    if (
+      record.platform ===
+      "WHATSAPP"
+    ) {
+      handle =
+        normalizeWhatsApp(
+          handle
+        );
+    }
+
+    if (
+      !handle ||
+      seen.has(
+        record.platform
+      )
+    ) {
+      continue;
+    }
+
+    seen.add(
+      record.platform
+    );
+
+    result.push({
+      platform:
+        record.platform,
+      handle,
+    });
+  }
+
+  return result;
+}
+
+function parseCategoryIds(
   value: unknown
 ): string[] {
   if (!Array.isArray(value)) {
     return [];
   }
 
-  return [
-    ...new Set(
+  return Array.from(
+    new Set(
       value
         .filter(
           (
@@ -139,172 +217,137 @@ function parseIdArray(
             typeof item ===
             "string"
         )
-        .map((item) =>
-          item.trim()
+        .map(
+          (item) =>
+            item.trim()
         )
         .filter(Boolean)
-    ),
-  ];
+    )
+  );
 }
 
-type SocialInput = {
-  platform: SocialPlatform;
-  handle: string;
-};
-
-function parseSocialLinks(
-  value: unknown
-): SocialInput[] {
-  if (!Array.isArray(value)) {
-    return [];
-  }
-
-  const links: SocialInput[] = [];
-
-  for (const item of value) {
-    if (
-      typeof item !==
-      "object" ||
-      item === null
-    ) {
-      continue;
-    }
-
-    const record =
-      item as Record<
-        string,
-        unknown
-      >;
-
-    const platform =
-      record.platform;
-
-    const handle =
-      cleanString(
-        record.handle
-      );
-
-    if (
-      !isSocialPlatform(
-        platform
-      ) ||
-      !handle
-    ) {
-      continue;
-    }
-
-    links.push({
-      platform,
-      handle,
-    });
-  }
-
-  return links;
+function isDeletionFilter(
+  value: string | null
+): value is "ALL" | "ACTIVE" | "DELETED" {
+  return (
+    value === "ALL" ||
+    value === "ACTIVE" ||
+    value === "DELETED"
+  );
 }
-
-/* -------------------------------------------------------------------------- */
-/* GET                                                                        */
-/* -------------------------------------------------------------------------- */
 
 export async function GET(
   request: NextRequest
 ) {
+  const auth = await requireAdmin();
+
+  if (!auth.authorized) {
+    return auth.response;
+  }
+
   try {
-    await requireAdmin();
+    const { searchParams } =
+      new URL(request.url);
 
-    const {
-      searchParams,
-    } = new URL(
-      request.url
-    );
-
-    const q = cleanString(
-      searchParams.get("q")
-    );
-
-    const statusValue =
+    const q =
       cleanString(
-        searchParams.get(
-          "status"
-        )
+        searchParams.get("q")
       );
 
-    const verificationValue =
-      cleanString(
-        searchParams.get(
-          "verification"
-        )
+    const status =
+      searchParams.get("status");
+
+    const verification =
+      searchParams.get(
+        "verification"
       );
 
-    const where = {
-      ...(statusValue &&
-      Object.values(
-        BusinessStatus
-      ).includes(
-        statusValue as BusinessStatus
-      )
-        ? {
-            status:
-              statusValue as BusinessStatus,
-          }
-        : {}),
+    /*
+     * Deleted filter:
+     *
+     * ALL     = active + soft-deleted
+     * ACTIVE  = deletedAt IS NULL
+     * DELETED = deletedAt IS NOT NULL
+     *
+     * Default is ALL because Admin must be able
+     * to see and restore soft-deleted businesses.
+     */
+    const requestedDeletionFilter =
+      searchParams.get("deleted");
 
-      ...(verificationValue &&
-      Object.values(
-        VerificationStatus
-      ).includes(
-        verificationValue as VerificationStatus
+    const deletionFilter =
+      isDeletionFilter(
+        requestedDeletionFilter
       )
-        ? {
-            verification:
-              verificationValue as VerificationStatus,
-          }
-        : {}),
-
-      ...(q
-        ? {
-            OR: [
-              {
-                name: {
-                  contains: q,
-                  mode: "insensitive" as const,
-                },
-              },
-              {
-                ownerName: {
-                  contains: q,
-                  mode: "insensitive" as const,
-                },
-              },
-              {
-                description: {
-                  contains: q,
-                  mode: "insensitive" as const,
-                },
-              },
-              {
-                phone: {
-                  contains: q,
-                  mode: "insensitive" as const,
-                },
-              },
-              {
-                location: {
-                  area: {
-                    contains: q,
-                    mode: "insensitive" as const,
-                  },
-                },
-              },
-            ],
-          }
-        : {}),
-    };
+        ? requestedDeletionFilter
+        : "ALL";
 
     const businesses =
       await prisma.business.findMany(
         {
-          where,
+          where: {
+            ...(q
+              ? {
+                  OR: [
+                    {
+                      name: {
+                        contains:
+                          q,
+                        mode:
+                          "insensitive",
+                      },
+                    },
+                    {
+                      ownerName: {
+                        contains:
+                          q,
+                        mode:
+                          "insensitive",
+                      },
+                    },
+                    {
+                      description: {
+                        contains:
+                          q,
+                        mode:
+                          "insensitive",
+                      },
+                    },
+                  ],
+                }
+              : {}),
+
+            ...(status &&
+            isBusinessStatus(status)
+              ? {
+                  status,
+                }
+              : {}),
+
+            ...(verification &&
+            isVerificationStatus(
+              verification
+            )
+              ? {
+                  verification,
+                }
+              : {}),
+
+            ...(deletionFilter ===
+            "ACTIVE"
+              ? {
+                  deletedAt:
+                    null,
+                }
+              : deletionFilter ===
+                "DELETED"
+              ? {
+                  deletedAt: {
+                    not: null,
+                  },
+                }
+              : {}),
+          },
 
           include: {
             location: true,
@@ -321,15 +364,23 @@ export async function GET(
                   where: {
                     status:
                       BusinessStatus.ACTIVE,
+                    deletedAt:
+                      null,
                   },
                 },
               },
             },
           },
 
-          orderBy: {
-            onboardedAt: "desc",
-          },
+          orderBy: [
+            {
+              deletedAt: "asc",
+            },
+            {
+              updatedAt:
+                "desc",
+            },
+          ],
         }
       );
 
@@ -337,9 +388,11 @@ export async function GET(
       businesses:
         businesses.map(
           (business) => ({
-            id: business.id,
+            id:
+              business.id,
 
-            name: business.name,
+            name:
+              business.name,
 
             ownerName:
               business.ownerName,
@@ -347,25 +400,22 @@ export async function GET(
             description:
               business.description,
 
-            imageUrl:
-              business.imageUrl,
-
-            phone:
-              business.phone,
-
             area:
               business.location
                 ?.area ??
-              "Location not added",
-
-            availability:
-              business.availability,
+              "",
 
             status:
               business.status,
 
             verification:
               business.verification,
+
+            availability:
+              business.availability,
+
+            phone:
+              business.phone,
 
             categories:
               business.categories.map(
@@ -379,6 +429,9 @@ export async function GET(
 
             onboardedAt:
               business.onboardedAt,
+
+            deletedAt:
+              business.deletedAt,
           })
         ),
     });
@@ -400,21 +453,42 @@ export async function GET(
   }
 }
 
-/* -------------------------------------------------------------------------- */
-/* POST                                                                       */
-/* -------------------------------------------------------------------------- */
-
 export async function POST(
   request: NextRequest
 ) {
-  try {
-    await requireAdmin();
+  const auth = await requireAdmin();
 
-    const body =
+  if (!auth.authorized) {
+    return auth.response;
+  }
+
+  try {
+    const body: unknown =
       await request.json();
 
+    if (
+      !body ||
+      typeof body !== "object" ||
+      Array.isArray(body)
+    ) {
+      return NextResponse.json(
+        {
+          error:
+            "Invalid request body.",
+        },
+        {
+          status: 400,
+        }
+      );
+    }
+
+    const payload =
+      body as Record<string, unknown>;
+
     const name =
-      cleanString(body.name);
+      cleanString(
+        payload.name
+      );
 
     if (!name) {
       return NextResponse.json(
@@ -428,8 +502,20 @@ export async function POST(
       );
     }
 
+    const ownerName =
+      nullableString(
+        payload.ownerName
+      );
+
+    const description =
+      nullableString(
+        payload.description
+      );
+
     const area =
-      cleanString(body.area);
+      cleanString(
+        payload.area
+      );
 
     if (!area) {
       return NextResponse.json(
@@ -443,55 +529,21 @@ export async function POST(
       );
     }
 
-    const ownerName =
-      nullableString(
-        body.ownerName
-      );
-
-    const description =
-      nullableString(
-        body.description
-      );
-
-    const phone =
-      nullableString(
-        body.phone
-      );
-
-    const imageUrl =
-      nullableString(
-        body.imageUrl
-      );
-
     const lat =
       parseOptionalFloat(
-        body.lat
-      );
-
-    const long =
-      parseOptionalFloat(
-        body.lng ??
-          body.long
-      );
-
-    const priceMin =
-      parseOptionalInt(
-        body.priceMin
-      );
-
-    const priceMax =
-      parseOptionalInt(
-        body.priceMax
+        payload.lat
       );
 
     if (
-      priceMin !== null &&
-      priceMin < 0
+      lat === undefined ||
+      (lat !== null &&
+        (lat < -90 ||
+          lat > 90))
     ) {
       return NextResponse.json(
         {
           error:
-            "Minimum price cannot be negative.",
+            "Latitude must be a valid value between -90 and 90.",
         },
         {
           status: 400,
@@ -499,14 +551,62 @@ export async function POST(
       );
     }
 
+    const long =
+      parseOptionalFloat(
+        payload.lng ??
+          payload.long
+      );
+
     if (
-      priceMax !== null &&
-      priceMax < 0
+      long === undefined ||
+      (long !== null &&
+        (long < -180 ||
+          long > 180))
     ) {
       return NextResponse.json(
         {
           error:
-            "Maximum price cannot be negative.",
+            "Longitude must be a valid value between -180 and 180.",
+        },
+        {
+          status: 400,
+        }
+      );
+    }
+
+    const priceMin =
+      parseOptionalInt(
+        payload.priceMin
+      );
+
+    if (
+      priceMin ===
+      undefined
+    ) {
+      return NextResponse.json(
+        {
+          error:
+            "Minimum price must be a valid integer.",
+        },
+        {
+          status: 400,
+        }
+      );
+    }
+
+    const priceMax =
+      parseOptionalInt(
+        payload.priceMax
+      );
+
+    if (
+      priceMax ===
+      undefined
+    ) {
+      return NextResponse.json(
+        {
+          error:
+            "Maximum price must be a valid integer.",
         },
         {
           status: 400,
@@ -522,7 +622,7 @@ export async function POST(
       return NextResponse.json(
         {
           error:
-            "Minimum price cannot exceed maximum price.",
+            "Minimum price cannot be greater than maximum price.",
         },
         {
           status: 400,
@@ -532,34 +632,76 @@ export async function POST(
 
     const availability =
       isAvailability(
-        body.availability
+        payload.availability
       )
-        ? body.availability
+        ? payload.availability
         : Availability.ASK_SELLER;
 
     const status =
       isBusinessStatus(
-        body.status
+        payload.status
       )
-        ? body.status
+        ? payload.status
         : BusinessStatus.ACTIVE;
 
     const verification =
       isVerificationStatus(
-        body.verification
+        payload.verification
       )
-        ? body.verification
+        ? payload.verification
         : VerificationStatus.UNVERIFIED;
 
-    const categoryIds =
-      parseIdArray(
-        body.categoryIds ??
-          body.categories
+    const phone =
+      nullableString(
+        payload.phone
       );
+
+    const imageUrl =
+      nullableString(
+        payload.imageUrl
+      );
+
+    const categoryIds =
+      parseCategoryIds(
+        payload.categoryIds
+      );
+
+    if (
+      categoryIds.length > 0
+    ) {
+      const categories =
+        await prisma.category.findMany(
+          {
+            where: {
+              id: {
+                in: categoryIds,
+              },
+            },
+            select: {
+              id: true,
+            },
+          }
+        );
+
+      if (
+        categories.length !==
+        categoryIds.length
+      ) {
+        return NextResponse.json(
+          {
+            error:
+              "One or more selected categories do not exist.",
+          },
+          {
+            status: 400,
+          }
+        );
+      }
+    }
 
     const socialLinks =
       parseSocialLinks(
-        body.socialLinks
+        payload.socialLinks
       );
 
     const business =
@@ -571,100 +713,63 @@ export async function POST(
                 where: {
                   area,
                 },
-
-                update: {
-                  ...(lat !== null
-                    ? { lat }
-                    : {}),
-                  ...(long !== null
-                    ? { long }
-                    : {}),
-                },
-
                 create: {
                   area,
+                  lat,
+                  long,
+                },
+                update: {
                   lat,
                   long,
                 },
               }
             );
 
-          const createdBusiness =
+          const created =
             await tx.business.create(
               {
                 data: {
                   name,
-
                   ownerName,
-
                   description,
-
                   locationId:
                     location.id,
-
                   priceMin,
-
                   priceMax,
-
                   availability,
-
                   phone,
-
                   status,
-
                   verification,
-
                   imageUrl,
+                  onboardedAt:
+                    new Date(),
                 },
               }
             );
 
           if (
-            categoryIds.length >
-            0
+            categoryIds.length > 0
           ) {
-            const existingCategories =
-              await tx.category.findMany(
-                {
-                  where: {
-                    id: {
-                      in: categoryIds,
-                    },
-                  },
-
-                  select: {
-                    id: true,
-                  },
-                }
-              );
-
-            if (
-              existingCategories.length >
-              0
-            ) {
-              await tx.businessCategory.createMany(
-                {
-                  data:
-                    existingCategories.map(
-                      (
-                        category
-                      ) => ({
-                        businessId:
-                          createdBusiness.id,
-                        categoryId:
-                          category.id,
-                      })
-                    ),
-                  skipDuplicates:
-                    true,
-                }
-              );
-            }
+            await tx.businessCategory.createMany(
+              {
+                data:
+                  categoryIds.map(
+                    (
+                      categoryId
+                    ) => ({
+                      businessId:
+                        created.id,
+                      categoryId,
+                    })
+                  ),
+                skipDuplicates:
+                  true,
+              }
+            );
           }
 
           if (
-            socialLinks.length >
-            0
+            socialLinks.length > 0
           ) {
             await tx.businessSocialLink.createMany(
               {
@@ -672,42 +777,26 @@ export async function POST(
                   socialLinks.map(
                     (link) => ({
                       businessId:
-                        createdBusiness.id,
+                        created.id,
                       platform:
                         link.platform,
                       handle:
                         link.handle,
                     })
                   ),
+                skipDuplicates:
+                  true,
               }
             );
           }
 
-          return tx.business.findUniqueOrThrow(
-            {
-              where: {
-                id:
-                  createdBusiness.id,
-              },
-
-              include: {
-                location: true,
-
-                categories: {
-                  include: {
-                    category: true,
-                  },
-                },
-
-                socialLinks: true,
-              },
-            }
-          );
+          return created;
         }
       );
 
     return NextResponse.json(
       {
+        success: true,
         business,
       },
       {

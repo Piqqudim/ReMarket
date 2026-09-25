@@ -3,6 +3,7 @@
 "use client";
 
 import {
+  type MouseEvent,
   useEffect,
   useState,
 } from "react";
@@ -29,6 +30,14 @@ import {
 
 import { trackContactEvent } from "@/lib/contact-event";
 
+import {
+  getSavedBusinesses,
+  isBusinessSaved,
+  saveBusiness,
+  removeSavedBusiness,
+  SAVED_BUSINESSES_CHANGED_EVENT,
+} from "@/lib/saved";
+
 const NAV_ITEMS = [
   {
     label: "Home",
@@ -52,7 +61,10 @@ const NAV_ITEMS = [
   },
 ];
 
-const CATEGORY_COLORS: Record<string, string> = {
+const CATEGORY_COLORS: Record<
+  string,
+  string
+> = {
   Fashion: "#FFE0D6",
   Electronics: "#DDF5EA",
   Food: "#FFF0C7",
@@ -80,28 +92,38 @@ type SocialLink = {
   platform: string;
   handle: string;
 };
+
+type SellerLocation = {
+  id?: string;
+  area: string;
+  lat?: number | null;
+  long?: number | null;
+} | null;
+
 type Seller = {
   id: string;
   name: string;
   ownerName: string | null;
   description: string | null;
 
-  location: {
-    area: string;
-    lat: number | null;
-    long: number | null;
-  };
+  location: SellerLocation;
 
   availability: string;
   verification: string;
   verified: boolean;
+
   category: string;
   categories: string[];
+
   productCount: number;
   products: Product[];
+
   socialLinks: SocialLink[];
 };
-function getInitials(name: string) {
+
+function getInitials(
+  name: string
+) {
   const words = name
     .trim()
     .split(/\s+/)
@@ -124,7 +146,7 @@ function getInitials(name: string) {
 }
 
 function getCategoryColor(
-  category?: string | null,
+  category?: string | null
 ) {
   if (!category) {
     return "#E4E9EF";
@@ -136,7 +158,9 @@ function getCategoryColor(
   );
 }
 
-function formatPrice(product: Product) {
+function formatPrice(
+  product: Product
+) {
   if (
     product.priceMin != null &&
     product.priceMax != null
@@ -167,7 +191,7 @@ function formatPrice(product: Product) {
 }
 
 function getAvailabilityLabel(
-  availability?: string,
+  availability?: string
 ) {
   switch (availability) {
     case "AVAILABLE":
@@ -182,7 +206,7 @@ function getAvailabilityLabel(
 }
 
 function getAvailabilityStyle(
-  availability?: string,
+  availability?: string
 ) {
   switch (availability) {
     case "AVAILABLE":
@@ -196,66 +220,164 @@ function getAvailabilityStyle(
   }
 }
 
+/**
+ * Normalize Nigerian WhatsApp numbers internally.
+ *
+ * Supported examples:
+ *
+ * 08012345678
+ * 8012345678
+ * 2348012345678
+ * +2348012345678
+ * 00 234 8012345678
+ *
+ * Result:
+ *
+ * +2348012345678
+ */
+function normalizeNigerianPhone(
+  value: string
+): string {
+  let clean = value
+    .trim()
+    .replace(/[^\d+]/g, "");
+
+  if (!clean) {
+    return "";
+  }
+
+  if (clean.startsWith("00")) {
+    clean = clean.slice(2);
+  }
+
+  if (clean.startsWith("+")) {
+    clean = clean.slice(1);
+  }
+
+  if (clean.startsWith("234")) {
+    return `+${clean}`;
+  }
+
+  if (clean.startsWith("0")) {
+    return `+234${clean.slice(1)}`;
+  }
+
+  return `+234${clean}`;
+}
+
 function buildContactUrl(
   platform: string,
   handle: string,
   latitude?: number | null,
-  longitude?: number | null,
+  longitude?: number | null
 ): string {
-  const clean = handle.trim().replace(/^@/, "");
+  const clean = handle
+    .trim()
+    .replace(/^@/, "");
 
   switch (platform) {
     case "WHATSAPP": {
-      if (!clean) return "#";
+      if (!clean) {
+        return "#";
+      }
 
-      if (clean.startsWith("http")) {
+      if (
+        clean.startsWith(
+          "http://"
+        ) ||
+        clean.startsWith(
+          "https://"
+        )
+      ) {
         return clean;
       }
 
-      const phone =
-        clean.replace(/\D/g, "");
+      const normalizedPhone =
+        normalizeNigerianPhone(
+          clean
+        );
 
-      return phone
-        ? `https://wa.me/${phone}`
-        : "#";
+      if (!normalizedPhone) {
+        return "#";
+      }
+
+      /*
+       * WhatsApp wa.me uses digits without
+       * the leading + sign.
+       *
+       * Internally we still normalize the
+       * number to +234.
+       */
+      return `https://wa.me/${normalizedPhone.slice(
+        1
+      )}`;
     }
 
     case "INSTAGRAM":
-      if (!clean) return "#";
+      if (!clean) {
+        return "#";
+      }
 
-      return clean.startsWith("http")
+      return clean.startsWith(
+        "http://"
+      ) ||
+        clean.startsWith(
+          "https://"
+        )
         ? clean
         : `https://instagram.com/${clean}`;
 
     case "TIKTOK":
-      if (!clean) return "#";
+      if (!clean) {
+        return "#";
+      }
 
-      return clean.startsWith("http")
+      return clean.startsWith(
+        "http://"
+      ) ||
+        clean.startsWith(
+          "https://"
+        )
         ? clean
         : `https://tiktok.com/@${clean}`;
 
     case "FACEBOOK":
-      if (!clean) return "#";
+      if (!clean) {
+        return "#";
+      }
 
-      return clean.startsWith("http")
+      return clean.startsWith(
+        "http://"
+      ) ||
+        clean.startsWith(
+          "https://"
+        )
         ? clean
         : `https://facebook.com/${clean}`;
 
     case "PHONE": {
-      if (!clean) return "#";
+      if (!clean) {
+        return "#";
+      }
 
-      const phone =
-        clean.replace(/[^\d+]/g, "");
+      const normalizedPhone =
+        normalizeNigerianPhone(
+          clean
+        );
 
-      return phone
-        ? `tel:${phone}`
-        : "#";
+      if (!normalizedPhone) {
+        return "#";
+      }
+
+      return `tel:${normalizedPhone}`;
     }
 
     case "DIRECTIONS": {
       if (
-        typeof latitude !== "number" ||
-        typeof longitude !== "number"
+        typeof latitude !==
+          "number" ||
+        typeof longitude !==
+          "number"
       ) {
         return "#";
       }
@@ -267,6 +389,7 @@ function buildContactUrl(
       return "#";
   }
 }
+
 function ContactIcon({
   platform,
 }: {
@@ -274,27 +397,47 @@ function ContactIcon({
 }) {
   switch (platform) {
     case "WHATSAPP":
-      return <MessageCircle size={16} />;
+      return (
+        <MessageCircle
+          size={16}
+        />
+      );
 
     case "INSTAGRAM":
-      return <ExternalLink size={16} />;
+      return (
+        <ExternalLink
+          size={16}
+        />
+      );
 
     case "TIKTOK":
-      return <Music2 size={16} />;
+      return (
+        <Music2 size={16} />
+      );
 
     case "FACEBOOK":
-      return <ExternalLink size={16} />;
+      return (
+        <ExternalLink
+          size={16}
+        />
+      );
 
     case "PHONE":
-      return <Phone size={16} />;
+      return (
+        <Phone size={16} />
+      );
 
     default:
-      return <ExternalLink size={16} />;
+      return (
+        <ExternalLink
+          size={16}
+        />
+      );
   }
 }
 
 function isTrackableContactPlatform(
-  platform: string,
+  platform: string
 ): platform is
   | "WHATSAPP"
   | "INSTAGRAM"
@@ -303,38 +446,83 @@ function isTrackableContactPlatform(
   | "PHONE"
   | "DIRECTIONS" {
   return (
-    platform === "WHATSAPP" ||
-    platform === "INSTAGRAM" ||
-    platform === "TIKTOK" ||
-    platform === "FACEBOOK" ||
-    platform === "PHONE" ||
-    platform === "DIRECTIONS"
+    platform ===
+      "WHATSAPP" ||
+    platform ===
+      "INSTAGRAM" ||
+    platform ===
+      "TIKTOK" ||
+    platform ===
+      "FACEBOOK" ||
+    platform ===
+      "PHONE" ||
+    platform ===
+      "DIRECTIONS"
   );
 }
-export default function SellerPage() {
-  const params = useParams();
 
-  const id =
-    typeof params.id === "string"
-      ? params.id
-      : "";
+function SellerPageContent({
+  id,
+}: {
+  id: string;
+}) {
+  const [
+    seller,
+    setSeller,
+  ] = useState<Seller | null>(
+    null
+  );
 
-  const [seller, setSeller] =
-    useState<Seller | null>(null);
+  const [
+    loading,
+    setLoading,
+  ] = useState(true);
 
-  const [loading, setLoading] =
-    useState(true);
+  const [
+    error,
+    setError,
+  ] = useState("");
 
-  const [error, setError] =
-    useState("");
+  const [
+    saved,
+    setSaved,
+  ] = useState(() =>
+    isBusinessSaved(id)
+  );
+
+  /*
+   * -----------------------------------------
+   * SAVED BUSINESS SYNC
+   * -----------------------------------------
+   */
 
   useEffect(() => {
-    if (!id) {
-      setError("Seller was not found.");
-      setLoading(false);
-      return;
+    function syncSaved() {
+      setSaved(
+        isBusinessSaved(id)
+      );
     }
 
+    window.addEventListener(
+      SAVED_BUSINESSES_CHANGED_EVENT,
+      syncSaved
+    );
+
+    return () => {
+      window.removeEventListener(
+        SAVED_BUSINESSES_CHANGED_EVENT,
+        syncSaved
+      );
+    };
+  }, [id]);
+
+  /*
+   * -----------------------------------------
+   * LOAD SELLER
+   * -----------------------------------------
+   */
+
+  useEffect(() => {
     const controller =
       new AbortController();
 
@@ -343,55 +531,72 @@ export default function SellerPage() {
         setLoading(true);
         setError("");
 
-        const response = await fetch(
-          `/api/businesses/${encodeURIComponent(id)}`,
-          {
-            cache: "no-store",
-            signal: controller.signal,
-          },
-        );
+        const response =
+          await fetch(
+            `/api/businesses/${encodeURIComponent(
+              id
+            )}`,
+            {
+              cache:
+                "no-store",
+              signal:
+                controller.signal,
+            }
+          );
 
         const data =
           await response.json();
 
         if (!response.ok) {
           throw new Error(
-            data?.error ||
-              "Unable to load seller.",
+            typeof data?.error ===
+              "string"
+              ? data.error
+              : "Unable to load seller."
           );
         }
 
         const business =
-          data?.business ?? data;
+          data?.business ??
+          data;
 
         if (!business?.id) {
           throw new Error(
-            "Seller information was not found.",
+            "Seller information was not found."
           );
         }
 
         setSeller({
           ...business,
+
+          location:
+            business.location ??
+            null,
+
           products:
             Array.isArray(
-              business.products,
+              business.products
             )
               ? business.products
               : [],
+
           categories:
             Array.isArray(
-              business.categories,
+              business.categories
             )
               ? business.categories
               : [],
+
           socialLinks:
             Array.isArray(
-              business.socialLinks,
+              business.socialLinks
             )
               ? business.socialLinks
               : [],
         });
-      } catch (fetchError) {
+      } catch (
+        fetchError
+      ) {
         if (
           fetchError instanceof
             DOMException &&
@@ -403,13 +608,14 @@ export default function SellerPage() {
 
         console.error(
           "Seller page error:",
-          fetchError,
+          fetchError
         );
 
         setError(
-          fetchError instanceof Error
+          fetchError instanceof
+            Error
             ? fetchError.message
-            : "Unable to load seller.",
+            : "Unable to load seller."
         );
       } finally {
         if (
@@ -420,29 +626,154 @@ export default function SellerPage() {
       }
     }
 
-    loadSeller();
+    void loadSeller();
 
     return () => {
       controller.abort();
     };
   }, [id]);
 
-function handleContactClick(
-  platform: string,
-) {
-  if (!seller?.id) {
-    return;
+  /*
+   * -----------------------------------------
+   * SAVE / UNSAVE BUSINESS
+   * -----------------------------------------
+   */
+
+  function toggleSavedBusiness() {
+    if (!seller) {
+      return;
+    }
+
+    if (
+      isBusinessSaved(
+        seller.id
+      )
+    ) {
+      removeSavedBusiness(
+        seller.id
+      );
+
+      setSaved(false);
+
+      return;
+    }
+
+    const categoryName =
+      seller.category ||
+      seller.categories?.[0] ||
+      "Services";
+
+    saveBusiness({
+      id: seller.id,
+
+      name: seller.name,
+
+      area:
+        seller.location?.area ??
+        "Local",
+
+      category:
+        categoryName,
+
+      verified:
+        seller.verified ||
+        seller.verification ===
+          "VERIFIED",
+
+      availability:
+        seller.availability,
+
+      imageUrl:
+        (
+          seller as Seller & {
+            imageUrl?: string | null;
+          }
+        ).imageUrl ??
+        null,
+    });
+
+    setSaved(true);
   }
 
-  if (!isTrackableContactPlatform(platform)) {
-    return;
+  /*
+   * -----------------------------------------
+   * CONTACT TRACKING
+   * -----------------------------------------
+   */
+
+  function handleContactClick(
+    platform: string
+  ) {
+    if (!seller?.id) {
+      return;
+    }
+
+    if (
+      !isTrackableContactPlatform(
+        platform
+      )
+    ) {
+      return;
+    }
+
+    void trackContactEvent({
+      businessId:
+        seller.id,
+      platform,
+    });
   }
 
-  void trackContactEvent({
-    businessId: seller.id,
-    platform,
-  });
-}
+  /*
+   * -----------------------------------------
+   * STOP LINK CLICK FROM BUBBLING
+   * -----------------------------------------
+   */
+
+  function handleSaveClick(
+    event: MouseEvent<HTMLButtonElement>
+  ) {
+    event.preventDefault();
+    event.stopPropagation();
+
+    toggleSavedBusiness();
+  }
+
+  /*
+   * -----------------------------------------
+   * NO ID
+   * -----------------------------------------
+   */
+
+  if (!id) {
+    return (
+      <main className="min-h-screen bg-[#FFF7ED] p-0 md:p-3">
+        <div className="mx-auto flex min-h-screen max-w-[1500px] items-center justify-center overflow-hidden bg-[#FFFDFC] md:min-h-[calc(100vh-24px)] md:rounded-[22px] md:border md:border-[#FF5A36]">
+          <div className="max-w-[700px] rounded-[18px] border border-[#F0C9BF] bg-[#FFF1ED] p-8 text-center">
+            <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-full bg-[#FFE0D6] text-[#9F2D18]">
+              <Store size={22} />
+            </div>
+
+            <h1 className="text-xl font-black text-[#17202A]">
+              Seller not found
+            </h1>
+
+            <p className="mt-2 text-[13px] leading-6 text-[#77716C]">
+              We couldn&apos;t find the seller you&apos;re looking for.
+            </p>
+
+            <Link
+              href="/shop"
+              className="mt-5 inline-flex items-center gap-2 rounded-xl bg-[#FF5A36] px-4 py-2.5 text-[12px] font-bold text-white transition hover:bg-[#E94E2C]"
+            >
+              <ShoppingBag size={15} />
+              Browse sellers
+            </Link>
+          </div>
+        </div>
+      </main>
+    );
+  }
+
   return (
     <main className="min-h-screen bg-[#FFF7ED] p-0 md:p-3">
       <div
@@ -507,29 +838,40 @@ function handleContactClick(
           </Link>
 
           <nav className="hidden items-center gap-7 md:flex">
-            {NAV_ITEMS.map((item) => {
-              const Icon = item.icon;
+            {NAV_ITEMS.map(
+              (item) => {
+                const Icon =
+                  item.icon;
 
-              return (
-                <Link
-                  key={item.href}
-                  href={item.href}
-                  className="
-                    flex
-                    items-center
-                    gap-2
-                    text-[13px]
-                    font-semibold
-                    text-[#68615C]
-                    transition
-                    hover:text-[#FF5A36]
-                  "
-                >
-                  <Icon size={17} />
-                  {item.label}
-                </Link>
-              );
-            })}
+                return (
+                  <Link
+                    key={
+                      item.href
+                    }
+                    href={
+                      item.href
+                    }
+                    className="
+                      flex
+                      items-center
+                      gap-2
+                      text-[13px]
+                      font-semibold
+                      text-[#68615C]
+                      transition
+                      hover:text-[#FF5A36]
+                    "
+                  >
+                    <Icon
+                      size={17}
+                    />
+                    {
+                      item.label
+                    }
+                  </Link>
+                );
+              }
+            )}
           </nav>
 
           <Link
@@ -574,33 +916,44 @@ function handleContactClick(
             </div>
 
             <nav className="space-y-1">
-              {NAV_ITEMS.map((item) => {
-                const Icon = item.icon;
+              {NAV_ITEMS.map(
+                (item) => {
+                  const Icon =
+                    item.icon;
 
-                return (
-                  <Link
-                    key={item.href}
-                    href={item.href}
-                    className="
-                      flex
-                      items-center
-                      gap-3
-                      rounded-xl
-                      px-3
-                      py-2.5
-                      text-[13px]
-                      font-semibold
-                      text-[#68615C]
-                      transition
-                      hover:bg-[#FFF0E9]
-                      hover:text-[#FF5A36]
-                    "
-                  >
-                    <Icon size={17} />
-                    {item.label}
-                  </Link>
-                );
-              })}
+                  return (
+                    <Link
+                      key={
+                        item.href
+                      }
+                      href={
+                        item.href
+                      }
+                      className="
+                        flex
+                        items-center
+                        gap-3
+                        rounded-xl
+                        px-3
+                        py-2.5
+                        text-[13px]
+                        font-semibold
+                        text-[#68615C]
+                        transition
+                        hover:bg-[#FFF0E9]
+                        hover:text-[#FF5A36]
+                      "
+                    >
+                      <Icon
+                        size={17}
+                      />
+                      {
+                        item.label
+                      }
+                    </Link>
+                  );
+                }
+              )}
             </nav>
 
             <div className="my-5 border-t border-[#E8E4DE]" />
@@ -620,7 +973,9 @@ function handleContactClick(
                 text-[#FF5A36]
               "
             >
-              <ShoppingBag size={17} />
+              <ShoppingBag
+                size={17}
+              />
               Browse sellers
             </Link>
           </aside>
@@ -654,7 +1009,9 @@ function handleContactClick(
                 hover:text-[#FF5A36]
               "
             >
-              <ArrowLeft size={15} />
+              <ArrowLeft
+                size={15}
+              />
               Back to Shop
             </Link>
 
@@ -672,68 +1029,70 @@ function handleContactClick(
             )}
 
             {/* ERROR */}
-            {!loading && error && (
-              <div
-                className="
-                  mx-auto
-                  max-w-[700px]
-                  rounded-[18px]
-                  border
-                  border-[#F0C9BF]
-                  bg-[#FFF1ED]
-                  p-8
-                  text-center
-                "
-              >
+            {!loading &&
+              error && (
                 <div
                   className="
                     mx-auto
-                    mb-4
-                    flex
-                    h-12
-                    w-12
-                    items-center
-                    justify-center
-                    rounded-full
-                    bg-[#FFE0D6]
-                    text-[#9F2D18]
+                    max-w-[700px]
+                    rounded-[18px]
+                    border
+                    border-[#F0C9BF]
+                    bg-[#FFF1ED]
+                    p-8
+                    text-center
                   "
                 >
-                  <Store size={22} />
+                  <div
+                    className="
+                      mx-auto
+                      mb-4
+                      flex
+                      h-12
+                      w-12
+                      items-center
+                      justify-center
+                      rounded-full
+                      bg-[#FFE0D6]
+                      text-[#9F2D18]
+                    "
+                  >
+                    <Store size={22} />
+                  </div>
+
+                  <h1 className="text-xl font-black text-[#17202A]">
+                    Seller not found
+                  </h1>
+
+                  <p className="mt-2 text-[13px] leading-6 text-[#77716C]">
+                    We couldn&apos;t find the seller you&apos;re looking for.
+                  </p>
+
+                  <Link
+                    href="/shop"
+                    className="
+                      mt-5
+                      inline-flex
+                      items-center
+                      gap-2
+                      rounded-xl
+                      bg-[#FF5A36]
+                      px-4
+                      py-2.5
+                      text-[12px]
+                      font-bold
+                      text-white
+                      transition
+                      hover:bg-[#E94E2C]
+                    "
+                  >
+                    <ShoppingBag
+                      size={15}
+                    />
+                    Browse sellers
+                  </Link>
                 </div>
-
-                <h1 className="text-xl font-black text-[#17202A]">
-                  Seller not found
-                </h1>
-
-                <p className="mt-2 text-[13px] leading-6 text-[#77716C]">
-                  We couldn't find the seller you're
-                  looking for.
-                </p>
-
-                <Link
-                  href="/shop"
-                  className="
-                    mt-5
-                    inline-flex
-                    items-center
-                    gap-2
-                    rounded-xl
-                    bg-[#FF5A36]
-                    px-4
-                    py-2.5
-                    text-[12px]
-                    font-bold
-                    text-white
-                    transition
-                    hover:bg-[#E94E2C]
-                  "
-                >
-                  <ShoppingBag size={15} />
-                  Browse sellers
-                </Link>
-              </div>
-            )}
+              )}
 
             {/* SELLER */}
             {!loading &&
@@ -756,7 +1115,7 @@ function handleContactClick(
                       style={{
                         backgroundColor:
                           getCategoryColor(
-                            seller.category,
+                            seller.category
                           ),
                       }}
                     />
@@ -784,14 +1143,16 @@ function handleContactClick(
                             "
                           >
                             {getInitials(
-                              seller.name,
+                              seller.name
                             )}
                           </div>
 
                           <div className="min-w-0">
                             <div className="flex flex-wrap items-center gap-2">
                               <h1 className="text-[23px] font-black tracking-tight text-[#17202A] sm:text-[28px]">
-                                {seller.name}
+                                {
+                                  seller.name
+                                }
                               </h1>
 
                               {(seller.verified ||
@@ -806,7 +1167,9 @@ function handleContactClick(
 
                             {seller.ownerName && (
                               <p className="mt-1 text-[12px] text-[#89817A]">
-                                {seller.ownerName}
+                                {
+                                  seller.ownerName
+                                }
                               </p>
                             )}
 
@@ -824,11 +1187,13 @@ function handleContactClick(
                                   style={{
                                     backgroundColor:
                                       getCategoryColor(
-                                        seller.category,
+                                        seller.category
                                       ),
                                   }}
                                 >
-                                  {seller.category}
+                                  {
+                                    seller.category
+                                  }
                                 </span>
                               )}
 
@@ -840,12 +1205,12 @@ function handleContactClick(
                                   text-[10px]
                                   font-bold
                                   ${getAvailabilityStyle(
-                                    seller.availability,
+                                    seller.availability
                                   )}
                                 `}
                               >
                                 {getAvailabilityLabel(
-                                  seller.availability,
+                                  seller.availability
                                 )}
                               </span>
 
@@ -859,57 +1224,107 @@ function handleContactClick(
                           </div>
                         </div>
 
-                        <div className="flex items-center gap-2">
-                          <button
-                            type="button"
-                            className="
-                              flex
-                              h-10
-                              w-10
-                              items-center
-                              justify-center
-                              rounded-xl
-                              border
-                              border-[#E5E0D9]
-                              bg-white
-                              text-[#746D67]
-                              transition
-                              hover:border-[#FFB39F]
-                              hover:text-[#FF5A36]
-                            "
-                            aria-label="Save seller"
-                          >
-                            <Heart size={18} />
-                          </button>
-                        </div>
+                        {/* SAVE */}
+                        <button
+                          type="button"
+                          aria-label={
+                            saved
+                              ? `Remove ${seller.name} from saved businesses`
+                              : `Save ${seller.name}`
+                          }
+                          aria-pressed={
+                            saved
+                          }
+                          onClick={
+                            handleSaveClick
+                          }
+                          className={`
+                            flex
+                            h-10
+                            w-10
+                            shrink-0
+                            items-center
+                            justify-center
+                            rounded-xl
+                            border
+                            transition
+                            ${
+                              saved
+                                ? "border-[#FFB39F] bg-[#FFF0E9] text-[#9F2D18]"
+                                : "border-[#E5E0D9] bg-white text-[#746D67] hover:border-[#FFB39F] hover:text-[#FF5A36]"
+                            }
+                          `}
+                        >
+                          <Heart
+                            size={18}
+                            fill={
+                              saved
+                                ? "currentColor"
+                                : "none"
+                            }
+                          />
+                        </button>
                       </div>
 
-                      {seller.location.lat !== null &&
-                    seller.location.long !== null && (
-                          <a
-                        href={buildContactUrl(
-                        "DIRECTIONS",
-                               "",
-                      seller.location.lat,
-                     seller.location.long,
-                        )}
-               target="_blank"
-                rel="noreferrer"
-            onClick={() =>
-              handleContactClick(
-              "DIRECTIONS",
-                    )
-                   }
-                className="..."
-                    >
-                <MapPin className="h-4 w-4" />
-                  <span>Directions</span>
-                      </a>
+                      {/* LOCATION */}
+                      {seller.location?.area && (
+                        <div className="mt-4 inline-flex items-center gap-2 rounded-xl bg-[#FCFAF6] px-3 py-2 text-[11px] font-semibold text-[#68615C]">
+                          <MapPin
+                            size={15}
+                            className="text-[#FF5A36]"
+                          />
+                          <span>
+                            {
+                              seller.location
+                                .area
+                            }
+                          </span>
+                        </div>
                       )}
+
+                      {/* DIRECTIONS */}
+                      {seller.location &&
+                        typeof seller
+                          .location
+                          .lat ===
+                          "number" &&
+                        typeof seller
+                          .location
+                          .long ===
+                          "number" && (
+                          <a
+                            href={buildContactUrl(
+                              "DIRECTIONS",
+                              "",
+                              seller
+                                .location
+                                .lat,
+                              seller
+                                .location
+                                .long
+                            )}
+                            target="_blank"
+                            rel="noreferrer"
+                            onClick={() =>
+                              handleContactClick(
+                                "DIRECTIONS"
+                              )
+                            }
+                            className="mt-3 inline-flex items-center gap-2 rounded-xl bg-[#FFF0E9] px-3 py-2 text-[11px] font-bold text-[#9F2D18] transition hover:bg-[#FFE4DA]"
+                          >
+                            <MapPin className="h-4 w-4" />
+                            <span>
+                              Directions
+                            </span>
+                          </a>
+                        )}
+
                       {/* Description */}
                       {seller.description && (
                         <p className="mt-4 max-w-[800px] text-[13px] leading-6 text-[#68615C]">
-                          {seller.description}
+                          {
+                            seller.description
+                          }
                         </p>
                       )}
                     </div>
@@ -935,9 +1350,9 @@ function handleContactClick(
                           </h2>
 
                           <p className="mt-1 text-[11px] text-[#8B847E]">
-                            {seller.products
-                              ?.length ??
-                              seller.productCount ??
+                            {seller.productCount ??
+                              seller.products
+                                ?.length ??
                               0}{" "}
                             items listed
                           </p>
@@ -950,13 +1365,18 @@ function handleContactClick(
                       </div>
 
                       {seller.products &&
-                      seller.products.length >
+                      seller.products
+                        .length >
                         0 ? (
                         <div className="grid gap-3 sm:grid-cols-2">
                           {seller.products.map(
-                            (product) => (
+                            (
+                              product
+                            ) => (
                               <div
-                                key={product.id}
+                                key={
+                                  product.id
+                                }
                                 className="
                                   overflow-hidden
                                   rounded-[15px]
@@ -993,7 +1413,7 @@ function handleContactClick(
                                     style={{
                                       backgroundColor:
                                         getCategoryColor(
-                                          seller.category,
+                                          seller.category
                                         ),
                                     }}
                                   >
@@ -1021,12 +1441,12 @@ function handleContactClick(
                                         text-[9px]
                                         font-bold
                                         ${getAvailabilityStyle(
-                                          product.availability,
+                                          product.availability
                                         )}
                                       `}
                                     >
                                       {getAvailabilityLabel(
-                                        product.availability,
+                                        product.availability
                                       )}
                                     </span>
                                   </div>
@@ -1041,12 +1461,12 @@ function handleContactClick(
 
                                   <div className="mt-4 text-[13px] font-black text-[#9F2D18]">
                                     {formatPrice(
-                                      product,
+                                      product
                                     )}
                                   </div>
                                 </div>
                               </div>
-                            ),
+                            )
                           )}
                         </div>
                       ) : (
@@ -1100,35 +1520,62 @@ function handleContactClick(
 
                         <div className="mt-4 space-y-2">
                           {seller.socialLinks &&
-                          seller.socialLinks.length >
+                          seller.socialLinks
+                            .length >
                             0 ? (
                             seller.socialLinks.map(
-                              (link) => {
+                              (
+                                link
+                              ) => {
                                 const url =
                                   buildContactUrl(
                                     link.platform,
                                     link.handle,
+                                    seller
+                                      .location
+                                      ?.lat,
+                                    seller
+                                      .location
+                                      ?.long
                                   );
+
+                                const isPhone =
+                                  link.platform ===
+                                  "PHONE";
+
+                                const isDirections =
+                                  link.platform ===
+                                  "DIRECTIONS";
+
+                                if (
+                                  url ===
+                                    "#" &&
+                                  isDirections
+                                ) {
+                                  return null;
+                                }
 
                                 return (
                                   <a
-                                    key={link.id}
-                                    href={url}
+                                    key={
+                                      link.id
+                                    }
+                                    href={
+                                      url
+                                    }
                                     target={
-                                      link.platform ===
-                                      "PHONE"
+                                      isPhone
                                         ? undefined
                                         : "_blank"
                                     }
                                     rel={
-                                      link.platform ===
-                                      "PHONE"
+                                      isPhone
                                         ? undefined
                                         : "noreferrer"
                                     }
                                     onClick={() =>
                                       handleContactClick(
-                                        link.platform,
+                                        link.platform
                                       )
                                     }
                                     className="
@@ -1175,11 +1622,13 @@ function handleContactClick(
                                     </span>
 
                                     <ExternalLink
-                                      size={13}
+                                      size={
+                                        13
+                                      }
                                     />
                                   </a>
                                 );
-                              },
+                              }
                             )
                           ) : (
                             <div className="rounded-xl bg-white/70 px-3 py-3 text-[11px] leading-5 text-[#817970]">
@@ -1192,7 +1641,8 @@ function handleContactClick(
 
                       {/* Categories */}
                       {seller.categories &&
-                        seller.categories.length >
+                        seller.categories
+                          .length >
                           0 && (
                           <div
                             className="
@@ -1209,26 +1659,32 @@ function handleContactClick(
 
                             <div className="mt-3 flex flex-wrap gap-2">
                               {seller.categories.map(
-                                (item) => (
+                                (
+                                  item
+                                ) => (
                                   <span
-                                    key={item}
+                                    key={
+                                      item
+                                    }
                                     className="rounded-full px-2.5 py-1 text-[10px] font-bold text-[#514B46]"
                                     style={{
                                       backgroundColor:
                                         getCategoryColor(
-                                          item,
+                                          item
                                         ),
                                     }}
                                   >
-                                    {item}
+                                    {
+                                      item
+                                    }
                                   </span>
-                                ),
+                                )
                               )}
                             </div>
                           </div>
                         )}
 
-                      {/* Request */}
+                      {/* REQUEST */}
                       <div
                         className="
                           rounded-[18px]
@@ -1239,7 +1695,7 @@ function handleContactClick(
                         "
                       >
                         <p className="text-[12px] font-bold text-[#3D3834]">
-                          Can't find what you need?
+                          Can&apos;t find what you need?
                         </p>
 
                         <p className="mt-1 text-[11px] leading-5 text-[#888079]">
@@ -1248,7 +1704,7 @@ function handleContactClick(
                         </p>
 
                         <Link
-                          href="/my-requests"
+                          href="/request"
                           className="
                             mt-4
                             flex
@@ -1295,37 +1751,66 @@ function handleContactClick(
           "
         >
           <div className="mx-auto flex max-w-md items-center justify-around">
-            {NAV_ITEMS.map((item) => {
-              const Icon = item.icon;
+            {NAV_ITEMS.map(
+              (item) => {
+                const Icon =
+                  item.icon;
 
-              return (
-                <Link
-                  key={item.href}
-                  href={item.href}
-                  className="
-                    flex
-                    min-w-[64px]
-                    flex-col
-                    items-center
-                    gap-1
-                    rounded-xl
-                    px-2
-                    py-1.5
-                    text-[9px]
-                    font-bold
-                    text-[#8A837D]
-                    transition
-                    hover:text-[#FF5A36]
-                  "
-                >
-                  <Icon size={18} />
-                  {item.label}
-                </Link>
-              );
-            })}
+                return (
+                  <Link
+                    key={
+                      item.href
+                    }
+                    href={
+                      item.href
+                    }
+                    className="
+                      flex
+                      min-w-[64px]
+                      flex-col
+                      items-center
+                      gap-1
+                      rounded-xl
+                      px-2
+                      py-1.5
+                      text-[9px]
+                      font-bold
+                      text-[#8A837D]
+                      transition
+                      hover:text-[#FF5A36]
+                    "
+                  >
+                    <Icon
+                      size={18}
+                    />
+                    {
+                      item.label
+                    }
+                  </Link>
+                );
+              }
+            )}
           </div>
         </nav>
       </div>
     </main>
+  );
+}
+
+export default function SellerPage() {
+  const params =
+    useParams();
+
+  const id =
+    typeof params.id ===
+    "string"
+      ? params.id
+      : "";
+
+  return (
+    <SellerPageContent
+      key={id}
+      id={id}
+    />
   );
 }

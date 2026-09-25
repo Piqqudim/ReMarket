@@ -1,7 +1,6 @@
 "use client";
 
 import {
-  type FormEvent,
   useEffect,
   useState,
 } from "react";
@@ -56,6 +55,11 @@ type Product = {
   images: ProductImage[];
 };
 
+type BusinessLocation = {
+  id: string;
+  area: string;
+};
+
 type Business = {
   id: string;
   name: string;
@@ -63,12 +67,7 @@ type Business = {
   description: string | null;
   imageUrl: string | null;
   area: string;
-  location: {
-    id: string;
-    area: string;
-    lat: number | null;
-    long: number | null;
-  } | null;
+  location: BusinessLocation | null;
   availability:
     | "AVAILABLE"
     | "ASK_SELLER"
@@ -168,8 +167,22 @@ export default function NearMePage() {
   const [error, setError] =
     useState("");
 
-  const [savedBusinesses, setSavedBusinesses] =
-    useState<Record<string, boolean>>({});
+ const [savedBusinesses, setSavedBusinesses] =
+  useState<Record<string, boolean>>(() => {
+    if (typeof window === "undefined") {
+      return {};
+    }
+
+    const saved = getSavedBusinesses();
+
+    const next: Record<string, boolean> = {};
+
+    for (const business of saved) {
+      next[business.id] = true;
+    }
+
+    return next;
+  });
 
   function syncSavedBusinesses() {
     const saved = getSavedBusinesses();
@@ -184,20 +197,18 @@ export default function NearMePage() {
   }
 
   useEffect(() => {
-    syncSavedBusinesses();
+  window.addEventListener(
+    SAVED_BUSINESSES_CHANGED_EVENT,
+    syncSavedBusinesses
+  );
 
-    window.addEventListener(
+  return () => {
+    window.removeEventListener(
       SAVED_BUSINESSES_CHANGED_EVENT,
       syncSavedBusinesses
     );
-
-    return () => {
-      window.removeEventListener(
-        SAVED_BUSINESSES_CHANGED_EVENT,
-        syncSavedBusinesses
-      );
-    };
-  }, []);
+  };
+}, []);
 
   async function loadByArea(
     selectedArea: string
@@ -217,6 +228,7 @@ export default function NearMePage() {
     setLoading(true);
     setError("");
     setBusinesses([]);
+    setMode("none");
 
     try {
       const params = new URLSearchParams();
@@ -226,6 +238,7 @@ export default function NearMePage() {
       const response = await fetch(
         `/api/near-me?${params.toString()}`,
         {
+          method: "GET",
           cache: "no-store",
         }
       );
@@ -247,9 +260,6 @@ export default function NearMePage() {
 
       setBusinesses(nextBusinesses);
 
-      // The request succeeded, so the page is now
-      // in area-search mode even when zero businesses
-      // were found.
       setMode("area");
     } catch (error) {
       console.error(
@@ -290,30 +300,34 @@ export default function NearMePage() {
     setLoading(true);
     setError("");
     setBusinesses([]);
+    setMode("none");
 
     navigator.geolocation.getCurrentPosition(
       async (position) => {
         try {
+          const latitude =
+            position.coords.latitude;
+
+          const longitude =
+            position.coords.longitude;
+
           const params =
             new URLSearchParams();
 
           params.set(
             "lat",
-            String(
-              position.coords.latitude
-            )
+            String(latitude)
           );
 
           params.set(
             "lng",
-            String(
-              position.coords.longitude
-            )
+            String(longitude)
           );
 
           const response = await fetch(
             `/api/near-me?${params.toString()}`,
             {
+              method: "GET",
               cache: "no-store",
             }
           );
@@ -335,9 +349,6 @@ export default function NearMePage() {
 
           setBusinesses(nextBusinesses);
 
-          // The GPS request succeeded.
-          // Keep the page in GPS mode even if
-          // there are zero businesses.
           setMode("gps");
         } catch (error) {
           console.error(
@@ -369,9 +380,30 @@ export default function NearMePage() {
         setBusinesses([]);
         setMode("none");
 
-        setError(
-          "We couldn't access your current location. Enter an area instead."
-        );
+        switch (geoError.code) {
+          case geoError.PERMISSION_DENIED:
+            setError(
+              "Location permission was denied. Enter an area instead."
+            );
+            break;
+
+          case geoError.POSITION_UNAVAILABLE:
+            setError(
+              "Your current location is unavailable. Enter an area instead."
+            );
+            break;
+
+          case geoError.TIMEOUT:
+            setError(
+              "Finding your location took too long. Enter an area instead."
+            );
+            break;
+
+          default:
+            setError(
+              "We couldn't access your current location. Enter an area instead."
+            );
+        }
       },
       {
         enableHighAccuracy: true,
@@ -390,6 +422,12 @@ export default function NearMePage() {
       removeSavedBusiness(
         business.id
       );
+
+      setSavedBusinesses((current) => ({
+        ...current,
+        [business.id]: false,
+      }));
+
       return;
     }
 
@@ -412,6 +450,11 @@ export default function NearMePage() {
       imageUrl:
         business.imageUrl,
     });
+
+    setSavedBusinesses((current) => ({
+      ...current,
+      [business.id]: true,
+    }));
   }
 
   return (
@@ -604,7 +647,7 @@ export default function NearMePage() {
                                   : "businesses"
                               } found`
                             : mode === "gps"
-                              ? "No businesses were found around your current location"
+                              ? "No businesses were found within the nearby search area"
                               : mode === "area"
                                 ? "No businesses were found in this area"
                                 : "Choose an area or use your current location"}
@@ -668,7 +711,7 @@ export default function NearMePage() {
 
                         <p className="mx-auto mt-1 max-w-[360px] text-xs leading-5 text-gray-400">
                           {mode === "gps"
-                            ? "We don't have businesses registered around your current location yet. Try searching another area or browse all businesses."
+                            ? "We don't have businesses registered within the nearby search area yet. Try searching another area or browse all businesses."
                             : `We don't have businesses registered around ${area.trim()} yet. Try another area or browse all businesses.`}
                         </p>
 

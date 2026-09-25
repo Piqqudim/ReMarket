@@ -5,6 +5,65 @@ import {
 
 import { prisma } from "@/lib/prisma";
 
+function normalizeNigerianPhone(
+  value: string
+): string {
+  let clean = value
+    .trim()
+    .replace(/[^\d+]/g, "");
+
+  if (!clean) {
+    return "";
+  }
+
+  if (clean.startsWith("00")) {
+    clean = clean.slice(2);
+  }
+
+  if (clean.startsWith("+")) {
+    clean = clean.slice(1);
+  }
+
+  if (clean.startsWith("234")) {
+    return `+${clean}`;
+  }
+
+  if (clean.startsWith("0")) {
+    return `+234${clean.slice(1)}`;
+  }
+
+  return `+234${clean}`;
+}
+
+function normalizeSocialHandle(
+  platform: string,
+  handle: string
+): string {
+  const clean = handle.trim();
+
+  if (!clean) {
+    return "";
+  }
+
+  if (
+    platform === "WHATSAPP" ||
+    platform === "PHONE"
+  ) {
+    if (
+      clean.startsWith("http://") ||
+      clean.startsWith("https://")
+    ) {
+      return clean;
+    }
+
+    return normalizeNigerianPhone(
+      clean
+    );
+  }
+
+  return clean;
+}
+
 export async function GET(
   request: NextRequest,
   {
@@ -13,85 +72,166 @@ export async function GET(
     params: Promise<{
       id: string;
     }>;
-  },
+  }
 ) {
   try {
-    const { id } = await params;
+    const { id } =
+      await params;
 
     if (!id) {
       return NextResponse.json(
         {
-          error: "Business ID is required",
+          error:
+            "Business ID is required",
         },
         {
           status: 400,
-        },
+        }
       );
     }
 
+    /*
+     * -----------------------------------------
+     * LOAD PUBLIC BUSINESS
+     * -----------------------------------------
+     *
+     * Public ReMarket pages may only expose
+     * ACTIVE and non-soft-deleted businesses.
+     */
+
     const business =
-      await prisma.business.findFirst({
-        where: {
-          id,
-          status: "ACTIVE",
-        },
-
-        include: {
-          location: true,
-
-          categories: {
-            include: {
-              category: true,
-            },
+      await prisma.business.findFirst(
+        {
+          where: {
+            id,
+            status: "ACTIVE",
+            deletedAt: null,
           },
 
-          products: {
-            where: {
-              status: "ACTIVE",
+          select: {
+            id: true,
+            name: true,
+            ownerName: true,
+            description: true,
+            imageUrl: true,
+            availability: true,
+            verification: true,
+
+            location: {
+              select: {
+                id: true,
+                area: true,
+                lat: true,
+                long: true,
+              },
             },
 
-            select: {
-              id: true,
-              name: true,
-              description: true,
-              price: true,
-              priceMin: true,
-              priceMax: true,
-              availability: true,
-              imageUrl: true,
-              keywords: true,
-              updatedAt: true,
-
-              images: {
-                select: {
-                  id: true,
-                  url: true,
-                  publicId: true,
-                  sortOrder: true,
-                  createdAt: true,
+            categories: {
+              select: {
+                category: {
+                  select: {
+                    id: true,
+                    name: true,
+                  },
                 },
               },
             },
 
-            orderBy: {
-              updatedAt: "desc",
+            /*
+             * Only active + non-deleted products
+             * are public.
+             */
+            products: {
+              where: {
+                status: "ACTIVE",
+                deletedAt: null,
+              },
+
+              select: {
+                id: true,
+                name: true,
+                description: true,
+                price: true,
+                priceMin: true,
+                priceMax: true,
+                availability: true,
+                imageUrl: true,
+                keywords: true,
+
+                images: {
+                  select: {
+                    id: true,
+                    url: true,
+                    publicId: true,
+                    sortOrder: true,
+                    createdAt: true,
+                  },
+
+                  orderBy: [
+                    {
+                      sortOrder: "asc",
+                    },
+                    {
+                      createdAt: "asc",
+                    },
+                  ],
+                },
+              },
+
+              orderBy: {
+                updatedAt: "desc",
+              },
+            },
+
+            /*
+             * Count only products which are
+             * currently visible to customers.
+             */
+            _count: {
+              select: {
+                products: {
+                  where: {
+                    status: "ACTIVE",
+                    deletedAt: null,
+                  },
+                },
+              },
+            },
+
+            socialLinks: {
+              select: {
+                id: true,
+                platform: true,
+                handle: true,
+              },
             },
           },
+        }
+      );
 
-          socialLinks: true,
-        },
-      });
+    /*
+     * -----------------------------------------
+     * BUSINESS NOT FOUND
+     * -----------------------------------------
+     */
 
     if (!business) {
       return NextResponse.json(
         {
-          error: "Business not found",
+          error:
+            "Business not found",
         },
         {
           status: 404,
-        },
+        }
       );
     }
+
+    /*
+     * -----------------------------------------
+     * FORMAT BUSINESS
+     * -----------------------------------------
+     */
 
     const formattedBusiness = {
       id: business.id,
@@ -107,7 +247,19 @@ export async function GET(
       imageUrl:
         business.imageUrl,
 
+      /*
+       * Coordinates remain available here
+       * because the public business page uses
+       * the business location for Directions.
+       *
+       * These are BUSINESS coordinates, not the
+       * customer's current coordinates.
+       */
       location: {
+        id:
+          business.location?.id ??
+          null,
+
         area:
           business.location?.area ??
           "Location not added",
@@ -132,16 +284,21 @@ export async function GET(
         "VERIFIED",
 
       category:
-        business
-          .categories[0]
+        business.categories[0]
           ?.category?.name ??
         "Other",
 
       categories:
         business.categories.map(
           (item) =>
-            item.category.name,
+            item.category.name
         ),
+
+      /*
+       * Accurate active product count.
+       */
+      productCount:
+        business._count.products,
 
       products:
         business.products.map(
@@ -171,17 +328,8 @@ export async function GET(
             keywords:
               product.keywords,
 
-            images: [
-              ...product.images,
-            ]
-              .sort(
-                (a, b) =>
-                  a.sortOrder -
-                    b.sortOrder ||
-                  a.createdAt.getTime() -
-                    b.createdAt.getTime(),
-              )
-              .map(
+            images:
+              product.images.map(
                 (image) => ({
                   id: image.id,
 
@@ -192,11 +340,15 @@ export async function GET(
 
                   sortOrder:
                     image.sortOrder,
-                }),
+                })
               ),
-          }),
+          })
         ),
 
+      /*
+       * Normalize WhatsApp/Phone handles
+       * before exposing them to the client.
+       */
       socialLinks:
         business.socialLinks.map(
           (link) => ({
@@ -206,8 +358,11 @@ export async function GET(
               link.platform,
 
             handle:
-              link.handle,
-          }),
+              normalizeSocialHandle(
+                link.platform,
+                link.handle
+              ),
+          })
         ),
     };
 
@@ -218,7 +373,7 @@ export async function GET(
   } catch (error) {
     console.error(
       "Business API error:",
-      error,
+      error
     );
 
     return NextResponse.json(
@@ -228,7 +383,7 @@ export async function GET(
       },
       {
         status: 500,
-      },
+      }
     );
   }
 }

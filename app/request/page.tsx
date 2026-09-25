@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useState } from "react";
+import { useState, type ChangeEvent } from "react";
 import {
   Home,
   ShoppingBag,
@@ -33,16 +33,22 @@ const CATEGORIES = [
   "Services",
 ];
 
-type CreatedRequest = {
-  requestCode: string;
-  query: string;
-  category?: string;
-  matches?: {
+type RequestMatch = {
+  id: string;
+  score: number;
+  business: {
     id: string;
     name: string;
     area: string;
-    verified?: boolean;
-  }[];
+    verified: boolean;
+  };
+};
+
+type CreatedRequest = {
+  requestCode: string;
+  query: string;
+  category?: string | null;
+  matches: RequestMatch[];
 };
 
 export default function RequestPage() {
@@ -62,11 +68,13 @@ export default function RequestPage() {
     useState<CreatedRequest | null>(null);
 
   async function handleImageUpload(
-    event: React.ChangeEvent<HTMLInputElement>
+    event: ChangeEvent<HTMLInputElement>
   ) {
     const file = event.target.files?.[0];
 
-    if (!file) return;
+    if (!file) {
+      return;
+    }
 
     setUploading(true);
     setError("");
@@ -106,7 +114,7 @@ export default function RequestPage() {
     setError("");
 
     if (!query.trim()) {
-      setError("Tell us what you're looking for.");
+      setError("Tell us what you are looking for.");
       return;
     }
 
@@ -117,8 +125,23 @@ export default function RequestPage() {
 
     const quantityNumber = Number(quantity);
 
-    if (!Number.isInteger(quantityNumber) || quantityNumber < 1) {
+    if (
+      !Number.isInteger(quantityNumber) ||
+      quantityNumber < 1
+    ) {
       setError("Quantity must be at least 1.");
+      return;
+    }
+
+    const budgetNumber = budget
+      ? Number(budget)
+      : undefined;
+
+    if (
+      budgetNumber !== undefined &&
+      (!Number.isFinite(budgetNumber) || budgetNumber < 0)
+    ) {
+      setError("Enter a valid budget.");
       return;
     }
 
@@ -133,7 +156,7 @@ export default function RequestPage() {
         body: JSON.stringify({
           query: query.trim(),
           category: category || undefined,
-          budget: budget ? Number(budget) : undefined,
+          budget: budgetNumber,
           locationArea: locationArea.trim() || undefined,
           quantity: quantityNumber,
           description: description.trim() || undefined,
@@ -150,11 +173,19 @@ export default function RequestPage() {
         );
       }
 
+      if (!data.request?.requestCode) {
+        throw new Error(
+          "Request was created but no request code was returned."
+        );
+      }
+
       setCreatedRequest({
-        requestCode: data.request?.requestCode,
-        query: data.request?.query ?? query.trim(),
-        category: data.request?.category,
-        matches: data.request?.matches ?? [],
+        requestCode: data.request.requestCode,
+        query: data.request.query ?? query.trim(),
+        category: data.request.category ?? null,
+        matches: Array.isArray(data.request.matches)
+          ? data.request.matches
+          : [],
       });
     } catch (err) {
       setError(
@@ -181,7 +212,9 @@ export default function RequestPage() {
   }
 
   async function copyRequestCode() {
-    if (!createdRequest?.requestCode) return;
+    if (!createdRequest?.requestCode) {
+      return;
+    }
 
     try {
       await navigator.clipboard.writeText(
@@ -195,7 +228,6 @@ export default function RequestPage() {
   return (
     <div className="min-h-screen bg-[#FFF7ED] px-3 py-3 sm:px-5 sm:py-5">
       <div className="mx-auto flex min-h-[calc(100vh-24px)] max-w-[1500px] flex-col overflow-hidden rounded-[22px] border border-[#FF5A36] bg-[#FFFDFC] shadow-sm sm:min-h-[calc(100vh-40px)]">
-        {/* Header */}
         <header className="flex h-[66px] shrink-0 items-center justify-between border-b border-[#EAE6DF] bg-white px-4 sm:px-6">
           <Link
             href="/"
@@ -235,7 +267,6 @@ export default function RequestPage() {
         </header>
 
         <div className="flex flex-1">
-          {/* Desktop sidebar */}
           <aside className="hidden w-[190px] shrink-0 border-r border-[#EAE6DF] bg-[#FCFAF6] p-3 md:block">
             <div className="space-y-1">
               {NAV_ITEMS.map((item) => {
@@ -261,7 +292,7 @@ export default function RequestPage() {
 
             <div className="mt-8 rounded-2xl bg-[#FFF0D9] p-4">
               <p className="text-sm font-bold text-[#9F2D18]">
-                Can't find it?
+                Cannot find it?
               </p>
 
               <p className="mt-1 text-xs leading-5 text-[#7C5B4E]">
@@ -270,7 +301,6 @@ export default function RequestPage() {
             </div>
           </aside>
 
-          {/* Main */}
           <main className="min-w-0 flex-1 overflow-y-auto pb-24 md:pb-8">
             {createdRequest ? (
               <SuccessView
@@ -295,9 +325,9 @@ export default function RequestPage() {
                     </h1>
 
                     <p className="mt-2 max-w-xl text-sm leading-6 text-[#7C746C]">
-                      Can't find what you need? Tell us what you're
-                      looking for and we'll help connect you with
-                      nearby sellers.
+                      Cannot find what you need? Tell us what you
+                      are looking for and we&apos;ll help connect
+                      you with nearby sellers.
                     </p>
                   </div>
                 </div>
@@ -313,7 +343,6 @@ export default function RequestPage() {
                   )}
 
                   <div className="space-y-5">
-                    {/* What */}
                     <div>
                       <label
                         htmlFor="query"
@@ -325,13 +354,14 @@ export default function RequestPage() {
                       <input
                         id="query"
                         value={query}
-                        onChange={(e) => setQuery(e.target.value)}
+                        onChange={(e) =>
+                          setQuery(e.target.value)
+                        }
                         placeholder="e.g. black school shoes"
                         className="w-full rounded-xl border border-[#E8E4DE] bg-[#FCFAF6] px-4 py-3 text-sm outline-none transition placeholder:text-[#A69D94] focus:border-[#FF5A36] focus:bg-white"
                       />
                     </div>
 
-                    {/* Category */}
                     <div>
                       <label
                         htmlFor="category"
@@ -343,10 +373,14 @@ export default function RequestPage() {
                       <select
                         id="category"
                         value={category}
-                        onChange={(e) => setCategory(e.target.value)}
+                        onChange={(e) =>
+                          setCategory(e.target.value)
+                        }
                         className="w-full rounded-xl border border-[#E8E4DE] bg-[#FCFAF6] px-4 py-3 text-sm outline-none focus:border-[#FF5A36] focus:bg-white"
                       >
-                        <option value="">Choose a category</option>
+                        <option value="">
+                          Choose a category
+                        </option>
 
                         {CATEGORIES.map((item) => (
                           <option key={item} value={item}>
@@ -356,7 +390,6 @@ export default function RequestPage() {
                       </select>
                     </div>
 
-                    {/* Budget + quantity */}
                     <div className="grid gap-4 sm:grid-cols-2">
                       <div>
                         <label
@@ -375,8 +408,11 @@ export default function RequestPage() {
                             id="budget"
                             type="number"
                             min="0"
+                            step="1"
                             value={budget}
-                            onChange={(e) => setBudget(e.target.value)}
+                            onChange={(e) =>
+                              setBudget(e.target.value)
+                            }
                             placeholder="Optional"
                             className="w-full rounded-xl border border-[#E8E4DE] bg-[#FCFAF6] py-3 pl-9 pr-4 text-sm outline-none placeholder:text-[#A69D94] focus:border-[#FF5A36] focus:bg-white"
                           />
@@ -395,14 +431,16 @@ export default function RequestPage() {
                           id="quantity"
                           type="number"
                           min="1"
+                          step="1"
                           value={quantity}
-                          onChange={(e) => setQuantity(e.target.value)}
+                          onChange={(e) =>
+                            setQuantity(e.target.value)
+                          }
                           className="w-full rounded-xl border border-[#E8E4DE] bg-[#FCFAF6] px-4 py-3 text-sm outline-none focus:border-[#FF5A36] focus:bg-white"
                         />
                       </div>
                     </div>
 
-                    {/* Area */}
                     <div>
                       <label
                         htmlFor="locationArea"
@@ -429,7 +467,6 @@ export default function RequestPage() {
                       </div>
                     </div>
 
-                    {/* Description */}
                     <div>
                       <label
                         htmlFor="description"
@@ -450,7 +487,6 @@ export default function RequestPage() {
                       />
                     </div>
 
-                    {/* Image */}
                     <div>
                       <label className="mb-2 block text-sm font-bold text-[#17202A]">
                         Add a photo
@@ -474,7 +510,8 @@ export default function RequestPage() {
                           </p>
 
                           <p className="mt-0.5 text-xs text-[#8A8178]">
-                            Help sellers understand exactly what you need.
+                            Help sellers understand exactly what
+                            you need.
                           </p>
                         </div>
 
@@ -487,7 +524,6 @@ export default function RequestPage() {
                       </label>
                     </div>
 
-                    {/* Contact */}
                     <div className="rounded-2xl bg-[#FFF0D9] p-4">
                       <label
                         htmlFor="buyerContact"
@@ -514,12 +550,11 @@ export default function RequestPage() {
                       </div>
 
                       <p className="mt-2 text-xs leading-5 text-[#7C5B4E]">
-                        We use this to help you retrieve your requests
-                        later. No account is required.
+                        We use this to help you retrieve your
+                        requests later. No account is required.
                       </p>
                     </div>
 
-                    {/* Submit */}
                     <button
                       type="submit"
                       disabled={loading || uploading}
@@ -541,7 +576,6 @@ export default function RequestPage() {
           </main>
         </div>
 
-        {/* Mobile navigation */}
         <nav className="fixed bottom-0 left-0 right-0 z-50 border-t border-[#EAE6DF] bg-white px-3 py-2 md:hidden">
           <div className="mx-auto flex max-w-md items-center justify-around">
             {NAV_ITEMS.map((item) => {
@@ -593,8 +627,8 @@ function SuccessView({
             </h1>
 
             <p className="mt-2 max-w-md text-sm leading-6 text-[#7C746C]">
-              Your request has been created. Keep your request code
-              so you can check its status later.
+              Your request has been created. Keep your request
+              code so you can check its status later.
             </p>
 
             <div className="mt-6 w-full max-w-sm rounded-2xl bg-[#FFF0D9] p-5">
@@ -641,7 +675,7 @@ function SuccessView({
             </div>
           </div>
 
-          {request.matches && request.matches.length > 0 ? (
+          {request.matches.length > 0 ? (
             <div className="mt-6">
               <div className="flex items-center justify-between">
                 <p className="text-sm font-bold text-[#17202A]">
@@ -654,10 +688,10 @@ function SuccessView({
               </div>
 
               <div className="mt-3 space-y-3">
-                {request.matches.slice(0, 3).map((seller) => (
+                {request.matches.slice(0, 3).map((match) => (
                   <Link
-                    key={seller.id}
-                    href={`/seller/${seller.id}`}
+                    key={match.id}
+                    href={`/seller/${match.business.id}`}
                     className="flex items-center gap-3 rounded-xl border border-[#EAE6DF] p-3 transition hover:border-[#FF5A36]"
                   >
                     <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-[#FFE0D6] text-[#FF5A36]">
@@ -666,16 +700,16 @@ function SuccessView({
 
                     <div className="min-w-0 flex-1">
                       <p className="truncate text-sm font-bold text-[#17202A]">
-                        {seller.name}
+                        {match.business.name}
                       </p>
 
                       <p className="mt-1 flex items-center gap-1 text-xs text-[#8A8178]">
                         <MapPin size={12} />
-                        {seller.area}
+                        {match.business.area}
                       </p>
                     </div>
 
-                    {seller.verified && (
+                    {match.business.verified && (
                       <span className="text-[11px] font-bold text-[#FF5A36]">
                         Verified
                       </span>
@@ -691,7 +725,7 @@ function SuccessView({
               </p>
 
               <p className="mt-1 text-xs leading-5 text-[#8A8178]">
-                Don't worry. You can check your request later for
+                No worries. You can check your request later for
                 updates.
               </p>
             </div>

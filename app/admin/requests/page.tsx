@@ -14,7 +14,12 @@ import {
   MapPin,
 } from "lucide-react";
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useState,
+  type FormEvent,
+} from "react";
 
 type RequestStatus =
   | "NEW"
@@ -66,7 +71,10 @@ const STATUS_OPTIONS: {
   { value: "MATCHED", label: "Matched" },
   { value: "CONTACTED", label: "Contacted" },
   { value: "FULFILLED", label: "Fulfilled" },
-  { value: "UNFULFILLED", label: "Unfulfilled" },
+  {
+    value: "UNFULFILLED",
+    label: "Unfulfilled",
+  },
   { value: "CLOSED", label: "Closed" },
 ];
 
@@ -93,7 +101,9 @@ const NAV_ITEMS = [
   },
 ];
 
-function getStatusClass(status: RequestStatus) {
+function getStatusClass(
+  status: RequestStatus
+) {
   switch (status) {
     case "NEW":
       return "bg-blue-50 text-blue-700 border-blue-200";
@@ -118,20 +128,28 @@ function getStatusClass(status: RequestStatus) {
   }
 }
 
-function getStatusLabel(status: RequestStatus) {
+function getStatusLabel(
+  status: RequestStatus
+) {
   switch (status) {
     case "NEW":
       return "New";
+
     case "MATCHED":
       return "Matched";
+
     case "CONTACTED":
       return "Contacted";
+
     case "FULFILLED":
       return "Fulfilled";
+
     case "UNFULFILLED":
       return "Unfulfilled";
+
     case "CLOSED":
       return "Closed";
+
     default:
       return status;
   }
@@ -145,67 +163,108 @@ function formatDate(date: string) {
 }
 
 export default function AdminRequestsPage() {
-  const [requests, setRequests] = useState<AdminRequest[]>([]);
+  const [requests, setRequests] = useState<
+    AdminRequest[]
+  >([]);
+
   const [search, setSearch] = useState("");
-  const [status, setStatus] = useState<"" | RequestStatus>("");
+
+  const [status, setStatus] = useState<
+    "" | RequestStatus
+  >("");
+
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+
   const [selectedRequest, setSelectedRequest] =
     useState<AdminRequest | null>(null);
-  const [updatingId, setUpdatingId] = useState<string | null>(null);
 
-  async function loadRequests() {
-    try {
-      setLoading(true);
-      setError("");
+  const [updatingId, setUpdatingId] =
+    useState<string | null>(null);
 
-      const params = new URLSearchParams();
+  const loadRequests = useCallback(
+    async (currentSearch: string) => {
+      try {
+        const params = new URLSearchParams();
 
-      if (search.trim()) {
-        params.set("q", search.trim());
+        if (currentSearch.trim()) {
+          params.set(
+            "q",
+            currentSearch.trim()
+          );
+        }
+
+        if (status) {
+          params.set("status", status);
+        }
+
+        const queryString =
+          params.toString();
+
+        const response = await fetch(
+          queryString
+            ? `/api/admin/requests?${queryString}`
+            : "/api/admin/requests",
+          {
+            cache: "no-store",
+          }
+        );
+
+        const data = await response.json();
+
+        if (!response.ok) {
+          throw new Error(
+            data.error ||
+              "Unable to load requests"
+          );
+        }
+
+        setRequests(
+          Array.isArray(data.requests)
+            ? data.requests
+            : []
+        );
+
+        setError("");
+      } catch (err) {
+        setError(
+          err instanceof Error
+            ? err.message
+            : "Unable to load requests"
+        );
+      } finally {
+        setLoading(false);
       }
-
-      if (status) {
-        params.set("status", status);
-      }
-
-      const response = await fetch(
-        `/api/admin/requests?${params.toString()}`,
-        {
-          cache: "no-store",
-        },
-      );
-
-      const data = await response.json();
-
-      if (!response.ok) {
-        throw new Error(data.error || "Unable to load requests");
-      }
-
-      setRequests(data.requests ?? []);
-    } catch (err) {
-      setError(
-        err instanceof Error
-          ? err.message
-          : "Unable to load requests",
-      );
-    } finally {
-      setLoading(false);
-    }
-  }
+    },
+    [status]
+  );
 
   useEffect(() => {
-    loadRequests();
-  }, [status]);
+    void loadRequests(search);
+  }, [loadRequests, search]);
 
-  async function handleSearch(event: React.FormEvent<HTMLFormElement>) {
+  async function handleSearch(
+    event: FormEvent<HTMLFormElement>
+  ) {
     event.preventDefault();
-    await loadRequests();
+
+    setLoading(true);
+    setError("");
+
+    await loadRequests(search);
+  }
+
+  function handleStatusChange(
+    nextStatus: "" | RequestStatus
+  ) {
+    setLoading(true);
+    setError("");
+    setStatus(nextStatus);
   }
 
   async function updateStatus(
     requestId: string,
-    newStatus: RequestStatus,
+    newStatus: RequestStatus
   ) {
     try {
       setUpdatingId(requestId);
@@ -221,33 +280,39 @@ export default function AdminRequestsPage() {
           body: JSON.stringify({
             status: newStatus,
           }),
-        },
+        }
       );
 
       const data = await response.json();
 
       if (!response.ok) {
         throw new Error(
-          data.error || "Unable to update request",
+          data.error ||
+            "Unable to update request"
         );
       }
 
-      const updatedRequest = data.request as AdminRequest;
+      const updatedRequest =
+        data.request as AdminRequest;
 
       setRequests((current) =>
         current.map((item) =>
-          item.id === requestId ? updatedRequest : item,
-        ),
+          item.id === requestId
+            ? updatedRequest
+            : item
+        )
       );
 
       setSelectedRequest((current) =>
-        current?.id === requestId ? updatedRequest : current,
+        current?.id === requestId
+          ? updatedRequest
+          : current
       );
     } catch (err) {
       setError(
         err instanceof Error
           ? err.message
-          : "Unable to update request",
+          : "Unable to update request"
       );
     } finally {
       setUpdatingId(null);
@@ -257,7 +322,6 @@ export default function AdminRequestsPage() {
   return (
     <main className="min-h-screen bg-[#FFF7ED] text-[#17202A]">
       <div className="mx-auto flex min-h-screen w-full max-w-[1500px] flex-col overflow-hidden border-x border-[#FF5A36] bg-[#FFFDFC] shadow-sm lg:my-4 lg:min-h-[calc(100vh-2rem)] lg:rounded-[22px] lg:border">
-        {/* Header */}
         <header className="flex h-16 shrink-0 items-center justify-between border-b border-[#EAE6DF] bg-white px-4 lg:px-6">
           <Link
             href="/admin"
@@ -271,6 +335,7 @@ export default function AdminRequestsPage() {
               <div className="text-base font-black tracking-tight">
                 ReMarket
               </div>
+
               <div className="text-[11px] font-medium text-gray-500">
                 Admin
               </div>
@@ -286,13 +351,14 @@ export default function AdminRequestsPage() {
         </header>
 
         <div className="flex min-h-0 flex-1">
-          {/* Desktop sidebar */}
           <aside className="hidden w-[190px] shrink-0 border-r border-[#EAE6DF] bg-[#FCFAF6] p-3 lg:block">
             <nav className="space-y-1">
               {NAV_ITEMS.map((item) => {
                 const Icon = item.icon;
+
                 const active =
-                  item.href === "/admin/requests";
+                  item.href ===
+                  "/admin/requests";
 
                 return (
                   <Link
@@ -312,7 +378,6 @@ export default function AdminRequestsPage() {
             </nav>
           </aside>
 
-          {/* Main */}
           <section className="min-w-0 flex-1 overflow-y-auto p-4 pb-24 lg:p-6 lg:pb-6">
             <div className="mb-6">
               <div className="flex items-start justify-between gap-4">
@@ -326,7 +391,8 @@ export default function AdminRequestsPage() {
                   </h1>
 
                   <p className="mt-1 text-sm text-gray-500">
-                    Manage buyer requests and their matched businesses.
+                    Manage buyer requests and
+                    their matched businesses.
                   </p>
                 </div>
 
@@ -334,6 +400,7 @@ export default function AdminRequestsPage() {
                   <div className="text-xs font-semibold text-gray-500">
                     Total requests
                   </div>
+
                   <div className="mt-1 text-xl font-black">
                     {requests.length}
                   </div>
@@ -341,22 +408,23 @@ export default function AdminRequestsPage() {
               </div>
             </div>
 
-            {/* Error */}
             {error && (
               <div className="mb-4 flex items-center justify-between gap-3 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
                 <span>{error}</span>
 
                 <button
                   type="button"
-                  onClick={() => setError("")}
+                  onClick={() =>
+                    setError("")
+                  }
                   className="shrink-0"
+                  aria-label="Dismiss error"
                 >
                   <X size={17} />
                 </button>
               </div>
             )}
 
-            {/* Filters */}
             <div className="mb-5 rounded-2xl border border-[#EAE6DF] bg-white p-4">
               <form
                 onSubmit={handleSearch}
@@ -371,7 +439,9 @@ export default function AdminRequestsPage() {
                   <input
                     value={search}
                     onChange={(event) =>
-                      setSearch(event.target.value)
+                      setSearch(
+                        event.target.value
+                      )
                     }
                     placeholder="Search request code, item, contact..."
                     className="w-full rounded-xl border border-[#E8E4DE] bg-[#FFFDFC] py-3 pl-10 pr-3 text-sm outline-none transition focus:border-[#FF5A36]"
@@ -381,35 +451,43 @@ export default function AdminRequestsPage() {
                 <select
                   value={status}
                   onChange={(event) =>
-                    setStatus(
-                      event.target.value as "" | RequestStatus,
+                    handleStatusChange(
+                      event.target
+                        .value as
+                        | ""
+                        | RequestStatus
                     )
                   }
                   className="rounded-xl border border-[#E8E4DE] bg-[#FFFDFC] px-3 py-3 text-sm font-medium outline-none focus:border-[#FF5A36]"
                 >
-                  {STATUS_OPTIONS.map((option) => (
-                    <option
-                      key={option.value}
-                      value={option.value}
-                    >
-                      {option.label}
-                    </option>
-                  ))}
+                  {STATUS_OPTIONS.map(
+                    (option) => (
+                      <option
+                        key={option.value}
+                        value={option.value}
+                      >
+                        {option.label}
+                      </option>
+                    )
+                  )}
                 </select>
 
                 <button
                   type="submit"
-                  className="rounded-xl bg-[#FF5A36] px-5 py-3 text-sm font-bold text-white transition hover:bg-[#e94d2c]"
+                  disabled={loading}
+                  className="rounded-xl bg-[#FF5A36] px-5 py-3 text-sm font-bold text-white transition hover:bg-[#e94d2c] disabled:cursor-not-allowed disabled:opacity-60"
                 >
-                  Search
+                  {loading
+                    ? "Loading..."
+                    : "Search"}
                 </button>
               </form>
             </div>
 
-            {/* Requests */}
             {loading ? (
               <div className="rounded-2xl border border-[#EAE6DF] bg-white p-10 text-center">
                 <div className="mx-auto mb-3 h-7 w-7 animate-spin rounded-full border-2 border-[#FF5A36] border-t-transparent" />
+
                 <p className="text-sm text-gray-500">
                   Loading requests...
                 </p>
@@ -426,7 +504,8 @@ export default function AdminRequestsPage() {
                 </h2>
 
                 <p className="mt-1 text-sm text-gray-500">
-                  Try another search or status filter.
+                  Try another search or status
+                  filter.
                 </p>
               </div>
             ) : (
@@ -445,15 +524,20 @@ export default function AdminRequestsPage() {
 
                           <span
                             className={`rounded-lg border px-2.5 py-1 text-xs font-bold ${getStatusClass(
-                              item.status,
+                              item.status
                             )}`}
                           >
-                            {getStatusLabel(item.status)}
+                            {getStatusLabel(
+                              item.status
+                            )}
                           </span>
 
                           {item.category && (
                             <span className="rounded-lg bg-gray-100 px-2.5 py-1 text-xs font-semibold text-gray-600">
-                              {item.category.name}
+                              {
+                                item.category
+                                  .name
+                              }
                             </span>
                           )}
                         </div>
@@ -469,28 +553,35 @@ export default function AdminRequestsPage() {
                         )}
 
                         <div className="mt-4 flex flex-wrap gap-x-5 gap-y-2 text-xs text-gray-500">
-                          {item.budget !== null && (
+                          {item.budget !==
+                            null && (
                             <span>
                               Budget: ₦
                               {item.budget.toLocaleString()}
                             </span>
                           )}
 
-                          {item.quantity !== null && (
+                          {item.quantity !==
+                            null && (
                             <span>
-                              Quantity: {item.quantity}
+                              Quantity:{" "}
+                              {item.quantity}
                             </span>
                           )}
 
                           {item.locationArea && (
                             <span className="inline-flex items-center gap-1">
                               <MapPin size={13} />
-                              {item.locationArea}
+                              {
+                                item.locationArea
+                              }
                             </span>
                           )}
 
                           <span>
-                            {formatDate(item.createdAt)}
+                            {formatDate(
+                              item.createdAt
+                            )}
                           </span>
                         </div>
                       </div>
@@ -499,7 +590,9 @@ export default function AdminRequestsPage() {
                         <button
                           type="button"
                           onClick={() =>
-                            setSelectedRequest(item)
+                            setSelectedRequest(
+                              item
+                            )
                           }
                           className="rounded-xl border border-[#E8E4DE] px-4 py-2.5 text-sm font-bold text-gray-700 transition hover:bg-[#FFF7ED]"
                         >
@@ -508,50 +601,75 @@ export default function AdminRequestsPage() {
 
                         <select
                           value={item.status}
-                          disabled={updatingId === item.id}
+                          disabled={
+                            updatingId ===
+                            item.id
+                          }
                           onChange={(event) =>
                             updateStatus(
                               item.id,
-                              event.target.value as RequestStatus,
+                              event.target
+                                .value as RequestStatus
                             )
                           }
                           className="rounded-xl border border-[#E8E4DE] bg-white px-3 py-2.5 text-sm font-semibold outline-none focus:border-[#FF5A36]"
                         >
                           {STATUS_OPTIONS.filter(
-                            (option) => option.value !== "",
-                          ).map((option) => (
-                            <option
-                              key={option.value}
-                              value={option.value}
-                            >
-                              {option.label}
-                            </option>
-                          ))}
+                            (option) =>
+                              option.value !==
+                              ""
+                          ).map(
+                            (option) => (
+                              <option
+                                key={
+                                  option.value
+                                }
+                                value={
+                                  option.value
+                                }
+                              >
+                                {option.label}
+                              </option>
+                            )
+                          )}
                         </select>
                       </div>
                     </div>
 
-                    {/* Matches */}
-                    {item.matches.length > 0 && (
+                    {item.matches.length >
+                      0 && (
                       <div className="mt-4 border-t border-[#F0ECE6] pt-4">
                         <div className="mb-2 flex items-center gap-2 text-xs font-bold text-gray-500">
                           <Users size={14} />
-                          {item.matches.length} matched{" "}
-                          {item.matches.length === 1
+
+                          {item.matches.length}{" "}
+                          matched{" "}
+                          {item.matches
+                            .length === 1
                             ? "business"
                             : "businesses"}
                         </div>
 
                         <div className="flex flex-wrap gap-2">
-                          {item.matches.slice(0, 5).map((match) => (
-                            <Link
-                              key={match.id}
-                              href={`/admin/businesses/${match.business.id}`}
-                              className="rounded-xl border border-[#EAE6DF] bg-[#FCFAF6] px-3 py-2 text-xs font-semibold transition hover:border-[#FF5A36]"
-                            >
-                              {match.business.name}
-                            </Link>
-                          ))}
+                          {item.matches
+                            .slice(0, 5)
+                            .map(
+                              (match) => (
+                                <Link
+                                  key={
+                                    match.id
+                                  }
+                                  href={`/admin/businesses/${match.business.id}`}
+                                  className="rounded-xl border border-[#EAE6DF] bg-[#FCFAF6] px-3 py-2 text-xs font-semibold transition hover:border-[#FF5A36]"
+                                >
+                                  {
+                                    match
+                                      .business
+                                      .name
+                                  }
+                                </Link>
+                              )
+                            )}
                         </div>
                       </div>
                     )}
@@ -562,13 +680,14 @@ export default function AdminRequestsPage() {
           </section>
         </div>
 
-        {/* Mobile bottom nav */}
         <nav className="fixed bottom-0 left-0 right-0 z-40 border-t border-[#EAE6DF] bg-white px-2 py-2 lg:hidden">
           <div className="mx-auto flex max-w-[600px] justify-around">
             {NAV_ITEMS.map((item) => {
               const Icon = item.icon;
+
               const active =
-                item.href === "/admin/requests";
+                item.href ===
+                "/admin/requests";
 
               return (
                 <Link
@@ -589,14 +708,15 @@ export default function AdminRequestsPage() {
         </nav>
       </div>
 
-      {/* Request details modal */}
       {selectedRequest && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-4">
           <div className="max-h-[90vh] w-full max-w-2xl overflow-y-auto rounded-3xl bg-white shadow-xl">
             <div className="sticky top-0 flex items-center justify-between border-b border-[#EAE6DF] bg-white px-5 py-4">
               <div>
                 <div className="text-xs font-bold text-[#FF5A36]">
-                  {selectedRequest.requestCode}
+                  {
+                    selectedRequest.requestCode
+                  }
                 </div>
 
                 <h2 className="mt-1 text-lg font-black">
@@ -606,8 +726,13 @@ export default function AdminRequestsPage() {
 
               <button
                 type="button"
-                onClick={() => setSelectedRequest(null)}
+                onClick={() =>
+                  setSelectedRequest(
+                    null
+                  )
+                }
                 className="rounded-xl p-2 text-gray-500 hover:bg-gray-100"
+                aria-label="Close request details"
               >
                 <X size={20} />
               </button>
@@ -632,10 +757,12 @@ export default function AdminRequestsPage() {
 
                   <div
                     className={`mt-2 inline-flex rounded-lg border px-2.5 py-1 text-xs font-bold ${getStatusClass(
-                      selectedRequest.status,
+                      selectedRequest.status
                     )}`}
                   >
-                    {getStatusLabel(selectedRequest.status)}
+                    {getStatusLabel(
+                      selectedRequest.status
+                    )}
                   </div>
                 </div>
 
@@ -646,11 +773,14 @@ export default function AdminRequestsPage() {
 
                   <div className="mt-2 flex items-center gap-2 text-sm font-bold">
                     <Phone size={15} />
-                    {selectedRequest.buyerContact}
+                    {
+                      selectedRequest.buyerContact
+                    }
                   </div>
                 </div>
 
-                {selectedRequest.budget !== null && (
+                {selectedRequest.budget !==
+                  null && (
                   <div className="rounded-xl bg-[#FCFAF6] p-3">
                     <div className="text-xs font-semibold text-gray-400">
                       Budget
@@ -663,14 +793,17 @@ export default function AdminRequestsPage() {
                   </div>
                 )}
 
-                {selectedRequest.quantity !== null && (
+                {selectedRequest.quantity !==
+                  null && (
                   <div className="rounded-xl bg-[#FCFAF6] p-3">
                     <div className="text-xs font-semibold text-gray-400">
                       Quantity
                     </div>
 
                     <div className="mt-2 text-sm font-bold">
-                      {selectedRequest.quantity}
+                      {
+                        selectedRequest.quantity
+                      }
                     </div>
                   </div>
                 )}
@@ -683,7 +816,9 @@ export default function AdminRequestsPage() {
 
                     <div className="mt-2 flex items-center gap-2 text-sm font-bold">
                       <MapPin size={15} />
-                      {selectedRequest.locationArea}
+                      {
+                        selectedRequest.locationArea
+                      }
                     </div>
                   </div>
                 )}
@@ -696,7 +831,9 @@ export default function AdminRequestsPage() {
                   </p>
 
                   <p className="mt-2 rounded-xl bg-[#FCFAF6] p-4 text-sm leading-6 text-gray-700">
-                    {selectedRequest.description}
+                    {
+                      selectedRequest.description
+                    }
                   </p>
                 </div>
               )}
@@ -708,54 +845,78 @@ export default function AdminRequestsPage() {
                   </p>
 
                   <span className="text-xs font-semibold text-gray-400">
-                    {selectedRequest.matches.length}
+                    {
+                      selectedRequest.matches
+                        .length
+                    }
                   </span>
                 </div>
 
-                {selectedRequest.matches.length === 0 ? (
+                {selectedRequest.matches
+                  .length === 0 ? (
                   <div className="mt-2 rounded-xl bg-[#FCFAF6] p-4 text-sm text-gray-500">
-                    No businesses matched this request yet.
+                    No businesses matched
+                    this request yet.
                   </div>
                 ) : (
                   <div className="mt-2 space-y-2">
-                    {selectedRequest.matches.map((match) => (
-                      <div
-                        key={match.id}
-                        className="flex items-center justify-between gap-3 rounded-xl border border-[#EAE6DF] p-3"
-                      >
-                        <div className="min-w-0">
-                          <Link
-                            href={`/admin/businesses/${match.business.id}`}
-                            className="font-bold hover:text-[#FF5A36]"
-                          >
-                            {match.business.name}
-                          </Link>
+                    {selectedRequest.matches.map(
+                      (match) => (
+                        <div
+                          key={match.id}
+                          className="flex items-center justify-between gap-3 rounded-xl border border-[#EAE6DF] p-3"
+                        >
+                          <div className="min-w-0">
+                            <Link
+                              href={`/admin/businesses/${match.business.id}`}
+                              className="font-bold hover:text-[#FF5A36]"
+                            >
+                              {
+                                match.business
+                                  .name
+                              }
+                            </Link>
 
-                          <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-gray-500">
-                            {match.business.area && (
-                              <span>{match.business.area}</span>
-                            )}
+                            <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-gray-500">
+                              {match.business
+                                .area && (
+                                <span>
+                                  {
+                                    match
+                                      .business
+                                      .area
+                                  }
+                                </span>
+                              )}
 
-                            {match.business.verified && (
-                              <span className="inline-flex items-center gap-1 text-green-600">
-                                <CheckCircle2 size={12} />
-                                Verified
-                              </span>
-                            )}
+                              {match.business
+                                .verified && (
+                                <span className="inline-flex items-center gap-1 text-green-600">
+                                  <CheckCircle2
+                                    size={
+                                      12
+                                    }
+                                  />
+                                  Verified
+                                </span>
+                              )}
+                            </div>
+                          </div>
+
+                          <div className="shrink-0 text-right">
+                            <div className="text-sm font-black">
+                              {
+                                match.score
+                              }
+                            </div>
+
+                            <div className="text-[10px] font-semibold text-gray-400">
+                              match score
+                            </div>
                           </div>
                         </div>
-
-                        <div className="shrink-0 text-right">
-                          <div className="text-sm font-black">
-                            {match.score}
-                          </div>
-
-                          <div className="text-[10px] font-semibold text-gray-400">
-                            match score
-                          </div>
-                        </div>
-                      </div>
-                    ))}
+                      )
+                    )}
                   </div>
                 )}
               </div>
@@ -763,7 +924,10 @@ export default function AdminRequestsPage() {
               <div className="border-t border-[#EAE6DF] pt-4">
                 <div className="flex items-center gap-2 text-xs text-gray-400">
                   <Clock3 size={14} />
-                  Created {formatDate(selectedRequest.createdAt)}
+                  Created{" "}
+                  {formatDate(
+                    selectedRequest.createdAt
+                  )}
                 </div>
               </div>
             </div>

@@ -5,18 +5,45 @@ import {
 
 import { prisma } from "@/lib/prisma";
 
-function clean(value: string | null): string {
+/**
+ * ReMarket Near Me search radius.
+ *
+ * This is intentionally isolated here so the radius
+ * can be changed later without changing the UI.
+ */
+const DEFAULT_NEAR_ME_RADIUS_KM = 10;
+
+function getNearMeRadiusKm(): number {
+  const configured =
+    Number(
+      process.env.REMARKET_NEAR_ME_RADIUS_KM
+    );
+
+  if (
+    Number.isFinite(configured) &&
+    configured > 0
+  ) {
+    return configured;
+  }
+
+  return DEFAULT_NEAR_ME_RADIUS_KM;
+}
+
+function clean(
+  value: string | null
+): string {
   return value?.trim() ?? "";
 }
 
 function parseCoordinate(
   value: string | null
 ): number | null {
-  if (!value) {
+  if (!value?.trim()) {
     return null;
   }
 
-  const parsed = Number(value);
+  const parsed =
+    Number(value.trim());
 
   if (!Number.isFinite(parsed)) {
     return null;
@@ -54,24 +81,42 @@ function distanceInKm(
   const earthRadiusKm = 6371;
 
   const latitudeDelta =
-    ((latitude2 - latitude1) * Math.PI) / 180;
+    ((latitude2 - latitude1) *
+      Math.PI) /
+    180;
 
   const longitudeDelta =
-    ((longitude2 - longitude1) * Math.PI) / 180;
+    ((longitude2 - longitude1) *
+      Math.PI) /
+    180;
 
   const latitude1Radians =
-    (latitude1 * Math.PI) / 180;
+    (latitude1 * Math.PI) /
+    180;
 
   const latitude2Radians =
-    (latitude2 * Math.PI) / 180;
+    (latitude2 * Math.PI) /
+    180;
 
   const a =
-    Math.sin(latitudeDelta / 2) *
-      Math.sin(latitudeDelta / 2) +
-    Math.cos(latitude1Radians) *
-      Math.cos(latitude2Radians) *
-      Math.sin(longitudeDelta / 2) *
-      Math.sin(longitudeDelta / 2);
+    Math.sin(
+      latitudeDelta / 2
+    ) *
+      Math.sin(
+        latitudeDelta / 2
+      ) +
+    Math.cos(
+      latitude1Radians
+    ) *
+      Math.cos(
+        latitude2Radians
+      ) *
+      Math.sin(
+        longitudeDelta / 2
+      ) *
+      Math.sin(
+        longitudeDelta / 2
+      );
 
   const c =
     2 *
@@ -86,16 +131,38 @@ function distanceInKm(
 function formatDistance(
   distanceKm: number
 ): number {
-  return Number(distanceKm.toFixed(1));
+  return Number(
+    distanceKm.toFixed(1)
+  );
+}
+
+function serializeLocation(
+  location: {
+    id: string;
+    area: string;
+  } | null
+) {
+  if (!location) {
+    return null;
+  }
+
+  /**
+   * Important:
+   * Exact business coordinates stay server-side.
+   * The client only needs the location identity/name.
+   */
+  return {
+    id: location.id,
+    area: location.area,
+  };
 }
 
 export async function GET(
   request: NextRequest
 ) {
   try {
-    const { searchParams } = new URL(
-      request.url
-    );
+    const { searchParams } =
+      new URL(request.url);
 
     /*
      * -----------------------------------------
@@ -107,28 +174,34 @@ export async function GET(
       searchParams.get("area")
     );
 
-    const latitude = parseCoordinate(
-      searchParams.get("lat")
-    );
+    const latitude =
+      parseCoordinate(
+        searchParams.get("lat")
+      );
 
-    const longitude = parseCoordinate(
-      searchParams.get("lng") ??
-        searchParams.get("long")
-    );
+    const longitude =
+      parseCoordinate(
+        searchParams.get("lng") ??
+          searchParams.get("long")
+      );
 
     const hasValidGps =
       isValidLatitude(latitude) &&
       isValidLongitude(longitude);
 
+    const searchMode = area
+      ? "area"
+      : hasValidGps
+        ? "gps"
+        : "none";
+
     /*
      * -----------------------------------------
      * NO LOCATION PROVIDED
      * -----------------------------------------
-     *
-     * ReMarket should not invent a location.
      */
 
-    if (!area && !hasValidGps) {
+    if (searchMode === "none") {
       return NextResponse.json({
         businesses: [],
         total: 0,
@@ -142,20 +215,19 @@ export async function GET(
      * LOAD ACTIVE BUSINESSES
      * -----------------------------------------
      *
-     * For area searches, Prisma filters
-     * businesses by their location area.
+     * IMPORTANT:
      *
-     * For GPS searches, we load active
-     * businesses and calculate their distance
-     * from the user's coordinates below.
+     * deletedAt must always be null for
+     * normal customer-facing queries.
      */
 
     const baseBusinesses =
       await prisma.business.findMany({
         where: {
           status: "ACTIVE",
+          deletedAt: null,
 
-          ...(area
+          ...(searchMode === "area"
             ? {
                 location: {
                   area: {
@@ -167,18 +239,50 @@ export async function GET(
             : {}),
         },
 
-        include: {
-          location: true,
+        select: {
+          id: true,
+          name: true,
+          ownerName: true,
+          description: true,
+          imageUrl: true,
+          availability: true,
+          verification: true,
+          onboardedAt: true,
 
-          categories: {
-            include: {
-              category: true,
+          location: {
+            select: {
+              id: true,
+              area: true,
+
+              /**
+               * These coordinates are selected only
+               * for server-side GPS calculations.
+               * They are never returned directly.
+               */
+              lat: true,
+              long: true,
             },
           },
 
+          categories: {
+            select: {
+              category: {
+                select: {
+                  id: true,
+                  name: true,
+                },
+              },
+            },
+          },
+
+          /**
+           * Near Me cards only display one product.
+           * Don't load all 30 products unnecessarily.
+           */
           products: {
             where: {
               status: "ACTIVE",
+              deletedAt: null,
             },
 
             select: {
@@ -203,15 +307,25 @@ export async function GET(
                 orderBy: {
                   sortOrder: "asc",
                 },
+
+                take: 1,
               },
             },
 
             orderBy: {
               updatedAt: "desc",
             },
+
+            take: 1,
           },
 
-          socialLinks: true,
+          socialLinks: {
+            select: {
+              id: true,
+              platform: true,
+              handle: true,
+            },
+          },
         },
 
         orderBy: {
@@ -225,7 +339,7 @@ export async function GET(
      * -----------------------------------------
      */
 
-    if (area) {
+    if (searchMode === "area") {
       const formattedBusinesses =
         baseBusinesses.map(
           (business) => ({
@@ -247,7 +361,9 @@ export async function GET(
               "Location not added",
 
             location:
-              business.location,
+              serializeLocation(
+                business.location
+              ),
 
             availability:
               business.availability,
@@ -290,9 +406,8 @@ export async function GET(
      * GPS SEARCH
      * -----------------------------------------
      *
-     * Businesses without valid coordinates
-     * cannot have a real distance calculated,
-     * so they are excluded from GPS results.
+     * Businesses must have valid coordinates
+     * before distance can be calculated.
      */
 
     const businessesWithCoordinates =
@@ -307,28 +422,55 @@ export async function GET(
           )
       );
 
+    const radiusKm =
+      getNearMeRadiusKm();
+
     /*
      * -----------------------------------------
-     * CALCULATE DISTANCES
+     * CALCULATE + FILTER DISTANCES
      * -----------------------------------------
      */
 
     const gpsResults =
       businessesWithCoordinates
         .map((business) => {
-          const businessLatitude =
-            business.location!.lat;
+          const location =
+            business.location;
 
-          const businessLongitude =
-            business.location!.long;
+          if (!location) {
+            return null;
+          }
+
+          if (
+            !isValidLatitude(
+              location.lat
+            ) ||
+            !isValidLongitude(
+              location.long
+            )
+          ) {
+            return null;
+          }
 
           const distanceKm =
             distanceInKm(
               latitude!,
               longitude!,
-              businessLatitude!,
-              businessLongitude!
+              location.lat,
+              location.long
             );
+
+          /**
+           * Proper Near Me behavior:
+           * businesses outside the configured
+           * radius are excluded.
+           */
+          if (
+            distanceKm >
+            radiusKm
+          ) {
+            return null;
+          }
 
           return {
             id: business.id,
@@ -345,10 +487,12 @@ export async function GET(
               business.imageUrl,
 
             area:
-              business.location!.area,
+              location.area,
 
             location:
-              business.location,
+              serializeLocation(
+                location
+              ),
 
             availability:
               business.availability,
@@ -375,6 +519,13 @@ export async function GET(
               ),
           };
         })
+        .filter(
+          (
+            business
+          ): business is NonNullable<
+            typeof business
+          > => business !== null
+        )
         .sort(
           (a, b) =>
             a.distanceKm -
@@ -385,17 +536,6 @@ export async function GET(
      * -----------------------------------------
      * GPS RESPONSE
      * -----------------------------------------
-     *
-     * IMPORTANT:
-     *
-     * Even when gpsResults is empty, this is
-     * still a successful GPS search.
-     *
-     * The frontend can therefore display:
-     *
-     * "No businesses found near you yet"
-     *
-     * instead of treating it as an error.
      */
 
     return NextResponse.json({
@@ -405,10 +545,15 @@ export async function GET(
 
       mode: "gps",
 
+      /**
+       * Do not return the user's exact
+       * coordinates unnecessarily.
+       */
       location: {
-        lat: latitude,
-        lng: longitude,
+        type: "current",
       },
+
+      radiusKm,
     });
   } catch (error) {
     console.error(
@@ -416,22 +561,12 @@ export async function GET(
       error
     );
 
-    /*
-     * -----------------------------------------
-     * SERVER ERROR
-     * -----------------------------------------
-     */
-
     return NextResponse.json(
       {
         businesses: [],
-
         total: 0,
-
         mode: "none",
-
         location: null,
-
         error:
           "Unable to load nearby businesses.",
       },

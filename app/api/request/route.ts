@@ -1,3 +1,4 @@
+import { Prisma } from "@prisma/client";
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { findMatches, parseQuery } from "@/lib/matching";
@@ -24,12 +25,6 @@ function optionalInt(value: unknown): number | null {
   return Math.floor(number);
 }
 
-/*
- * Generate a short human-friendly request code.
- *
- * Example:
- * RM-7K4P
- */
 function generateRequestCode(): string {
   const characters = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
 
@@ -46,9 +41,6 @@ function generateRequestCode(): string {
   return code;
 }
 
-/*
- * Make sure the generated code is actually unique.
- */
 async function createUniqueRequestCode(): Promise<string> {
   for (let attempt = 0; attempt < 10; attempt++) {
     const requestCode = generateRequestCode();
@@ -70,25 +62,59 @@ async function createUniqueRequestCode(): Promise<string> {
   throw new Error("Unable to generate request code");
 }
 
-/*
- * Convert a database request into the shape
- * expected by the ReMarket UI.
- */
-function formatRequest(request: any) {
+const requestInclude = {
+  category: true,
+
+  matches: {
+    where: {
+      business: {
+        status: "ACTIVE",
+        deletedAt: null,
+      },
+    },
+
+    orderBy: {
+      score: "desc",
+    },
+
+    include: {
+      business: {
+        select: {
+          id: true,
+          name: true,
+          verification: true,
+
+          location: {
+            select: {
+              area: true,
+            },
+          },
+        },
+      },
+    },
+  },
+} satisfies Prisma.BuyerRequestInclude;
+
+type RequestWithDetails =
+  Prisma.BuyerRequestGetPayload<{
+    include: typeof requestInclude;
+  }>;
+
+function formatRequest(request: RequestWithDetails) {
   return {
     id: request.id,
     requestCode: request.requestCode,
-
     query: request.query,
 
-    category:
-      request.category?.name ?? null,
+    category: request.category?.name ?? null,
 
     budget: request.budget,
     locationArea: request.locationArea,
     quantity: request.quantity,
     description: request.description,
     imageUrl: request.imageUrl,
+
+    buyerContact: request.buyerContact,
 
     status: request.status,
 
@@ -97,40 +123,31 @@ function formatRequest(request: any) {
         ? request.createdAt.toISOString()
         : request.createdAt,
 
-    matches: (request.matches ?? []).map(
-      (match: any) => ({
-        id: match.id,
-        score: match.score,
+    matches: request.matches.map((match) => ({
+      id: match.id,
+      score: match.score,
 
-        business: {
-          id: match.business.id,
-          name: match.business.name,
-          verification:
-            match.business.verification,
-
-          location:
-            match.business.location
-              ? {
-                  area:
-                    match.business.location.area,
-                }
-              : null,
-        },
-      })
-    ),
+      business: {
+        id: match.business.id,
+        name: match.business.name,
+        area:
+          match.business.location?.area ??
+          "Location not specified",
+        verified:
+          match.business.verification === "VERIFIED",
+      },
+    })),
   };
 }
 
 /*
  * GET
  *
- * Retrieve requests using either:
+ * /api/request?code=RM-7K4P
  *
- * /api/requests?code=RM-7K4P
+ * or
  *
- * or:
- *
- * /api/requests?contact=08012345678
+ * /api/request?contact=08012345678
  */
 export async function GET(
   request: NextRequest
@@ -171,31 +188,7 @@ export async function GET(
               buyerContact: contact,
             },
 
-        include: {
-          category: true,
-
-          matches: {
-            orderBy: {
-              score: "desc",
-            },
-
-            include: {
-              business: {
-                select: {
-                  id: true,
-                  name: true,
-                  verification: true,
-
-                  location: {
-                    select: {
-                      area: true,
-                    },
-                  },
-                },
-              },
-            },
-          },
-        },
+        include: requestInclude,
 
         orderBy: {
           createdAt: "desc",
@@ -232,8 +225,8 @@ export async function GET(
 /*
  * POST
  *
- * Creates a request without requiring
- * the buyer to create an account.
+ * Creates a buyer request without
+ * requiring an account.
  */
 export async function POST(
   request: NextRequest
@@ -246,15 +239,12 @@ export async function POST(
     const locationArea = clean(
       body.locationArea
     );
-
     const buyerContact = clean(
       body.buyerContact
     );
-
     const description = clean(
       body.description
     );
-
     const imageUrl = clean(
       body.imageUrl
     );
@@ -267,9 +257,6 @@ export async function POST(
       body.quantity
     );
 
-    /*
-     * Required fields
-     */
     if (!query) {
       return NextResponse.json(
         {
@@ -324,9 +311,6 @@ export async function POST(
       );
     }
 
-    /*
-     * Find category.
-     */
     let categoryId: string | null = null;
 
     if (category) {
@@ -348,24 +332,15 @@ export async function POST(
         categoryRecord?.id ?? null;
     }
 
-    /*
-     * Generate request code.
-     */
     const requestCode =
       await createUniqueRequestCode();
 
-    /*
-     * Create the request.
-     */
     const buyerRequest =
       await prisma.buyerRequest.create({
         data: {
           requestCode,
-
           query,
-
           categoryId,
-
           budget,
 
           locationArea:
@@ -386,48 +361,90 @@ export async function POST(
       });
 
     /*
-     * Find matching sellers.
-     *
-     * If matching fails, the request itself
-     * still remains safely stored.
+     * Existing matching architecture is preserved.
+     * We only validate the returned businesses before
+     * creating Match records.
      */
     try {
       const parsedQuery = parseQuery(
-        query,
-        locationArea || undefined
-      );
+          query,
+      locationArea || undefined,
+      budget ?? undefined,
+     category || undefined
+          );
+      
 
       const matches =
         await findMatches(parsedQuery);
 
-      const validMatches = matches
-        .filter(
-          (match) =>
-            match?.business?.id &&
-            Number.isFinite(match.score)
-        )
-        .map((match) => ({
-          requestId: buyerRequest.id,
-          businessId: match.business.id,
-          score: Math.round(match.score),
-          addedManually: false,
-        }));
+      const candidateBusinessIds = [
+        ...new Set(
+          matches
+            .map((match) => match.business?.id)
+            .filter(
+              (id): id is string =>
+                typeof id === "string" &&
+                id.length > 0
+            )
+        ),
+      ];
 
-      if (validMatches.length > 0) {
-        await prisma.match.createMany({
-          data: validMatches,
-          skipDuplicates: true,
-        });
+      if (candidateBusinessIds.length > 0) {
+        const activeBusinesses =
+          await prisma.business.findMany({
+            where: {
+              id: {
+                in: candidateBusinessIds,
+              },
 
-        await prisma.buyerRequest.update({
-          where: {
-            id: buyerRequest.id,
-          },
+              status: "ACTIVE",
+              deletedAt: null,
+            },
 
-          data: {
-            status: "MATCHED",
-          },
-        });
+            select: {
+              id: true,
+            },
+          });
+
+        const activeBusinessIds =
+          new Set(
+            activeBusinesses.map(
+              (business) => business.id
+            )
+          );
+
+        const validMatches = matches
+          .filter(
+            (match) =>
+              match?.business?.id &&
+              activeBusinessIds.has(
+                match.business.id
+              ) &&
+              Number.isFinite(match.score)
+          )
+          .map((match) => ({
+            requestId: buyerRequest.id,
+            businessId: match.business.id,
+            score: Math.round(match.score),
+            addedManually: false,
+          }));
+
+        if (validMatches.length > 0) {
+          await prisma.match.createMany({
+            data: validMatches,
+            skipDuplicates: true,
+          });
+
+          await prisma.buyerRequest.update({
+            where: {
+              id: buyerRequest.id,
+            },
+
+            data: {
+              status: "MATCHED",
+            },
+          });
+        }
       }
     } catch (matchingError) {
       console.error(
@@ -436,41 +453,13 @@ export async function POST(
       );
     }
 
-    /*
-     * Load the final request with
-     * its matches and category.
-     */
     const result =
       await prisma.buyerRequest.findUnique({
         where: {
           id: buyerRequest.id,
         },
 
-        include: {
-          category: true,
-
-          matches: {
-            orderBy: {
-              score: "desc",
-            },
-
-            include: {
-              business: {
-                select: {
-                  id: true,
-                  name: true,
-                  verification: true,
-
-                  location: {
-                    select: {
-                      area: true,
-                    },
-                  },
-                },
-              },
-            },
-          },
-        },
+        include: requestInclude,
       });
 
     if (!result) {

@@ -1,25 +1,61 @@
-import {
-  NextRequest,
-  NextResponse,
-} from "next/server";
-
-import { prisma } from "@/lib/prisma";
-import { requireAdmin } from "@/lib/admin-auth";
-
+import { NextRequest, NextResponse } from "next/server";
 import {
   Availability,
   BusinessStatus,
 } from "@prisma/client";
 
+import { prisma } from "@/lib/prisma";
+import { requireAdmin } from "@/lib/admin-auth";
+
+type RouteContext = {
+  params: Promise<{
+    id: string;
+    productId: string;
+  }>;
+};
+
+function cleanString(value: unknown): string {
+  return typeof value === "string"
+    ? value.trim()
+    : "";
+}
+
+function nullableString(
+  value: unknown
+): string | null {
+  const cleaned =
+    cleanString(value);
+
+  return cleaned || null;
+}
+
+function parseOptionalInt(
+  value: unknown
+): number | null | undefined {
+  if (
+    value === undefined ||
+    value === null ||
+    value === ""
+  ) {
+    return null;
+  }
+
+  const parsed = Number(value);
+
+  if (!Number.isInteger(parsed)) {
+    return undefined;
+  }
+
+  return parsed;
+}
+
 function isAvailability(
   value: unknown
 ): value is Availability {
   return (
-    value === Availability.AVAILABLE ||
-    value ===
-      Availability.ASK_SELLER ||
-    value ===
-      Availability.UNAVAILABLE
+    value === "AVAILABLE" ||
+    value === "ASK_SELLER" ||
+    value === "UNAVAILABLE"
   );
 }
 
@@ -27,99 +63,127 @@ function isBusinessStatus(
   value: unknown
 ): value is BusinessStatus {
   return (
-    value === BusinessStatus.ACTIVE ||
-    value === BusinessStatus.INACTIVE ||
-    value === BusinessStatus.PENDING
+    value === "ACTIVE" ||
+    value === "INACTIVE" ||
+    value === "PENDING"
   );
-}
-
-function parseOptionalInt(
-  value: unknown
-): number | null {
-  if (
-    value === null ||
-    value === undefined ||
-    value === ""
-  ) {
-    return null;
-  }
-
-  const parsed =
-    Number(value);
-
-  if (
-    !Number.isFinite(parsed)
-  ) {
-    return null;
-  }
-
-  return Math.floor(parsed);
 }
 
 function parseKeywords(
   value: unknown
-): string[] {
+): string[] | null {
   if (!Array.isArray(value)) {
-    return [];
+    return null;
   }
 
-  return value
-    .filter(
-      (item): item is string =>
-        typeof item ===
-        "string"
+  return Array.from(
+    new Set(
+      value
+        .filter(
+          (
+            item
+          ): item is string =>
+            typeof item ===
+            "string"
+        )
+        .map(
+          (item) =>
+            item.trim()
+        )
+        .filter(Boolean)
     )
-    .map((item) =>
-      item.trim()
+  );
+}
+
+function parseImages(
+  value: unknown
+): string[] | null {
+  if (!Array.isArray(value)) {
+    return null;
+  }
+
+  return Array.from(
+    new Set(
+      value
+        .filter(
+          (
+            item
+          ): item is string =>
+            typeof item ===
+            "string"
+        )
+        .map(
+          (item) =>
+            item.trim()
+        )
+        .filter(Boolean)
     )
-    .filter(Boolean);
+  );
+}
+
+async function getProduct(
+  businessId: string,
+  productId: string
+) {
+  return prisma.product.findFirst({
+    where: {
+      id: productId,
+      businessId,
+    },
+    include: {
+      business: {
+        select: {
+          id: true,
+          name: true,
+        },
+      },
+
+      category: true,
+
+      images: {
+        orderBy: {
+          sortOrder: "asc",
+        },
+      },
+    },
+  });
 }
 
 export async function GET(
-  request: NextRequest,
-  {
-    params,
-  }: {
-    params: Promise<{
-      id: string;
-      productId: string;
-    }>;
-  }
+  _request: NextRequest,
+  context: RouteContext
 ) {
+  const auth = await requireAdmin();
+
+  if (!auth.authorized) {
+    return auth.response;
+  }
+
+  const {
+    id: businessId,
+    productId,
+  } = await context.params;
+
+  if (
+    !businessId ||
+    !productId
+  ) {
+    return NextResponse.json(
+      {
+        error:
+          "Business ID and product ID are required.",
+      },
+      {
+        status: 400,
+      }
+    );
+  }
+
   try {
-    await requireAdmin();
-
-    const {
-      id: businessId,
-      productId,
-    } = await params;
-
     const product =
-      await prisma.product.findFirst(
-        {
-          where: {
-            id: productId,
-            businessId,
-          },
-
-          include: {
-            business: true,
-            category: true,
-
-            images: {
-              orderBy: [
-                {
-                  sortOrder:
-                    "asc",
-                },
-                {
-                  createdAt:
-                    "asc",
-                },
-              ],
-            },
-          },
-        }
+      await getProduct(
+        businessId,
+        productId
       );
 
     if (!product) {
@@ -157,23 +221,35 @@ export async function GET(
 
 export async function PATCH(
   request: NextRequest,
-  {
-    params,
-  }: {
-    params: Promise<{
-      id: string;
-      productId: string;
-    }>;
-  }
+  context: RouteContext
 ) {
+  const auth = await requireAdmin();
+
+  if (!auth.authorized) {
+    return auth.response;
+  }
+
+  const {
+    id: businessId,
+    productId,
+  } = await context.params;
+
+  if (
+    !businessId ||
+    !productId
+  ) {
+    return NextResponse.json(
+      {
+        error:
+          "Business ID and product ID are required.",
+      },
+      {
+        status: 400,
+      }
+    );
+  }
+
   try {
-    await requireAdmin();
-
-    const {
-      id: businessId,
-      productId,
-    } = await params;
-
     const existing =
       await prisma.product.findFirst(
         {
@@ -181,20 +257,19 @@ export async function PATCH(
             id: productId,
             businessId,
           },
-
-          include: {
-            images: {
-              orderBy: [
-                {
-                  sortOrder:
-                    "asc",
-                },
-                {
-                  createdAt:
-                    "asc",
-                },
-              ],
-            },
+          select: {
+            id: true,
+            name: true,
+            description: true,
+            categoryId: true,
+            price: true,
+            priceMin: true,
+            priceMax: true,
+            availability: true,
+            keywords: true,
+            imageUrl: true,
+            status: true,
+            deletedAt: true,
           },
         }
       );
@@ -211,8 +286,27 @@ export async function PATCH(
       );
     }
 
-    const body =
+    const body: unknown =
       await request.json();
+
+    if (
+      !body ||
+      typeof body !== "object" ||
+      Array.isArray(body)
+    ) {
+      return NextResponse.json(
+        {
+          error:
+            "Invalid request body.",
+        },
+        {
+          status: 400,
+        }
+      );
+    }
+
+    const payload =
+      body as Record<string, unknown>;
 
     const data: {
       name?: string;
@@ -222,20 +316,19 @@ export async function PATCH(
       priceMin?: number | null;
       priceMax?: number | null;
       availability?: Availability;
-      status?: BusinessStatus;
       keywords?: string[];
       imageUrl?: string | null;
+      status?: BusinessStatus;
+      deletedAt?: Date | null;
     } = {};
 
-    if (
-      body.name !==
-      undefined
-    ) {
-      if (
-        typeof body.name !==
-        "string" ||
-        !body.name.trim()
-      ) {
+    if ("name" in payload) {
+      const name =
+        cleanString(
+          payload.name
+        );
+
+      if (!name) {
         return NextResponse.json(
           {
             error:
@@ -247,32 +340,21 @@ export async function PATCH(
         );
       }
 
-      data.name =
-        body.name.trim();
+      data.name = name;
     }
 
-    if (
-      body.description !==
-      undefined
-    ) {
+    if ("description" in payload) {
       data.description =
-        typeof body.description ===
-        "string"
-          ? body.description.trim() ||
-            null
-          : null;
+        nullableString(
+          payload.description
+        );
     }
 
-    if (
-      body.categoryId !==
-      undefined
-    ) {
+    if ("categoryId" in payload) {
       const categoryId =
-        typeof body.categoryId ===
-          "string" &&
-        body.categoryId.trim()
-          ? body.categoryId.trim()
-          : null;
+        nullableString(
+          payload.categoryId
+        );
 
       if (categoryId) {
         const category =
@@ -281,6 +363,9 @@ export async function PATCH(
               where: {
                 id: categoryId,
               },
+              select: {
+                id: true,
+              },
             }
           );
 
@@ -288,7 +373,7 @@ export async function PATCH(
           return NextResponse.json(
             {
               error:
-                "Category not found.",
+                "Selected category does not exist.",
             },
             {
               status: 400,
@@ -301,97 +386,87 @@ export async function PATCH(
         categoryId;
     }
 
+    const price =
+      parseOptionalInt(
+        payload.price
+      );
+
     if (
-      body.price !==
-      undefined
+      price === undefined
     ) {
+      return NextResponse.json(
+        {
+          error:
+            "Price must be a valid integer.",
+        },
+        {
+          status: 400,
+        }
+      );
+    }
+
+    if ("price" in payload) {
       data.price =
-        parseOptionalInt(
-          body.price
-        );
+        price;
     }
 
+    const priceMin =
+      parseOptionalInt(
+        payload.priceMin
+      );
+
     if (
-      body.priceMin !==
-      undefined
+      priceMin === undefined
     ) {
+      return NextResponse.json(
+        {
+          error:
+            "Minimum price must be a valid integer.",
+        },
+        {
+          status: 400,
+        }
+      );
+    }
+
+    if ("priceMin" in payload) {
       data.priceMin =
-        parseOptionalInt(
-          body.priceMin
-        );
+        priceMin;
     }
+
+    const priceMax =
+      parseOptionalInt(
+        payload.priceMax
+      );
 
     if (
-      body.priceMax !==
-      undefined
+      priceMax === undefined
     ) {
-      data.priceMax =
-        parseOptionalInt(
-          body.priceMax
-        );
+      return NextResponse.json(
+        {
+          error:
+            "Maximum price must be a valid integer.",
+        },
+        {
+          status: 400,
+        }
+      );
     }
 
-    const finalPrice =
-      data.price !== undefined
-        ? data.price
-        : existing.price;
+    if ("priceMax" in payload) {
+      data.priceMax =
+        priceMax;
+    }
 
     const finalPriceMin =
-      data.priceMin !==
-      undefined
-        ? data.priceMin
+      "priceMin" in payload
+        ? priceMin
         : existing.priceMin;
 
     const finalPriceMax =
-      data.priceMax !==
-      undefined
-        ? data.priceMax
+      "priceMax" in payload
+        ? priceMax
         : existing.priceMax;
-
-    if (
-      finalPrice !== null &&
-      finalPrice < 0
-    ) {
-      return NextResponse.json(
-        {
-          error:
-            "Price cannot be negative.",
-        },
-        {
-          status: 400,
-        }
-      );
-    }
-
-    if (
-      finalPriceMin !== null &&
-      finalPriceMin < 0
-    ) {
-      return NextResponse.json(
-        {
-          error:
-            "Minimum price cannot be negative.",
-        },
-        {
-          status: 400,
-        }
-      );
-    }
-
-    if (
-      finalPriceMax !== null &&
-      finalPriceMax < 0
-    ) {
-      return NextResponse.json(
-        {
-          error:
-            "Maximum price cannot be negative.",
-        },
-        {
-          status: 400,
-        }
-      );
-    }
 
     if (
       finalPriceMin !== null &&
@@ -402,7 +477,7 @@ export async function PATCH(
       return NextResponse.json(
         {
           error:
-            "Minimum price cannot exceed maximum price.",
+            "Minimum price cannot be greater than maximum price.",
         },
         {
           status: 400,
@@ -411,18 +486,18 @@ export async function PATCH(
     }
 
     if (
-      body.availability !==
-      undefined
+      "availability" in
+      payload
     ) {
       if (
         !isAvailability(
-          body.availability
+          payload.availability
         )
       ) {
         return NextResponse.json(
           {
             error:
-              "Invalid availability.",
+              "Invalid availability value.",
           },
           {
             status: 400,
@@ -431,16 +506,13 @@ export async function PATCH(
       }
 
       data.availability =
-        body.availability;
+        payload.availability;
     }
 
-    if (
-      body.status !==
-      undefined
-    ) {
+    if ("status" in payload) {
       if (
         !isBusinessStatus(
-          body.status
+          payload.status
         )
       ) {
         return NextResponse.json(
@@ -455,87 +527,75 @@ export async function PATCH(
       }
 
       data.status =
-        body.status;
+        payload.status;
     }
 
-    if (
-      body.keywords !==
-      undefined
-    ) {
-      data.keywords =
+    if ("keywords" in payload) {
+      const keywords =
         parseKeywords(
-          body.keywords
+          payload.keywords
         );
-    }
 
-    const hasImagesField =
-      Object.prototype.hasOwnProperty.call(
-        body,
-        "images"
-      );
+      if (!keywords) {
+        return NextResponse.json(
+          {
+            error:
+              "Keywords must be an array.",
+          },
+          {
+            status: 400,
+          }
+        );
+      }
 
-    if (
-      hasImagesField &&
-      !Array.isArray(
-        body.images
-      )
-    ) {
-      return NextResponse.json(
-        {
-          error:
-            "Images must be an array.",
-        },
-        {
-          status: 400,
-        }
-      );
+      data.keywords =
+        keywords;
     }
 
     let imageUrls:
       | string[]
-      | null = [];
+      | null = null;
 
-    if (hasImagesField) {
+    if ("images" in payload) {
       imageUrls =
-        body.images
-          .filter(
-            (
-              value: any
-            ): value is string =>
-              typeof value ===
-              "string"
-          )
-          .map((value: string) =>
-            value.trim()
-          )
-          .filter(Boolean);
-          if(imageUrls !== null){
-             data.imageUrl =imageUrls[0] ?? null;
-          }
+        parseImages(
+          payload.images
+        );
 
-     
-        
+      if (!imageUrls) {
+        return NextResponse.json(
+          {
+            error:
+              "Images must be an array.",
+          },
+          {
+            status: 400,
+          }
+        );
+      }
+
+      data.imageUrl =
+        imageUrls[0] ??
+        null;
     }
 
-    const product =
+    const updated =
       await prisma.$transaction(
         async (tx) => {
-          const updated =
+          const product =
             await tx.product.update(
               {
                 where: {
                   id: productId,
                 },
-
                 data,
-
-                include: {
-                  category: true,
-                },
               }
             );
 
-          if (hasImagesField) {
+          if (
+            imageUrls !==
+            null
+          ) {
             await tx.productImage.deleteMany(
               {
                 where: {
@@ -545,8 +605,8 @@ export async function PATCH(
             );
 
             if (
-              imageUrls &&
-              imageUrls.length > 0
+              imageUrls.length >
+              0
             ) {
               await tx.productImage.createMany(
                 {
@@ -558,6 +618,8 @@ export async function PATCH(
                       ) => ({
                         productId,
                         url,
+                        publicId:
+                          null,
                         sortOrder:
                           index,
                       })
@@ -567,39 +629,20 @@ export async function PATCH(
             }
           }
 
-          return updated;
+          return product;
         }
       );
 
-    const completeProduct =
-      await prisma.product.findUnique(
-        {
-          where: {
-            id: product.id,
-          },
-
-          include: {
-            category: true,
-
-            images: {
-              orderBy: [
-                {
-                  sortOrder:
-                    "asc",
-                },
-                {
-                  createdAt:
-                    "asc",
-                },
-              ],
-            },
-          },
-        }
+    const refreshed =
+      await getProduct(
+        businessId,
+        updated.id
       );
 
     return NextResponse.json({
+      success: true,
       product:
-        completeProduct,
+        refreshed,
     });
   } catch (error) {
     console.error(
@@ -620,24 +663,36 @@ export async function PATCH(
 }
 
 export async function DELETE(
-  request: NextRequest,
-  {
-    params,
-  }: {
-    params: Promise<{
-      id: string;
-      productId: string;
-    }>;
-  }
+  _request: NextRequest,
+  context: RouteContext
 ) {
+  const auth = await requireAdmin();
+
+  if (!auth.authorized) {
+    return auth.response;
+  }
+
+  const {
+    id: businessId,
+    productId,
+  } = await context.params;
+
+  if (
+    !businessId ||
+    !productId
+  ) {
+    return NextResponse.json(
+      {
+        error:
+          "Business ID and product ID are required.",
+      },
+      {
+        status: 400,
+      }
+    );
+  }
+
   try {
-    await requireAdmin();
-
-    const {
-      id: businessId,
-      productId,
-    } = await params;
-
     const existing =
       await prisma.product.findFirst(
         {
@@ -645,9 +700,9 @@ export async function DELETE(
             id: productId,
             businessId,
           },
-
           select: {
             id: true,
+            deletedAt: true,
           },
         }
       );
@@ -664,10 +719,20 @@ export async function DELETE(
       );
     }
 
-    await prisma.product.delete(
+    if (existing.deletedAt) {
+      return NextResponse.json({
+        success: true,
+      });
+    }
+
+    await prisma.product.update(
       {
         where: {
           id: productId,
+        },
+        data: {
+          deletedAt:
+            new Date(),
         },
       }
     );

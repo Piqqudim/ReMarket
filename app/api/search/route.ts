@@ -24,12 +24,12 @@ function clean(
 function parseOptionalInt(
   value: string | null
 ): number | null {
-  if (!value) {
+  if (!value?.trim()) {
     return null;
   }
 
   const number =
-    Number(value);
+    Number(value.trim());
 
   if (
     !Number.isFinite(number)
@@ -85,23 +85,27 @@ export async function GET(
       request.url
     );
 
+    /*
+     * -----------------------------------------
+     * READ SEARCH PARAMETERS
+     * -----------------------------------------
+     */
+
     const q = clean(
       searchParams.get("q")
     );
 
-    const category =
-      clean(
-        searchParams.get(
-          "category"
-        )
-      );
+    const category = clean(
+      searchParams.get(
+        "category"
+      )
+    );
 
-    const location =
-      clean(
-        searchParams.get(
-          "location"
-        )
-      );
+    const location = clean(
+      searchParams.get(
+        "location"
+      )
+    );
 
     const minPrice =
       parseOptionalInt(
@@ -136,6 +140,12 @@ export async function GET(
         )
       );
 
+    /*
+     * -----------------------------------------
+     * NORMALIZE PRICE FILTERS
+     * -----------------------------------------
+     */
+
     const validMinPrice =
       minPrice !== null &&
       minPrice >= 0
@@ -148,11 +158,45 @@ export async function GET(
         ? maxPrice
         : null;
 
+    /*
+     * If both are supplied in the wrong
+     * order, swap them so the filter remains
+     * useful instead of silently returning
+     * unexpected results.
+     */
+
+    const normalizedMinPrice =
+      validMinPrice !== null &&
+      validMaxPrice !== null &&
+      validMinPrice >
+        validMaxPrice
+        ? validMaxPrice
+        : validMinPrice;
+
+    const normalizedMaxPrice =
+      validMinPrice !== null &&
+      validMaxPrice !== null &&
+      validMinPrice >
+        validMaxPrice
+        ? validMinPrice
+        : validMaxPrice;
+
+    /*
+     * -----------------------------------------
+     * LOAD ACTIVE BUSINESSES
+     * -----------------------------------------
+     *
+     * Soft-deleted businesses and products
+     * must never appear in normal ReMarket
+     * search results.
+     */
+
     const businesses =
       await prisma.business.findMany(
         {
           where: {
             status: "ACTIVE",
+            deletedAt: null,
 
             ...(category
               ? {
@@ -206,9 +250,14 @@ export async function GET(
               },
             },
 
+            /*
+             * Only active + non-deleted
+             * products are visible.
+             */
             products: {
               where: {
                 status: "ACTIVE",
+                deletedAt: null,
               },
 
               select: {
@@ -259,13 +308,27 @@ export async function GET(
         }
       );
 
+    /*
+     * -----------------------------------------
+     * PRICE FILTER
+     * -----------------------------------------
+     *
+     * A business qualifies when at least one
+     * active product overlaps the requested
+     * price range.
+     *
+     * Products without any price remain
+     * searchable because the seller may still
+     * require the customer to ask for a price.
+     */
+
     const priceFiltered =
       businesses.filter(
         (business) => {
           if (
-            validMinPrice ===
+            normalizedMinPrice ===
               null &&
-            validMaxPrice ===
+            normalizedMaxPrice ===
               null
           ) {
             return true;
@@ -281,6 +344,11 @@ export async function GET(
                 product.priceMax ??
                 product.price;
 
+              /*
+               * No price information:
+               * preserve the existing ReMarket
+               * "Ask seller" behavior.
+               */
               if (
                 productMin ===
                   null &&
@@ -290,24 +358,32 @@ export async function GET(
                 return true;
               }
 
+              /*
+               * Requested minimum means the
+               * product's maximum must reach it.
+               */
               if (
-                validMinPrice !==
+                normalizedMinPrice !==
                   null &&
                 productMax !==
                   null &&
                 productMax <
-                  validMinPrice
+                  normalizedMinPrice
               ) {
                 return false;
               }
 
+              /*
+               * Requested maximum means the
+               * product's minimum must not exceed it.
+               */
               if (
-                validMaxPrice !==
+                normalizedMaxPrice !==
                   null &&
                 productMin !==
                   null &&
                 productMin >
-                  validMaxPrice
+                  normalizedMaxPrice
               ) {
                 return false;
               }
@@ -317,6 +393,12 @@ export async function GET(
           );
         }
       );
+
+    /*
+     * -----------------------------------------
+     * TEXT / MATCHING SEARCH
+     * -----------------------------------------
+     */
 
     let results =
       priceFiltered;
@@ -339,7 +421,10 @@ export async function GET(
           number
         >();
 
-      for (const match of matches) {
+      for (
+        const match of
+          matches
+      ) {
         scoreMap.set(
           match.business.id,
           match.score
@@ -373,6 +458,12 @@ export async function GET(
             }
           );
     }
+
+    /*
+     * -----------------------------------------
+     * FORMAT RESPONSE
+     * -----------------------------------------
+     */
 
     const formattedBusinesses =
       results.map(
@@ -416,8 +507,7 @@ export async function GET(
             VerificationStatus.VERIFIED,
 
           category:
-            business
-              .categories?.[0]
+            business.categories?.[0]
               ?.category?.name ??
             "Other",
 
@@ -487,6 +577,15 @@ export async function GET(
         })
       );
 
+    /*
+     * -----------------------------------------
+     * SEARCH ANALYTICS
+     * -----------------------------------------
+     *
+     * Analytics failure must never make
+     * a valid search fail.
+     */
+
     try {
       await prisma.searchEvent.create(
         {
@@ -500,6 +599,12 @@ export async function GET(
             location:
               location || null,
 
+            minPrice:
+              normalizedMinPrice,
+
+            maxPrice:
+              normalizedMaxPrice,
+
             resultCount:
               formattedBusinesses.length,
           },
@@ -511,6 +616,12 @@ export async function GET(
         eventError
       );
     }
+
+    /*
+     * -----------------------------------------
+     * RESPONSE
+     * -----------------------------------------
+     */
 
     return NextResponse.json({
       businesses:
@@ -529,10 +640,10 @@ export async function GET(
           location || null,
 
         minPrice:
-          validMinPrice,
+          normalizedMinPrice,
 
         maxPrice:
-          validMaxPrice,
+          normalizedMaxPrice,
 
         availability:
           availability || null,

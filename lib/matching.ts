@@ -1,11 +1,10 @@
-// lib/matching.ts
-
 import { prisma } from "@/lib/prisma";
 
 export type ParsedQuery = {
   keywords: string[];
   location?: string;
   budget?: number;
+  category?: string;
 };
 
 const GENERIC_WORDS = new Set([
@@ -37,7 +36,9 @@ const GENERIC_WORDS = new Set([
   "the",
 ]);
 
-function normalize(value: string | null | undefined): string {
+function normalize(
+  value: string | null | undefined
+): string {
   return (value ?? "")
     .toLowerCase()
     .normalize("NFKC")
@@ -55,7 +56,8 @@ function tokenize(value: string): string[] {
 export function parseQuery(
   raw: string,
   explicitLocation?: string,
-  explicitBudget?: number
+  explicitBudget?: number,
+  explicitCategory?: string
 ): ParsedQuery {
   let text = normalize(raw);
 
@@ -64,6 +66,10 @@ export function parseQuery(
     : undefined;
 
   let budget = explicitBudget;
+
+  const category = explicitCategory
+    ? normalize(explicitCategory)
+    : undefined;
 
   const locationMatch = text.match(
     /\b(?:near|in|at|around)\s+([a-z0-9\s-]+?)(?=\s+(?:under|below|less|budget|for)\b|$)/
@@ -74,21 +80,34 @@ export function parseQuery(
   }
 
   if (locationMatch) {
-    text = text.replace(locationMatch[0], " ");
+    text = text.replace(
+      locationMatch[0],
+      " "
+    );
   }
 
   const budgetMatch = text.match(
     /\b(?:under|below|less than|budget(?: of)?|up to|upto|max(?:imum)?)\s*₦?\s*([\d,]+)/
   );
 
-  if (budget == null && budgetMatch?.[1]) {
-    budget = Number(
+  if (
+    budget == null &&
+    budgetMatch?.[1]
+  ) {
+    const parsedBudget = Number(
       budgetMatch[1].replace(/,/g, "")
     );
+
+    if (Number.isFinite(parsedBudget)) {
+      budget = parsedBudget;
+    }
   }
 
   if (budgetMatch) {
-    text = text.replace(budgetMatch[0], " ");
+    text = text.replace(
+      budgetMatch[0],
+      " "
+    );
   }
 
   const keywords = tokenize(text);
@@ -97,6 +116,7 @@ export function parseQuery(
     keywords,
     location,
     budget,
+    category,
   };
 }
 
@@ -119,13 +139,19 @@ function containsPhrase(
   phrase: string
 ): boolean {
   const normalizedText = normalize(text);
-  const normalizedPhrase = normalize(phrase);
+  const normalizedPhrase =
+    normalize(phrase);
 
-  if (!normalizedText || !normalizedPhrase) {
+  if (
+    !normalizedText ||
+    !normalizedPhrase
+  ) {
     return false;
   }
 
-  return normalizedText.includes(normalizedPhrase);
+  return normalizedText.includes(
+    normalizedPhrase
+  );
 }
 
 export async function findMatches(
@@ -135,6 +161,7 @@ export async function findMatches(
     await prisma.business.findMany({
       where: {
         status: "ACTIVE",
+        deletedAt: null,
       },
 
       include: {
@@ -149,10 +176,9 @@ export async function findMatches(
         products: {
           where: {
             status: "ACTIVE",
+            deletedAt: null,
           },
         },
-
-        socialLinks: true,
       },
     });
 
@@ -170,6 +196,9 @@ export async function findMatches(
   const queryPhrase =
     searchKeywords.join(" ");
 
+  const normalizedCategory =
+    normalize(parsed.category);
+
   const matches = businesses
     .map((business) => {
       const businessName =
@@ -181,7 +210,9 @@ export async function findMatches(
       const categoryNames =
         business.categories
           .map((item) =>
-            normalize(item.category.name)
+            normalize(
+              item.category.name
+            )
           )
           .join(" ");
 
@@ -221,7 +252,7 @@ export async function findMatches(
       let keywordHits = 0;
 
       /*
-       * Strong business-name match
+       * Strong business-name phrase match.
        */
       if (
         queryPhrase &&
@@ -235,10 +266,12 @@ export async function findMatches(
       }
 
       /*
-       * Match individual search terms
+       * Match individual query terms.
        */
       for (const keyword of searchKeywords) {
-        if (!keyword) continue;
+        if (!keyword) {
+          continue;
+        }
 
         if (
           containsWord(
@@ -289,7 +322,9 @@ export async function findMatches(
         }
 
         if (
-          searchableText.includes(keyword)
+          searchableText.includes(
+            keyword
+          )
         ) {
           score += 10;
           keywordHits += 1;
@@ -297,8 +332,9 @@ export async function findMatches(
       }
 
       /*
-       * If there was a search query
-       * and nothing matched, remove it.
+       * If a query exists but nothing
+       * matched, this business is not
+       * considered a match.
        */
       if (
         searchKeywords.length > 0 &&
@@ -308,7 +344,24 @@ export async function findMatches(
       }
 
       /*
-       * Location bonus
+       * Explicit category bonus.
+       *
+       * Example:
+       * category = Fashion
+       */
+      if (normalizedCategory) {
+        if (
+          containsWord(
+            categoryNames,
+            normalizedCategory
+          )
+        ) {
+          score += 30;
+        }
+      }
+
+      /*
+       * Location bonus.
        */
       if (parsed.location) {
         const businessArea =
@@ -328,7 +381,11 @@ export async function findMatches(
       }
 
       /*
-       * Budget bonus
+       * Budget bonus.
+       *
+       * A product is affordable when the
+       * buyer's budget falls within the
+       * product's known price/range.
        */
       if (parsed.budget != null) {
         const hasAffordableProduct =
@@ -373,7 +430,7 @@ export async function findMatches(
       }
 
       /*
-       * Availability
+       * Business availability bonus.
        */
       if (
         business.availability ===
@@ -388,7 +445,7 @@ export async function findMatches(
       }
 
       /*
-       * Verification
+       * Verification bonus.
        */
       if (
         business.verification ===

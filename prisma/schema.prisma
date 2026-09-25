@@ -48,6 +48,12 @@ enum VerificationStatus {
   VERIFIED
 }
 
+enum DeletionRequestStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
 model User {
   id        String   @id @default(cuid())
   email     String   @unique
@@ -55,6 +61,18 @@ model User {
   role      Role     @default(BUYER)
   name      String?
   createdAt DateTime @default(now())
+
+  // Seller-owned business
+  business Business?
+
+  // Products soft-deleted by this user
+  deletedProducts Product[] @relation("ProductDeletedBy")
+
+  // Business deletion requests created by this user
+  deletionRequestsRequested BusinessDeletionRequest[] @relation("BusinessDeletionRequestedBy")
+
+  // Business deletion requests reviewed by this user
+  deletionRequestsReviewed BusinessDeletionRequest[] @relation("BusinessDeletionReviewedBy")
 }
 
 model Location {
@@ -66,11 +84,12 @@ model Location {
 }
 
 model BusinessSocialLink {
-  id         String         @id @default(cuid())
+  id         String   @id @default(cuid())
   businessId String
-  business   Business       @relation(fields: [businessId], references: [id], onDelete: Cascade)
-  platform   SocialPlatform
-  handle     String
+  business   Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+
+  platform SocialPlatform
+  handle   String
 
   @@index([businessId])
 }
@@ -86,16 +105,25 @@ model Category {
 model BusinessCategory {
   businessId String
   categoryId String
-  business   Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
-  category   Category @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+
+  business Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+
+  category Category @relation(fields: [categoryId], references: [id], onDelete: Cascade)
 
   @@id([businessId, categoryId])
 }
 
 model Business {
-  id          String  @id @default(cuid())
-  name        String
-  ownerName   String?
+  id        String  @id @default(cuid())
+  name      String
+  ownerName String?
+
+  // Seller account that owns this business.
+  // Optional so existing manually onboarded businesses
+  // can continue to exist without a seller account.
+  ownerId String? @unique
+  owner   User?   @relation(fields: [ownerId], references: [id], onDelete: SetNull)
+
   description String?
 
   locationId String?
@@ -106,32 +134,40 @@ model Business {
 
   availability Availability @default(ASK_SELLER)
 
-  phone String?
+  phone  String?
+  status BusinessStatus @default(ACTIVE)
 
-  status       BusinessStatus     @default(ACTIVE)
   verification VerificationStatus @default(UNVERIFIED)
 
-  notes String?
-
+  notes    String?
   imageUrl String?
 
   onboardedAt DateTime @default(now())
+  updatedAt   DateTime @default(now()) @updatedAt
 
-  categories    BusinessCategory[]
-  products      Product[]
-  socialLinks   BusinessSocialLink[]
-  matches       Match[]
-  contactEvents ContactEvent[]
+  // Soft delete.
+  // null = active
+  // timestamp = soft-deleted
+  deletedAt DateTime?
+
+  categories       BusinessCategory[]
+  products         Product[]
+  socialLinks      BusinessSocialLink[]
+  matches          Match[]
+  contactEvents    ContactEvent[]
+  deletionRequests BusinessDeletionRequest[]
 
   @@index([status])
   @@index([verification])
+  @@index([deletedAt])
+  @@index([status, deletedAt])
 }
 
 model Product {
-  id String @id @default(cuid())
-
+  id         String @id @default(cuid())
   businessId String
-  business   Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+
+  business Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
 
   name        String
   description String?
@@ -148,28 +184,37 @@ model Product {
   keywords String[] @default([])
 
   imageUrl String?
+  images   ProductImage[]
 
-  images ProductImage[]
-
+  // Existing product status preserved.
   status BusinessStatus @default(ACTIVE)
+
+  // Soft delete.
+  // null = active
+  // timestamp = soft-deleted
+  deletedAt DateTime?
+
+  // Audit: which authenticated user deleted this product?
+  deletedById String?
+  deletedBy   User?   @relation("ProductDeletedBy", fields: [deletedById], references: [id], onDelete: SetNull)
 
   updatedAt DateTime @updatedAt
 
   @@index([businessId])
+  @@index([businessId, deletedAt])
   @@index([categoryId])
+  @@index([deletedAt])
 }
 
 model ProductImage {
-  id String @id @default(cuid())
-
+  id        String @id @default(cuid())
   productId String
-  product   Product @relation(fields: [productId], references: [id], onDelete: Cascade)
 
-  url      String
-  publicId String?
+  product Product @relation(fields: [productId], references: [id], onDelete: Cascade)
 
-  sortOrder Int @default(0)
-
+  url       String
+  publicId  String?
+  sortOrder Int      @default(0)
   createdAt DateTime @default(now())
 
   @@index([productId])
@@ -177,56 +222,69 @@ model ProductImage {
 }
 
 model BuyerRequest {
-  id           String        @id @default(cuid())
-  query        String
-  requestCode  String        @unique
-  categoryId   String?
-  category     Category?     @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+  id          String @id @default(cuid())
+  query       String
+  requestCode String @unique
+
+  categoryId String?
+  category   Category? @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+
   budget       Int?
   locationArea String?
   quantity     Int?
   description  String?
   imageUrl     String?
-  status       RequestStatus @default(NEW)
+
+  status RequestStatus @default(NEW)
+
   buyerContact String?
-  createdAt    DateTime      @default(now())
-  matches      Match[]
+
+  createdAt DateTime @default(now())
+
+  matches Match[]
 
   @@index([status])
   @@index([buyerContact])
 }
 
 model Match {
-  id            String       @id @default(cuid())
-  requestId     String
-  request       BuyerRequest @relation(fields: [requestId], references: [id], onDelete: Cascade)
-  businessId    String
-  business      Business     @relation(fields: [businessId], references: [id], onDelete: Cascade)
-  score         Int          @default(0)
-  addedManually Boolean      @default(false)
-  createdAt     DateTime     @default(now())
+  id String @id @default(cuid())
+
+  requestId String
+  request   BuyerRequest @relation(fields: [requestId], references: [id], onDelete: Cascade)
+
+  businessId String
+  business   Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+
+  score         Int      @default(0)
+  addedManually Boolean  @default(false)
+  createdAt     DateTime @default(now())
 
   @@unique([requestId, businessId])
 }
 
 model ContactEvent {
-  id         String         @id @default(cuid())
+  id         String @id @default(cuid())
   businessId String
-  business   Business       @relation(fields: [businessId], references: [id])
-  requestId  String?
-  platform   SocialPlatform
-  createdAt  DateTime       @default(now())
+
+  business Business @relation(fields: [businessId], references: [id])
+
+  requestId String?
+  platform  SocialPlatform
+
+  createdAt DateTime @default(now())
 }
 
 model SearchEvent {
-  id          String   @id @default(cuid())
+  id          String  @id @default(cuid())
   query       String
   category    String?
-  resultCount Int      @default(0)
+  resultCount Int     @default(0)
   location    String?
   minPrice    Int?
   maxPrice    Int?
-  createdAt   DateTime @default(now())
+
+  createdAt DateTime @default(now())
 }
 
 model AdminNote {
@@ -235,4 +293,33 @@ model AdminNote {
   requestId  String?
   content    String
   createdAt  DateTime @default(now())
+}
+
+model BusinessDeletionRequest {
+  id String @id @default(cuid())
+
+  businessId String
+  business   Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+
+  // Seller/admin account that submitted the request.
+  requestedById String
+  requestedBy   User   @relation("BusinessDeletionRequestedBy", fields: [requestedById], references: [id], onDelete: Cascade)
+
+  reason String?
+
+  status DeletionRequestStatus @default(PENDING)
+
+  // Admin who reviewed the request.
+  reviewedById String?
+  reviewedBy   User?   @relation("BusinessDeletionReviewedBy", fields: [reviewedById], references: [id], onDelete: SetNull)
+
+  reviewedAt DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([businessId, status])
+  @@index([requestedById])
+  @@index([reviewedById])
+  @@index([status])
 }

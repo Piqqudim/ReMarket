@@ -32,6 +32,7 @@ type Request = {
   locationArea?: string | null;
   quantity?: number | null;
   description?: string | null;
+  imageUrl?: string | null;
   status: string;
   buyerContact: string;
   createdAt: string;
@@ -64,14 +65,19 @@ function statusClass(status: string) {
   switch (status) {
     case "MATCHED":
       return "bg-[#DDF5EA] text-[#237A50]";
+
     case "CONTACTED":
       return "bg-[#E7E5FF] text-[#5149A5]";
+
     case "FULFILLED":
       return "bg-[#DDF5EA] text-[#237A50]";
+
     case "UNFULFILLED":
       return "bg-[#FFE0D6] text-[#9F2D18]";
+
     case "CLOSED":
       return "bg-[#E4E9EF] text-[#5E6872]";
+
     default:
       return "bg-[#FFF0C7] text-[#8A6710]";
   }
@@ -84,13 +90,17 @@ export default function MyRequestsPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
-  async function findRequests(event: React.SubmitEvent<HTMLFormElement>) {
+  async function findRequests(
+    event: React.SubmitEvent<HTMLFormElement>
+  ) {
     event.preventDefault();
 
     const value = lookup.trim();
 
     if (!value) {
-      setError("Enter your request code or WhatsApp number.");
+      setError(
+        "Enter your request code or WhatsApp number."
+      );
       return;
     }
 
@@ -99,23 +109,35 @@ export default function MyRequestsPage() {
     setSearched(false);
 
     try {
-      const isCode = /^RM-[A-Z0-9]{4}$/i.test(value);
+      const isCode =
+        /^RM-[A-Z0-9]{4}$/i.test(value);
 
       const params = new URLSearchParams(
-        isCode ? { code: value.toUpperCase() } : { contact: value }
+        isCode
+          ? {
+              code: value.toUpperCase(),
+            }
+          : {
+              contact: value,
+            }
       );
 
-      const response = await fetch(`/api/request?${params.toString()}`);
+      const response = await fetch(
+        `/api/request?${params.toString()}`
+      );
 
       const data = await response.json();
 
       if (!response.ok) {
         throw new Error(
-          data.error || "Unable to find your requests."
+          data.error ||
+            "Unable to find your requests."
         );
       }
 
-      const result = Array.isArray(data.requests)
+      const result = Array.isArray(
+        data.requests
+      )
         ? data.requests
         : data.request
           ? [data.request]
@@ -137,7 +159,6 @@ export default function MyRequestsPage() {
   return (
     <div className="min-h-screen bg-[#FFF7ED] px-3 py-3 sm:px-5 sm:py-5">
       <div className="mx-auto flex min-h-[calc(100vh-24px)] max-w-[1500px] flex-col overflow-hidden rounded-[22px] border border-[#FF5A36] bg-[#FFFDFC] shadow-sm sm:min-h-[calc(100vh-40px)]">
-        {/* Header */}
         <header className="flex h-[66px] shrink-0 items-center justify-between border-b border-[#EAE6DF] bg-white px-4 sm:px-6">
           <Link
             href="/"
@@ -177,7 +198,6 @@ export default function MyRequestsPage() {
         </header>
 
         <div className="flex flex-1">
-          {/* Sidebar */}
           <aside className="hidden w-[190px] shrink-0 border-r border-[#EAE6DF] bg-[#FCFAF6] p-3 md:block">
             <div className="space-y-1">
               {NAV_ITEMS.map((item) => {
@@ -207,12 +227,12 @@ export default function MyRequestsPage() {
               </p>
 
               <p className="mt-1 text-xs leading-5 text-[#7C5B4E]">
-                Use your request code or contact number anytime.
+                Use your request code or contact number
+                anytime.
               </p>
             </div>
           </aside>
 
-          {/* Main */}
           <main className="min-w-0 flex-1 overflow-y-auto pb-24 md:pb-8">
             <div className="mx-auto w-full max-w-5xl px-4 py-6 sm:px-6 lg:px-8">
               <Link
@@ -229,11 +249,11 @@ export default function MyRequestsPage() {
                 </h1>
 
                 <p className="mt-2 text-sm leading-6 text-[#7C746C]">
-                  Track requests you've submitted without creating an account.
+                  Track requests you have submitted without
+                  creating an account.
                 </p>
               </div>
 
-              {/* Lookup */}
               <form
                 onSubmit={findRequests}
                 className="rounded-2xl border border-[#EAE6DF] bg-white p-4 shadow-sm sm:p-5"
@@ -255,7 +275,9 @@ export default function MyRequestsPage() {
                     <input
                       id="request-lookup"
                       value={lookup}
-                      onChange={(e) => setLookup(e.target.value)}
+                      onChange={(e) =>
+                        setLookup(e.target.value)
+                      }
                       placeholder="e.g. RM-7K4P or 08012345678"
                       className="w-full rounded-xl border border-[#E8E4DE] bg-[#FCFAF6] py-3 pl-11 pr-4 text-sm outline-none placeholder:text-[#A69D94] focus:border-[#FF5A36] focus:bg-white"
                     />
@@ -266,12 +288,15 @@ export default function MyRequestsPage() {
                     disabled={loading}
                     className="rounded-xl bg-[#FF5A36] px-6 py-3 text-sm font-bold text-white transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60"
                   >
-                    {loading ? "Searching..." : "Find my requests"}
+                    {loading
+                      ? "Searching..."
+                      : "Find my requests"}
                   </button>
                 </div>
 
                 <p className="mt-2 text-xs text-[#8A8178]">
-                  Your request code is shown after you submit a request.
+                  Your request code is shown after you
+                  submit a request.
                 </p>
 
                 {error && (
@@ -281,22 +306,24 @@ export default function MyRequestsPage() {
                 )}
               </form>
 
-              {/* Results */}
-              {searched && requests.length === 0 && !error && (
-                <div className="mt-6 rounded-2xl border border-[#EAE6DF] bg-white p-8 text-center shadow-sm">
-                  <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-full bg-[#FFF0D9] text-[#FF5A36]">
-                    <ClipboardList size={25} />
+              {searched &&
+                requests.length === 0 &&
+                !error && (
+                  <div className="mt-6 rounded-2xl border border-[#EAE6DF] bg-white p-8 text-center shadow-sm">
+                    <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-full bg-[#FFF0D9] text-[#FF5A36]">
+                      <ClipboardList size={25} />
+                    </div>
+
+                    <h2 className="mt-4 font-black text-[#17202A]">
+                      No requests found
+                    </h2>
+
+                    <p className="mx-auto mt-2 max-w-md text-sm leading-6 text-[#8A8178]">
+                      Check your request code or WhatsApp
+                      number and try again.
+                    </p>
                   </div>
-
-                  <h2 className="mt-4 font-black text-[#17202A]">
-                    No requests found
-                  </h2>
-
-                  <p className="mx-auto mt-2 max-w-md text-sm leading-6 text-[#8A8178]">
-                    Check your request code or WhatsApp number and try again.
-                  </p>
-                </div>
-              )}
+                )}
 
               {requests.length > 0 && (
                 <div className="mt-6 space-y-5">
@@ -325,7 +352,6 @@ export default function MyRequestsPage() {
           </main>
         </div>
 
-        {/* Mobile navigation */}
         <nav className="fixed bottom-0 left-0 right-0 z-50 border-t border-[#EAE6DF] bg-white px-3 py-2 md:hidden">
           <div className="mx-auto flex max-w-md items-center justify-around">
             {NAV_ITEMS.map((item) => {
@@ -354,7 +380,11 @@ export default function MyRequestsPage() {
   );
 }
 
-function RequestCard({ request }: { request: Request }) {
+function RequestCard({
+  request,
+}: {
+  request: Request;
+}) {
   return (
     <article className="rounded-2xl border border-[#EAE6DF] bg-white p-4 shadow-sm sm:p-5">
       <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
@@ -395,7 +425,8 @@ function RequestCard({ request }: { request: Request }) {
 
             {request.budget != null && (
               <span>
-                Budget: ₦{request.budget.toLocaleString()}
+                Budget: ₦
+                {request.budget.toLocaleString()}
               </span>
             )}
           </div>
@@ -404,7 +435,9 @@ function RequestCard({ request }: { request: Request }) {
         <div className="flex items-center gap-2 text-xs text-[#8A8178]">
           <Clock3 size={14} />
 
-          {new Date(request.createdAt).toLocaleDateString()}
+          {new Date(
+            request.createdAt
+          ).toLocaleDateString()}
         </div>
       </div>
 
@@ -476,7 +509,9 @@ function RequestCard({ request }: { request: Request }) {
 
       <div className="mt-4 flex items-center gap-2 text-xs text-[#8A8178]">
         <Phone size={13} />
-        <span>Contact: {request.buyerContact}</span>
+        <span>
+          Contact: {request.buyerContact}
+        </span>
       </div>
     </article>
   );

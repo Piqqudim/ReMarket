@@ -1,10 +1,10 @@
 "use client";
 
 import {
+  type ReactNode,
   useEffect,
   useState,
-  Suspense
-
+  Suspense,
 } from "react";
 
 import {
@@ -26,10 +26,15 @@ import {
   Layers3,
   Briefcase,
   MoreHorizontal,
+  ChevronLeft,
+  ChevronRight,
 } from "lucide-react";
 
 import Link from "next/link";
-import { useRouter, useSearchParams } from "next/navigation";
+import {
+  useRouter,
+  useSearchParams,
+} from "next/navigation";
 
 import {
   getSavedBusinesses,
@@ -77,8 +82,6 @@ type Business = {
   location: {
     id: string;
     area: string;
-    lat: number | null;
-    long: number | null;
   } | null;
 
   area?: string;
@@ -98,6 +101,8 @@ type Business = {
 
   products: Product[];
 
+  productCount?: number;
+
   socialLinks: {
     id: string;
     platform: string;
@@ -105,43 +110,7 @@ type Business = {
   }[];
 };
 
-const CATEGORY_STYLE: Record<
-  string,
-  {
-    bg: string;
-    icon: React.ReactNode;
-  }
-> = {
-  Fashion: {
-    bg: "#FFE0D6",
-    icon: <Shirt className="h-5 w-5" />,
-  },
-
-  Electronics: {
-    bg: "#DDF5EA",
-    icon: <Plug className="h-5 w-5" />,
-  },
-
-  Food: {
-    bg: "#FFF0C7",
-    icon: <Utensils className="h-5 w-5" />,
-  },
-
-  Beauty: {
-    bg: "#E7E5FF",
-    icon: <Sparkles className="h-5 w-5" />,
-  },
-
-  Textiles: {
-    bg: "#F9DCE8",
-    icon: <Layers3 className="h-5 w-5" />,
-  },
-
-  Services: {
-    bg: "#E4E9EF",
-    icon: <Briefcase className="h-5 w-5" />,
-  },
-};
+const PAGE_SIZE = 12;
 
 const NAV_ITEMS = [
   {
@@ -165,6 +134,56 @@ const NAV_ITEMS = [
     icon: Heart,
   },
 ];
+
+const CATEGORY_STYLE: Record<
+  string,
+  {
+    bg: string;
+    icon: ReactNode;
+  }
+> = {
+  Fashion: {
+    bg: "#FFE0D6",
+    icon: (
+      <Shirt className="h-5 w-5" />
+    ),
+  },
+
+  Electronics: {
+    bg: "#DDF5EA",
+    icon: (
+      <Plug className="h-5 w-5" />
+    ),
+  },
+
+  Food: {
+    bg: "#FFF0C7",
+    icon: (
+      <Utensils className="h-5 w-5" />
+    ),
+  },
+
+  Beauty: {
+    bg: "#E7E5FF",
+    icon: (
+      <Sparkles className="h-5 w-5" />
+    ),
+  },
+
+  Textiles: {
+    bg: "#F9DCE8",
+    icon: (
+      <Layers3 className="h-5 w-5" />
+    ),
+  },
+
+  Services: {
+    bg: "#E4E9EF",
+    icon: (
+      <Briefcase className="h-5 w-5" />
+    ),
+  },
+};
 
 function getCategoryStyle(
   name: string
@@ -199,24 +218,20 @@ function formatPrice(
   }
 
   if (
-    product.priceMin !==
-      null &&
-    product.priceMax !==
-      null
+    product.priceMin !== null &&
+    product.priceMax !== null
   ) {
     return `₦${product.priceMin.toLocaleString()} - ₦${product.priceMax.toLocaleString()}`;
   }
 
   if (
-    product.priceMin !==
-    null
+    product.priceMin !== null
   ) {
     return `From ₦${product.priceMin.toLocaleString()}`;
   }
 
   if (
-    product.priceMax !==
-    null
+    product.priceMax !== null
   ) {
     return `Up to ₦${product.priceMax.toLocaleString()}`;
   }
@@ -224,21 +239,104 @@ function formatPrice(
   return "Ask seller";
 }
 
- function ShopPageContent() {
-  const router =
-    useRouter();
+function parsePage(
+  value: string | null
+): number {
+  const parsed = Number(value);
 
+  if (
+    !Number.isInteger(parsed) ||
+    parsed < 1
+  ) {
+    return 1;
+  }
+
+  return parsed;
+}
+
+function buildShopUrl(
+  query: string,
+  category: string,
+  page: number
+): string {
+  const params =
+    new URLSearchParams();
+
+  const trimmedQuery =
+    query.trim();
+
+  if (trimmedQuery) {
+    params.set(
+      "q",
+      trimmedQuery
+    );
+  }
+
+  if (category) {
+    params.set(
+      "category",
+      category
+    );
+  }
+
+  if (page > 1) {
+    params.set(
+      "page",
+      String(page)
+    );
+  }
+
+  const queryString =
+    params.toString();
+
+  return queryString
+    ? `/shop?${queryString}`
+    : "/shop";
+}
+
+function ShopPageContent() {
   const searchParams =
     useSearchParams();
 
   const initialQuery =
-    searchParams.get("q") ??
-    "";
+    searchParams.get("q") ?? "";
 
   const initialCategory =
-    searchParams.get(
-      "category"
-    ) ?? "";
+    searchParams.get("category") ?? "";
+
+  const initialPage = parsePage(
+    searchParams.get("page")
+  );
+
+  /*
+   * The key forces the form state to be
+   * recreated when URL search parameters
+   * change, avoiding the old setState-in-effect
+   * pattern.
+   */
+  return (
+    <ShopPageView
+      key={`${initialQuery}|${initialCategory}|${initialPage}`}
+      initialQuery={initialQuery}
+      initialCategory={initialCategory}
+      initialPage={initialPage}
+    />
+  );
+}
+
+type ShopPageViewProps = {
+  initialQuery: string;
+  initialCategory: string;
+  initialPage: number;
+};
+
+function ShopPageView({
+  initialQuery,
+  initialCategory,
+  initialPage,
+}: ShopPageViewProps) {
+  const router =
+    useRouter();
 
   const [query, setQuery] =
     useState(initialQuery);
@@ -247,14 +345,10 @@ function formatPrice(
     useState(initialCategory);
 
   const [categories, setCategories] =
-    useState<Category[]>(
-      []
-    );
+    useState<Category[]>([]);
 
   const [businesses, setBusinesses] =
-    useState<Business[]>(
-      []
-    );
+    useState<Business[]>([]);
 
   const [loading, setLoading] =
     useState(true);
@@ -262,18 +356,25 @@ function formatPrice(
   const [error, setError] =
     useState("");
 
+  const [totalBusinesses, setTotalBusinesses] =
+    useState(0);
+
+  const [totalPages, setTotalPages] =
+    useState(1);
+
+  const [currentPage, setCurrentPage] =
+    useState(initialPage);
+
   const [savedBusinesses, setSavedBusinesses] =
     useState<
       Record<string, boolean>
     >({});
 
-  useEffect(() => {
-    setQuery(initialQuery);
-    setCategory(initialCategory);
-  }, [
-    initialQuery,
-    initialCategory,
-  ]);
+  /*
+   * -----------------------------------------
+   * SAVED BUSINESSES
+   * -----------------------------------------
+   */
 
   useEffect(() => {
     function syncSaved() {
@@ -307,6 +408,12 @@ function formatPrice(
     };
   }, []);
 
+  /*
+   * -----------------------------------------
+   * LOAD CATEGORIES
+   * -----------------------------------------
+   */
+
   useEffect(() => {
     const controller =
       new AbortController();
@@ -317,8 +424,7 @@ function formatPrice(
           await fetch(
             "/api/categories",
             {
-              cache:
-                "no-store",
+              cache: "no-store",
               signal:
                 controller.signal,
             }
@@ -342,7 +448,8 @@ function formatPrice(
         );
       } catch (error) {
         if (
-          error instanceof DOMException &&
+          error instanceof
+            DOMException &&
           error.name ===
             "AbortError"
         ) {
@@ -362,6 +469,15 @@ function formatPrice(
       controller.abort();
     };
   }, []);
+
+  /*
+   * -----------------------------------------
+   * LOAD BUSINESSES
+   * -----------------------------------------
+   *
+   * The API must perform the pagination.
+   * We only request PAGE_SIZE businesses.
+   */
 
   useEffect(() => {
     const controller =
@@ -391,6 +507,16 @@ function formatPrice(
           );
         }
 
+        params.set(
+          "page",
+          String(initialPage)
+        );
+
+        params.set(
+          "pageSize",
+          String(PAGE_SIZE)
+        );
+
         const response =
           await fetch(
             `/api/browse?${params.toString()}`,
@@ -414,16 +540,68 @@ function formatPrice(
           );
         }
 
-        setBusinesses(
+        const nextBusinesses =
           Array.isArray(
-            data.businesses
+            data?.businesses
           )
             ? data.businesses
-            : []
+            : [];
+
+        const nextTotal =
+          Number(data?.total);
+
+        const nextPage =
+          Number(data?.page);
+
+        const nextPageSize =
+          Number(data?.pageSize);
+
+        const calculatedTotalPages =
+          Number(data?.totalPages) ||
+          Math.max(
+            1,
+            Math.ceil(
+              (Number.isFinite(
+                nextTotal
+              )
+                ? nextTotal
+                : nextBusinesses.length) /
+                (Number.isFinite(
+                  nextPageSize
+                ) &&
+                nextPageSize > 0
+                  ? nextPageSize
+                  : PAGE_SIZE)
+            )
+          );
+
+        setBusinesses(
+          nextBusinesses
+        );
+
+        setTotalBusinesses(
+          Number.isFinite(
+            nextTotal
+          )
+            ? nextTotal
+            : nextBusinesses.length
+        );
+
+        setTotalPages(
+          calculatedTotalPages
+        );
+
+        setCurrentPage(
+          Number.isInteger(
+            nextPage
+          ) && nextPage >= 1
+            ? nextPage
+            : initialPage
         );
       } catch (error) {
         if (
-          error instanceof DOMException &&
+          error instanceof
+            DOMException &&
           error.name ===
             "AbortError"
         ) {
@@ -434,6 +612,12 @@ function formatPrice(
           "Shop loading error:",
           error
         );
+
+        setBusinesses([]);
+
+        setTotalBusinesses(0);
+
+        setTotalPages(1);
 
         setError(
           error instanceof Error
@@ -457,71 +641,82 @@ function formatPrice(
   }, [
     initialQuery,
     initialCategory,
+    initialPage,
   ]);
+
+  /*
+   * -----------------------------------------
+   * SEARCH
+   * -----------------------------------------
+   */
 
   function submitSearch(
     event: React.SubmitEvent<HTMLFormElement>
   ) {
     event.preventDefault();
 
-    const params =
-      new URLSearchParams();
-
-    if (query.trim()) {
-      params.set(
-        "q",
-        query.trim()
-      );
-    }
-
-    if (category) {
-      params.set(
-        "category",
-        category
-      );
-    }
-
-    const queryString =
-      params.toString();
-
     router.push(
-      queryString
-        ? `/shop?${queryString}`
-        : "/shop"
+      buildShopUrl(
+        query,
+        category,
+        1
+      )
     );
   }
+
+  /*
+   * -----------------------------------------
+   * CATEGORY
+   * -----------------------------------------
+   */
 
   function selectCategory(
     nextCategory: string
   ) {
-    setCategory(nextCategory);
-
-    const params =
-      new URLSearchParams();
-
-    if (query.trim()) {
-      params.set(
-        "q",
-        query.trim()
-      );
-    }
-
-    if (nextCategory) {
-      params.set(
-        "category",
-        nextCategory
-      );
-    }
-
-    const queryString =
-      params.toString();
+    setCategory(
+      nextCategory
+    );
 
     router.push(
-      queryString
-        ? `/shop?${queryString}`
-        : "/shop"
+      buildShopUrl(
+        query,
+        nextCategory,
+        1
+      )
     );
   }
+
+  /*
+   * -----------------------------------------
+   * PAGINATION
+   * -----------------------------------------
+   */
+
+  function goToPage(
+    page: number
+  ) {
+    if (
+      page < 1 ||
+      page > totalPages ||
+      page === currentPage
+    ) {
+      return;
+    }
+
+    router.push(
+      buildShopUrl(
+        query,
+        category,
+        page
+      )
+    );
+  }
+
+  /*
+   * -----------------------------------------
+   * SAVED
+   * -----------------------------------------
+   */
 
   function toggleSaved(
     business: Business
@@ -534,6 +729,14 @@ function formatPrice(
       removeSavedBusiness(
         business.id
       );
+
+      setSavedBusinesses(
+        (current) => ({
+          ...current,
+          [business.id]: false,
+        })
+      );
+
       return;
     }
 
@@ -560,13 +763,43 @@ function formatPrice(
       imageUrl:
         business.imageUrl,
     });
+
+    setSavedBusinesses(
+      (current) => ({
+        ...current,
+        [business.id]: true,
+      })
+    );
   }
+
+  /*
+   * -----------------------------------------
+   * RESULTS LABEL
+   * -----------------------------------------
+   */
+
+  const resultStart =
+    totalBusinesses === 0
+      ? 0
+      : (currentPage - 1) *
+          PAGE_SIZE +
+        1;
+
+  const resultEnd =
+    totalBusinesses === 0
+      ? 0
+      : Math.min(
+          currentPage *
+            PAGE_SIZE,
+          totalBusinesses
+        );
 
   return (
     <main className="min-h-screen bg-[#FFF7ED]">
       <div className="mx-auto min-h-screen w-full max-w-[1500px] px-3 py-3 sm:px-5 sm:py-5">
         <div className="min-h-[calc(100vh-24px)] overflow-hidden rounded-[18px] border border-[#FF5A36] bg-[#FFFDFC] shadow-sm sm:rounded-[22px] lg:min-h-[calc(100vh-40px)]">
 
+          {/* HEADER */}
           <header className="flex h-[64px] items-center justify-between border-b border-[#EAE6DF] bg-white px-4 sm:px-6 lg:h-[66px]">
             <Link
               href="/"
@@ -647,6 +880,8 @@ function formatPrice(
           </header>
 
           <div className="flex">
+
+            {/* SIDEBAR */}
             <aside className="hidden w-[190px] shrink-0 border-r border-[#EAE6DF] bg-[#FCFAF6] px-3 py-5 lg:block">
               <nav className="space-y-1">
                 {NAV_ITEMS.map(
@@ -709,64 +944,65 @@ function formatPrice(
                   All
                 </button>
 
-                {categories
-                  .slice(0, categories.length)
-                  .map(
-                    (item) => {
-                      const style =
-                        getCategoryStyle(
-                          item.name
-                        );
+                {categories.map(
+                  (item) => {
+                    const style =
+                      getCategoryStyle(
+                        item.name
+                      );
 
-                      const active =
-                        category ===
-                        item.name;
+                    const active =
+                      category ===
+                      item.name;
 
-                      return (
-                        <button
-                          key={
-                            item.id
-                          }
-                          type="button"
-                          onClick={() =>
-                            selectCategory(
-                              item.name
-                            )
-                          }
-                          className={`flex w-full items-center gap-3 rounded-xl px-3 py-2 text-left ${
-                            active
-                              ? "bg-white text-[#9F2D18]"
-                              : "text-gray-700 hover:bg-white"
-                          }`}
+                    return (
+                      <button
+                        key={
+                          item.id
+                        }
+                        type="button"
+                        onClick={() =>
+                          selectCategory(
+                            item.name
+                          )
+                        }
+                        className={`flex w-full items-center gap-3 rounded-xl px-3 py-2 text-left ${
+                          active
+                            ? "bg-white text-[#9F2D18]"
+                            : "text-gray-700 hover:bg-white"
+                        }`}
+                      >
+                        <span
+                          className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full"
+                          style={{
+                            backgroundColor:
+                              style.bg,
+                          }}
                         >
-                          <span
-                            className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full"
-                            style={{
-                              backgroundColor:
-                                style.bg,
-                            }}
-                          >
-                            <span className="scale-[0.65]">
-                              {
-                                style.icon
-                              }
-                            </span>
-                          </span>
-
-                          <span className="truncate text-xs font-medium">
+                          <span className="scale-[0.65]">
                             {
-                              item.name
+                              style.icon
                             }
                           </span>
-                        </button>
-                      );
-                    }
-                  )}
+                        </span>
+
+                        <span className="truncate text-xs font-medium">
+                          {
+                            item.name
+                          }
+                        </span>
+                      </button>
+                    );
+                  }
+                )}
               </div>
             </aside>
 
+            {/* MAIN */}
             <div className="min-w-0 flex-1">
               <div className="px-4 pb-24 pt-4 sm:px-6 sm:pt-6 lg:px-6 lg:pb-8">
+
+                {/* HERO */}
                 <section className="rounded-[18px] bg-[#FF5A36] px-5 py-6 text-white sm:px-7 sm:py-7">
                   <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-white/75">
                     Shop ReMarket
@@ -789,7 +1025,9 @@ function formatPrice(
                     <Search className="ml-3 h-[18px] w-[18px] text-gray-500" />
 
                     <input
-                      value={query}
+                      value={
+                        query
+                      }
                       onChange={(
                         event
                       ) =>
@@ -811,6 +1049,7 @@ function formatPrice(
                   </form>
                 </section>
 
+                {/* RESULTS HEADER */}
                 <section className="mt-5">
                   <div className="flex flex-wrap items-center justify-between gap-3">
                     <div>
@@ -823,17 +1062,30 @@ function formatPrice(
                       <p className="mt-0.5 text-xs text-muted">
                         {loading
                           ? "Loading businesses..."
-                          : `${businesses.length} ${
-                              businesses.length ===
-                              1
-                                ? "business"
-                                : "businesses"
-                            }`}
+                          : totalBusinesses ===
+                              0
+                            ? "0 businesses"
+                            : `Showing ${resultStart}-${resultEnd} of ${totalBusinesses} businesses`}
                       </p>
                     </div>
+
+                    {totalPages >
+                      1 && (
+                      <p className="text-[10px] font-semibold text-gray-400">
+                        Page{" "}
+                        {
+                          currentPage
+                        }{" "}
+                        of{" "}
+                        {
+                          totalPages
+                        }
+                      </p>
+                    )}
                   </div>
                 </section>
 
+                {/* RESULTS */}
                 <section className="mt-4">
                   {error && (
                     <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-xs text-red-700">
@@ -848,6 +1100,10 @@ function formatPrice(
                         2,
                         3,
                         4,
+                        5,
+                        6,
+                        7,
+                        8,
                       ].map(
                         (item) => (
                           <div
@@ -882,224 +1138,309 @@ function formatPrice(
                     !error &&
                     businesses.length >
                       0 && (
-                      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-                        {businesses.map(
-                          (business) => {
-                            const categoryName =
-                              business.categories?.[0]
-                                ?.category?.name ??
-                              "Services";
+                      <>
+                        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+                          {businesses.map(
+                            (
+                              business
+                            ) => {
+                              const categoryName =
+                                business
+                                  .categories?.[0]
+                                  ?.category
+                                  ?.name ??
+                                "Services";
 
-                            const style =
-                              getCategoryStyle(
-                                categoryName
-                              );
+                              const style =
+                                getCategoryStyle(
+                                  categoryName
+                                );
 
-                            const saved =
-                              Boolean(
-                                savedBusinesses[
-                                  business.id
-                                ]
-                              );
+                              const saved =
+                                Boolean(
+                                  savedBusinesses[
+                                    business.id
+                                  ]
+                                );
 
-                            const product =
-                              business.products?.[0] ??
-                              null;
+                              const product =
+                                business
+                                  .products?.[0] ??
+                                null;
 
-                            const productImage =
-                              product
-                                ? getProductImage(
-                                    product
-                                  )
-                                : null;
+                              const productImage =
+                                product
+                                  ? getProductImage(
+                                      product
+                                    )
+                                  : null;
 
-                            return (
-                              <article
-                                key={
-                                  business.id
-                                }
-                                className="overflow-hidden rounded-xl border border-[#E8E4DE] bg-white transition hover:-translate-y-0.5 hover:shadow-md"
-                              >
-                                <Link
-                                  href={`/seller/${business.id}`}
-                                  className="relative flex h-[116px] items-center justify-center overflow-hidden"
-                                  style={{
-                                    backgroundColor:
-                                      style.bg,
-                                  }}
+                              const productCount =
+                                business.productCount ??
+                                business.products
+                                  .length;
+
+                              return (
+                                <article
+                                  key={
+                                    business.id
+                                  }
+                                  className="overflow-hidden rounded-xl border border-[#E8E4DE] bg-white transition hover:-translate-y-0.5 hover:shadow-md"
                                 >
-                                  {business.imageUrl ? (
-                                    <img
-                                      src={
-                                        business.imageUrl
-                                      }
-                                      alt={
-                                        business.name
-                                      }
-                                      className="absolute inset-0 h-full w-full object-cover"
-                                    />
-                                  ) : (
-                                    <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-white/75">
-                                      <Store className="h-7 w-7 text-gray-700" />
-                                    </div>
-                                  )}
-
-                                  <span className="absolute right-3 top-3 rounded-full bg-[#DDF5EA] px-2.5 py-1 text-[9px] font-semibold text-[#137A59]">
-                                    {business.availability ===
-                                    "AVAILABLE"
-                                      ? "Available"
-                                      : "Active"}
-                                  </span>
-                                </Link>
-
-                                <div className="p-3.5">
-                                  <div className="flex items-start justify-between gap-2">
-                                    <div className="min-w-0">
-                                      <Link
-                                        href={`/seller/${business.id}`}
-                                        className="block truncate text-sm font-bold text-[#17202A] hover:text-[#9F2D18]"
-                                      >
-                                        {
-                                          business.name
-                                        }
-                                      </Link>
-
-                                      <p className="mt-1 flex items-center gap-1 text-[10px] text-muted">
-                                        <span>
-                                          {
-                                            categoryName
-                                          }
-                                        </span>
-
-                                        <span>
-                                          ·
-                                        </span>
-
-                                        <span className="flex min-w-0 items-center gap-1 truncate">
-                                          <MapPin className="h-3 w-3 shrink-0" />
-                                          {
-                                            business
-                                              .location
-                                              ?.area ??
-                                            "Local"
-                                          }
-                                        </span>
-                                      </p>
-                                    </div>
-
-                                    <button
-                                      type="button"
-                                      aria-label={
-                                        saved
-                                          ? `Remove ${business.name} from saved businesses`
-                                          : `Save ${business.name}`
-                                      }
-                                      aria-pressed={
-                                        saved
-                                      }
-                                      onClick={(
-                                        event
-                                      ) => {
-                                        event.preventDefault();
-                                        event.stopPropagation();
-
-                                        toggleSaved(
-                                          business
-                                        );
-                                      }}
-                                      className={`shrink-0 ${
-                                        saved
-                                          ? "text-[#9F2D18]"
-                                          : "text-gray-500 hover:text-[#9F2D18]"
-                                      }`}
-                                    >
-                                      <Bookmark
-                                        className="h-4 w-4"
-                                        fill={
-                                          saved
-                                            ? "currentColor"
-                                            : "none"
-                                        }
-                                      />
-                                    </button>
-                                  </div>
-
-                                  <div className="mt-3 flex items-center justify-between">
-                                    <div className="flex items-center gap-1">
-                                      <Package className="h-4 w-4 text-gray-400" />
-
-                                      <span className="text-[10px] font-semibold text-gray-600">
-                                        {
-                                          business.products.length
-                                        }{" "}
-                                        products
-                                      </span>
-                                    </div>
-                                  </div>
-
-                                  {product && (
-                                    <div className="mt-3 border-t border-[#F0ECE6] pt-3">
-                                      <div className="flex items-center gap-2.5">
-                                        {productImage ? (
-                                          <img
-                                            src={
-                                              productImage
-                                            }
-                                            alt={
-                                              product.name
-                                            }
-                                            className="h-10 w-10 rounded-lg object-cover"
-                                          />
-                                        ) : (
-                                          <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-[#FCFAF6] text-gray-400">
-                                            <Package className="h-4 w-4" />
-                                          </div>
-                                        )}
-
-                                        <div className="min-w-0">
-                                          <p className="truncate text-[10px] font-semibold text-gray-600">
-                                            {
-                                              product.name
-                                            }
-                                          </p>
-
-                                          <p className="mt-1 text-[10px] text-gray-400">
-                                            {formatPrice(
-                                              product
-                                            )}
-                                          </p>
-                                        </div>
-                                      </div>
-                                    </div>
-                                  )}
-
                                   <Link
                                     href={`/seller/${business.id}`}
-                                    className="mt-3 flex w-full items-center justify-center gap-2 rounded-lg bg-[#FFF1ED] py-2.5 text-[11px] font-bold text-[#9F2D18]"
+                                    className="relative flex h-[116px] items-center justify-center overflow-hidden"
+                                    style={{
+                                      backgroundColor:
+                                        style.bg,
+                                    }}
                                   >
-                                    Browse
-                                    <ArrowRight className="h-3.5 w-3.5" />
+                                    {business.imageUrl ? (
+                                      <img
+                                        src={
+                                          business.imageUrl
+                                        }
+                                        alt={
+                                          business.name
+                                        }
+                                        className="absolute inset-0 h-full w-full object-cover"
+                                      />
+                                    ) : (
+                                      <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-white/75">
+                                        <Store className="h-7 w-7 text-gray-700" />
+                                      </div>
+                                    )}
+
+                                    <span className="absolute right-3 top-3 rounded-full bg-[#DDF5EA] px-2.5 py-1 text-[9px] font-semibold text-[#137A59]">
+                                      {business.availability ===
+                                      "AVAILABLE"
+                                        ? "Available"
+                                        : "Active"}
+                                    </span>
                                   </Link>
-                                </div>
-                              </article>
-                            );
-                          }
+
+                                  <div className="p-3.5">
+                                    <div className="flex items-start justify-between gap-2">
+                                      <div className="min-w-0">
+                                        <Link
+                                          href={`/seller/${business.id}`}
+                                          className="block truncate text-sm font-bold text-[#17202A] hover:text-[#9F2D18]"
+                                        >
+                                          {
+                                            business.name
+                                          }
+                                        </Link>
+
+                                        <p className="mt-1 flex items-center gap-1 text-[10px] text-muted">
+                                          <span>
+                                            {
+                                              categoryName
+                                            }
+                                          </span>
+
+                                          <span>
+                                            ·
+                                          </span>
+
+                                          <span className="flex min-w-0 items-center gap-1 truncate">
+                                            <MapPin className="h-3 w-3 shrink-0" />
+                                            {
+                                              business
+                                                .location
+                                                ?.area ??
+                                              business.area ??
+                                              "Local"
+                                            }
+                                          </span>
+                                        </p>
+                                      </div>
+
+                                      <button
+                                        type="button"
+                                        aria-label={
+                                          saved
+                                            ? `Remove ${business.name} from saved businesses`
+                                            : `Save ${business.name}`
+                                        }
+                                        aria-pressed={
+                                          saved
+                                        }
+                                        onClick={(
+                                          event
+                                        ) => {
+                                          event.preventDefault();
+                                          event.stopPropagation();
+
+                                          toggleSaved(
+                                            business
+                                          );
+                                        }}
+                                        className={`shrink-0 ${
+                                          saved
+                                            ? "text-[#9F2D18]"
+                                            : "text-gray-500 hover:text-[#9F2D18]"
+                                        }`}
+                                      >
+                                        <Bookmark
+                                          className="h-4 w-4"
+                                          fill={
+                                            saved
+                                              ? "currentColor"
+                                              : "none"
+                                          }
+                                        />
+                                      </button>
+                                    </div>
+
+                                    <div className="mt-3 flex items-center justify-between">
+                                      <div className="flex items-center gap-1">
+                                        <Package className="h-4 w-4 text-gray-400" />
+
+                                        <span className="text-[10px] font-semibold text-gray-600">
+                                          {
+                                            productCount
+                                          }{" "}
+                                          {
+                                            productCount ===
+                                            1
+                                              ? "product"
+                                              : "products"
+                                          }
+                                        </span>
+                                      </div>
+                                    </div>
+
+                                    {product && (
+                                      <div className="mt-3 border-t border-[#F0ECE6] pt-3">
+                                        <div className="flex items-center gap-2.5">
+                                          {productImage ? (
+                                            <img
+                                              src={
+                                                productImage
+                                              }
+                                              alt={
+                                                product.name
+                                              }
+                                              className="h-10 w-10 rounded-lg object-cover"
+                                            />
+                                          ) : (
+                                            <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-[#FCFAF6] text-gray-400">
+                                              <Package className="h-4 w-4" />
+                                            </div>
+                                          )}
+
+                                          <div className="min-w-0">
+                                            <p className="truncate text-[10px] font-semibold text-gray-600">
+                                              {
+                                                product.name
+                                              }
+                                            </p>
+
+                                            <p className="mt-1 text-[10px] text-gray-400">
+                                              {formatPrice(
+                                                product
+                                              )}
+                                            </p>
+                                          </div>
+                                        </div>
+                                      </div>
+                                    )}
+
+                                    <Link
+                                      href={`/seller/${business.id}`}
+                                      className="mt-3 flex w-full items-center justify-center gap-2 rounded-lg bg-[#FFF1ED] py-2.5 text-[11px] font-bold text-[#9F2D18]"
+                                    >
+                                      Browse
+                                      <ArrowRight className="h-3.5 w-3.5" />
+                                    </Link>
+                                  </div>
+                                </article>
+                              );
+                            }
+                          )}
+                        </div>
+
+                        {/* PAGINATION */}
+                        {totalPages >
+                          1 && (
+                          <div className="mt-6 flex items-center justify-center">
+                            <div className="flex w-full max-w-md items-center justify-between rounded-xl border border-[#E8E4DE] bg-white p-2">
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  goToPage(
+                                    currentPage -
+                                      1
+                                  )
+                                }
+                                disabled={
+                                  currentPage <=
+                                  1
+                                }
+                                className="inline-flex items-center gap-1 rounded-lg px-3 py-2 text-[11px] font-bold text-[#9F2D18] transition hover:bg-[#FFF1ED] disabled:cursor-not-allowed disabled:text-gray-300 disabled:hover:bg-transparent"
+                              >
+                                <ChevronLeft className="h-4 w-4" />
+                                Previous
+                              </button>
+
+                              <div className="text-center">
+                                <p className="text-[11px] font-bold text-[#17202A]">
+                                  Page{" "}
+                                  {
+                                    currentPage
+                                  }{" "}
+                                  of{" "}
+                                  {
+                                    totalPages
+                                  }
+                                </p>
+
+                                <p className="mt-0.5 text-[9px] text-gray-400">
+                                  {
+                                    totalBusinesses
+                                  }{" "}
+                                  businesses
+                                </p>
+                              </div>
+
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  goToPage(
+                                    currentPage +
+                                      1
+                                  )
+                                }
+                                disabled={
+                                  currentPage >=
+                                  totalPages
+                                }
+                                className="inline-flex items-center gap-1 rounded-lg px-3 py-2 text-[11px] font-bold text-[#9F2D18] transition hover:bg-[#FFF1ED] disabled:cursor-not-allowed disabled:text-gray-300 disabled:hover:bg-transparent"
+                              >
+                                Next
+                                <ChevronRight className="h-4 w-4" />
+                              </button>
+                            </div>
+                          </div>
                         )}
-                      </div>
+                      </>
                     )}
                 </section>
 
                 <footer className="mt-7 flex items-center justify-center gap-3 text-[10px] text-gray-400">
                   <span className="h-px w-16 bg-gray-200" />
+
                   <span>
                     ReMarket · Find it nearby
                   </span>
+
                   <span className="h-px w-16 bg-gray-200" />
                 </footer>
               </div>
             </div>
           </div>
 
+          {/* MOBILE NAV */}
           <nav className="fixed bottom-0 left-0 right-0 z-50 border-t border-gray-200 bg-white/95 px-2 pb-[max(6px,safe-area-inset-bottom)] pt-1.5 backdrop-blur lg:hidden">
             <div className="mx-auto grid max-w-md grid-cols-4">
               {NAV_ITEMS.map(
@@ -1143,8 +1484,9 @@ function formatPrice(
     </main>
   );
 }
-export default function ShopPage(){
-  return(
+
+export default function ShopPage() {
+  return (
     <Suspense
       fallback={
         <main className="min-h-screen bg-[#FFF7ED]">
@@ -1155,8 +1497,8 @@ export default function ShopPage(){
           </div>
         </main>
       }
-      >
-        <ShopPageContent/>
-      </Suspense>
-  )
+    >
+      <ShopPageContent />
+    </Suspense>
+  );
 }

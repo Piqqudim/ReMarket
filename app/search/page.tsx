@@ -1,9 +1,12 @@
 "use client";
 
 import {
+  type ReactNode,
   useEffect,
+  useMemo,
   useState,
-  Suspense
+  useSyncExternalStore,
+  Suspense,
 } from "react";
 
 import {
@@ -50,7 +53,7 @@ const CATEGORY_STYLE: Record<
   string,
   {
     bg: string;
-    icon: React.ReactNode;
+    icon: ReactNode;
   }
 > = {
   Fashion: {
@@ -95,6 +98,43 @@ const CATEGORY_STYLE: Record<
     ),
   },
 };
+
+/*
+ * ReMarket's current category set.
+ *
+ * IMPORTANT:
+ * These categories belong to the ReMarket UI.
+ * The Search page does not depend on the
+ * /api/categories endpoint to render them.
+ *
+ * Additional categories can be added here later.
+ */
+const REMARKET_CATEGORIES: Category[] = [
+  {
+    id: "fashion",
+    name: "Fashion",
+  },
+  {
+    id: "electronics",
+    name: "Electronics",
+  },
+  {
+    id: "food",
+    name: "Food",
+  },
+  {
+    id: "beauty",
+    name: "Beauty",
+  },
+  {
+    id: "textiles",
+    name: "Textiles",
+  },
+  {
+    id: "services",
+    name: "Services",
+  },
+];
 
 type Category = {
   id: string;
@@ -242,180 +282,264 @@ function getProductImage(
   );
 }
 
-function SearchPageContent() {
-  const router =
-    useRouter();
+/*
+ * -----------------------------------------
+ * SAVED BUSINESSES EXTERNAL STORE
+ * -----------------------------------------
+ *
+ * This avoids synchronously calling setState
+ * from an effect during the initial render.
+ */
 
+function subscribeToSavedBusinesses(
+  callback: () => void
+) {
+  window.addEventListener(
+    SAVED_BUSINESSES_CHANGED_EVENT,
+    callback
+  );
+
+  window.addEventListener(
+    "storage",
+    callback
+  );
+
+  return () => {
+    window.removeEventListener(
+      SAVED_BUSINESSES_CHANGED_EVENT,
+      callback
+    );
+
+    window.removeEventListener(
+      "storage",
+      callback
+    );
+  };
+}
+
+function getSavedBusinessesSnapshot(): string {
+  const saved =
+    getSavedBusinesses();
+
+  return JSON.stringify(
+    saved
+      .map(
+        (business) =>
+          business.id
+      )
+      .sort()
+  );
+}
+
+function getSavedBusinessesServerSnapshot(): string {
+  return "[]";
+}
+
+type SearchPageViewProps = {
+  initialQuery: string;
+  initialCategory: string;
+  initialLocation: string;
+  initialMinPrice: string;
+  initialMaxPrice: string;
+  initialAvailability: string;
+  initialVerified: boolean;
+};
+
+function SearchPageContent() {
   const searchParams =
     useSearchParams();
 
-  const urlQuery =
-    searchParams.get("q") ??
-    "";
+  const initialQuery =
+    searchParams.get("q") ?? "";
 
-  const [query, setQuery] =
-    useState(urlQuery);
+  const initialCategory =
+    searchParams.get(
+      "category"
+    ) ?? "";
 
-  const [categories, setCategories] =
-    useState<Category[]>(
-      []
-    );
+  const initialLocation =
+    searchParams.get(
+      "location"
+    ) ?? "";
 
-  const [businesses, setBusinesses] =
-    useState<Business[]>(
-      []
-    );
+  const initialMinPrice =
+    searchParams.get(
+      "minPrice"
+    ) ?? "";
 
-  const [loading, setLoading] =
-    useState(true);
+  const initialMaxPrice =
+    searchParams.get(
+      "maxPrice"
+    ) ?? "";
 
-  const [error, setError] =
-    useState("");
+  const initialAvailability =
+    searchParams.get(
+      "availability"
+    ) ?? "";
 
-  const [showFilters, setShowFilters] =
-    useState(false);
+  const initialVerified =
+    searchParams.get(
+      "verified"
+    ) === "true";
 
-  const [category, setCategory] =
-    useState(
-      searchParams.get(
-        "category"
-      ) ?? ""
-    );
+  /*
+   * Re-create the view whenever the URL
+   * changes. This means query/filter state
+   * comes directly from the URL instead of
+   * using a setState effect.
+   */
+  const searchKey =
+    searchParams.toString();
 
-  const [location, setLocation] =
-    useState(
-      searchParams.get(
-        "location"
-      ) ?? ""
-    );
-
-  const [minPrice, setMinPrice] =
-    useState(
-      searchParams.get(
-        "minPrice"
-      ) ?? ""
-    );
-
-  const [maxPrice, setMaxPrice] =
-    useState(
-      searchParams.get(
-        "maxPrice"
-      ) ?? ""
-    );
-
-  const [availability, setAvailability] =
-    useState(
-      searchParams.get(
-        "availability"
-      ) ?? ""
-    );
-
-  const [verified, setVerified] =
-    useState(
-      searchParams.get(
-        "verified"
-      ) === "true"
-    );
-
-  const [savedBusinesses, setSavedBusinesses] =
-    useState<
-      Record<string, boolean>
-    >({});
-
-  useEffect(() => {
-    setQuery(urlQuery);
-  }, [urlQuery]);
-
-  useEffect(() => {
-    function syncSavedBusinesses() {
-      const saved =
-        getSavedBusinesses();
-
-      const nextState: Record<
-        string,
-        boolean
-      > = {};
-
-      for (const business of saved) {
-        nextState[business.id] =
-          true;
+  return (
+    <SearchPageView
+      key={searchKey}
+      initialQuery={initialQuery}
+      initialCategory={
+        initialCategory
       }
+      initialLocation={
+        initialLocation
+      }
+      initialMinPrice={
+        initialMinPrice
+      }
+      initialMaxPrice={
+        initialMaxPrice
+      }
+      initialAvailability={
+        initialAvailability
+      }
+      initialVerified={
+        initialVerified
+      }
+    />
+  );
+}
 
-      setSavedBusinesses(
-        nextState
-      );
-    }
+function SearchPageView({
+  initialQuery,
+  initialCategory,
+  initialLocation,
+  initialMinPrice,
+  initialMaxPrice,
+  initialAvailability,
+  initialVerified,
+}: SearchPageViewProps) {
+  const router =
+    useRouter();
 
-    syncSavedBusinesses();
+  const [
+    query,
+    setQuery,
+  ] = useState(
+    initialQuery
+  );
 
-    window.addEventListener(
-      SAVED_BUSINESSES_CHANGED_EVENT,
-      syncSavedBusinesses
+  const [
+    category,
+    setCategory,
+  ] = useState(
+    initialCategory
+  );
+
+  const [
+    location,
+    setLocation,
+  ] = useState(
+    initialLocation
+  );
+
+  const [
+    minPrice,
+    setMinPrice,
+  ] = useState(
+    initialMinPrice
+  );
+
+  const [
+    maxPrice,
+    setMaxPrice,
+  ] = useState(
+    initialMaxPrice
+  );
+
+  const [
+    availability,
+    setAvailability,
+  ] = useState(
+    initialAvailability
+  );
+
+  const [
+    verified,
+    setVerified,
+  ] = useState(
+    initialVerified
+  );
+
+  const [
+    businesses,
+    setBusinesses,
+  ] = useState<Business[]>(
+    []
+  );
+
+  const [
+    loading,
+    setLoading,
+  ] = useState(true);
+
+  const [
+    error,
+    setError,
+  ] = useState("");
+
+  const [
+    showFilters,
+    setShowFilters,
+  ] = useState(false);
+
+  const savedSnapshot =
+    useSyncExternalStore(
+      subscribeToSavedBusinesses,
+      getSavedBusinessesSnapshot,
+      getSavedBusinessesServerSnapshot
     );
 
-    return () => {
-      window.removeEventListener(
-        SAVED_BUSINESSES_CHANGED_EVENT,
-        syncSavedBusinesses
-      );
-    };
-  }, []);
-
-  useEffect(() => {
-    const controller =
-      new AbortController();
-
-    async function loadCategories() {
+  const savedBusinessIds =
+    useMemo(() => {
       try {
-        const response =
-          await fetch(
-            "/api/categories",
-            {
-              cache:
-                "no-store",
-              signal:
-                controller.signal,
-            }
+        const ids =
+          JSON.parse(
+            savedSnapshot
           );
 
-        if (!response.ok) {
-          throw new Error(
-            "Unable to load categories"
-          );
-        }
-
-        const data =
-          await response.json();
-
-        setCategories(
-          Array.isArray(
-            data.categories
-          )
-            ? data.categories
-            : []
-        );
-      } catch (error) {
         if (
-          error instanceof DOMException &&
-          error.name ===
-            "AbortError"
+          !Array.isArray(ids)
         ) {
-          return;
+          return new Set<string>();
         }
 
-        console.error(
-          "Category loading error:",
-          error
+        return new Set<string>(
+          ids.filter(
+            (
+              value
+            ): value is string =>
+              typeof value ===
+              "string"
+          )
         );
+      } catch {
+        return new Set<string>();
       }
-    }
+    }, [savedSnapshot]);
 
-    void loadCategories();
-
-    return () => {
-      controller.abort();
-    };
-  }, []);
+  /*
+   * -----------------------------------------
+   * LOAD SEARCH RESULTS
+   * -----------------------------------------
+   */
 
   useEffect(() => {
     const controller =
@@ -430,11 +554,11 @@ function SearchPageContent() {
           new URLSearchParams();
 
         if (
-          urlQuery.trim()
+          initialQuery.trim()
         ) {
           params.set(
             "q",
-            urlQuery.trim()
+            initialQuery.trim()
           );
         }
 
@@ -497,31 +621,36 @@ function SearchPageContent() {
             }
           );
 
-        if (!response.ok) {
-          throw new Error(
-            "Unable to complete search"
-          );
-        }
-
         const data =
           await response.json();
 
-        if (
-          !controller.signal
-            .aborted
-        ) {
-          setBusinesses(
-            Array.isArray(
-              data.businesses
-            )
-              ? data.businesses
-              : []
+        if (!response.ok) {
+          throw new Error(
+            typeof data?.error ===
+              "string"
+              ? data.error
+              : "Unable to complete search."
           );
         }
-      } catch (error) {
+
         if (
-          error instanceof DOMException &&
-          error.name ===
+          controller.signal.aborted
+        ) {
+          return;
+        }
+
+        setBusinesses(
+          Array.isArray(
+            data.businesses
+          )
+            ? data.businesses
+            : []
+        );
+      } catch (searchError) {
+        if (
+          searchError instanceof
+            DOMException &&
+          searchError.name ===
             "AbortError"
         ) {
           return;
@@ -529,8 +658,10 @@ function SearchPageContent() {
 
         console.error(
           "Search loading error:",
-          error
+          searchError
         );
+
+        setBusinesses([]);
 
         setError(
           "We couldn't complete your search right now."
@@ -551,7 +682,7 @@ function SearchPageContent() {
       controller.abort();
     };
   }, [
-    urlQuery,
+    initialQuery,
     category,
     location,
     minPrice,
@@ -564,7 +695,9 @@ function SearchPageContent() {
     const params =
       new URLSearchParams();
 
-    if (query.trim()) {
+    if (
+      query.trim()
+    ) {
       params.set(
         "q",
         query.trim()
@@ -667,7 +800,9 @@ function SearchPageContent() {
     const params =
       new URLSearchParams();
 
-    if (query.trim()) {
+    if (
+      query.trim()
+    ) {
       params.set(
         "q",
         query.trim()
@@ -726,11 +861,21 @@ function SearchPageContent() {
   }
 
   const activeFilterCount =
-    Number(Boolean(category)) +
-    Number(Boolean(location)) +
-    Number(Boolean(minPrice)) +
-    Number(Boolean(maxPrice)) +
-    Number(Boolean(availability)) +
+    Number(
+      Boolean(category)
+    ) +
+    Number(
+      Boolean(location)
+    ) +
+    Number(
+      Boolean(minPrice)
+    ) +
+    Number(
+      Boolean(maxPrice)
+    ) +
+    Number(
+      Boolean(availability)
+    ) +
     Number(verified);
 
   return (
@@ -738,6 +883,7 @@ function SearchPageContent() {
       <div className="mx-auto min-h-screen w-full max-w-[1500px] px-3 py-3 sm:px-5 sm:py-5">
         <div className="min-h-[calc(100vh-24px)] overflow-hidden rounded-[18px] border border-[#FF5A36] bg-[#FFFDFC] shadow-sm sm:rounded-[22px] lg:min-h-[calc(100vh-40px)]">
 
+          {/* HEADER */}
           <header className="flex h-[64px] items-center justify-between border-b border-[#EAE6DF] bg-white px-4 sm:px-6 lg:h-[66px]">
             <Link
               href="/"
@@ -785,9 +931,7 @@ function SearchPageContent() {
               <button
                 type="button"
                 onClick={() =>
-                  router.push(
-                    "/"
-                  )
+                  router.push("/")
                 }
                 className="hidden h-9 w-9 items-center justify-center rounded-full hover:bg-gray-50 sm:flex"
                 aria-label="Home"
@@ -831,6 +975,8 @@ function SearchPageContent() {
           </header>
 
           <div className="flex">
+
+            {/* SIDEBAR */}
             <aside className="hidden w-[190px] shrink-0 border-r border-[#EAE6DF] bg-[#FCFAF6] px-3 py-5 lg:block">
               <nav className="space-y-1">
                 {NAV_ITEMS.map(
@@ -857,6 +1003,7 @@ function SearchPageContent() {
                         }`}
                       >
                         <Icon className="h-[18px] w-[18px]" />
+
                         <span>
                           {
                             item.label
@@ -876,51 +1023,59 @@ function SearchPageContent() {
                 </p>
 
                 <div className="mt-3 space-y-1">
-                  {categories
-                    .slice(0, 6)
-                    .map(
-                      (item) => {
-                        const style =
-                          getCategoryStyle(
-                            item.name
-                          );
+                  {REMARKET_CATEGORIES.map(
+                    (item) => {
+                      const style =
+                        getCategoryStyle(
+                          item.name
+                        );
 
-                        return (
-                          <button
-                            key={
-                              item.id
-                            }
-                            type="button"
-                            onClick={() =>
-                              setCategory(
-                                item.name
-                              )
-                            }
-                            className="flex w-full items-center gap-3 rounded-xl px-3 py-2 text-left transition hover:bg-white"
+                      const active =
+                        category ===
+                        item.name;
+
+                      return (
+                        <button
+                          key={
+                            item.id
+                          }
+                          type="button"
+                          onClick={() =>
+                            setCategory(
+                              active
+                                ? ""
+                                : item.name
+                            )
+                          }
+                          className={`flex w-full items-center gap-3 rounded-xl px-3 py-2 text-left transition hover:bg-white ${
+                            active
+                              ? "bg-white text-[#9F2D18]"
+                              : "text-gray-700"
+                          }`}
+                        >
+                          <span
+                            className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full"
+                            style={{
+                              backgroundColor:
+                                style.bg,
+                            }}
                           >
-                            <span
-                              className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full"
-                              style={{
-                                backgroundColor:
-                                  style.bg,
-                              }}
-                            >
-                              <span className="scale-[0.65]">
-                                {
-                                  style.icon
-                                }
-                              </span>
-                            </span>
-
-                            <span className="truncate text-xs font-medium text-gray-700">
+                            <span className="scale-[0.65]">
                               {
-                                item.name
+                                style.icon
                               }
                             </span>
-                          </button>
-                        );
-                      }
-                    )}
+                          </span>
+
+                          <span className="truncate text-xs font-medium">
+                            {
+                              item.name
+                            }
+                          </span>
+                        </button>
+                      );
+                    }
+                  )}
 
                   <button
                     type="button"
@@ -943,9 +1098,11 @@ function SearchPageContent() {
               </div>
             </aside>
 
+            {/* MAIN */}
             <div className="min-w-0 flex-1">
               <div className="px-4 pb-24 pt-4 sm:px-6 sm:pt-6 lg:px-6 lg:pb-8">
 
+                {/* HERO */}
                 <section className="rounded-[18px] bg-[#FF5A36] px-5 py-6 text-white shadow-soft sm:px-7 sm:py-7">
                   <div className="max-w-[720px]">
                     <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-white/75">
@@ -992,6 +1149,7 @@ function SearchPageContent() {
                   </div>
                 </section>
 
+                {/* RESULTS HEADER */}
                 <section className="mt-5">
                   <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                     <div>
@@ -1021,6 +1179,7 @@ function SearchPageContent() {
                       className="flex items-center justify-center gap-2 rounded-xl border border-[#E8E4DE] bg-white px-4 py-2.5 text-xs font-semibold text-gray-700 transition hover:border-[#FFB09B] hover:text-[#9F2D18]"
                     >
                       <SlidersHorizontal className="h-4 w-4" />
+
                       Filters
 
                       {activeFilterCount >
@@ -1133,6 +1292,7 @@ function SearchPageContent() {
                   )}
                 </section>
 
+                {/* RESULTS */}
                 <section className="mt-5">
                   {loading && (
                     <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
@@ -1189,7 +1349,7 @@ function SearchPageContent() {
                         <Search className="mx-auto h-8 w-8 text-gray-300" />
 
                         <p className="mt-3 text-sm font-semibold text-gray-700">
-                          We couldn't find that
+                          We couldn&apos;t find that
                         </p>
 
                         <p className="mt-1 text-xs leading-5 text-gray-400">
@@ -1206,7 +1366,6 @@ function SearchPageContent() {
                           className="mt-4 inline-flex items-center gap-2 rounded-xl bg-[#FF5A36] px-4 py-2.5 text-xs font-semibold text-white"
                         >
                           Adjust filters
-
                           <SlidersHorizontal className="h-3.5 w-3.5" />
                         </button>
                       </div>
@@ -1218,7 +1377,9 @@ function SearchPageContent() {
                       0 && (
                       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
                         {businesses.map(
-                          (business) => {
+                          (
+                            business
+                          ) => {
                             const category =
                               business
                                 .categories?.[0]
@@ -1232,10 +1393,8 @@ function SearchPageContent() {
                               );
 
                             const saved =
-                              Boolean(
-                                savedBusinesses[
-                                  business.id
-                                ]
+                              savedBusinessIds.has(
+                                business.id
                               );
 
                             const firstProduct =
@@ -1315,7 +1474,8 @@ function SearchPageContent() {
                                           <MapPin className="h-3 w-3 shrink-0" />
 
                                           {
-                                            business.location
+                                            business
+                                              .location
                                               ?.area ??
                                             "Local"
                                           }
@@ -1374,8 +1534,7 @@ function SearchPageContent() {
 
                                       <span>
                                         {
-                                          business
-                                            .products
+                                          business.products
                                             ?.length
                                         }{" "}
                                         available
@@ -1451,6 +1610,7 @@ function SearchPageContent() {
             </div>
           </div>
 
+          {/* FILTER DRAWER */}
           {showFilters && (
             <div className="fixed inset-0 z-[60]">
               <button
@@ -1496,7 +1656,7 @@ function SearchPageContent() {
                   </label>
 
                   <div className="mt-2 grid grid-cols-2 gap-2">
-                    {categories.map(
+                    {REMARKET_CATEGORIES.map(
                       (item) => {
                         const active =
                           category ===
@@ -1563,9 +1723,7 @@ function SearchPageContent() {
                     <MapPin className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" />
 
                     <input
-                      value={
-                        location
-                      }
+                      value={location}
                       onChange={(
                         event
                       ) =>
@@ -1740,6 +1898,7 @@ function SearchPageContent() {
             </div>
           )}
 
+          {/* MOBILE NAV */}
           <nav className="fixed bottom-0 left-0 right-0 z-50 border-t border-gray-200 bg-white/95 px-2 pb-[max(6px,safe-area-inset-bottom)] pt-1.5 backdrop-blur lg:hidden">
             <div className="mx-auto grid max-w-md grid-cols-4">
               {NAV_ITEMS.map(
@@ -1783,8 +1942,9 @@ function SearchPageContent() {
     </main>
   );
 }
-export default function SearchPage(){
-  return(
+
+export default function SearchPage() {
+  return (
     <Suspense
       fallback={
         <main className="min-h-screen bg-[#FFF7ED]">
@@ -1795,8 +1955,8 @@ export default function SearchPage(){
           </div>
         </main>
       }
-      >
-        <SearchPageContent/>
-      </Suspense>
-  )
+    >
+      <SearchPageContent />
+    </Suspense>
+  );
 }
