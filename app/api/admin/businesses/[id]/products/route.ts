@@ -3,22 +3,21 @@ import {
   NextResponse,
 } from "next/server";
 
-import { prisma } from "@/lib/prisma";
-import { requireAdmin } from "@/lib/admin-auth";
 import {
   Availability,
   BusinessStatus,
 } from "@prisma/client";
+
+import { prisma } from "@/lib/prisma";
+import { requireAdmin } from "@/lib/admin-auth";
 
 function isAvailability(
   value: unknown
 ): value is Availability {
   return (
     value === Availability.AVAILABLE ||
-    value ===
-      Availability.ASK_SELLER ||
-    value ===
-      Availability.UNAVAILABLE
+    value === Availability.ASK_SELLER ||
+    value === Availability.UNAVAILABLE
   );
 }
 
@@ -34,7 +33,7 @@ function isBusinessStatus(
 
 function parseOptionalInt(
   value: unknown
-): number | null {
+): number | null | undefined {
   if (
     value === null ||
     value === undefined ||
@@ -44,15 +43,17 @@ function parseOptionalInt(
   }
 
   const parsed =
-    Number(value);
+    typeof value === "number"
+      ? value
+      : typeof value === "string"
+        ? Number(value.trim())
+        : Number.NaN;
 
-  if (
-    !Number.isFinite(parsed)
-  ) {
-    return null;
+  if (!Number.isInteger(parsed)) {
+    return undefined;
   }
 
-  return Math.floor(parsed);
+  return parsed;
 }
 
 function parseKeywords(
@@ -65,8 +66,25 @@ function parseKeywords(
   return value
     .filter(
       (item): item is string =>
-        typeof item ===
-        "string"
+        typeof item === "string"
+    )
+    .map((item) =>
+      item.trim()
+    )
+    .filter(Boolean);
+}
+
+function parseImageUrls(
+  value: unknown
+): string[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value
+    .filter(
+      (item): item is string =>
+        typeof item === "string"
     )
     .map((item) =>
       item.trim()
@@ -75,7 +93,7 @@ function parseKeywords(
 }
 
 export async function GET(
-  request: NextRequest,
+  _request: NextRequest,
   {
     params,
   }: {
@@ -84,12 +102,29 @@ export async function GET(
     }>;
   }
 ) {
-  try {
+  const auth =
     await requireAdmin();
 
-    const { id: businessId } =
-      await params;
+  if (!auth.authorized) {
+    return auth.response;
+  }
 
+  const { id: businessId } =
+    await params;
+
+  if (!businessId) {
+    return NextResponse.json(
+      {
+        error:
+          "Business ID is required.",
+      },
+      {
+        status: 400,
+      }
+    );
+  }
+
+  try {
     const business =
       await prisma.business.findUnique(
         {
@@ -176,14 +211,53 @@ export async function POST(
     }>;
   }
 ) {
-  try {
+  const auth =
     await requireAdmin();
 
-    const { id: businessId } =
-      await params;
+  if (!auth.authorized) {
+    return auth.response;
+  }
+
+  const { id: businessId } =
+    await params;
+
+  if (!businessId) {
+    return NextResponse.json(
+      {
+        error:
+          "Business ID is required.",
+      },
+      {
+        status: 400,
+      }
+    );
+  }
+
+  try {
+    const rawBody: unknown =
+      await request.json();
+
+    if (
+      !rawBody ||
+      typeof rawBody !== "object" ||
+      Array.isArray(rawBody)
+    ) {
+      return NextResponse.json(
+        {
+          error:
+            "Invalid request body.",
+        },
+        {
+          status: 400,
+        }
+      );
+    }
 
     const body =
-      await request.json();
+      rawBody as Record<
+        string,
+        unknown
+      >;
 
     const name =
       typeof body.name ===
@@ -211,6 +285,7 @@ export async function POST(
           },
           select: {
             id: true,
+            deletedAt: true,
           },
         }
       );
@@ -227,9 +302,21 @@ export async function POST(
       );
     }
 
+    if (business.deletedAt) {
+      return NextResponse.json(
+        {
+          error:
+            "This business has been deleted and cannot receive new products.",
+        },
+        {
+          status: 409,
+        }
+      );
+    }
+
     const categoryId =
       typeof body.categoryId ===
-      "string" &&
+        "string" &&
       body.categoryId.trim()
         ? body.categoryId.trim()
         : null;
@@ -240,6 +327,9 @@ export async function POST(
           {
             where: {
               id: categoryId,
+            },
+            select: {
+              id: true,
             },
           }
         );
@@ -271,6 +361,46 @@ export async function POST(
       parseOptionalInt(
         body.priceMax
       );
+
+    if (price === undefined) {
+      return NextResponse.json(
+        {
+          error:
+            "Price must be a valid integer.",
+        },
+        {
+          status: 400,
+        }
+      );
+    }
+
+    if (
+      priceMin === undefined
+    ) {
+      return NextResponse.json(
+        {
+          error:
+            "Minimum price must be a valid integer.",
+        },
+        {
+          status: 400,
+        }
+      );
+    }
+
+    if (
+      priceMax === undefined
+    ) {
+      return NextResponse.json(
+        {
+          error:
+            "Maximum price must be a valid integer.",
+        },
+        {
+          status: 400,
+        }
+      );
+    }
 
     if (
       price !== null &&
@@ -360,20 +490,9 @@ export async function POST(
       );
 
     const requestedImages =
-      Array.isArray(body.images)
-        ? body.images
-            .filter(
-              (
-                value: any
-              ): value is string =>
-                typeof value ===
-                "string"
-            )
-            .map((value:any) =>
-              value.trim()
-            )
-            .filter(Boolean)
-        : [];
+      parseImageUrls(
+        body.images
+      );
 
     const legacyImageUrl =
       typeof body.imageUrl ===
@@ -419,13 +538,13 @@ export async function POST(
               null,
 
             images:
-              imageUrls.length
+              imageUrls.length > 0
                 ? {
                     create:
                       imageUrls.map(
                         (
-                          url:any,
-                          index:any
+                          url,
+                          index
                         ) => ({
                           url,
                           sortOrder:

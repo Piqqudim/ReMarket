@@ -56,8 +56,12 @@ export const authOptions: NextAuthOptions = {
           return null;
         }
 
-        // Only ADMIN users can access the admin system.
-        if (user.role !== "ADMIN") {
+        // Only ADMIN and SELLER users can authenticate
+        // through the credentials provider.
+        if (
+          user.role !== "ADMIN" &&
+          user.role !== "SELLER"
+        ) {
           return null;
         }
 

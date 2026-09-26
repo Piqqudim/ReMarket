@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+
 import { prisma } from "@/lib/prisma";
 
 const FEATURED_COUNT = 4;
@@ -29,7 +30,10 @@ export async function GET() {
     /*
      * No eligible businesses.
      */
-    if (randomBusinessIds.length === 0) {
+    if (
+      randomBusinessIds.length ===
+      0
+    ) {
       return NextResponse.json(
         {
           businesses: [],
@@ -65,7 +69,17 @@ export async function GET() {
         include: {
           location: true,
 
+          /*
+           * Only active categories should be
+           * exposed on public Featured cards.
+           */
           categories: {
+            where: {
+              category: {
+                isActive: true,
+              },
+            },
+
             include: {
               category: true,
             },
@@ -121,12 +135,15 @@ export async function GET() {
      *
      * Restore the random order here.
      */
-    const businessMap = new Map(
-      businesses.map((business) => [
-        business.id,
-        business,
-      ])
-    );
+    const businessMap =
+      new Map(
+        businesses.map(
+          (business) => [
+            business.id,
+            business,
+          ]
+        )
+      );
 
     const orderedBusinesses =
       randomBusinessIds
@@ -138,7 +155,9 @@ export async function GET() {
             business
           ): business is NonNullable<
             typeof business
-          > => business !== undefined
+          > =>
+            business !==
+            undefined
         );
 
     /*
@@ -162,7 +181,8 @@ export async function GET() {
             business.imageUrl,
 
           area:
-            business.location?.area ??
+            business.location
+              ?.area ??
             "Location not added",
 
           availability:
@@ -179,11 +199,13 @@ export async function GET() {
           categories:
             business.categories.map(
               (item) =>
-                item.category.name
+                item.category
+                  .name
             ),
 
           productCount:
-            business._count.products,
+            business._count
+              .products,
 
           products:
             business.products,
@@ -201,7 +223,8 @@ export async function GET() {
     return NextResponse.json(
       {
         businesses: featured,
-        total: featured.length,
+        total:
+          featured.length,
       },
       {
         headers: {

@@ -796,25 +796,17 @@ export async function PATCH(
           }
         );
       }
+const location =
+  await prisma.location.create({
+    data: {
+      area: requestedArea,
+      lat,
+      long,
+    },
+  });
 
-      const location =
-        await prisma.location.upsert({
-          where: {
-            area: requestedArea,
-          },
-          create: {
-            area: requestedArea,
-            lat,
-            long,
-          },
-          update: {
-            lat,
-            long,
-          },
-        });
-
-      locationId = location.id;
-      data.locationId = location.id;
+locationId = location.id;
+data.locationId = location.id;
     }
 
     await prisma.$transaction(

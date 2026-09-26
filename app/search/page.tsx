@@ -1,7 +1,6 @@
 "use client";
 
 import {
-  type ReactNode,
   useEffect,
   useMemo,
   useState,
@@ -27,19 +26,20 @@ import {
   Bookmark,
   Star,
   MoreHorizontal,
-  Shirt,
-  Plug,
-  Utensils,
-  Sparkles,
-  Layers3,
-  Briefcase,
 } from "lucide-react";
 
 import Link from "next/link";
+
 import {
   useRouter,
   useSearchParams,
 } from "next/navigation";
+
+import {
+  DEFAULT_CATEGORIES,
+  mergeCategories,
+  type ReMarketCategory,
+} from "@/lib/categories";
 
 import {
   getSavedBusinesses,
@@ -49,97 +49,7 @@ import {
   SAVED_BUSINESSES_CHANGED_EVENT,
 } from "@/lib/saved";
 
-const CATEGORY_STYLE: Record<
-  string,
-  {
-    bg: string;
-    icon: ReactNode;
-  }
-> = {
-  Fashion: {
-    bg: "#FFE0D6",
-    icon: (
-      <Shirt className="h-5 w-5" />
-    ),
-  },
-
-  Electronics: {
-    bg: "#DDF5EA",
-    icon: (
-      <Plug className="h-5 w-5" />
-    ),
-  },
-
-  Food: {
-    bg: "#FFF0C7",
-    icon: (
-      <Utensils className="h-5 w-5" />
-    ),
-  },
-
-  Beauty: {
-    bg: "#E7E5FF",
-    icon: (
-      <Sparkles className="h-5 w-5" />
-    ),
-  },
-
-  Textiles: {
-    bg: "#F9DCE8",
-    icon: (
-      <Layers3 className="h-5 w-5" />
-    ),
-  },
-
-  Services: {
-    bg: "#E4E9EF",
-    icon: (
-      <Briefcase className="h-5 w-5" />
-    ),
-  },
-};
-
-/*
- * ReMarket's current category set.
- *
- * IMPORTANT:
- * These categories belong to the ReMarket UI.
- * The Search page does not depend on the
- * /api/categories endpoint to render them.
- *
- * Additional categories can be added here later.
- */
-const REMARKET_CATEGORIES: Category[] = [
-  {
-    id: "fashion",
-    name: "Fashion",
-  },
-  {
-    id: "electronics",
-    name: "Electronics",
-  },
-  {
-    id: "food",
-    name: "Food",
-  },
-  {
-    id: "beauty",
-    name: "Beauty",
-  },
-  {
-    id: "textiles",
-    name: "Textiles",
-  },
-  {
-    id: "services",
-    name: "Services",
-  },
-];
-
-type Category = {
-  id: string;
-  name: string;
-};
+type Category = ReMarketCategory;
 
 type ProductImage = {
   id: string;
@@ -222,49 +132,23 @@ const NAV_ITEMS = [
   },
 ];
 
-function getCategoryStyle(
-  name: string
-) {
-  return (
-    CATEGORY_STYLE[name] ?? {
-      bg: "#EEF1F4",
-      icon: (
-        <MoreHorizontal className="h-5 w-5" />
-      ),
-    }
-  );
-}
-
-function formatPrice(
-  product: Product
-): string {
-  if (
-    product.price !==
-    null
-  ) {
+function formatPrice(product: Product): string {
+  if (product.price !== null) {
     return `₦${product.price.toLocaleString()}`;
   }
 
   if (
-    product.priceMin !==
-      null &&
-    product.priceMax !==
-      null
+    product.priceMin !== null &&
+    product.priceMax !== null
   ) {
     return `₦${product.priceMin.toLocaleString()} - ₦${product.priceMax.toLocaleString()}`;
   }
 
-  if (
-    product.priceMin !==
-    null
-  ) {
+  if (product.priceMin !== null) {
     return `From ₦${product.priceMin.toLocaleString()}`;
   }
 
-  if (
-    product.priceMax !==
-    null
-  ) {
+  if (product.priceMax !== null) {
     return `Up to ₦${product.priceMax.toLocaleString()}`;
   }
 
@@ -275,8 +159,7 @@ function getProductImage(
   product: Product
 ): string | null {
   return (
-    product.images?.[0]
-      ?.url ??
+    product.images?.[0]?.url ??
     product.imageUrl ??
     null
   );
@@ -286,9 +169,6 @@ function getProductImage(
  * -----------------------------------------
  * SAVED BUSINESSES EXTERNAL STORE
  * -----------------------------------------
- *
- * This avoids synchronously calling setState
- * from an effect during the initial render.
  */
 
 function subscribeToSavedBusinesses(
@@ -384,9 +264,8 @@ function SearchPageContent() {
 
   /*
    * Re-create the view whenever the URL
-   * changes. This means query/filter state
-   * comes directly from the URL instead of
-   * using a setState effect.
+   * changes. Search/filter state therefore
+   * comes from the URL after submission.
    */
   const searchKey =
     searchParams.toString();
@@ -394,7 +273,9 @@ function SearchPageContent() {
   return (
     <SearchPageView
       key={searchKey}
-      initialQuery={initialQuery}
+      initialQuery={
+        initialQuery
+      }
       initialCategory={
         initialCategory
       }
@@ -479,6 +360,13 @@ function SearchPageView({
   );
 
   const [
+    categories,
+    setCategories,
+  ] = useState<Category[]>(
+    DEFAULT_CATEGORIES
+  );
+
+  const [
     businesses,
     setBusinesses,
   ] = useState<Business[]>(
@@ -537,10 +425,72 @@ function SearchPageView({
 
   /*
    * -----------------------------------------
+   * LOAD CATEGORIES
+   * -----------------------------------------
+   *
+   * Backend categories are authoritative.
+   * DEFAULT_CATEGORIES is only the fallback
+   * when the categories endpoint cannot be
+   * loaded.
+   */
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadCategories() {
+      try {
+        const response =
+          await fetch(
+            "/api/categories",
+            {
+              cache:
+                "no-store",
+            }
+          );
+
+        if (!response.ok) {
+          return;
+        }
+
+        const data =
+          await response.json();
+
+        if (
+          !cancelled &&
+          Array.isArray(
+            data.categories
+          )
+        ) {
+          setCategories(
+            mergeCategories(
+              data.categories
+            )
+          );
+        }
+      } catch (categoryError) {
+        console.error(
+          "Failed to load categories:",
+          categoryError
+        );
+      }
+    }
+
+    void loadCategories();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  /*
+   * -----------------------------------------
    * LOAD SEARCH RESULTS
    * -----------------------------------------
+   *
+   * IMPORTANT:
+   * Only URL/search values are dependencies.
+   * Editing filters locally must NOT trigger a
+   * search until the user presses Apply filters.
    */
-
   useEffect(() => {
     const controller =
       new AbortController();
@@ -562,48 +512,52 @@ function SearchPageView({
           );
         }
 
-        if (category) {
+        if (
+          initialCategory.trim()
+        ) {
           params.set(
             "category",
-            category
+            initialCategory.trim()
           );
         }
 
         if (
-          location.trim()
+          initialLocation.trim()
         ) {
           params.set(
             "location",
-            location.trim()
+            initialLocation.trim()
           );
         }
 
         if (
-          minPrice.trim()
+          initialMinPrice.trim()
         ) {
           params.set(
             "minPrice",
-            minPrice.trim()
+            initialMinPrice.trim()
           );
         }
 
         if (
-          maxPrice.trim()
+          initialMaxPrice.trim()
         ) {
           params.set(
             "maxPrice",
-            maxPrice.trim()
+            initialMaxPrice.trim()
           );
         }
 
-        if (availability) {
+        if (
+          initialAvailability
+        ) {
           params.set(
             "availability",
-            availability
+            initialAvailability
           );
         }
 
-        if (verified) {
+        if (initialVerified) {
           params.set(
             "verified",
             "true"
@@ -634,7 +588,8 @@ function SearchPageView({
         }
 
         if (
-          controller.signal.aborted
+          controller.signal
+            .aborted
         ) {
           return;
         }
@@ -683,12 +638,12 @@ function SearchPageView({
     };
   }, [
     initialQuery,
-    category,
-    location,
-    minPrice,
-    maxPrice,
-    availability,
-    verified,
+    initialCategory,
+    initialLocation,
+    initialMinPrice,
+    initialMaxPrice,
+    initialAvailability,
+    initialVerified,
   ]);
 
   function createSearchParams() {
@@ -1023,12 +978,10 @@ function SearchPageView({
                 </p>
 
                 <div className="mt-3 space-y-1">
-                  {REMARKET_CATEGORIES.map(
+                  {categories.map(
                     (item) => {
-                      const style =
-                        getCategoryStyle(
-                          item.name
-                        );
+                      const Icon =
+                        item.icon;
 
                       const active =
                         category ===
@@ -1057,14 +1010,10 @@ function SearchPageView({
                             className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full"
                             style={{
                               backgroundColor:
-                                style.bg,
+                                item.bg,
                             }}
                           >
-                            <span className="scale-[0.65]">
-                              {
-                                style.icon
-                              }
-                            </span>
+                            <Icon className="h-3.5 w-3.5" />
                           </span>
 
                           <span className="truncate text-xs font-medium">
@@ -1387,10 +1336,25 @@ function SearchPageView({
                                 ?.name ??
                               "Services";
 
-                            const style =
-                              getCategoryStyle(
-                                category
+                            const categoryStyle =
+                              categories.find(
+                                (
+                                  item
+                                ) =>
+                                  item.name.toLowerCase() ===
+                                  category.toLowerCase()
+                              ) ??
+                              DEFAULT_CATEGORIES.find(
+                                (
+                                  item
+                                ) =>
+                                  item.name.toLowerCase() ===
+                                  category.toLowerCase()
                               );
+
+                            const categoryBg =
+                              categoryStyle?.bg ??
+                              "#EEF1F4";
 
                             const saved =
                               savedBusinessIds.has(
@@ -1420,7 +1384,7 @@ function SearchPageView({
                                   className="relative flex h-[92px] items-center justify-center overflow-hidden"
                                   style={{
                                     backgroundColor:
-                                      style.bg,
+                                      categoryBg,
                                   }}
                                 >
                                   {business.imageUrl ? (
@@ -1656,16 +1620,14 @@ function SearchPageView({
                   </label>
 
                   <div className="mt-2 grid grid-cols-2 gap-2">
-                    {REMARKET_CATEGORIES.map(
+                    {categories.map(
                       (item) => {
+                        const Icon =
+                          item.icon;
+
                         const active =
                           category ===
                           item.name;
-
-                        const style =
-                          getCategoryStyle(
-                            item.name
-                          );
 
                         return (
                           <button
@@ -1690,12 +1652,10 @@ function SearchPageView({
                               className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full"
                               style={{
                                 backgroundColor:
-                                  style.bg,
+                                  item.bg,
                               }}
                             >
-                              {
-                                style.icon
-                              }
+                              <Icon className="h-4 w-4" />
                             </span>
 
                             <span className="truncate">

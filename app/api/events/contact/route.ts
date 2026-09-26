@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+
 import { prisma } from "@/lib/prisma";
 
 const PLATFORMS = [
@@ -10,68 +11,115 @@ const PLATFORMS = [
   "DIRECTIONS",
 ] as const;
 
-type ContactPlatform = (typeof PLATFORMS)[number];
+type ContactPlatform =
+  (typeof PLATFORMS)[number];
 
-export async function POST(request: Request) {
+export async function POST(
+  request: Request
+) {
   try {
-    const body = await request.json();
+    const body =
+      await request.json();
 
     const businessId =
-      typeof body.businessId === "string"
+      typeof body.businessId ===
+      "string"
         ? body.businessId.trim()
         : "";
 
     const requestId =
-      typeof body.requestId === "string"
-        ? body.requestId.trim()
+      typeof body.requestId ===
+      "string"
+        ? body.requestId.trim() ||
+          null
         : null;
 
     const platform =
-      typeof body.platform === "string"
-        ? body.platform.trim().toUpperCase()
+      typeof body.platform ===
+      "string"
+        ? body.platform
+            .trim()
+            .toUpperCase()
         : "";
+
+    /*
+     * -----------------------------------------
+     * VALIDATE BUSINESS ID
+     * -----------------------------------------
+     */
 
     if (!businessId) {
       return NextResponse.json(
-        { error: "Business ID is required" },
-        { status: 400 },
+        {
+          error:
+            "Business ID is required",
+        },
+        {
+          status: 400,
+        }
       );
     }
+
+    /*
+     * -----------------------------------------
+     * VALIDATE CONTACT PLATFORM
+     * -----------------------------------------
+     */
 
     if (
       !PLATFORMS.includes(
-        platform as ContactPlatform,
+        platform as ContactPlatform
       )
     ) {
       return NextResponse.json(
-        { error: "Invalid contact platform" },
-        { status: 400 },
+        {
+          error:
+            "Invalid contact platform",
+        },
+        {
+          status: 400,
+        }
       );
     }
 
-    const business = await prisma.business.findUnique({
-      where: {
-        id: businessId,
-      },
-      select: {
-        id: true,
-        status: true,
-      },
-    });
+    /*
+     * -----------------------------------------
+     * VERIFY BUSINESS
+     * -----------------------------------------
+     *
+     * Only active, non-soft-deleted
+     * businesses may receive contact events.
+     */
+
+    const business =
+      await prisma.business.findFirst({
+        where: {
+          id: businessId,
+          status: "ACTIVE",
+          deletedAt: null,
+        },
+        select: {
+          id: true,
+        },
+      });
 
     if (!business) {
       return NextResponse.json(
-        { error: "Business not found" },
-        { status: 404 },
+        {
+          error:
+            "Business not found",
+        },
+        {
+          status: 404,
+        }
       );
     }
 
-    if (business.status !== "ACTIVE") {
-      return NextResponse.json(
-        { error: "Business is not active" },
-        { status: 400 },
-      );
-    }
+    /*
+     * -----------------------------------------
+     * VERIFY REQUEST WHEN PROVIDED
+     * -----------------------------------------
+     */
 
     if (requestId) {
       const buyerRequest =
@@ -86,40 +134,69 @@ export async function POST(request: Request) {
 
       if (!buyerRequest) {
         return NextResponse.json(
-          { error: "Request not found" },
-          { status: 404 },
+          {
+            error:
+              "Request not found",
+          },
+          {
+            status: 404,
+          }
         );
       }
     }
 
-    const event = await prisma.contactEvent.create({
-      data: {
-        businessId,
-        requestId,
-        platform: platform as ContactPlatform,
-      },
-      select: {
-        id: true,
-        businessId: true,
-        requestId: true,
-        platform: true,
-        createdAt: true,
-      },
-    });
+    /*
+     * -----------------------------------------
+     * CREATE CONTACT EVENT
+     * -----------------------------------------
+     */
+
+    const event =
+      await prisma.contactEvent.create({
+        data: {
+          businessId,
+          requestId,
+          platform:
+            platform as ContactPlatform,
+        },
+        select: {
+          id: true,
+          businessId: true,
+          requestId: true,
+          platform: true,
+          createdAt: true,
+        },
+      });
+
+    /*
+     * -----------------------------------------
+     * SUCCESS
+     * -----------------------------------------
+     */
 
     return NextResponse.json(
       {
         success: true,
         event,
       },
-      { status: 201 },
+      {
+        status: 201,
+      }
     );
   } catch (error) {
-    console.error("Contact event error:", error);
+    console.error(
+      "Contact event error:",
+      error
+    );
 
     return NextResponse.json(
-      { error: "Unable to record contact event" },
-      { status: 500 },
+      {
+        error:
+          "Unable to record contact event",
+      },
+      {
+        status: 500,
+      }
     );
   }
 }

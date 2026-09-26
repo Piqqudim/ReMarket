@@ -3,6 +3,7 @@
 import {
   useEffect,
   useState,
+  type FormEvent,
 } from "react";
 
 import {
@@ -16,10 +17,11 @@ import { useParams, useRouter } from "next/navigation";
 
 import ProductImageUpload from "@/components/ProductImageUpload";
 
-type Category = {
-  id: string;
-  name: string;
-};
+import {
+  DEFAULT_CATEGORIES,
+  mergeCategories,
+  type ReMarketCategory,
+} from "@/lib/categories";
 
 export default function NewProductPage() {
   const router =
@@ -36,8 +38,16 @@ export default function NewProductPage() {
   const [businessName, setBusinessName] =
     useState("");
 
+  const [businessDeletedAt, setBusinessDeletedAt] =
+    useState<string | null>(null);
+
   const [categories, setCategories] =
-    useState<Category[]>([]);
+    useState<ReMarketCategory[]>(
+      DEFAULT_CATEGORIES
+    );
+
+  const [usingCategoryFallback, setUsingCategoryFallback] =
+    useState(true);
 
   const [name, setName] =
     useState("");
@@ -142,26 +152,61 @@ export default function NewProductPage() {
           );
         }
 
+        const business =
+          businessData?.business;
+
         if (
-          !categoriesResponse.ok
+          !business ||
+          typeof business.name !==
+            "string"
         ) {
           throw new Error(
-            "Unable to load categories."
+            "Business information is unavailable."
           );
         }
 
         setBusinessName(
-          businessData.business?.name ??
-            ""
+          business.name
         );
 
-        setCategories(
+        setBusinessDeletedAt(
+          typeof business.deletedAt ===
+            "string"
+            ? business.deletedAt
+            : null
+        );
+
+        const backendCategories =
+          categoriesResponse.ok &&
           Array.isArray(
-            categoriesData.categories
+            categoriesData?.categories
           )
             ? categoriesData.categories
-            : []
-        );
+            : [];
+
+        const mergedCategories =
+          mergeCategories(
+            backendCategories
+          );
+
+        if (
+          mergedCategories.length > 0
+        ) {
+          setCategories(
+            mergedCategories
+          );
+          setUsingCategoryFallback(
+            false
+          );
+        } else {
+          setCategories(
+            DEFAULT_CATEGORIES
+          );
+          setUsingCategoryFallback(
+            true
+          );
+          setCategoryId("");
+        }
       } catch (error) {
         if (
           error instanceof DOMException &&
@@ -200,12 +245,20 @@ export default function NewProductPage() {
   ]);
 
   async function submit(
-    event: React.SubmitEvent<HTMLFormElement>
+    event: FormEvent<HTMLFormElement>
   ) {
     event.preventDefault();
 
-    setSaving(true);
     setError("");
+
+    if (businessDeletedAt) {
+      setError(
+        "This business has been deleted and cannot receive new products."
+      );
+      return;
+    }
+
+    setSaving(true);
 
     const trimmedName =
       name.trim();
@@ -225,10 +278,12 @@ export default function NewProductPage() {
           {
             method:
               "POST",
+
             headers: {
               "Content-Type":
                 "application/json",
             },
+
             body: JSON.stringify({
               name:
                 trimmedName,
@@ -315,6 +370,9 @@ export default function NewProductPage() {
     );
   }
 
+  const businessDeleted =
+    Boolean(businessDeletedAt);
+
   return (
     <main className="min-h-screen bg-[#FFF7ED] p-4 sm:p-6">
       <div className="mx-auto max-w-[900px]">
@@ -357,6 +415,12 @@ export default function NewProductPage() {
               </div>
             )}
 
+            {businessDeleted && (
+              <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-xs font-medium text-red-700">
+                This business has been deleted and is retained for administrative reference. New products cannot be added until the business is restored.
+              </div>
+            )}
+
             <section>
               <h2 className="text-sm font-bold text-[#17202A]">
                 Product details
@@ -377,7 +441,10 @@ export default function NewProductPage() {
                       )
                     }
                     placeholder="e.g. Men's Sneakers"
-                    className="mt-2 h-11 w-full rounded-xl border border-[#E8E4DE] bg-white px-3 text-xs outline-none focus:border-[#FF9B82] focus:ring-4 focus:ring-[#FF5A36]/10"
+                    disabled={
+                      businessDeleted
+                    }
+                    className="mt-2 h-11 w-full rounded-xl border border-[#E8E4DE] bg-white px-3 text-xs outline-none focus:border-[#FF9B82] focus:ring-4 focus:ring-[#FF5A36]/10 disabled:cursor-not-allowed disabled:bg-gray-50"
                   />
                 </div>
 
@@ -397,8 +464,11 @@ export default function NewProductPage() {
                       )
                     }
                     rows={4}
+                    disabled={
+                      businessDeleted
+                    }
                     placeholder="Describe the product."
-                    className="mt-2 w-full resize-none rounded-xl border border-[#E8E4DE] bg-white px-3 py-3 text-xs outline-none focus:border-[#FF9B82]"
+                    className="mt-2 w-full resize-none rounded-xl border border-[#E8E4DE] bg-white px-3 py-3 text-xs outline-none focus:border-[#FF9B82] disabled:cursor-not-allowed disabled:bg-gray-50"
                   />
                 </div>
               </div>
@@ -420,7 +490,8 @@ export default function NewProductPage() {
                     setImages
                   }
                   disabled={
-                    saving
+                    saving ||
+                    businessDeleted
                   }
                 />
               </div>
@@ -449,7 +520,12 @@ export default function NewProductPage() {
                           .value
                       )
                     }
-                    className="mt-2 h-11 w-full rounded-xl border border-[#E8E4DE] bg-white px-3 text-xs"
+                    disabled={
+                      saving ||
+                      businessDeleted ||
+                      usingCategoryFallback
+                    }
+                    className="mt-2 h-11 w-full rounded-xl border border-[#E8E4DE] bg-white px-3 text-xs disabled:cursor-not-allowed disabled:bg-gray-50"
                   >
                     <option value="">
                       No category
@@ -472,6 +548,12 @@ export default function NewProductPage() {
                       )
                     )}
                   </select>
+
+                  {usingCategoryFallback && (
+                    <p className="mt-1.5 text-[10px] text-gray-400">
+                      Categories are temporarily unavailable. You can create the product without a category.
+                    </p>
+                  )}
                 </div>
 
                 <div>
@@ -489,7 +571,10 @@ export default function NewProductPage() {
                     }
                     inputMode="numeric"
                     placeholder="Optional"
-                    className="mt-2 h-11 w-full rounded-xl border border-[#E8E4DE] bg-white px-3 text-xs"
+                    disabled={
+                      businessDeleted
+                    }
+                    className="mt-2 h-11 w-full rounded-xl border border-[#E8E4DE] bg-white px-3 text-xs disabled:cursor-not-allowed disabled:bg-gray-50"
                   />
                 </div>
 
@@ -510,7 +595,10 @@ export default function NewProductPage() {
                     }
                     inputMode="numeric"
                     placeholder="Optional"
-                    className="mt-2 h-11 w-full rounded-xl border border-[#E8E4DE] bg-white px-3 text-xs"
+                    disabled={
+                      businessDeleted
+                    }
+                    className="mt-2 h-11 w-full rounded-xl border border-[#E8E4DE] bg-white px-3 text-xs disabled:cursor-not-allowed disabled:bg-gray-50"
                   />
                 </div>
 
@@ -531,7 +619,10 @@ export default function NewProductPage() {
                     }
                     inputMode="numeric"
                     placeholder="Optional"
-                    className="mt-2 h-11 w-full rounded-xl border border-[#E8E4DE] bg-white px-3 text-xs"
+                    disabled={
+                      businessDeleted
+                    }
+                    className="mt-2 h-11 w-full rounded-xl border border-[#E8E4DE] bg-white px-3 text-xs disabled:cursor-not-allowed disabled:bg-gray-50"
                   />
                 </div>
               </div>
@@ -560,7 +651,10 @@ export default function NewProductPage() {
                           .value as typeof availability
                       )
                     }
-                    className="mt-2 h-11 w-full rounded-xl border border-[#E8E4DE] bg-white px-3 text-xs"
+                    disabled={
+                      businessDeleted
+                    }
+                    className="mt-2 h-11 w-full rounded-xl border border-[#E8E4DE] bg-white px-3 text-xs disabled:cursor-not-allowed disabled:bg-gray-50"
                   >
                     <option value="AVAILABLE">
                       Available
@@ -591,7 +685,10 @@ export default function NewProductPage() {
                           .value as typeof status
                       )
                     }
-                    className="mt-2 h-11 w-full rounded-xl border border-[#E8E4DE] bg-white px-3 text-xs"
+                    disabled={
+                      businessDeleted
+                    }
+                    className="mt-2 h-11 w-full rounded-xl border border-[#E8E4DE] bg-white px-3 text-xs disabled:cursor-not-allowed disabled:bg-gray-50"
                   >
                     <option value="ACTIVE">
                       Active
@@ -623,7 +720,10 @@ export default function NewProductPage() {
                   )
                 }
                 placeholder="e.g. sneakers, shoes, footwear"
-                className="mt-3 h-11 w-full rounded-xl border border-[#E8E4DE] bg-white px-3 text-xs outline-none focus:border-[#FF9B82]"
+                disabled={
+                  businessDeleted
+                }
+                className="mt-3 h-11 w-full rounded-xl border border-[#E8E4DE] bg-white px-3 text-xs outline-none focus:border-[#FF9B82] disabled:cursor-not-allowed disabled:bg-gray-50"
               />
 
               <p className="mt-1.5 text-[10px] text-gray-400">
@@ -641,16 +741,21 @@ export default function NewProductPage() {
 
               <button
                 type="submit"
-                disabled={saving}
-                className="inline-flex items-center gap-2 rounded-xl bg-[#FF5A36] px-5 py-3 text-xs font-bold text-white disabled:opacity-60"
+                disabled={
+                  saving ||
+                  businessDeleted
+                }
+                className="inline-flex items-center gap-2 rounded-xl bg-[#FF5A36] px-5 py-3 text-xs font-bold text-white disabled:cursor-not-allowed disabled:opacity-60"
               >
                 {saving && (
                   <Loader2 className="h-4 w-4 animate-spin" />
                 )}
 
-                {saving
-                  ? "Creating..."
-                  : "Create product"}
+                {businessDeleted
+                  ? "Business deleted"
+                  : saving
+                    ? "Creating..."
+                    : "Create product"}
               </button>
             </div>
           </form>

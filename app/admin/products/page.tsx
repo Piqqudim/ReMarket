@@ -12,7 +12,11 @@ import {
   Store,
   X,
 } from "lucide-react";
-import { useEffect, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useState,
+} from "react";
 
 type Product = {
   id: string;
@@ -31,10 +35,13 @@ type Product = {
     | "PENDING";
   imageUrl: string | null;
 
+  deletedAt?: string | null;
+
   business: {
     id: string;
     name: string;
     area: string;
+    deletedAt?: string | null;
   };
 
   category: string | null;
@@ -72,47 +79,28 @@ type ProductChanges = {
 };
 
 export default function AdminProductsPage() {
-  const [products, setProducts] =
-    useState<Product[]>([]);
-
-  const [query, setQuery] =
-    useState("");
-
-  const [status, setStatus] =
-    useState("");
-
-  const [availability, setAvailability] =
-    useState("");
-
-  const [loading, setLoading] =
-    useState(true);
-
-  const [error, setError] =
-    useState("");
-
+  const [products, setProducts] = useState<Product[]>([]);
+  const [query, setQuery] = useState("");
+  const [status, setStatus] = useState("");
+  const [availability, setAvailability] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
   const [updatingId, setUpdatingId] =
     useState<string | null>(null);
 
-  async function loadProducts() {
+  const loadProducts = useCallback(async () => {
     try {
       setLoading(true);
       setError("");
 
-      const params =
-        new URLSearchParams();
+      const params = new URLSearchParams();
 
       if (query.trim()) {
-        params.set(
-          "q",
-          query.trim()
-        );
+        params.set("q", query.trim());
       }
 
       if (status) {
-        params.set(
-          "status",
-          status
-        );
+        params.set("status", status);
       }
 
       if (availability) {
@@ -126,8 +114,7 @@ export default function AdminProductsPage() {
         `/api/admin/products?${params.toString()}`
       );
 
-      const data =
-        await response.json();
+      const data = await response.json();
 
       if (!response.ok) {
         throw new Error(
@@ -149,25 +136,32 @@ export default function AdminProductsPage() {
     } finally {
       setLoading(false);
     }
-  }
+  }, [query, status, availability]);
 
   useEffect(() => {
     const timer = setTimeout(() => {
-      loadProducts();
+      void loadProducts();
     }, 250);
 
-    return () =>
-      clearTimeout(timer);
-  }, [
-    query,
-    status,
-    availability,
-  ]);
+    return () => clearTimeout(timer);
+  }, [loadProducts]);
 
   async function updateProduct(
     product: Product,
     changes: ProductChanges
   ) {
+    if (
+      product.deletedAt ||
+      product.business.deletedAt
+    ) {
+      setError(
+        product.deletedAt
+          ? "This product has been deleted."
+          : "This product belongs to a deleted business."
+      );
+      return;
+    }
+
     try {
       setUpdatingId(product.id);
       setError("");
@@ -180,14 +174,11 @@ export default function AdminProductsPage() {
             "Content-Type":
               "application/json",
           },
-          body: JSON.stringify(
-            changes
-          ),
+          body: JSON.stringify(changes),
         }
       );
 
-      const data =
-        await response.json();
+      const data = await response.json();
 
       if (!response.ok) {
         throw new Error(
@@ -223,7 +214,6 @@ export default function AdminProductsPage() {
   return (
     <main className="min-h-screen bg-[#FFF7ED] px-3 py-3 sm:px-5 sm:py-5">
       <div className="mx-auto flex min-h-[calc(100vh-24px)] max-w-[1500px] overflow-hidden rounded-[22px] border border-[#FF5A36] bg-[#FFFDFC] shadow-sm sm:min-h-[calc(100vh-40px)]">
-
         {/* Sidebar */}
         <aside className="hidden w-[190px] shrink-0 border-r border-[#EAE6DF] bg-[#FCFAF6] lg:block">
           <div className="flex h-[66px] items-center border-b border-[#EAE6DF] px-5">
@@ -231,8 +221,12 @@ export default function AdminProductsPage() {
               href="/admin"
               className="text-xl font-black tracking-tight"
             >
-              <span className="text-[#FF5A36]">Re</span>
-              <span className="text-[#17202A]">Market</span>
+              <span className="text-[#FF5A36]">
+                Re
+              </span>
+              <span className="text-[#17202A]">
+                Market
+              </span>
             </Link>
           </div>
 
@@ -249,7 +243,8 @@ export default function AdminProductsPage() {
                   key={item.href}
                   href={item.href}
                   className={`flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-semibold transition ${
-                    item.href === "/admin/products"
+                    item.href ===
+                    "/admin/products"
                       ? "bg-[#FFE0D6] text-[#9F2D18]"
                       : "text-[#6F675F] hover:bg-[#FFF0D9]"
                   }`}
@@ -304,7 +299,8 @@ export default function AdminProductsPage() {
                     key={item.href}
                     href={item.href}
                     className={`flex shrink-0 items-center gap-2 rounded-xl px-3 py-2 text-xs font-bold ${
-                      item.href === "/admin/products"
+                      item.href ===
+                      "/admin/products"
                         ? "bg-[#FF5A36] text-white"
                         : "bg-[#FCFAF6] text-[#6F675F]"
                     }`}
@@ -362,10 +358,22 @@ export default function AdminProductsPage() {
                   value={availability}
                   onChange={setAvailability}
                   options={[
-                    ["", "All availability"],
-                    ["AVAILABLE", "Available"],
-                    ["ASK_SELLER", "Ask seller"],
-                    ["UNAVAILABLE", "Unavailable"],
+                    [
+                      "",
+                      "All availability",
+                    ],
+                    [
+                      "AVAILABLE",
+                      "Available",
+                    ],
+                    [
+                      "ASK_SELLER",
+                      "Ask seller",
+                    ],
+                    [
+                      "UNAVAILABLE",
+                      "Unavailable",
+                    ],
                   ]}
                 />
               </div>
@@ -510,16 +518,30 @@ function ProductRow({
     changes: ProductChanges
   ) => void;
 }) {
+  const locked =
+    Boolean(product.deletedAt) ||
+    Boolean(product.business.deletedAt);
+
   return (
-    <tr>
+    <tr
+      className={
+        locked ? "bg-[#FCFAF6]" : undefined
+      }
+    >
       <td className="px-4 py-4">
         <div className="flex items-center gap-3">
           <ProductImage product={product} />
 
           <div className="min-w-0">
-            <p className="truncate font-bold text-[#17202A]">
-              {product.name}
-            </p>
+            <div className="flex items-center gap-2">
+              <p className="truncate font-bold text-[#17202A]">
+                {product.name}
+              </p>
+
+              {product.deletedAt && (
+                <RecordBadge label="Deleted" />
+              )}
+            </div>
 
             {product.category && (
               <p className="mt-1 text-xs text-[#8A8178]">
@@ -531,9 +553,15 @@ function ProductRow({
       </td>
 
       <td className="px-4 py-4">
-        <p className="font-semibold text-[#17202A]">
-          {product.business.name}
-        </p>
+        <div className="flex items-center gap-2">
+          <p className="font-semibold text-[#17202A]">
+            {product.business.name}
+          </p>
+
+          {product.business.deletedAt && (
+            <RecordBadge label="Deleted" />
+          )}
+        </div>
 
         <p className="mt-1 text-xs text-[#8A8178]">
           {product.business.area}
@@ -548,6 +576,7 @@ function ProductRow({
         <AvailabilityButton
           product={product}
           updating={updating}
+          locked={locked}
           onUpdate={onUpdate}
         />
       </td>
@@ -556,6 +585,7 @@ function ProductRow({
         <StatusButton
           product={product}
           updating={updating}
+          locked={locked}
           onUpdate={onUpdate}
         />
       </td>
@@ -569,13 +599,23 @@ function ProductRow({
             View Business
           </Link>
 
-          <Link
-            href={`/admin/businesses/${product.business.id}/products/${product.id}/edit`}
-            className="inline-flex items-center gap-1.5 rounded-xl bg-[#FF5A36] px-3 py-2 text-xs font-bold text-white transition hover:bg-[#E94B29]"
-          >
-            <Pencil size={14} />
-            Edit
-          </Link>
+          {locked ? (
+            <span
+              title="Deleted products or products belonging to deleted businesses cannot be edited."
+              className="inline-flex cursor-not-allowed items-center gap-1.5 rounded-xl bg-[#E8E4DE] px-3 py-2 text-xs font-bold text-[#A39A91]"
+            >
+              <Pencil size={14} />
+              Edit
+            </span>
+          ) : (
+            <Link
+              href={`/admin/businesses/${product.business.id}/products/${product.id}/edit`}
+              className="inline-flex items-center gap-1.5 rounded-xl bg-[#FF5A36] px-3 py-2 text-xs font-bold text-white transition hover:bg-[#E94B29]"
+            >
+              <Pencil size={14} />
+              Edit
+            </Link>
+          )}
         </div>
       </td>
     </tr>
@@ -594,19 +634,39 @@ function ProductMobileCard({
     changes: ProductChanges
   ) => void;
 }) {
+  const locked =
+    Boolean(product.deletedAt) ||
+    Boolean(product.business.deletedAt);
+
   return (
-    <article className="p-4">
+    <article
+      className={`p-4 ${
+        locked ? "bg-[#FCFAF6]" : ""
+      }`}
+    >
       <div className="flex gap-3">
         <ProductImage product={product} />
 
         <div className="min-w-0 flex-1">
-          <h3 className="truncate font-black text-[#17202A]">
-            {product.name}
-          </h3>
+          <div className="flex items-center gap-2">
+            <h3 className="truncate font-black text-[#17202A]">
+              {product.name}
+            </h3>
 
-          <p className="mt-1 text-xs text-[#8A8178]">
-            {product.business.name}
-          </p>
+            {product.deletedAt && (
+              <RecordBadge label="Deleted" />
+            )}
+          </div>
+
+          <div className="mt-1 flex flex-wrap items-center gap-2">
+            <p className="text-xs text-[#8A8178]">
+              {product.business.name}
+            </p>
+
+            {product.business.deletedAt && (
+              <RecordBadge label="Business deleted" />
+            )}
+          </div>
 
           <p className="mt-2 font-bold text-[#FF5A36]">
             <Price product={product} />
@@ -618,12 +678,14 @@ function ProductMobileCard({
         <AvailabilityButton
           product={product}
           updating={updating}
+          locked={locked}
           onUpdate={onUpdate}
         />
 
         <StatusButton
           product={product}
           updating={updating}
+          locked={locked}
           onUpdate={onUpdate}
         />
 
@@ -634,13 +696,20 @@ function ProductMobileCard({
           View Business
         </Link>
 
-        <Link
-          href={`/admin/businesses/${product.business.id}/products/${product.id}/edit`}
-          className="inline-flex items-center gap-1.5 rounded-xl bg-[#FF5A36] px-3 py-2 text-xs font-bold text-white"
-        >
-          <Pencil size={13} />
-          Edit
-        </Link>
+        {locked ? (
+          <span className="inline-flex cursor-not-allowed items-center gap-1.5 rounded-xl bg-[#E8E4DE] px-3 py-2 text-xs font-bold text-[#A39A91]">
+            <Pencil size={13} />
+            Edit
+          </span>
+        ) : (
+          <Link
+            href={`/admin/businesses/${product.business.id}/products/${product.id}/edit`}
+            className="inline-flex items-center gap-1.5 rounded-xl bg-[#FF5A36] px-3 py-2 text-xs font-bold text-white"
+          >
+            <Pencil size={13} />
+            Edit
+          </Link>
+        )}
       </div>
     </article>
   );
@@ -698,10 +767,12 @@ function Price({
 function AvailabilityButton({
   product,
   updating,
+  locked,
   onUpdate,
 }: {
   product: Product;
   updating: boolean;
+  locked: boolean;
   onUpdate: (
     product: Product,
     changes: ProductChanges
@@ -728,13 +799,18 @@ function AvailabilityButton({
   return (
     <button
       type="button"
-      disabled={updating}
+      disabled={updating || locked}
+      title={
+        locked
+          ? "Deleted records cannot be updated."
+          : undefined
+      }
       onClick={() =>
         onUpdate(product, {
           availability: next,
         })
       }
-      className="inline-flex items-center gap-1 rounded-xl border border-[#EAE6DF] bg-[#FCFAF6] px-3 py-2 text-[11px] font-bold text-[#6F675F] transition hover:bg-[#FFF0D9] disabled:opacity-50"
+      className="inline-flex items-center gap-1 rounded-xl border border-[#EAE6DF] bg-[#FCFAF6] px-3 py-2 text-[11px] font-bold text-[#6F675F] transition hover:bg-[#FFF0D9] disabled:cursor-not-allowed disabled:opacity-50"
     >
       {label}
       <ChevronDown size={13} />
@@ -745,10 +821,12 @@ function AvailabilityButton({
 function StatusButton({
   product,
   updating,
+  locked,
   onUpdate,
 }: {
   product: Product;
   updating: boolean;
+  locked: boolean;
   onUpdate: (
     product: Product,
     changes: ProductChanges
@@ -757,10 +835,18 @@ function StatusButton({
   const active =
     product.status === "ACTIVE";
 
+  const pending =
+    product.status === "PENDING";
+
   return (
     <button
       type="button"
-      disabled={updating}
+      disabled={updating || locked}
+      title={
+        locked
+          ? "Deleted records cannot be updated."
+          : undefined
+      }
       onClick={() =>
         onUpdate(product, {
           status: active
@@ -768,10 +854,12 @@ function StatusButton({
             : "ACTIVE",
         })
       }
-      className={`rounded-full px-2.5 py-1 text-[11px] font-bold disabled:opacity-50 ${
+      className={`rounded-full px-2.5 py-1 text-[11px] font-bold disabled:cursor-not-allowed disabled:opacity-50 ${
         active
           ? "bg-[#E7F7EF] text-[#287A4B]"
-          : "bg-[#F0ECE7] text-[#6F675F]"
+          : pending
+            ? "bg-[#FFF0C7] text-[#8A5A00]"
+            : "bg-[#F0ECE7] text-[#6F675F]"
       }`}
     >
       {active ? (
@@ -779,10 +867,24 @@ function StatusButton({
           <Check size={12} />
           Active
         </span>
+      ) : pending ? (
+        "Pending"
       ) : (
         "Inactive"
       )}
     </button>
+  );
+}
+
+function RecordBadge({
+  label,
+}: {
+  label: string;
+}) {
+  return (
+    <span className="shrink-0 rounded-full bg-[#F0ECE7] px-2 py-0.5 text-[10px] font-bold text-[#8A8178]">
+      {label}
+    </span>
   );
 }
 
@@ -800,9 +902,7 @@ function FilterSelect({
       <select
         value={value}
         onChange={(event) =>
-          onChange(
-            event.target.value
-          )
+          onChange(event.target.value)
         }
         className="h-11 min-w-[155px] appearance-none rounded-xl border border-[#EAE6DF] bg-[#FCFAF6] pl-3 pr-9 text-sm font-medium text-[#6F675F] outline-none focus:border-[#FF5A36]"
       >

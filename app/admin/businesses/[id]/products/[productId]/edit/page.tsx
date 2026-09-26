@@ -3,7 +3,6 @@
 import {
   useEffect,
   useState,
-
 } from "react";
 
 import {
@@ -21,10 +20,11 @@ import {
 
 import ProductImageUpload from "@/components/ProductImageUpload";
 
-type Category = {
-  id: string;
-  name: string;
-};
+import {
+  DEFAULT_CATEGORIES,
+  mergeCategories,
+  type ReMarketCategory,
+} from "@/lib/categories";
 
 type ProductImage = {
   id: string;
@@ -52,6 +52,7 @@ type Product = {
     | "INACTIVE"
     | "PENDING";
   images: ProductImage[];
+  deletedAt?: string | null;
 };
 
 export default function EditProductPage() {
@@ -73,8 +74,16 @@ export default function EditProductPage() {
   const [businessName, setBusinessName] =
     useState("");
 
+  const [businessDeletedAt, setBusinessDeletedAt] =
+    useState<string | null>(null);
+
   const [categories, setCategories] =
-    useState<Category[]>([]);
+    useState<ReMarketCategory[]>(
+      DEFAULT_CATEGORIES
+    );
+
+  const [usingCategoryFallback, setUsingCategoryFallback] =
+    useState(true);
 
   const [product, setProduct] =
     useState<Product | null>(
@@ -190,24 +199,27 @@ export default function EditProductPage() {
           );
         }
 
-        if (
-          !categoriesResponse.ok
-        ) {
+        const business =
+          businessData?.business;
+
+        if (!business) {
           throw new Error(
-            "Unable to load categories."
+            "Business not found."
           );
         }
 
         const loadedProduct =
-          businessData.business?.products?.find(
-            (
-              item: Product
-            ) =>
-              item.id ===
-              productId
-          ) as
-            | Product
-            | undefined;
+          Array.isArray(
+            business.products
+          )
+            ? business.products.find(
+                (
+                  item: Product
+                ) =>
+                  item.id ===
+                  productId
+              )
+            : undefined;
 
         if (!loadedProduct) {
           throw new Error(
@@ -216,91 +228,135 @@ export default function EditProductPage() {
         }
 
         setBusinessName(
-          businessData.business?.name ??
-            ""
+          typeof business.name ===
+            "string"
+            ? business.name
+            : ""
         );
 
-        setCategories(
+        setBusinessDeletedAt(
+          typeof business.deletedAt ===
+            "string"
+            ? business.deletedAt
+            : null
+        );
+
+        const backendCategories =
+          categoriesResponse.ok &&
           Array.isArray(
             categoriesData.categories
           )
             ? categoriesData.categories
-            : []
-        );
+            : [];
+
+        const mergedCategories =
+          mergeCategories(
+            backendCategories
+          );
+
+        if (
+          mergedCategories.length >
+          0
+        ) {
+          setCategories(
+            mergedCategories
+          );
+          setUsingCategoryFallback(
+            false
+          );
+        } else {
+          setCategories(
+            DEFAULT_CATEGORIES
+          );
+          setUsingCategoryFallback(
+            true
+          );
+        }
+
+        const typedProduct =
+          loadedProduct as Product;
 
         setProduct(
-          loadedProduct
+          typedProduct
         );
 
         setName(
-          loadedProduct.name
+          typedProduct.name
         );
 
         setDescription(
-          loadedProduct.description ??
+          typedProduct.description ??
             ""
         );
 
         setCategoryId(
-          loadedProduct.categoryId ??
+          typedProduct.categoryId ??
             ""
         );
 
         setPrice(
-          loadedProduct.price !=
+          typedProduct.price !=
             null
             ? String(
-                loadedProduct.price
+                typedProduct.price
               )
             : ""
         );
 
         setPriceMin(
-          loadedProduct.priceMin !=
+          typedProduct.priceMin !=
             null
             ? String(
-                loadedProduct.priceMin
+                typedProduct.priceMin
               )
             : ""
         );
 
         setPriceMax(
-          loadedProduct.priceMax !=
+          typedProduct.priceMax !=
             null
             ? String(
-                loadedProduct.priceMax
+                typedProduct.priceMax
               )
             : ""
         );
 
         setAvailability(
-          loadedProduct.availability
+          typedProduct.availability
         );
 
         setStatus(
-          loadedProduct.status
+          typedProduct.status
         );
 
         setKeywords(
-          loadedProduct.keywords.join(
-            ", "
+          Array.isArray(
+            typedProduct.keywords
           )
+            ? typedProduct.keywords.join(
+                ", "
+              )
+            : ""
         );
 
         const gallery =
-          loadedProduct.images
-            .slice()
-            .sort(
-              (a, b) =>
-                a.sortOrder -
-                b.sortOrder
-            )
-            .map(
-              (
-                image
-              ) =>
-                image.url
-            );
+          Array.isArray(
+            typedProduct.images
+          )
+            ? typedProduct.images
+                .slice()
+                .sort(
+                  (a, b) =>
+                    a.sortOrder -
+                    b.sortOrder
+                )
+                .map(
+                  (
+                    image
+                  ) =>
+                    image.url
+                )
+            : [];
 
         /*
          * Backwards compatibility:
@@ -309,9 +365,9 @@ export default function EditProductPage() {
         setImages(
           gallery.length > 0
             ? gallery
-            : loadedProduct.imageUrl
+            : typedProduct.imageUrl
               ? [
-                  loadedProduct.imageUrl,
+                  typedProduct.imageUrl,
                 ]
               : []
         );
@@ -353,13 +409,42 @@ export default function EditProductPage() {
     productId,
   ]);
 
+  const businessDeleted =
+    Boolean(
+      businessDeletedAt
+    );
+
+  const productDeleted =
+    Boolean(
+      product?.deletedAt
+    );
+
+  const editingDisabled =
+    businessDeleted ||
+    productDeleted;
+
   async function submit(
     event: React.SubmitEvent<HTMLFormElement>
   ) {
     event.preventDefault();
 
-    setSaving(true);
     setError("");
+
+    if (businessDeleted) {
+      setError(
+        "This business has been deleted and cannot be edited."
+      );
+      return;
+    }
+
+    if (productDeleted) {
+      setError(
+        "This product has been deleted and is retained for administrative reference."
+      );
+      return;
+    }
+
+    setSaving(true);
 
     if (!name.trim()) {
       setError(
@@ -376,10 +461,12 @@ export default function EditProductPage() {
           {
             method:
               "PATCH",
+
             headers: {
               "Content-Type":
                 "application/json",
             },
+
             body: JSON.stringify({
               name:
                 name.trim(),
@@ -458,6 +545,13 @@ export default function EditProductPage() {
   }
 
   async function deleteProduct() {
+    if (
+      businessDeleted ||
+      productDeleted
+    ) {
+      return;
+    }
+
     const confirmed =
       window.confirm(
         "Delete this product?"
@@ -565,6 +659,19 @@ export default function EditProductPage() {
               </div>
             )}
 
+            {businessDeleted && (
+              <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-xs font-medium text-red-700">
+                This business has been deleted and is retained for administrative reference. Its products cannot be edited.
+              </div>
+            )}
+
+            {!businessDeleted &&
+              productDeleted && (
+                <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-xs font-medium text-red-700">
+                  This product has been deleted and is retained for administrative reference.
+                </div>
+              )}
+
             <section>
               <h2 className="text-sm font-bold text-[#17202A]">
                 Product details
@@ -584,7 +691,10 @@ export default function EditProductPage() {
                           .value
                       )
                     }
-                    className="mt-2 h-11 w-full rounded-xl border border-[#E8E4DE] bg-white px-3 text-xs outline-none focus:border-[#FF9B82]"
+                    disabled={
+                      editingDisabled
+                    }
+                    className="mt-2 h-11 w-full rounded-xl border border-[#E8E4DE] bg-white px-3 text-xs outline-none focus:border-[#FF9B82] disabled:cursor-not-allowed disabled:bg-gray-50"
                   />
                 </div>
 
@@ -604,7 +714,10 @@ export default function EditProductPage() {
                       )
                     }
                     rows={4}
-                    className="mt-2 w-full resize-none rounded-xl border border-[#E8E4DE] bg-white px-3 py-3 text-xs outline-none focus:border-[#FF9B82]"
+                    disabled={
+                      editingDisabled
+                    }
+                    className="mt-2 w-full resize-none rounded-xl border border-[#E8E4DE] bg-white px-3 py-3 text-xs outline-none focus:border-[#FF9B82] disabled:cursor-not-allowed disabled:bg-gray-50"
                   />
                 </div>
               </div>
@@ -627,7 +740,8 @@ export default function EditProductPage() {
                   }
                   disabled={
                     saving ||
-                    deleting
+                    deleting ||
+                    editingDisabled
                   }
                 />
               </div>
@@ -656,7 +770,11 @@ export default function EditProductPage() {
                           .value
                       )
                     }
-                    className="mt-2 h-11 w-full rounded-xl border border-[#E8E4DE] bg-white px-3 text-xs"
+                    disabled={
+                      editingDisabled ||
+                      usingCategoryFallback
+                    }
+                    className="mt-2 h-11 w-full rounded-xl border border-[#E8E4DE] bg-white px-3 text-xs disabled:cursor-not-allowed disabled:bg-gray-50"
                   >
                     <option value="">
                       No category
@@ -679,6 +797,12 @@ export default function EditProductPage() {
                       )
                     )}
                   </select>
+
+                  {usingCategoryFallback && (
+                    <p className="mt-1.5 text-[10px] text-gray-400">
+                      Categories are temporarily unavailable. The existing category will be preserved.
+                    </p>
+                  )}
                 </div>
 
                 <div>
@@ -695,7 +819,10 @@ export default function EditProductPage() {
                       )
                     }
                     inputMode="numeric"
-                    className="mt-2 h-11 w-full rounded-xl border border-[#E8E4DE] bg-white px-3 text-xs"
+                    disabled={
+                      editingDisabled
+                    }
+                    className="mt-2 h-11 w-full rounded-xl border border-[#E8E4DE] bg-white px-3 text-xs disabled:cursor-not-allowed disabled:bg-gray-50"
                   />
                 </div>
 
@@ -715,7 +842,10 @@ export default function EditProductPage() {
                       )
                     }
                     inputMode="numeric"
-                    className="mt-2 h-11 w-full rounded-xl border border-[#E8E4DE] bg-white px-3 text-xs"
+                    disabled={
+                      editingDisabled
+                    }
+                    className="mt-2 h-11 w-full rounded-xl border border-[#E8E4DE] bg-white px-3 text-xs disabled:cursor-not-allowed disabled:bg-gray-50"
                   />
                 </div>
 
@@ -735,7 +865,10 @@ export default function EditProductPage() {
                       )
                     }
                     inputMode="numeric"
-                    className="mt-2 h-11 w-full rounded-xl border border-[#E8E4DE] bg-white px-3 text-xs"
+                    disabled={
+                      editingDisabled
+                    }
+                    className="mt-2 h-11 w-full rounded-xl border border-[#E8E4DE] bg-white px-3 text-xs disabled:cursor-not-allowed disabled:bg-gray-50"
                   />
                 </div>
               </div>
@@ -764,7 +897,10 @@ export default function EditProductPage() {
                           .value as typeof availability
                       )
                     }
-                    className="mt-2 h-11 w-full rounded-xl border border-[#E8E4DE] bg-white px-3 text-xs"
+                    disabled={
+                      editingDisabled
+                    }
+                    className="mt-2 h-11 w-full rounded-xl border border-[#E8E4DE] bg-white px-3 text-xs disabled:cursor-not-allowed disabled:bg-gray-50"
                   >
                     <option value="AVAILABLE">
                       Available
@@ -795,7 +931,10 @@ export default function EditProductPage() {
                           .value as typeof status
                       )
                     }
-                    className="mt-2 h-11 w-full rounded-xl border border-[#E8E4DE] bg-white px-3 text-xs"
+                    disabled={
+                      editingDisabled
+                    }
+                    className="mt-2 h-11 w-full rounded-xl border border-[#E8E4DE] bg-white px-3 text-xs disabled:cursor-not-allowed disabled:bg-gray-50"
                   >
                     <option value="ACTIVE">
                       Active
@@ -827,7 +966,10 @@ export default function EditProductPage() {
                   )
                 }
                 placeholder="e.g. sneakers, shoes, footwear"
-                className="mt-3 h-11 w-full rounded-xl border border-[#E8E4DE] bg-white px-3 text-xs"
+                disabled={
+                  editingDisabled
+                }
+                className="mt-3 h-11 w-full rounded-xl border border-[#E8E4DE] bg-white px-3 text-xs disabled:cursor-not-allowed disabled:bg-gray-50"
               />
 
               <p className="mt-1.5 text-[10px] text-gray-400">
@@ -843,9 +985,10 @@ export default function EditProductPage() {
                 }
                 disabled={
                   saving ||
-                  deleting
+                  deleting ||
+                  editingDisabled
                 }
-                className="inline-flex items-center gap-2 rounded-xl border border-red-200 bg-white px-4 py-3 text-xs font-bold text-red-600 disabled:opacity-50"
+                className="inline-flex items-center gap-2 rounded-xl border border-red-200 bg-white px-4 py-3 text-xs font-bold text-red-600 disabled:cursor-not-allowed disabled:opacity-50"
               >
                 {deleting ? (
                   <Loader2 className="h-4 w-4 animate-spin" />
@@ -855,7 +998,9 @@ export default function EditProductPage() {
 
                 {deleting
                   ? "Deleting..."
-                  : "Delete product"}
+                  : productDeleted
+                    ? "Product deleted"
+                    : "Delete product"}
               </button>
 
               <div className="flex gap-2">
@@ -870,17 +1015,20 @@ export default function EditProductPage() {
                   type="submit"
                   disabled={
                     saving ||
-                    deleting
+                    deleting ||
+                    editingDisabled
                   }
-                  className="inline-flex items-center gap-2 rounded-xl bg-[#FF5A36] px-5 py-3 text-xs font-bold text-white disabled:opacity-60"
+                  className="inline-flex items-center gap-2 rounded-xl bg-[#FF5A36] px-5 py-3 text-xs font-bold text-white disabled:cursor-not-allowed disabled:opacity-60"
                 >
                   {saving && (
                     <Loader2 className="h-4 w-4 animate-spin" />
                   )}
 
-                  {saving
-                    ? "Saving..."
-                    : "Save changes"}
+                  {editingDisabled
+                    ? "Editing disabled"
+                    : saving
+                      ? "Saving..."
+                      : "Save changes"}
                 </button>
               </div>
             </div>

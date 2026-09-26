@@ -1,7 +1,11 @@
 import { Prisma } from "@prisma/client";
 import { NextRequest, NextResponse } from "next/server";
+
 import { prisma } from "@/lib/prisma";
-import { findMatches, parseQuery } from "@/lib/matching";
+import {
+  findMatches,
+  parseQuery,
+} from "@/lib/matching";
 
 function clean(value: unknown): string {
   if (typeof value !== "string") {
@@ -11,8 +15,14 @@ function clean(value: unknown): string {
   return value.trim();
 }
 
-function optionalInt(value: unknown): number | null {
-  if (value === undefined || value === null || value === "") {
+function optionalInt(
+  value: unknown
+): number | null {
+  if (
+    value === undefined ||
+    value === null ||
+    value === ""
+  ) {
     return null;
   }
 
@@ -25,41 +35,266 @@ function optionalInt(value: unknown): number | null {
   return Math.floor(number);
 }
 
+/*
+ * -----------------------------------------
+ * NIGERIAN PHONE NORMALIZATION
+ * -----------------------------------------
+ *
+ * ReMarket stores Nigerian phone numbers in
+ * one canonical format:
+ *
+ * +2348012345678
+ *
+ * This lets users submit:
+ *
+ * 08012345678
+ * +2348012345678
+ * 2348012345678
+ * 080 1234 5678
+ *
+ * and still find the same request later.
+ */
+
+function normalizeNigerianPhone(
+  value: string
+): string {
+  const original = value.trim();
+
+  if (!original) {
+    return "";
+  }
+
+  let cleanValue = original.replace(
+    /[^\d+]/g,
+    ""
+  );
+
+  if (!cleanValue) {
+    return "";
+  }
+
+  /*
+   * Convert 00 international prefix.
+   *
+   * 002348012345678
+   *      ↓
+   * 2348012345678
+   */
+  if (
+    cleanValue.startsWith("00")
+  ) {
+    cleanValue =
+      cleanValue.slice(2);
+  }
+
+  /*
+   * Remove leading + before processing.
+   *
+   * +2348012345678
+   *       ↓
+   * 2348012345678
+   */
+  if (
+    cleanValue.startsWith("+")
+  ) {
+    cleanValue =
+      cleanValue.slice(1);
+  }
+
+  /*
+   * Already using Nigerian country code.
+   */
+  if (
+    cleanValue.startsWith("234")
+  ) {
+    return `+${cleanValue}`;
+  }
+
+  /*
+   * Local Nigerian format.
+   *
+   * 08012345678
+   *       ↓
+   * +2348012345678
+   */
+  if (
+    cleanValue.startsWith("0")
+  ) {
+    return `+234${cleanValue.slice(1)}`;
+  }
+
+  /*
+   * Handle the common case where the user
+   * enters the Nigerian number without the
+   * leading zero.
+   *
+   * 8012345678
+   *       ↓
+   * +2348012345678
+   */
+  if (
+    /^\d+$/.test(cleanValue)
+  ) {
+    return `+234${cleanValue}`;
+  }
+
+  /*
+   * Preserve non-phone contact text rather
+   * than changing the existing behavior.
+   */
+  return original;
+}
+
+/*
+ * -----------------------------------------
+ * CONTACT LOOKUP VARIANTS
+ * -----------------------------------------
+ *
+ * Existing requests may already have been
+ * stored before normalization was introduced.
+ *
+ * We therefore search both:
+ *
+ * - the canonical normalized value
+ * - common legacy forms
+ *
+ * New requests are always stored canonically.
+ */
+
+function getContactLookupVariants(
+  value: string
+): string[] {
+  const original = value.trim();
+
+  if (!original) {
+    return [];
+  }
+
+  const normalized =
+    normalizeNigerianPhone(
+      original
+    );
+
+  const digitsOnly =
+    original.replace(
+      /\D/g,
+      ""
+    );
+
+  const variants = new Set<string>();
+
+  variants.add(original);
+
+  if (normalized) {
+    variants.add(normalized);
+  }
+
+  if (digitsOnly) {
+    variants.add(digitsOnly);
+
+    if (
+      digitsOnly.startsWith(
+        "234"
+      )
+    ) {
+      variants.add(
+        `+${digitsOnly}`
+      );
+
+      variants.add(
+        `0${digitsOnly.slice(3)}`
+      );
+    }
+
+    if (
+      digitsOnly.startsWith("0")
+    ) {
+      variants.add(
+        `234${digitsOnly.slice(1)}`
+      );
+
+      variants.add(
+        `+234${digitsOnly.slice(1)}`
+      );
+    }
+
+    if (
+      !digitsOnly.startsWith("0") &&
+      !digitsOnly.startsWith("234")
+    ) {
+      variants.add(
+        `234${digitsOnly}`
+      );
+
+      variants.add(
+        `+234${digitsOnly}`
+      );
+
+      variants.add(
+        `0${digitsOnly}`
+      );
+    }
+  }
+
+  return Array.from(
+    variants
+  ).filter(Boolean);
+}
+
 function generateRequestCode(): string {
-  const characters = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+  const characters =
+    "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
 
   let code = "RM-";
 
-  for (let i = 0; i < 4; i++) {
-    const index = Math.floor(
-      Math.random() * characters.length
-    );
+  for (
+    let i = 0;
+    i < 4;
+    i++
+  ) {
+    const index =
+      Math.floor(
+        Math.random() *
+          characters.length
+      );
 
-    code += characters[index];
+    code +=
+      characters[index];
   }
 
   return code;
 }
 
 async function createUniqueRequestCode(): Promise<string> {
-  for (let attempt = 0; attempt < 10; attempt++) {
-    const requestCode = generateRequestCode();
+  for (
+    let attempt = 0;
+    attempt < 10;
+    attempt++
+  ) {
+    const requestCode =
+      generateRequestCode();
 
-    const existing = await prisma.buyerRequest.findUnique({
-      where: {
-        requestCode,
-      },
-      select: {
-        id: true,
-      },
-    });
+    const existing =
+      await prisma.buyerRequest.findUnique(
+        {
+          where: {
+            requestCode,
+          },
+
+          select: {
+            id: true,
+          },
+        }
+      );
 
     if (!existing) {
       return requestCode;
     }
   }
 
-  throw new Error("Unable to generate request code");
+  throw new Error(
+    "Unable to generate request code"
+  );
 }
 
 const requestInclude = {
@@ -100,47 +335,79 @@ type RequestWithDetails =
     include: typeof requestInclude;
   }>;
 
-function formatRequest(request: RequestWithDetails) {
+function formatRequest(
+  request: RequestWithDetails
+) {
   return {
     id: request.id,
-    requestCode: request.requestCode,
+
+    requestCode:
+      request.requestCode,
+
     query: request.query,
 
-    category: request.category?.name ?? null,
+    category:
+      request.category?.name ??
+      null,
 
-    budget: request.budget,
-    locationArea: request.locationArea,
-    quantity: request.quantity,
-    description: request.description,
-    imageUrl: request.imageUrl,
+    budget:
+      request.budget,
 
-    buyerContact: request.buyerContact,
+    locationArea:
+      request.locationArea,
 
-    status: request.status,
+    quantity:
+      request.quantity,
+
+    description:
+      request.description,
+
+    imageUrl:
+      request.imageUrl,
+
+    buyerContact:
+      request.buyerContact,
+
+    status:
+      request.status,
 
     createdAt:
-      request.createdAt instanceof Date
+      request.createdAt instanceof
+      Date
         ? request.createdAt.toISOString()
         : request.createdAt,
 
-    matches: request.matches.map((match) => ({
-      id: match.id,
-      score: match.score,
+    matches:
+      request.matches.map(
+        (match) => ({
+          id: match.id,
 
-      business: {
-        id: match.business.id,
-        name: match.business.name,
-        area:
-          match.business.location?.area ??
-          "Location not specified",
-        verified:
-          match.business.verification === "VERIFIED",
-      },
-    })),
+          score: match.score,
+
+          business: {
+            id:
+              match.business.id,
+
+            name:
+              match.business.name,
+
+            area:
+              match.business
+                .location?.area ??
+              "Location not specified",
+
+            verified:
+              match.business
+                .verification ===
+              "VERIFIED",
+          },
+        })
+      ),
   };
 }
 
 /*
+ * -----------------------------------------
  * GET
  *
  * /api/request?code=RM-7K4P
@@ -148,7 +415,9 @@ function formatRequest(request: RequestWithDetails) {
  * or
  *
  * /api/request?contact=08012345678
+ * -----------------------------------------
  */
+
 export async function GET(
   request: NextRequest
 ) {
@@ -164,7 +433,10 @@ export async function GET(
       searchParams.get("contact")
     );
 
-    if (!code && !contact) {
+    if (
+      !code &&
+      !contact
+    ) {
       return NextResponse.json(
         {
           requests: [],
@@ -178,29 +450,49 @@ export async function GET(
       );
     }
 
+    const contactVariants =
+      contact
+        ? getContactLookupVariants(
+            contact
+          )
+        : [];
+
     const requests =
-      await prisma.buyerRequest.findMany({
-        where: code
-          ? {
-              requestCode: code,
-            }
-          : {
-              buyerContact: contact,
-            },
+      await prisma.buyerRequest.findMany(
+        {
+          where: code
+            ? {
+                requestCode:
+                  code,
+              }
+            : {
+                buyerContact: {
+                  in:
+                    contactVariants,
+                },
+              },
 
-        include: requestInclude,
+          include:
+            requestInclude,
 
-        orderBy: {
-          createdAt: "desc",
-        },
-      });
+          orderBy: {
+            createdAt:
+              "desc",
+          },
+        }
+      );
 
     const formattedRequests =
-      requests.map(formatRequest);
+      requests.map(
+        formatRequest
+      );
 
     return NextResponse.json({
-      requests: formattedRequests,
-      total: formattedRequests.length,
+      requests:
+        formattedRequests,
+
+      total:
+        formattedRequests.length,
     });
   } catch (error) {
     console.error(
@@ -223,39 +515,61 @@ export async function GET(
 }
 
 /*
+ * -----------------------------------------
  * POST
  *
  * Creates a buyer request without
  * requiring an account.
+ * -----------------------------------------
  */
+
 export async function POST(
   request: NextRequest
 ) {
   try {
-    const body = await request.json();
+    const body =
+      await request.json();
 
-    const query = clean(body.query);
-    const category = clean(body.category);
-    const locationArea = clean(
-      body.locationArea
-    );
-    const buyerContact = clean(
-      body.buyerContact
-    );
-    const description = clean(
-      body.description
-    );
-    const imageUrl = clean(
-      body.imageUrl
-    );
+    const query =
+      clean(body.query);
 
-    const budget = optionalInt(
-      body.budget
-    );
+    const category =
+      clean(body.category);
 
-    const quantity = optionalInt(
-      body.quantity
-    );
+    const locationArea =
+      clean(
+        body.locationArea
+      );
+
+    const rawBuyerContact =
+      clean(
+        body.buyerContact
+      );
+
+    const description =
+      clean(
+        body.description
+      );
+
+    const imageUrl =
+      clean(
+        body.imageUrl
+      );
+
+    const buyerContact =
+      normalizeNigerianPhone(
+        rawBuyerContact
+      );
+
+    const budget =
+      optionalInt(
+        body.budget
+      );
+
+    const quantity =
+      optionalInt(
+        body.quantity
+      );
 
     if (!query) {
       return NextResponse.json(
@@ -311,142 +625,218 @@ export async function POST(
       );
     }
 
-    let categoryId: string | null = null;
+    let categoryId:
+      | string
+      | null = null;
 
     if (category) {
       const categoryRecord =
-        await prisma.category.findFirst({
-          where: {
-            name: {
-              equals: category,
-              mode: "insensitive",
+        await prisma.category.findFirst(
+          {
+            where: {
+              name: {
+                equals:
+                  category,
+                mode:
+                  "insensitive",
+              },
             },
-          },
 
-          select: {
-            id: true,
-          },
-        });
+            select: {
+              id: true,
+            },
+          }
+        );
 
       categoryId =
-        categoryRecord?.id ?? null;
+        categoryRecord?.id ??
+        null;
     }
 
     const requestCode =
       await createUniqueRequestCode();
 
     const buyerRequest =
-      await prisma.buyerRequest.create({
-        data: {
-          requestCode,
-          query,
-          categoryId,
-          budget,
+      await prisma.buyerRequest.create(
+        {
+          data: {
+            requestCode,
 
-          locationArea:
-            locationArea || null,
+            query,
 
-          quantity,
+            categoryId,
 
-          description:
-            description || null,
+            budget,
 
-          imageUrl:
-            imageUrl || null,
+            locationArea:
+              locationArea ||
+              null,
 
-          buyerContact,
+            quantity,
 
-          status: "NEW",
-        },
-      });
+            description:
+              description ||
+              null,
+
+            imageUrl:
+              imageUrl ||
+              null,
+
+            /*
+             * Store the canonical
+             * normalized contact.
+             */
+            buyerContact,
+
+            status: "NEW",
+          },
+        }
+      );
 
     /*
+     * -----------------------------------------
+     * MATCHING
+     * -----------------------------------------
+     *
      * Existing matching architecture is preserved.
      * We only validate the returned businesses before
      * creating Match records.
      */
+
     try {
-      const parsedQuery = parseQuery(
+      const parsedQuery =
+        parseQuery(
           query,
-      locationArea || undefined,
-      budget ?? undefined,
-     category || undefined
-          );
-      
+          locationArea ||
+            undefined,
+          budget ??
+            undefined,
+          category ||
+            undefined
+        );
 
       const matches =
-        await findMatches(parsedQuery);
+        await findMatches(
+          parsedQuery
+        );
 
-      const candidateBusinessIds = [
-        ...new Set(
-          matches
-            .map((match) => match.business?.id)
-            .filter(
-              (id): id is string =>
-                typeof id === "string" &&
-                id.length > 0
-            )
-        ),
-      ];
+      const candidateBusinessIds =
+        [
+          ...new Set(
+            matches
+              .map(
+                (match) =>
+                  match.business
+                    ?.id
+              )
+              .filter(
+                (
+                  id
+                ): id is string =>
+                  typeof id ===
+                    "string" &&
+                  id.length > 0
+              )
+          ),
+        ];
 
-      if (candidateBusinessIds.length > 0) {
+      if (
+        candidateBusinessIds.length >
+        0
+      ) {
         const activeBusinesses =
-          await prisma.business.findMany({
-            where: {
-              id: {
-                in: candidateBusinessIds,
+          await prisma.business.findMany(
+            {
+              where: {
+                id: {
+                  in:
+                    candidateBusinessIds,
+                },
+
+                status:
+                  "ACTIVE",
+
+                deletedAt:
+                  null,
               },
 
-              status: "ACTIVE",
-              deletedAt: null,
-            },
-
-            select: {
-              id: true,
-            },
-          });
+              select: {
+                id: true,
+              },
+            }
+          );
 
         const activeBusinessIds =
           new Set(
             activeBusinesses.map(
-              (business) => business.id
+              (business) =>
+                business.id
             )
           );
 
-        const validMatches = matches
-          .filter(
-            (match) =>
-              match?.business?.id &&
-              activeBusinessIds.has(
-                match.business.id
-              ) &&
-              Number.isFinite(match.score)
-          )
-          .map((match) => ({
-            requestId: buyerRequest.id,
-            businessId: match.business.id,
-            score: Math.round(match.score),
-            addedManually: false,
-          }));
+        const validMatches =
+          matches
+            .filter(
+              (match) =>
+                match?.business
+                  ?.id &&
+                activeBusinessIds.has(
+                  match.business.id
+                ) &&
+                Number.isFinite(
+                  match.score
+                )
+            )
+            .map(
+              (match) => ({
+                requestId:
+                  buyerRequest.id,
 
-        if (validMatches.length > 0) {
-          await prisma.match.createMany({
-            data: validMatches,
-            skipDuplicates: true,
-          });
+                businessId:
+                  match.business.id,
 
-          await prisma.buyerRequest.update({
-            where: {
-              id: buyerRequest.id,
-            },
+                score:
+                  Math.round(
+                    match.score
+                  ),
 
-            data: {
-              status: "MATCHED",
-            },
-          });
+                addedManually:
+                  false,
+              })
+            );
+
+        if (
+          validMatches.length >
+          0
+        ) {
+          await prisma.match.createMany(
+            {
+              data:
+                validMatches,
+
+              skipDuplicates:
+                true,
+            }
+          );
+
+          await prisma.buyerRequest.update(
+            {
+              where: {
+                id:
+                  buyerRequest.id,
+              },
+
+              data: {
+                status:
+                  "MATCHED",
+              },
+            }
+          );
         }
       }
-    } catch (matchingError) {
+    } catch (
+      matchingError
+    ) {
       console.error(
         "Request matching error:",
         matchingError
@@ -454,13 +844,17 @@ export async function POST(
     }
 
     const result =
-      await prisma.buyerRequest.findUnique({
-        where: {
-          id: buyerRequest.id,
-        },
+      await prisma.buyerRequest.findUnique(
+        {
+          where: {
+            id:
+              buyerRequest.id,
+          },
 
-        include: requestInclude,
-      });
+          include:
+            requestInclude,
+        }
+      );
 
     if (!result) {
       return NextResponse.json(
@@ -476,7 +870,10 @@ export async function POST(
 
     return NextResponse.json(
       {
-        request: formatRequest(result),
+        request:
+          formatRequest(
+            result
+          ),
       },
       {
         status: 201,

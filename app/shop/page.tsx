@@ -1,7 +1,6 @@
 "use client";
 
 import {
-  type ReactNode,
   useEffect,
   useState,
   Suspense,
@@ -19,18 +18,13 @@ import {
   Bookmark,
   Package,
   ArrowRight,
-  Shirt,
-  Plug,
-  Utensils,
-  Sparkles,
-  Layers3,
-  Briefcase,
   MoreHorizontal,
   ChevronLeft,
   ChevronRight,
 } from "lucide-react";
 
 import Link from "next/link";
+
 import {
   useRouter,
   useSearchParams,
@@ -44,10 +38,11 @@ import {
   SAVED_BUSINESSES_CHANGED_EVENT,
 } from "@/lib/saved";
 
-type Category = {
-  id: string;
-  name: string;
-};
+import {
+  DEFAULT_CATEGORIES,
+  mergeCategories,
+  type ReMarketCategory,
+} from "@/lib/categories";
 
 type ProductImage = {
   id: string;
@@ -96,7 +91,10 @@ type Business = {
     | "UNVERIFIED";
 
   categories: {
-    category: Category;
+    category: {
+      id: string;
+      name: string;
+    };
   }[];
 
   products: Product[];
@@ -134,69 +132,6 @@ const NAV_ITEMS = [
     icon: Heart,
   },
 ];
-
-const CATEGORY_STYLE: Record<
-  string,
-  {
-    bg: string;
-    icon: ReactNode;
-  }
-> = {
-  Fashion: {
-    bg: "#FFE0D6",
-    icon: (
-      <Shirt className="h-5 w-5" />
-    ),
-  },
-
-  Electronics: {
-    bg: "#DDF5EA",
-    icon: (
-      <Plug className="h-5 w-5" />
-    ),
-  },
-
-  Food: {
-    bg: "#FFF0C7",
-    icon: (
-      <Utensils className="h-5 w-5" />
-    ),
-  },
-
-  Beauty: {
-    bg: "#E7E5FF",
-    icon: (
-      <Sparkles className="h-5 w-5" />
-    ),
-  },
-
-  Textiles: {
-    bg: "#F9DCE8",
-    icon: (
-      <Layers3 className="h-5 w-5" />
-    ),
-  },
-
-  Services: {
-    bg: "#E4E9EF",
-    icon: (
-      <Briefcase className="h-5 w-5" />
-    ),
-  },
-};
-
-function getCategoryStyle(
-  name: string
-) {
-  return (
-    CATEGORY_STYLE[name] ?? {
-      bg: "#EEF1F4",
-      icon: (
-        <MoreHorizontal className="h-5 w-5" />
-      ),
-    }
-  );
-}
 
 function getProductImage(
   product: Product
@@ -304,16 +239,11 @@ function ShopPageContent() {
   const initialCategory =
     searchParams.get("category") ?? "";
 
-  const initialPage = parsePage(
-    searchParams.get("page")
-  );
+  const initialPage =
+    parsePage(
+      searchParams.get("page")
+    );
 
-  /*
-   * The key forces the form state to be
-   * recreated when URL search parameters
-   * change, avoiding the old setState-in-effect
-   * pattern.
-   */
   return (
     <ShopPageView
       key={`${initialQuery}|${initialCategory}|${initialPage}`}
@@ -345,7 +275,9 @@ function ShopPageView({
     useState(initialCategory);
 
   const [categories, setCategories] =
-    useState<Category[]>([]);
+    useState<ReMarketCategory[]>(
+      DEFAULT_CATEGORIES
+    );
 
   const [businesses, setBusinesses] =
     useState<Business[]>([]);
@@ -369,6 +301,46 @@ function ShopPageView({
     useState<
       Record<string, boolean>
     >({});
+
+  /*
+   * -----------------------------------------
+   * CATEGORY VISUAL
+   * -----------------------------------------
+   */
+
+  function getCategoryStyle(
+    name: string
+  ) {
+    const matchedCategory =
+      categories.find(
+        (item) =>
+          item.name
+            .trim()
+            .toLowerCase() ===
+          name
+            .trim()
+            .toLowerCase()
+      );
+
+    if (!matchedCategory) {
+      return {
+        bg: "#EEF1F4",
+        icon: (
+          <MoreHorizontal className="h-5 w-5" />
+        ),
+      };
+    }
+
+    const Icon =
+      matchedCategory.icon;
+
+    return {
+      bg: matchedCategory.bg,
+      icon: (
+        <Icon className="h-5 w-5" />
+      ),
+    };
+  }
 
   /*
    * -----------------------------------------
@@ -400,9 +372,19 @@ function ShopPageView({
       syncSaved
     );
 
+    window.addEventListener(
+      "storage",
+      syncSaved
+    );
+
     return () => {
       window.removeEventListener(
         SAVED_BUSINESSES_CHANGED_EVENT,
+        syncSaved
+      );
+
+      window.removeEventListener(
+        "storage",
         syncSaved
       );
     };
@@ -439,13 +421,25 @@ function ShopPageView({
         const data =
           await response.json();
 
-        setCategories(
+        const backendCategories =
           Array.isArray(
-            data.categories
+            data?.categories
           )
             ? data.categories
-            : []
-        );
+            : [];
+
+        const mergedCategories =
+          mergeCategories(
+            backendCategories
+          );
+
+        if (
+          mergedCategories.length > 0
+        ) {
+          setCategories(
+            mergedCategories
+          );
+        }
       } catch (error) {
         if (
           error instanceof
@@ -459,6 +453,11 @@ function ShopPageView({
         console.error(
           "Shop categories error:",
           error
+
+        /*
+         * Keep DEFAULT_CATEGORIES
+         * as the fallback.
+         */
         );
       }
     }
@@ -475,7 +474,7 @@ function ShopPageView({
    * LOAD BUSINESSES
    * -----------------------------------------
    *
-   * The API must perform the pagination.
+   * The API performs pagination.
    * We only request PAGE_SIZE businesses.
    */
 
@@ -561,17 +560,21 @@ function ShopPageView({
           Math.max(
             1,
             Math.ceil(
-              (Number.isFinite(
-                nextTotal
-              )
-                ? nextTotal
-                : nextBusinesses.length) /
-                (Number.isFinite(
-                  nextPageSize
-                ) &&
-                nextPageSize > 0
-                  ? nextPageSize
-                  : PAGE_SIZE)
+              (
+                Number.isFinite(
+                  nextTotal
+                )
+                  ? nextTotal
+                  : nextBusinesses.length
+              ) /
+                (
+                  Number.isFinite(
+                    nextPageSize
+                  ) &&
+                  nextPageSize > 0
+                    ? nextPageSize
+                    : PAGE_SIZE
+                )
             )
           );
 
@@ -651,7 +654,7 @@ function ShopPageView({
    */
 
   function submitSearch(
-    event: React.SubmitEvent<HTMLFormElement>
+    event: React.FormEvent<HTMLFormElement>
   ) {
     event.preventDefault();
 
@@ -800,6 +803,7 @@ function ShopPageView({
         <div className="min-h-[calc(100vh-24px)] overflow-hidden rounded-[18px] border border-[#FF5A36] bg-[#FFFDFC] shadow-sm sm:rounded-[22px] lg:min-h-[calc(100vh-40px)]">
 
           {/* HEADER */}
+
           <header className="flex h-[64px] items-center justify-between border-b border-[#EAE6DF] bg-white px-4 sm:px-6 lg:h-[66px]">
             <Link
               href="/"
@@ -882,6 +886,7 @@ function ShopPageView({
           <div className="flex">
 
             {/* SIDEBAR */}
+
             <aside className="hidden w-[190px] shrink-0 border-r border-[#EAE6DF] bg-[#FCFAF6] px-3 py-5 lg:block">
               <nav className="space-y-1">
                 {NAV_ITEMS.map(
@@ -908,6 +913,7 @@ function ShopPageView({
                         }`}
                       >
                         <Icon className="h-[18px] w-[18px]" />
+
                         {
                           item.label
                         }
@@ -999,10 +1005,12 @@ function ShopPageView({
             </aside>
 
             {/* MAIN */}
+
             <div className="min-w-0 flex-1">
               <div className="px-4 pb-24 pt-4 sm:px-6 sm:pt-6 lg:px-6 lg:pb-8">
 
                 {/* HERO */}
+
                 <section className="rounded-[18px] bg-[#FF5A36] px-5 py-6 text-white sm:px-7 sm:py-7">
                   <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-white/75">
                     Shop ReMarket
@@ -1050,6 +1058,7 @@ function ShopPageView({
                 </section>
 
                 {/* RESULTS HEADER */}
+
                 <section className="mt-5">
                   <div className="flex flex-wrap items-center justify-between gap-3">
                     <div>
@@ -1086,6 +1095,7 @@ function ShopPageView({
                 </section>
 
                 {/* RESULTS */}
+
                 <section className="mt-4">
                   {error && (
                     <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-xs text-red-700">
@@ -1244,6 +1254,7 @@ function ShopPageView({
 
                                           <span className="flex min-w-0 items-center gap-1 truncate">
                                             <MapPin className="h-3 w-3 shrink-0" />
+
                                             {
                                               business
                                                 .location
@@ -1361,6 +1372,7 @@ function ShopPageView({
                         </div>
 
                         {/* PAGINATION */}
+
                         {totalPages >
                           1 && (
                           <div className="mt-6 flex items-center justify-center">
@@ -1380,6 +1392,7 @@ function ShopPageView({
                                 className="inline-flex items-center gap-1 rounded-lg px-3 py-2 text-[11px] font-bold text-[#9F2D18] transition hover:bg-[#FFF1ED] disabled:cursor-not-allowed disabled:text-gray-300 disabled:hover:bg-transparent"
                               >
                                 <ChevronLeft className="h-4 w-4" />
+
                                 Previous
                               </button>
 
@@ -1418,6 +1431,7 @@ function ShopPageView({
                                 className="inline-flex items-center gap-1 rounded-lg px-3 py-2 text-[11px] font-bold text-[#9F2D18] transition hover:bg-[#FFF1ED] disabled:cursor-not-allowed disabled:text-gray-300 disabled:hover:bg-transparent"
                               >
                                 Next
+
                                 <ChevronRight className="h-4 w-4" />
                               </button>
                             </div>
@@ -1441,6 +1455,7 @@ function ShopPageView({
           </div>
 
           {/* MOBILE NAV */}
+
           <nav className="fixed bottom-0 left-0 right-0 z-50 border-t border-gray-200 bg-white/95 px-2 pb-[max(6px,safe-area-inset-bottom)] pt-1.5 backdrop-blur lg:hidden">
             <div className="mx-auto grid max-w-md grid-cols-4">
               {NAV_ITEMS.map(

@@ -3,11 +3,13 @@
 import {
   useEffect,
   useState,
-  type FormEvent,
 } from "react";
 
 import Link from "next/link";
-import { useParams, useRouter } from "next/navigation";
+import {
+  useParams,
+  useRouter,
+} from "next/navigation";
 
 import {
   AlertTriangle,
@@ -15,6 +17,7 @@ import {
   ExternalLink,
   Loader2,
   MapPin,
+  Navigation,
   Package,
   RotateCcw,
   Save,
@@ -22,6 +25,13 @@ import {
   Trash2,
   X,
 } from "lucide-react";
+
+import {
+  DEFAULT_CATEGORIES,
+  mergeCategories,
+  type ApiCategory,
+  type ReMarketCategory,
+} from "@/lib/categories";
 
 type Category = {
   id: string;
@@ -181,7 +191,14 @@ export default function BusinessDetailsPage() {
     );
 
   const [categories, setCategories] =
-    useState<Category[]>([]);
+    useState<ReMarketCategory[]>(
+      DEFAULT_CATEGORIES
+    );
+
+  const [
+    usingCategoryFallback,
+    setUsingCategoryFallback,
+  ] = useState(true);
 
   const [loading, setLoading] =
     useState(true);
@@ -201,8 +218,10 @@ export default function BusinessDetailsPage() {
   const [success, setSuccess] =
     useState("");
 
-  const [showDeleteConfirmation, setShowDeleteConfirmation] =
-    useState(false);
+  const [
+    showDeleteConfirmation,
+    setShowDeleteConfirmation,
+  ] = useState(false);
 
   async function loadBusiness() {
     if (!businessId) {
@@ -248,25 +267,45 @@ export default function BusinessDetailsPage() {
         );
       }
 
-      if (
-        !categoriesResponse.ok
-      ) {
-        throw new Error(
-          "Unable to load categories."
-        );
-      }
-
       setBusiness(
         businessData.business ?? null
       );
 
-      setCategories(
+      const backendCategories =
+        categoriesResponse.ok &&
         Array.isArray(
           categoriesData.categories
         )
-          ? categoriesData.categories
-          : []
-      );
+          ? (
+              categoriesData.categories as ApiCategory[]
+            )
+          : [];
+
+      const mergedCategories =
+        mergeCategories(
+          backendCategories
+        );
+
+      if (
+        mergedCategories.length >
+        0
+      ) {
+        setCategories(
+          mergedCategories
+        );
+
+        setUsingCategoryFallback(
+          false
+        );
+      } else {
+        setCategories(
+          DEFAULT_CATEGORIES
+        );
+
+        setUsingCategoryFallback(
+          true
+        );
+      }
     } catch (loadError) {
       console.error(
         "Business details load error:",
@@ -274,7 +313,8 @@ export default function BusinessDetailsPage() {
       );
 
       setError(
-        loadError instanceof Error
+        loadError instanceof
+          Error
           ? loadError.message
           : "Unable to load business."
       );
@@ -297,19 +337,21 @@ export default function BusinessDetailsPage() {
       setError("");
       setSuccess("");
 
-      const response = await fetch(
-        `/api/admin/businesses/${business.id}`,
-        {
-          method: "DELETE",
-        }
-      );
+      const response =
+        await fetch(
+          `/api/admin/businesses/${business.id}`,
+          {
+            method: "DELETE",
+          }
+        );
 
       const data =
         await response.json();
 
       if (!response.ok) {
         throw new Error(
-          typeof data?.error === "string"
+          typeof data?.error ===
+            "string"
             ? data.error
             : "Unable to delete business."
         );
@@ -320,13 +362,17 @@ export default function BusinessDetailsPage() {
           ? {
               ...current,
               deletedAt:
-                data.business?.deletedAt ??
+                data.business
+                  ?.deletedAt ??
                 new Date().toISOString(),
             }
           : current
       );
 
-      setShowDeleteConfirmation(false);
+      setShowDeleteConfirmation(
+        false
+      );
+
       setSuccess(
         `${business.name} was moved to deleted businesses.`
       );
@@ -337,7 +383,8 @@ export default function BusinessDetailsPage() {
       );
 
       setError(
-        deleteError instanceof Error
+        deleteError instanceof
+          Error
           ? deleteError.message
           : "Unable to delete business."
       );
@@ -356,26 +403,28 @@ export default function BusinessDetailsPage() {
       setError("");
       setSuccess("");
 
-      const response = await fetch(
-        `/api/admin/businesses/${business.id}`,
-        {
-          method: "PATCH",
-          headers: {
-            "Content-Type":
-              "application/json",
-          },
-          body: JSON.stringify({
-            restore: true,
-          }),
-        }
-      );
+      const response =
+        await fetch(
+          `/api/admin/businesses/${business.id}`,
+          {
+            method: "PATCH",
+            headers: {
+              "Content-Type":
+                "application/json",
+            },
+            body: JSON.stringify({
+              restore: true,
+            }),
+          }
+        );
 
       const data =
         await response.json();
 
       if (!response.ok) {
         throw new Error(
-          typeof data?.error === "string"
+          typeof data?.error ===
+            "string"
             ? data.error
             : "Unable to restore business."
         );
@@ -401,7 +450,8 @@ export default function BusinessDetailsPage() {
       );
 
       setError(
-        restoreError instanceof Error
+        restoreError instanceof
+          Error
           ? restoreError.message
           : "Unable to restore business."
       );
@@ -459,6 +509,9 @@ export default function BusinessDetailsPage() {
         key={`${business.id}-${business.deletedAt ?? "active"}`}
         business={business}
         categories={categories}
+        usingCategoryFallback={
+          usingCategoryFallback
+        }
         saving={saving}
         setSaving={setSaving}
         error={error}
@@ -469,7 +522,9 @@ export default function BusinessDetailsPage() {
         deleting={deleting}
         restoring={restoring}
         onDelete={() =>
-          setShowDeleteConfirmation(true)
+          setShowDeleteConfirmation(
+            true
+          )
         }
         onRestore={() => {
           void restoreBusiness();
@@ -481,7 +536,9 @@ export default function BusinessDetailsPage() {
           business={business}
           loading={deleting}
           onCancel={() =>
-            setShowDeleteConfirmation(false)
+            setShowDeleteConfirmation(
+              false
+            )
           }
           onConfirm={() => {
             void deleteBusiness();
@@ -494,7 +551,8 @@ export default function BusinessDetailsPage() {
 
 type BusinessEditorProps = {
   business: Business;
-  categories: Category[];
+  categories: ReMarketCategory[];
+  usingCategoryFallback: boolean;
   saving: boolean;
   setSaving: (
     value: boolean
@@ -519,6 +577,7 @@ type BusinessEditorProps = {
 function BusinessEditor({
   business,
   categories,
+  usingCategoryFallback,
   saving,
   setSaving,
   error,
@@ -542,10 +601,12 @@ function BusinessEditor({
       business.ownerName ?? ""
     );
 
-  const [description, setDescription] =
-    useState(
-      business.description ?? ""
-    );
+  const [
+    description,
+    setDescription,
+  ] = useState(
+    business.description ?? ""
+  );
 
   const [phone, setPhone] =
     useState(
@@ -559,9 +620,14 @@ function BusinessEditor({
 
   const [area, setArea] =
     useState(
-      business.location?.area ?? ""
+      business.location?.area ??
+        ""
     );
 
+  /*
+   * Coordinates are kept internally.
+   * The admin does not type them manually.
+   */
   const [lat, setLat] =
     useState(
       business.location?.lat ===
@@ -586,6 +652,27 @@ function BusinessEditor({
           )
     );
 
+  const [
+    locationStatus,
+    setLocationStatus,
+  ] = useState(
+    business.location?.lat !==
+        null &&
+      business.location?.lat !==
+        undefined &&
+      business.location?.long !==
+        null &&
+      business.location?.long !==
+        undefined
+      ? "Business coordinates are already saved."
+      : "No exact business coordinates have been captured yet."
+  );
+
+  const [
+    capturingLocation,
+    setCapturingLocation,
+  ] = useState(false);
+
   const [priceMin, setPriceMin] =
     useState(
       formatPrice(
@@ -600,88 +687,192 @@ function BusinessEditor({
       )
     );
 
-  const [availability, setAvailability] =
-    useState<
-      | "AVAILABLE"
-      | "ASK_SELLER"
-      | "UNAVAILABLE"
-    >(
-      business.availability
-    );
+  const [
+    availability,
+    setAvailability,
+  ] = useState<
+    | "AVAILABLE"
+    | "ASK_SELLER"
+    | "UNAVAILABLE"
+  >(business.availability);
 
   const [status, setStatus] =
     useState<
       | "ACTIVE"
       | "INACTIVE"
       | "PENDING"
-    >(
-      business.status
+    >(business.status);
+
+  const [
+    verification,
+    setVerification,
+  ] = useState<
+    | "VERIFIED"
+    | "UNVERIFIED"
+  >(business.verification);
+
+  const [
+    selectedCategoryIds,
+    setSelectedCategoryIds,
+  ] = useState<string[]>(
+    business.categories.map(
+      (category) =>
+        category.id
+    )
+  );
+
+  const [
+    socialValues,
+    setSocialValues,
+  ] = useState<
+    Record<
+      SocialPlatform,
+      string
+    >
+  >({
+    WHATSAPP:
+      getSocialValue(
+        business.socialLinks,
+        "WHATSAPP"
+      ),
+    INSTAGRAM:
+      getSocialValue(
+        business.socialLinks,
+        "INSTAGRAM"
+      ),
+    TIKTOK:
+      getSocialValue(
+        business.socialLinks,
+        "TIKTOK"
+      ),
+    FACEBOOK:
+      getSocialValue(
+        business.socialLinks,
+        "FACEBOOK"
+      ),
+    PHONE:
+      getSocialValue(
+        business.socialLinks,
+        "PHONE"
+      ),
+    DIRECTIONS:
+      getSocialValue(
+        business.socialLinks,
+        "DIRECTIONS"
+      ),
+  });
+
+  function captureCurrentLocation() {
+    if (
+      typeof navigator ===
+        "undefined" ||
+      !navigator.geolocation
+    ) {
+      setError(
+        "Location is not supported by this browser."
+      );
+
+      return;
+    }
+
+    if (deleted) {
+      return;
+    }
+
+    setCapturingLocation(true);
+    setError("");
+    setLocationStatus(
+      "Capturing business location..."
     );
 
-  const [verification, setVerification] =
-    useState<
-      | "VERIFIED"
-      | "UNVERIFIED"
-    >(
-      business.verification
-    );
+    navigator.geolocation.getCurrentPosition(
+      (position) => {
+        const latitude =
+          position.coords.latitude;
 
-  const [selectedCategoryIds, setSelectedCategoryIds] =
-    useState<string[]>(
-      business.categories.map(
-        (category) =>
-          category.id
-      )
-    );
+        const longitude =
+          position.coords.longitude;
 
-  const [socialValues, setSocialValues] =
-    useState<
-      Record<
-        SocialPlatform,
-        string
-      >
-    >({
-      WHATSAPP:
-        getSocialValue(
-          business.socialLinks,
-          "WHATSAPP"
-        ),
-      INSTAGRAM:
-        getSocialValue(
-          business.socialLinks,
-          "INSTAGRAM"
-        ),
-      TIKTOK:
-        getSocialValue(
-          business.socialLinks,
-          "TIKTOK"
-        ),
-      FACEBOOK:
-        getSocialValue(
-          business.socialLinks,
-          "FACEBOOK"
-        ),
-      PHONE:
-        getSocialValue(
-          business.socialLinks,
-          "PHONE"
-        ),
-      DIRECTIONS:
-        getSocialValue(
-          business.socialLinks,
-          "DIRECTIONS"
-        ),
-    });
+        if (
+          !Number.isFinite(
+            latitude
+          ) ||
+          !Number.isFinite(
+            longitude
+          )
+        ) {
+          setLocationStatus(
+            "Unable to capture a valid business location."
+          );
+
+          setCapturingLocation(
+            false
+          );
+
+          return;
+        }
+
+        setLat(
+          String(latitude)
+        );
+
+        setLong(
+          String(longitude)
+        );
+
+        setLocationStatus(
+          "Business location captured successfully."
+        );
+
+        setCapturingLocation(
+          false
+        );
+      },
+      (locationError) => {
+        console.error(
+          "Business location capture error:",
+          locationError
+        );
+
+        setLocationStatus(
+          "Location permission was not granted or the location could not be determined."
+        );
+
+        setError(
+          "Allow location access to capture the business location."
+        );
+
+        setCapturingLocation(
+          false
+        );
+      },
+      {
+        enableHighAccuracy: true,
+        timeout: 15000,
+        maximumAge: 60000,
+      }
+    );
+  }
 
   function toggleCategory(
     categoryId: string
   ) {
+    if (
+      usingCategoryFallback ||
+      deleted
+    ) {
+      return;
+    }
+
     setSelectedCategoryIds(
       (current) =>
-        current.includes(categoryId)
+        current.includes(
+          categoryId
+        )
           ? current.filter(
               (id) =>
-                id !== categoryId
+                id !==
+                categoryId
             )
           : [
               ...current,
@@ -694,6 +885,10 @@ function BusinessEditor({
     platform: SocialPlatform,
     value: string
   ) {
+    if (deleted) {
+      return;
+    }
+
     setSocialValues(
       (current) => ({
         ...current,
@@ -703,7 +898,7 @@ function BusinessEditor({
   }
 
   async function submit(
-    event: FormEvent<HTMLFormElement>
+    event: React.SubmitEvent<HTMLFormElement>
   ) {
     event.preventDefault();
 
@@ -721,7 +916,9 @@ function BusinessEditor({
       setError(
         "Business name is required."
       );
+
       setSaving(false);
+
       return;
     }
 
@@ -729,7 +926,9 @@ function BusinessEditor({
       setError(
         "Business area is required."
       );
+
       setSaving(false);
+
       return;
     }
 
@@ -770,7 +969,9 @@ function BusinessEditor({
       setError(
         "Minimum price must be a valid integer."
       );
+
       setSaving(false);
+
       return;
     }
 
@@ -783,7 +984,9 @@ function BusinessEditor({
       setError(
         "Maximum price must be a valid integer."
       );
+
       setSaving(false);
+
       return;
     }
 
@@ -796,7 +999,9 @@ function BusinessEditor({
       setError(
         "Minimum price cannot be greater than maximum price."
       );
+
       setSaving(false);
+
       return;
     }
 
@@ -809,9 +1014,11 @@ function BusinessEditor({
         parsedLat > 90)
     ) {
       setError(
-        "Latitude must be between -90 and 90."
+        "Saved business latitude is invalid."
       );
+
       setSaving(false);
+
       return;
     }
 
@@ -824,9 +1031,11 @@ function BusinessEditor({
         parsedLong > 180)
     ) {
       setError(
-        "Longitude must be between -180 and 180."
+        "Saved business longitude is invalid."
       );
+
       setSaving(false);
+
       return;
     }
 
@@ -882,6 +1091,11 @@ function BusinessEditor({
               area:
                 trimmedArea,
 
+              /*
+               * Coordinates are supplied from the
+               * internally stored/captured values.
+               * The admin never types them.
+               */
               lat:
                 parsedLat,
 
@@ -894,18 +1108,26 @@ function BusinessEditor({
               priceMax:
                 parsedPriceMax,
 
-              /*
-               * Keep existing values unchanged
-               * for a deleted business.
-               */
               availability,
 
               status,
 
               verification,
 
+              /*
+               * Only send category IDs from the real
+               * backend category list. When the API
+               * failed and fallback categories are shown,
+               * preserve the existing real IDs instead of
+               * submitting synthetic IDs.
+               */
               categoryIds:
-                selectedCategoryIds,
+                usingCategoryFallback
+                  ? business.categories.map(
+                      (category) =>
+                        category.id
+                    )
+                  : selectedCategoryIds,
 
               socialLinks,
             }),
@@ -924,12 +1146,135 @@ function BusinessEditor({
         );
       }
 
+      const updatedBusiness =
+        data.business as
+          | Business
+          | undefined;
+
+      if (
+        updatedBusiness
+      ) {
+        setName(
+          updatedBusiness.name
+        );
+
+        setOwnerName(
+          updatedBusiness.ownerName ??
+            ""
+        );
+
+        setDescription(
+          updatedBusiness.description ??
+            ""
+        );
+
+        setPhone(
+          updatedBusiness.phone ??
+            ""
+        );
+
+        setImageUrl(
+          updatedBusiness.imageUrl ??
+            ""
+        );
+
+        setArea(
+          updatedBusiness.location
+            ?.area ?? ""
+        );
+
+        setLat(
+          updatedBusiness
+            .location
+            ?.lat != null
+            ? String(
+                updatedBusiness
+                  .location
+                  .lat
+              )
+            : ""
+        );
+
+        setLong(
+          updatedBusiness
+            .location
+            ?.long != null
+            ? String(
+                updatedBusiness
+                  .location
+                  .long
+              )
+            : ""
+        );
+
+        setAvailability(
+          updatedBusiness.availability
+        );
+
+        setStatus(
+          updatedBusiness.status
+        );
+
+        setVerification(
+          updatedBusiness.verification
+        );
+
+        setSelectedCategoryIds(
+          updatedBusiness.categories.map(
+            (category) =>
+              category.id
+          )
+        );
+
+        setSocialValues(
+          {
+            WHATSAPP:
+              getSocialValue(
+                updatedBusiness.socialLinks,
+                "WHATSAPP"
+              ),
+            INSTAGRAM:
+              getSocialValue(
+                updatedBusiness.socialLinks,
+                "INSTAGRAM"
+              ),
+            TIKTOK:
+              getSocialValue(
+                updatedBusiness.socialLinks,
+                "TIKTOK"
+              ),
+            FACEBOOK:
+              getSocialValue(
+                updatedBusiness.socialLinks,
+                "FACEBOOK"
+              ),
+            PHONE:
+              getSocialValue(
+                updatedBusiness.socialLinks,
+                "PHONE"
+              ),
+            DIRECTIONS:
+              getSocialValue(
+                updatedBusiness.socialLinks,
+                "DIRECTIONS"
+              ),
+          }
+        );
+
+        setLocationStatus(
+          updatedBusiness
+            .location
+            ?.lat != null &&
+            updatedBusiness
+              .location
+              ?.long != null
+            ? "Business coordinates are saved."
+            : "No exact business coordinates have been captured yet."
+        );
+      }
+
       setSuccess(
         "Business changes saved successfully."
-      );
-
-      setBusinessEditorStateFromResponse(
-        data.business
       );
 
       router.refresh();
@@ -955,68 +1300,6 @@ function BusinessEditor({
     }
   }
 
-  function setBusinessEditorStateFromResponse(
-    updatedBusiness: Partial<Business> | undefined
-  ) {
-    if (!updatedBusiness) {
-      return;
-    }
-
-    if (
-      typeof updatedBusiness.name ===
-      "string"
-    ) {
-      setName(
-        updatedBusiness.name
-      );
-    }
-
-    if (
-      typeof updatedBusiness.ownerName ===
-      "string" ||
-      updatedBusiness.ownerName === null
-    ) {
-      setOwnerName(
-        updatedBusiness.ownerName ?? ""
-      );
-    }
-
-    if (
-      typeof updatedBusiness.description ===
-      "string" ||
-      updatedBusiness.description ===
-      null
-    ) {
-      setDescription(
-        updatedBusiness.description ??
-          ""
-      );
-    }
-
-    if (
-      typeof updatedBusiness.phone ===
-      "string" ||
-      updatedBusiness.phone === null
-    ) {
-      setPhone(
-        updatedBusiness.phone ??
-          ""
-      );
-    }
-
-    if (
-      typeof updatedBusiness.imageUrl ===
-      "string" ||
-      updatedBusiness.imageUrl ===
-        null
-    ) {
-      setImageUrl(
-        updatedBusiness.imageUrl ??
-          ""
-      );
-    }
-  }
-
   return (
     <main className="min-h-screen bg-[#FFF7ED] p-4 sm:p-6">
       <div className="mx-auto max-w-[1100px]">
@@ -1033,7 +1316,7 @@ function BusinessEditor({
             {!deleted && (
               <>
                 <Link
-                  href={`/business/${business.id}`}
+                  href={`/seller/${business.id}`}
                   target="_blank"
                   rel="noreferrer"
                   className="inline-flex items-center gap-2 rounded-xl border border-[#EAE6DF] bg-white px-4 py-2.5 text-xs font-bold text-[#6F675F] transition hover:border-[#FFB49F] hover:bg-[#FCFAF6]"
@@ -1063,6 +1346,7 @@ function BusinessEditor({
                   className="inline-flex items-center gap-2 rounded-xl border border-[#F2C7BC] bg-[#FFF5F2] px-4 py-2.5 text-xs font-bold text-[#9F2D18] transition hover:bg-[#FFE9E3] disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   <Trash2 className="h-4 w-4" />
+
                   {deleting
                     ? "Deleting..."
                     : "Delete business"}
@@ -1084,6 +1368,7 @@ function BusinessEditor({
                 className="inline-flex items-center gap-2 rounded-xl bg-[#E7F7EF] px-4 py-2.5 text-xs font-bold text-[#287A4B] transition hover:bg-[#D8F1E3] disabled:cursor-not-allowed disabled:opacity-50"
               >
                 <RotateCcw className="h-4 w-4" />
+
                 {restoring
                   ? "Restoring..."
                   : "Restore business"}
@@ -1133,7 +1418,9 @@ function BusinessEditor({
 
                 <div className="mt-1 flex flex-wrap items-center gap-2">
                   <h1 className="truncate text-xl font-bold text-[#17202A]">
-                    {business.name}
+                    {
+                      business.name
+                    }
                   </h1>
 
                   {deleted && (
@@ -1156,7 +1443,9 @@ function BusinessEditor({
                         : "bg-[#F0ECE7] text-[#6F675F]"
                     }`}
                   >
-                    {business.status}
+                    {
+                      business.status
+                    }
                   </span>
 
                   <span
@@ -1167,11 +1456,17 @@ function BusinessEditor({
                         : "bg-[#F3F0EB] text-[#6F675F]"
                     }`}
                   >
-                    {business.verification}
+                    {
+                      business.verification
+                    }
                   </span>
 
                   <span className="rounded-full bg-[#F3F0EB] px-2.5 py-1 text-[10px] font-bold text-[#6F675F]">
-                    {business.products.length}{" "}
+                    {
+                      business
+                        .products
+                        .length
+                    }{" "}
                     products
                   </span>
                 </div>
@@ -1215,6 +1510,8 @@ function BusinessEditor({
               </div>
             )}
 
+            {/* BASIC INFORMATION */}
+
             <section>
               <h2 className="text-sm font-bold text-[#17202A]">
                 Basic information
@@ -1231,7 +1528,9 @@ function BusinessEditor({
                 <Field
                   label="Owner name"
                   value={ownerName}
-                  onChange={setOwnerName}
+                  onChange={
+                    setOwnerName
+                  }
                 />
 
                 <div className="sm:col-span-2">
@@ -1248,7 +1547,9 @@ function BusinessEditor({
                 <Field
                   label="Phone"
                   value={phone}
-                  onChange={setPhone}
+                  onChange={
+                    setPhone
+                  }
                   type="tel"
                 />
 
@@ -1263,6 +1564,8 @@ function BusinessEditor({
               </div>
             </section>
 
+            {/* LOCATION */}
+
             <section className="border-t border-[#EAE6DF] pt-6">
               <div className="flex items-center gap-2">
                 <MapPin className="h-4 w-4 text-[#9F2D18]" />
@@ -1272,39 +1575,66 @@ function BusinessEditor({
                 </h2>
               </div>
 
-              <div className="mt-4 grid gap-4 sm:grid-cols-3">
+              <div className="mt-4">
                 <Field
                   label="Area"
                   value={area}
                   onChange={setArea}
                   required
                 />
-
-                <Field
-                  label="Latitude"
-                  value={lat}
-                  onChange={setLat}
-                  type="number"
-                  step="any"
-                  placeholder="Optional"
-                />
-
-                <Field
-                  label="Longitude"
-                  value={long}
-                  onChange={setLong}
-                  type="number"
-                  step="any"
-                  placeholder="Optional"
-                />
               </div>
 
-              <p className="mt-2 text-[10px] text-[#A39A91]">
-                The saved area and coordinates
-                are used by ReMarket location
-                features.
-              </p>
+              <div className="mt-4 rounded-2xl border border-[#EAE6DF] bg-[#FCFAF6] p-4">
+                <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <Navigation className="h-4 w-4 text-[#FF5A36]" />
+
+                      <p className="text-xs font-bold text-[#17202A]">
+                        Exact business
+                        location
+                      </p>
+                    </div>
+
+                    <p className="mt-1 text-[11px] leading-5 text-[#7E766F]">
+                      {locationStatus}
+                    </p>
+                  </div>
+
+                  <button
+                    type="button"
+                    disabled={
+                      deleted ||
+                      capturingLocation
+                    }
+                    onClick={
+                      captureCurrentLocation
+                    }
+                    className="inline-flex items-center justify-center gap-2 rounded-xl bg-[#FF5A36] px-4 py-2.5 text-[11px] font-bold text-white transition hover:bg-[#E94B29] disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    {capturingLocation ? (
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                    ) : (
+                      <Navigation className="h-4 w-4" />
+                    )}
+
+                    {capturingLocation
+                      ? "Capturing..."
+                      : "Use current location"}
+                  </button>
+                </div>
+
+                <p className="mt-3 text-[10px] leading-5 text-[#9A9087]">
+                  Use this only when the device is
+                  physically at the business location.
+                  ReMarket stores the coordinates
+                  automatically; the admin does not
+                  type latitude or longitude.
+                </p>
+              </div>
             </section>
+
+            {/* PRICE */}
 
             <section className="border-t border-[#EAE6DF] pt-6">
               <h2 className="text-sm font-bold text-[#17202A]">
@@ -1315,7 +1645,9 @@ function BusinessEditor({
                 <Field
                   label="Minimum price"
                   value={priceMin}
-                  onChange={setPriceMin}
+                  onChange={
+                    setPriceMin
+                  }
                   type="number"
                   step="1"
                   min="0"
@@ -1324,13 +1656,17 @@ function BusinessEditor({
                 <Field
                   label="Maximum price"
                   value={priceMax}
-                  onChange={setPriceMax}
+                  onChange={
+                    setPriceMax
+                  }
                   type="number"
                   step="1"
                   min="0"
                 />
               </div>
             </section>
+
+            {/* BUSINESS STATE */}
 
             <section className="border-t border-[#EAE6DF] pt-6">
               <h2 className="text-sm font-bold text-[#17202A]">
@@ -1340,8 +1676,12 @@ function BusinessEditor({
               <div className="mt-4 grid gap-4 sm:grid-cols-3">
                 <SelectField
                   label="Availability"
-                  value={availability}
-                  onChange={(value) =>
+                  value={
+                    availability
+                  }
+                  onChange={(
+                    value
+                  ) =>
                     setAvailability(
                       value as
                         | "AVAILABLE"
@@ -1375,7 +1715,9 @@ function BusinessEditor({
                 <SelectField
                   label="Status"
                   value={status}
-                  onChange={(value) =>
+                  onChange={(
+                    value
+                  ) =>
                     setStatus(
                       value as
                         | "ACTIVE"
@@ -1408,8 +1750,12 @@ function BusinessEditor({
 
                 <SelectField
                   label="Verification"
-                  value={verification}
-                  onChange={(value) =>
+                  value={
+                    verification
+                  }
+                  onChange={(
+                    value
+                  ) =>
                     setVerification(
                       value as
                         | "VERIFIED"
@@ -1443,14 +1789,33 @@ function BusinessEditor({
               )}
             </section>
 
+            {/* CATEGORIES */}
+
             <section className="border-t border-[#EAE6DF] pt-6">
-              <h2 className="text-sm font-bold text-[#17202A]">
-                Categories
-              </h2>
+              <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
+                <div>
+                  <h2 className="text-sm font-bold text-[#17202A]">
+                    Categories
+                  </h2>
+
+                  <p className="mt-1 text-[10px] text-[#A39A91]">
+                    Select categories assigned to
+                    this business.
+                  </p>
+                </div>
+
+                {usingCategoryFallback && (
+                  <span className="text-[10px] font-semibold text-[#9F5A18]">
+                    Category service unavailable
+                  </span>
+                )}
+              </div>
 
               <div className="mt-4 flex flex-wrap gap-2">
                 {categories.map(
-                  (category) => {
+                  (
+                    category
+                  ) => {
                     const selected =
                       selectedCategoryIds.includes(
                         category.id
@@ -1462,6 +1827,10 @@ function BusinessEditor({
                           category.id
                         }
                         type="button"
+                        disabled={
+                          usingCategoryFallback ||
+                          deleted
+                        }
                         onClick={() =>
                           toggleCategory(
                             category.id
@@ -1472,6 +1841,10 @@ function BusinessEditor({
                           selected
                             ? "border-[#FF5A36] bg-[#FFE0D6] text-[#9F2D18]"
                             : "border-[#EAE6DF] bg-white text-[#6F675F] hover:border-[#FFB49F]",
+                          usingCategoryFallback ||
+                          deleted
+                            ? "cursor-not-allowed opacity-60"
+                            : "",
                         ].join(
                           " "
                         )}
@@ -1484,7 +1857,18 @@ function BusinessEditor({
                   }
                 )}
               </div>
+
+              {usingCategoryFallback && (
+                <p className="mt-3 rounded-xl bg-[#FFF0D9] px-3 py-2 text-[10px] leading-5 text-[#9F5A18]">
+                  The category list could not be loaded.
+                  Existing database category IDs will be
+                  preserved, and fallback display categories
+                  cannot be submitted.
+                </p>
+              )}
             </section>
+
+            {/* CONTACT LINKS */}
 
             <section className="border-t border-[#EAE6DF] pt-6">
               <h2 className="text-sm font-bold text-[#17202A]">
@@ -1530,6 +1914,8 @@ function BusinessEditor({
                 )}
               </div>
             </section>
+
+            {/* PRODUCTS */}
 
             <section className="border-t border-[#EAE6DF] pt-6">
               <div className="flex items-center justify-between gap-3">
@@ -1634,6 +2020,8 @@ function BusinessEditor({
               </div>
             </section>
 
+            {/* SAVE */}
+
             <div className="flex flex-col-reverse gap-2 border-t border-[#EAE6DF] pt-5 sm:flex-row sm:justify-end">
               <Link
                 href="/admin/businesses"
@@ -1645,7 +2033,7 @@ function BusinessEditor({
               <button
                 type="submit"
                 disabled={saving}
-                className="inline-flex items-center justify-center gap-2 rounded-xl bg-[#FF5A36] px-5 py-3 text-xs font-bold text-white transition hover:bg-[#E94F2D] disabled:cursor-not-allowed disabled:opacity-60"
+                className="inline-flex items-center justify-center gap-2 rounded-xl bg-[#FF5A36] px-5 py-3 text-xs font-bold text-white transition hover:bg-[#E94B2D] disabled:cursor-not-allowed disabled:opacity-60"
               >
                 {saving ? (
                   <Loader2 className="h-4 w-4 animate-spin" />
@@ -1707,7 +2095,9 @@ function Field({
               event.target.value
             )
           }
-          placeholder={placeholder}
+          placeholder={
+            placeholder
+          }
           required={required}
           rows={5}
           className={`${className} resize-y`}
@@ -1721,7 +2111,9 @@ function Field({
               event.target.value
             )
           }
-          placeholder={placeholder}
+          placeholder={
+            placeholder
+          }
           required={required}
           step={step}
           min={min}
@@ -1807,7 +2199,9 @@ function DeleteConfirmationModal({
       <div className="w-full max-w-md rounded-2xl border border-[#EAE6DF] bg-[#FFFDFC] p-5 shadow-xl">
         <div className="flex items-start gap-3">
           <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-[#FFF0ED] text-[#FF5A36]">
-            <AlertTriangle size={21} />
+            <AlertTriangle
+              size={21}
+            />
           </div>
 
           <div className="min-w-0">
@@ -1817,7 +2211,9 @@ function DeleteConfirmationModal({
 
             <p className="mt-1 text-sm leading-6 text-[#6F675F]">
               <span className="font-bold text-[#17202A]">
-                {business.name}
+                {
+                  business.name
+                }
               </span>{" "}
               will be removed from customer-facing
               ReMarket results. Its information will
@@ -1831,7 +2227,9 @@ function DeleteConfirmationModal({
           <button
             type="button"
             disabled={loading}
-            onClick={onCancel}
+            onClick={
+              onCancel
+            }
             className="h-10 rounded-xl border border-[#EAE6DF] bg-[#FCFAF6] px-4 text-sm font-bold text-[#6F675F] transition hover:bg-[#FFF0D9] disabled:cursor-not-allowed disabled:opacity-50"
           >
             Cancel
@@ -1840,7 +2238,9 @@ function DeleteConfirmationModal({
           <button
             type="button"
             disabled={loading}
-            onClick={onConfirm}
+            onClick={
+              onConfirm
+            }
             className="h-10 rounded-xl bg-[#FF5A36] px-4 text-sm font-extrabold text-white transition hover:bg-[#E94B29] disabled:cursor-not-allowed disabled:opacity-50"
           >
             {loading

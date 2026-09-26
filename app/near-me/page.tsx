@@ -1,7 +1,7 @@
 "use client";
 
 import {
-  useEffect,
+  useSyncExternalStore,
   useState,
 } from "react";
 
@@ -147,16 +147,63 @@ function getProductImage(
   );
 }
 
+/*
+ * -----------------------------------------
+ * SAVED BUSINESSES EXTERNAL STORE
+ * -----------------------------------------
+ */
+
+function subscribeToSavedBusinesses(
+  callback: () => void
+) {
+  window.addEventListener(
+    SAVED_BUSINESSES_CHANGED_EVENT,
+    callback
+  );
+
+  window.addEventListener(
+    "storage",
+    callback
+  );
+
+  return () => {
+    window.removeEventListener(
+      SAVED_BUSINESSES_CHANGED_EVENT,
+      callback
+    );
+
+    window.removeEventListener(
+      "storage",
+      callback
+    );
+  };
+}
+
+function getSavedBusinessesSnapshot(): string {
+  return JSON.stringify(
+    getSavedBusinesses()
+      .map((business) => business.id)
+      .sort()
+  );
+}
+
+function getSavedBusinessesServerSnapshot(): string {
+  return "[]";
+}
+
 export default function NearMePage() {
   const router = useRouter();
 
-  const [area, setArea] = useState("");
+  const [area, setArea] =
+    useState("");
 
   const [businesses, setBusinesses] =
     useState<Business[]>([]);
 
   const [mode, setMode] =
-    useState<"none" | "area" | "gps">("none");
+    useState<
+      "none" | "area" | "gps"
+    >("none");
 
   const [loading, setLoading] =
     useState(false);
@@ -167,48 +214,48 @@ export default function NearMePage() {
   const [error, setError] =
     useState("");
 
- const [savedBusinesses, setSavedBusinesses] =
-  useState<Record<string, boolean>>(() => {
-    if (typeof window === "undefined") {
-      return {};
-    }
-
-    const saved = getSavedBusinesses();
-
-    const next: Record<string, boolean> = {};
-
-    for (const business of saved) {
-      next[business.id] = true;
-    }
-
-    return next;
-  });
-
-  function syncSavedBusinesses() {
-    const saved = getSavedBusinesses();
-
-    const next: Record<string, boolean> = {};
-
-    for (const business of saved) {
-      next[business.id] = true;
-    }
-
-    setSavedBusinesses(next);
-  }
-
-  useEffect(() => {
-  window.addEventListener(
-    SAVED_BUSINESSES_CHANGED_EVENT,
-    syncSavedBusinesses
-  );
-
-  return () => {
-    window.removeEventListener(
-      SAVED_BUSINESSES_CHANGED_EVENT,
-      syncSavedBusinesses
+  const savedSnapshot =
+    useSyncExternalStore(
+      subscribeToSavedBusinesses,
+      getSavedBusinessesSnapshot,
+      getSavedBusinessesServerSnapshot
     );
-  };
-}, []);
+
+  const savedBusinessIds =
+    (() => {
+      try {
+        const ids =
+          JSON.parse(
+            savedSnapshot
+          );
+
+        if (
+          !Array.isArray(
+            ids
+          )
+        ) {
+          return new Set<string>();
+        }
+
+        return new Set<string>(
+          ids.filter(
+            (
+              value
+            ): value is string =>
+              typeof value ===
+              "string"
+          )
+        );
+      } catch {
+        return new Set<string>();
+      }
+    })();
+
+  /*
+   * -----------------------------------------
+   * SEARCH BY AREA
+   * -----------------------------------------
+   */
 
   async function loadByArea(
     selectedArea: string
@@ -231,48 +278,64 @@ export default function NearMePage() {
     setMode("none");
 
     try {
-      const params = new URLSearchParams();
+      const params =
+        new URLSearchParams();
 
-      params.set("area", trimmedArea);
-
-      const response = await fetch(
-        `/api/near-me?${params.toString()}`,
-        {
-          method: "GET",
-          cache: "no-store",
-        }
+      params.set(
+        "area",
+        trimmedArea
       );
 
-      const data = await response.json();
+      const response =
+        await fetch(
+          `/api/near-me?${params.toString()}`,
+          {
+            method: "GET",
+            cache: "no-store",
+          }
+        );
+
+      const data =
+        await response.json();
 
       if (!response.ok) {
         throw new Error(
-          typeof data?.error === "string"
+          typeof data?.error ===
+            "string"
             ? data.error
             : "Unable to load nearby businesses."
         );
       }
 
       const nextBusinesses =
-        Array.isArray(data?.businesses)
+        Array.isArray(
+          data?.businesses
+        )
           ? data.businesses
           : [];
 
-      setBusinesses(nextBusinesses);
+      /*
+       * A successful empty response is
+       * still a valid area search.
+       */
+      setBusinesses(
+        nextBusinesses
+      );
 
       setMode("area");
-    } catch (error) {
+    } catch (searchError) {
       console.error(
         "Area near-me error:",
-        error
+        searchError
       );
 
       setBusinesses([]);
       setMode("none");
 
       setError(
-        error instanceof Error
-          ? error.message
+        searchError instanceof
+          Error
+          ? searchError.message
           : "Unable to load nearby businesses."
       );
     } finally {
@@ -287,6 +350,16 @@ export default function NearMePage() {
 
     void loadByArea(area);
   }
+
+  /*
+   * -----------------------------------------
+   * CURRENT LOCATION
+   * -----------------------------------------
+   *
+   * Latitude and longitude are obtained
+   * internally from the browser.
+   * The user never types them.
+   */
 
   function useCurrentLocation() {
     if (!navigator.geolocation) {
@@ -324,44 +397,56 @@ export default function NearMePage() {
             String(longitude)
           );
 
-          const response = await fetch(
-            `/api/near-me?${params.toString()}`,
-            {
-              method: "GET",
-              cache: "no-store",
-            }
-          );
+          const response =
+            await fetch(
+              `/api/near-me?${params.toString()}`,
+              {
+                method: "GET",
+                cache: "no-store",
+              }
+            );
 
-          const data = await response.json();
+          const data =
+            await response.json();
 
           if (!response.ok) {
             throw new Error(
-              typeof data?.error === "string"
+              typeof data?.error ===
+                "string"
                 ? data.error
                 : "Unable to find businesses near you."
             );
           }
 
           const nextBusinesses =
-            Array.isArray(data?.businesses)
+            Array.isArray(
+              data?.businesses
+            )
               ? data.businesses
               : [];
 
-          setBusinesses(nextBusinesses);
+          /*
+           * A successful empty GPS response
+           * is still a valid nearby search.
+           */
+          setBusinesses(
+            nextBusinesses
+          );
 
           setMode("gps");
-        } catch (error) {
+        } catch (locationError) {
           console.error(
             "GPS near-me error:",
-            error
+            locationError
           );
 
           setBusinesses([]);
           setMode("none");
 
           setError(
-            error instanceof Error
-              ? error.message
+            locationError instanceof
+              Error
+              ? locationError.message
               : "Unable to find businesses near you."
           );
         } finally {
@@ -413,20 +498,23 @@ export default function NearMePage() {
     );
   }
 
+  /*
+   * -----------------------------------------
+   * SAVE / UNSAVE
+   * -----------------------------------------
+   */
+
   function toggleSaved(
     business: Business
   ) {
     if (
-      isBusinessSaved(business.id)
+      isBusinessSaved(
+        business.id
+      )
     ) {
       removeSavedBusiness(
         business.id
       );
-
-      setSavedBusinesses((current) => ({
-        ...current,
-        [business.id]: false,
-      }));
 
       return;
     }
@@ -441,20 +529,18 @@ export default function NearMePage() {
       name: business.name,
       area:
         business.area ??
+        business.location?.area ??
         "Local",
       category,
       verified:
-        business.verified,
+        business.verified ??
+        business.verification ===
+          "VERIFIED",
       availability:
         business.availability,
       imageUrl:
         business.imageUrl,
     });
-
-    setSavedBusinesses((current) => ({
-      ...current,
-      [business.id]: true,
-    }));
   }
 
   return (
@@ -463,6 +549,7 @@ export default function NearMePage() {
         <div className="min-h-[calc(100vh-24px)] overflow-hidden rounded-[18px] border border-[#FF5A36] bg-[#FFFDFC] shadow-sm sm:rounded-[22px] lg:min-h-[calc(100vh-40px)]">
 
           {/* HEADER */}
+
           <header className="flex h-[64px] items-center justify-between border-b border-[#EAE6DF] bg-white px-4 sm:px-6 lg:h-[66px]">
             <Link
               href="/"
@@ -484,25 +571,35 @@ export default function NearMePage() {
             </Link>
 
             <nav className="hidden items-center gap-1 md:flex">
-              {NAV_ITEMS.map((item) => (
-                <button
-                  key={item.label}
-                  type="button"
-                  onClick={() =>
-                    router.push(item.href)
-                  }
-                  className="rounded-xl px-4 py-2 text-xs font-semibold text-gray-700 hover:bg-gray-50"
-                >
-                  {item.label}
-                </button>
-              ))}
+              {NAV_ITEMS.map(
+                (item) => (
+                  <button
+                    key={
+                      item.label
+                    }
+                    type="button"
+                    onClick={() =>
+                      router.push(
+                        item.href
+                      )
+                    }
+                    className="rounded-xl px-4 py-2 text-xs font-semibold text-gray-700 hover:bg-gray-50"
+                  >
+                    {
+                      item.label
+                    }
+                  </button>
+                )
+              )}
             </nav>
 
             <div className="flex items-center gap-2 sm:gap-3">
               <button
                 type="button"
                 onClick={() =>
-                  router.push("/saved")
+                  router.push(
+                    "/saved"
+                  )
                 }
                 className="hidden h-9 w-9 items-center justify-center rounded-full hover:bg-gray-50 sm:flex"
                 aria-label="Saved"
@@ -521,7 +618,9 @@ export default function NearMePage() {
               <button
                 type="button"
                 onClick={() =>
-                  router.push("/request")
+                  router.push(
+                    "/request"
+                  )
                 }
                 className="rounded-xl bg-[#FF5A36] px-3.5 py-2.5 text-[11px] font-bold text-white sm:px-4 sm:text-xs"
               >
@@ -533,37 +632,51 @@ export default function NearMePage() {
           <div className="flex">
 
             {/* SIDEBAR */}
+
             <aside className="hidden w-[190px] shrink-0 border-r border-[#EAE6DF] bg-[#FCFAF6] px-3 py-5 lg:block">
               <nav className="space-y-1">
-                {NAV_ITEMS.map((item) => {
-                  const Icon = item.icon;
+                {NAV_ITEMS.map(
+                  (item) => {
+                    const Icon =
+                      item.icon;
 
-                  return (
-                    <button
-                      key={item.label}
-                      type="button"
-                      onClick={() =>
-                        router.push(item.href)
-                      }
-                      className={`flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-sm font-medium ${
-                        item.label === "Shop"
-                          ? "bg-white text-[#9F2D18]"
-                          : "text-gray-700"
-                      }`}
-                    >
-                      <Icon className="h-[18px] w-[18px]" />
-                      {item.label}
-                    </button>
-                  );
-                })}
+                    return (
+                      <button
+                        key={
+                          item.label
+                        }
+                        type="button"
+                        onClick={() =>
+                          router.push(
+                            item.href
+                          )
+                        }
+                        className={`flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-sm font-medium ${
+                          item.label ===
+                          "Shop"
+                            ? "bg-white text-[#9F2D18]"
+                            : "text-gray-700"
+                        }`}
+                      >
+                        <Icon className="h-[18px] w-[18px]" />
+
+                        {
+                          item.label
+                        }
+                      </button>
+                    );
+                  }
+                )}
               </nav>
             </aside>
 
             {/* MAIN */}
+
             <div className="min-w-0 flex-1">
               <div className="px-4 pb-24 pt-4 sm:px-6 sm:pt-6 lg:px-6 lg:pb-8">
 
                 {/* HERO */}
+
                 <section className="rounded-[18px] bg-[#FF5A36] px-5 py-6 text-white shadow-soft sm:px-7 sm:py-7">
                   <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-white/75">
                     Near You
@@ -578,16 +691,21 @@ export default function NearMePage() {
                   </p>
 
                   <form
-                    onSubmit={submitArea}
+                    onSubmit={
+                      submitArea
+                    }
                     className="mt-5 flex h-[48px] max-w-[720px] items-center rounded-full bg-white p-1.5"
                   >
                     <MapPin className="ml-3 h-[18px] w-[18px] text-gray-500" />
 
                     <input
                       value={area}
-                      onChange={(event) =>
+                      onChange={(
+                        event
+                      ) =>
                         setArea(
-                          event.target.value
+                          event.target
+                            .value
                         )
                       }
                       placeholder="Enter an area, e.g. Ogba"
@@ -610,7 +728,9 @@ export default function NearMePage() {
                     onClick={
                       useCurrentLocation
                     }
-                    disabled={locating}
+                    disabled={
+                      locating
+                    }
                     className="mt-3 inline-flex items-center gap-2 rounded-xl bg-white/15 px-3.5 py-2.5 text-[11px] font-bold text-white backdrop-blur transition hover:bg-white/20 disabled:opacity-60"
                   >
                     {locating ? (
@@ -626,13 +746,16 @@ export default function NearMePage() {
                 </section>
 
                 {/* RESULTS */}
+
                 <section className="mt-5">
                   <div className="flex items-center justify-between gap-3">
                     <div>
                       <h2 className="text-lg font-bold text-[#17202A]">
-                        {mode === "gps"
+                        {mode ===
+                        "gps"
                           ? "Businesses near you"
-                          : mode === "area"
+                          : mode ===
+                              "area"
                             ? `Businesses around ${area.trim()}`
                             : "Nearby businesses"}
                       </h2>
@@ -640,48 +763,67 @@ export default function NearMePage() {
                       <p className="mt-0.5 text-xs text-muted">
                         {loading
                           ? "Finding local businesses..."
-                          : businesses.length > 0
+                          : businesses.length >
+                              0
                             ? `${businesses.length} ${
-                                businesses.length === 1
+                                businesses.length ===
+                                1
                                   ? "business"
                                   : "businesses"
                               } found`
-                            : mode === "gps"
+                            : mode ===
+                                "gps"
                               ? "No businesses were found within the nearby search area"
-                              : mode === "area"
+                              : mode ===
+                                  "area"
                                 ? "No businesses were found in this area"
                                 : "Choose an area or use your current location"}
                       </p>
                     </div>
 
-                    {mode !== "none" && (
+                    {mode !==
+                      "none" && (
                       <button
                         type="button"
                         onClick={() =>
-                          router.push("/shop")
+                          router.push(
+                            "/shop"
+                          )
                         }
                         className="inline-flex items-center gap-1 text-[11px] font-bold text-[#9F2D18]"
                       >
                         Browse all
+
                         <ArrowRight className="h-3.5 w-3.5" />
                       </button>
                     )}
                   </div>
 
                   {/* ERROR */}
+
                   {error && (
                     <div className="mt-4 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-xs text-red-700">
-                      {error}
+                      {
+                        error
+                      }
                     </div>
                   )}
 
                   {/* LOADING */}
+
                   {loading && (
                     <div className="mt-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-                      {[1, 2, 3, 4].map(
+                      {[
+                        1,
+                        2,
+                        3,
+                        4,
+                      ].map(
                         (item) => (
                           <div
-                            key={item}
+                            key={
+                              item
+                            }
                             className="h-[240px] animate-pulse rounded-xl border border-[#E8E4DE] bg-white"
                           />
                         )
@@ -690,13 +832,17 @@ export default function NearMePage() {
                   )}
 
                   {/* EMPTY RESULT */}
+
                   {!loading &&
                     !error &&
-                    businesses.length === 0 &&
-                    mode !== "none" && (
+                    businesses.length ===
+                      0 &&
+                    mode !==
+                      "none" && (
                       <div className="mt-5 rounded-xl border border-[#E8E4DE] bg-white px-5 py-12 text-center">
                         <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-2xl bg-[#FFF1ED]">
-                          {mode === "gps" ? (
+                          {mode ===
+                          "gps" ? (
                             <Navigation className="h-6 w-6 text-[#FF5A36]" />
                           ) : (
                             <Search className="h-6 w-6 text-[#FF5A36]" />
@@ -704,13 +850,15 @@ export default function NearMePage() {
                         </div>
 
                         <p className="mt-4 text-sm font-semibold text-gray-700">
-                          {mode === "gps"
+                          {mode ===
+                          "gps"
                             ? "No businesses found near you"
                             : "No businesses found in this area"}
                         </p>
 
                         <p className="mx-auto mt-1 max-w-[360px] text-xs leading-5 text-gray-400">
-                          {mode === "gps"
+                          {mode ===
+                          "gps"
                             ? "We don't have businesses registered within the nearby search area yet. Try searching another area or browse all businesses."
                             : `We don't have businesses registered around ${area.trim()} yet. Try another area or browse all businesses.`}
                         </p>
@@ -719,13 +867,22 @@ export default function NearMePage() {
                           <button
                             type="button"
                             onClick={() => {
-                              setMode("none");
-                              setBusinesses([]);
-                              setError("");
+                              setMode(
+                                "none"
+                              );
+
+                              setBusinesses(
+                                []
+                              );
+
+                              setError(
+                                ""
+                              );
                             }}
                             className="inline-flex items-center justify-center gap-2 rounded-lg bg-[#FF5A36] px-4 py-2.5 text-[11px] font-bold text-white"
                           >
                             Search another area
+
                             <Search className="h-3.5 w-3.5" />
                           </button>
 
@@ -734,6 +891,7 @@ export default function NearMePage() {
                             className="inline-flex items-center justify-center gap-2 rounded-lg border border-[#E8E4DE] bg-white px-4 py-2.5 text-[11px] font-bold text-[#9F2D18]"
                           >
                             Browse all businesses
+
                             <ArrowRight className="h-3.5 w-3.5" />
                           </Link>
                         </div>
@@ -741,26 +899,30 @@ export default function NearMePage() {
                     )}
 
                   {/* BUSINESS RESULTS */}
+
                   {!loading &&
                     !error &&
-                    businesses.length > 0 && (
+                    businesses.length >
+                      0 && (
                       <div className="mt-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
                         {businesses.map(
-                          (business) => {
+                          (
+                            business
+                          ) => {
                             const category =
-                              business.categories?.[0]
+                              business
+                                .categories?.[0]
                                 ?.category?.name ??
                               "Services";
 
                             const saved =
-                              Boolean(
-                                savedBusinesses[
-                                  business.id
-                                ]
+                              savedBusinessIds.has(
+                                business.id
                               );
 
                             const product =
-                              business.products?.[0] ??
+                              business
+                                .products?.[0] ??
                               null;
 
                             const productImage =
@@ -772,7 +934,9 @@ export default function NearMePage() {
 
                             return (
                               <article
-                                key={business.id}
+                                key={
+                                  business.id
+                                }
                                 className="overflow-hidden rounded-xl border border-[#E8E4DE] bg-white transition hover:-translate-y-0.5 hover:shadow-md"
                               >
                                 <Link
@@ -838,6 +1002,7 @@ export default function NearMePage() {
 
                                         <span className="flex min-w-0 items-center gap-1 truncate">
                                           <MapPin className="h-3 w-3 shrink-0" />
+
                                           {
                                             business.area
                                           }
@@ -921,6 +1086,7 @@ export default function NearMePage() {
                                     className="mt-3 flex w-full items-center justify-center gap-2 rounded-lg bg-[#FFF1ED] py-2.5 text-[11px] font-bold text-[#9F2D18]"
                                   >
                                     Browse
+
                                     <ArrowRight className="h-3.5 w-3.5" />
                                   </Link>
                                 </div>
@@ -932,7 +1098,9 @@ export default function NearMePage() {
                     )}
 
                   {/* INITIAL STATE */}
-                  {mode === "none" &&
+
+                  {mode ===
+                    "none" &&
                     !loading &&
                     !error && (
                       <div className="mt-5 rounded-xl border border-[#E8E4DE] bg-white px-5 py-12 text-center">
@@ -950,6 +1118,7 @@ export default function NearMePage() {
                 </section>
 
                 {/* FOOTER */}
+
                 <footer className="mt-7 flex items-center justify-center gap-3 text-[10px] text-gray-400">
                   <span className="h-px w-16 bg-gray-200" />
 
@@ -964,28 +1133,38 @@ export default function NearMePage() {
           </div>
 
           {/* MOBILE NAV */}
+
           <nav className="fixed bottom-0 left-0 right-0 z-50 border-t border-gray-200 bg-white/95 px-2 pb-[max(6px,safe-area-inset-bottom)] pt-1.5 backdrop-blur lg:hidden">
             <div className="mx-auto grid max-w-md grid-cols-4">
-              {NAV_ITEMS.map((item) => {
-                const Icon = item.icon;
+              {NAV_ITEMS.map(
+                (item) => {
+                  const Icon =
+                    item.icon;
 
-                return (
-                  <button
-                    key={item.label}
-                    type="button"
-                    onClick={() =>
-                      router.push(item.href)
-                    }
-                    className="flex flex-col items-center justify-center gap-1 rounded-xl py-2 text-gray-500"
-                  >
-                    <Icon className="h-[19px] w-[19px]" />
+                  return (
+                    <button
+                      key={
+                        item.label
+                      }
+                      type="button"
+                      onClick={() =>
+                        router.push(
+                          item.href
+                        )
+                      }
+                      className="flex flex-col items-center justify-center gap-1 rounded-xl py-2 text-gray-500"
+                    >
+                      <Icon className="h-[19px] w-[19px]" />
 
-                    <span className="text-[9px] font-medium">
-                      {item.label}
-                    </span>
-                  </button>
-                );
-              })}
+                      <span className="text-[9px] font-medium">
+                        {
+                          item.label
+                        }
+                      </span>
+                    </button>
+                  );
+                }
+              )}
             </div>
           </nav>
         </div>

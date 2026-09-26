@@ -1,9 +1,11 @@
 import { NextResponse } from "next/server";
+
 import { prisma } from "@/lib/prisma";
 import { requireAdmin } from "@/lib/admin-auth";
 
 export async function GET() {
-  const auth = await requireAdmin();
+  const auth =
+    await requireAdmin();
 
   if (!auth.authorized) {
     return auth.response;
@@ -58,84 +60,149 @@ export async function GET() {
       }),
     ]);
 
+    /*
+     * -----------------------------------------
+     * TOP BUSINESSES BY CONTACTS
+     * -----------------------------------------
+     */
+
     const topBusinesses =
       await prisma.contactEvent.groupBy({
         by: ["businessId"],
+
         _count: {
           businessId: true,
         },
+
         orderBy: {
           _count: {
             businessId: "desc",
           },
         },
+
         take: 10,
       });
 
-    const businessIds = topBusinesses.map(
-      (item) => item.businessId,
-    );
+    const businessIds =
+      topBusinesses.map(
+        (item) =>
+          item.businessId
+      );
+
+    /*
+     * -----------------------------------------
+     * LOAD BUSINESS DETAILS
+     * -----------------------------------------
+     *
+     * Do not require ACTIVE / deletedAt:null
+     * here because this is historical admin
+     * analytics.
+     */
 
     const businesses =
-      await prisma.business.findMany({
-        where: {
-          id: {
-            in: businessIds,
-          },
-        },
-        select: {
-          id: true,
-          name: true,
-          location: {
-            select: {
-              area: true,
+      businessIds.length > 0
+        ? await prisma.business.findMany({
+            where: {
+              id: {
+                in: businessIds,
+              },
             },
-          },
-        },
-      });
 
-    const businessMap = new Map(
-      businesses.map((business) => [
-        business.id,
-        business,
-      ]),
-    );
+            select: {
+              id: true,
+              name: true,
+
+              location: {
+                select: {
+                  area: true,
+                },
+              },
+            },
+          })
+        : [];
+
+    const businessMap =
+      new Map(
+        businesses.map(
+          (business) => [
+            business.id,
+            business,
+          ]
+        )
+      );
+
+    /*
+     * -----------------------------------------
+     * RESPONSE
+     * -----------------------------------------
+     */
 
     return NextResponse.json({
       total,
-      byPlatform: {
-        WHATSAPP: whatsapp,
-        PHONE: phone,
-        INSTAGRAM: instagram,
-        TIKTOK: tiktok,
-        FACEBOOK: facebook,
-        DIRECTIONS: directions,
-      },
-      topBusinesses: topBusinesses.map(
-        (item) => {
-          const business =
-            businessMap.get(item.businessId);
 
-          return {
-            businessId: item.businessId,
-            businessName:
-              business?.name ?? "Unknown business",
-            area:
-              business?.location?.area ?? null,
-            contacts: item._count.businessId,
-          };
-        },
-      ),
+      byPlatform: {
+        WHATSAPP:
+          whatsapp,
+
+        PHONE:
+          phone,
+
+        INSTAGRAM:
+          instagram,
+
+        TIKTOK:
+          tiktok,
+
+        FACEBOOK:
+          facebook,
+
+        DIRECTIONS:
+          directions,
+      },
+
+      topBusinesses:
+        topBusinesses.map(
+          (item) => {
+            const business =
+              businessMap.get(
+                item.businessId
+              );
+
+            return {
+              businessId:
+                item.businessId,
+
+              businessName:
+                business?.name ??
+                "Unknown business",
+
+              area:
+                business
+                  ?.location
+                  ?.area ??
+                null,
+
+              contacts:
+                item._count
+                  .businessId,
+            };
+          }
+        ),
     });
   } catch (error) {
     console.error(
       "Admin contact events error:",
-      error,
+      error
     );
 
     return NextResponse.json(
-      { error: "Unable to load contact analytics" },
-      { status: 500 },
+      {
+        error:
+          "Unable to load contact analytics",
+      },
+      {
+        status: 500,
+      }
     );
   }
 }

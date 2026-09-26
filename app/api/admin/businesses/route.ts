@@ -1,4 +1,8 @@
-import { NextRequest, NextResponse } from "next/server";
+import {
+  NextRequest,
+  NextResponse,
+} from "next/server";
+
 import {
   Availability,
   BusinessStatus,
@@ -10,11 +14,16 @@ import { prisma } from "@/lib/prisma";
 import { requireAdmin } from "@/lib/admin-auth";
 
 function cleanString(value: unknown): string {
-  return typeof value === "string" ? value.trim() : "";
+  return typeof value === "string"
+    ? value.trim()
+    : "";
 }
 
-function nullableString(value: unknown): string | null {
+function nullableString(
+  value: unknown
+): string | null {
   const valueString = cleanString(value);
+
   return valueString || null;
 }
 
@@ -142,13 +151,15 @@ function parseSocialLinks(
   }
 
   const result: ParsedSocialLink[] = [];
+
   const seen =
     new Set<SocialPlatform>();
 
   for (const item of value) {
     if (
       !item ||
-      typeof item !== "object"
+      typeof item !== "object" ||
+      Array.isArray(item)
     ) {
       continue;
     }
@@ -165,11 +176,13 @@ function parseSocialLinks(
     }
 
     let handle =
-      cleanString(record.handle);
+      cleanString(
+        record.handle
+      );
 
     if (
       record.platform ===
-      "WHATSAPP"
+      SocialPlatform.WHATSAPP
     ) {
       handle =
         normalizeWhatsApp(
@@ -228,7 +241,10 @@ function parseCategoryIds(
 
 function isDeletionFilter(
   value: string | null
-): value is "ALL" | "ACTIVE" | "DELETED" {
+): value is
+  | "ALL"
+  | "ACTIVE"
+  | "DELETED" {
   return (
     value === "ALL" ||
     value === "ACTIVE" ||
@@ -239,7 +255,8 @@ function isDeletionFilter(
 export async function GET(
   request: NextRequest
 ) {
-  const auth = await requireAdmin();
+  const auth =
+    await requireAdmin();
 
   if (!auth.authorized) {
     return auth.response;
@@ -262,18 +279,10 @@ export async function GET(
         "verification"
       );
 
-    /*
-     * Deleted filter:
-     *
-     * ALL     = active + soft-deleted
-     * ACTIVE  = deletedAt IS NULL
-     * DELETED = deletedAt IS NOT NULL
-     *
-     * Default is ALL because Admin must be able
-     * to see and restore soft-deleted businesses.
-     */
     const requestedDeletionFilter =
-      searchParams.get("deleted");
+      searchParams.get(
+        "deleted"
+      );
 
     const deletionFilter =
       isDeletionFilter(
@@ -318,7 +327,9 @@ export async function GET(
               : {}),
 
             ...(status &&
-            isBusinessStatus(status)
+            isBusinessStatus(
+              status
+            )
               ? {
                   status,
                 }
@@ -374,7 +385,8 @@ export async function GET(
 
           orderBy: [
             {
-              deletedAt: "asc",
+              deletedAt:
+                "asc",
             },
             {
               updatedAt:
@@ -456,7 +468,8 @@ export async function GET(
 export async function POST(
   request: NextRequest
 ) {
-  const auth = await requireAdmin();
+  const auth =
+    await requireAdmin();
 
   if (!auth.authorized) {
     return auth.response;
@@ -483,7 +496,10 @@ export async function POST(
     }
 
     const payload =
-      body as Record<string, unknown>;
+      body as Record<
+        string,
+        unknown
+      >;
 
     const name =
       cleanString(
@@ -707,18 +723,22 @@ export async function POST(
     const business =
       await prisma.$transaction(
         async (tx) => {
+          /*
+           * IMPORTANT:
+           *
+           * A Location belongs to one business's
+           * exact coordinates.
+           *
+           * Do NOT reuse a Location by area.
+           *
+           * Multiple businesses can be in the same
+           * area and still have different coordinates.
+           */
           const location =
-            await tx.location.upsert(
+            await tx.location.create(
               {
-                where: {
+                data: {
                   area,
-                },
-                create: {
-                  area,
-                  lat,
-                  long,
-                },
-                update: {
                   lat,
                   long,
                 },
@@ -732,15 +752,23 @@ export async function POST(
                   name,
                   ownerName,
                   description,
+
                   locationId:
                     location.id,
+
                   priceMin,
                   priceMax,
+
                   availability,
+
                   phone,
+
                   status,
+
                   verification,
+
                   imageUrl,
+
                   onboardedAt:
                     new Date(),
                 },
@@ -748,7 +776,8 @@ export async function POST(
             );
 
           if (
-            categoryIds.length > 0
+            categoryIds.length >
+            0
           ) {
             await tx.businessCategory.createMany(
               {
@@ -759,6 +788,7 @@ export async function POST(
                     ) => ({
                       businessId:
                         created.id,
+
                       categoryId,
                     })
                   ),
@@ -769,17 +799,22 @@ export async function POST(
           }
 
           if (
-            socialLinks.length > 0
+            socialLinks.length >
+            0
           ) {
             await tx.businessSocialLink.createMany(
               {
                 data:
                   socialLinks.map(
-                    (link) => ({
+                    (
+                      link
+                    ) => ({
                       businessId:
                         created.id,
+
                       platform:
                         link.platform,
+
                       handle:
                         link.handle,
                     })

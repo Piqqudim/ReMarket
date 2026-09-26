@@ -1,9 +1,11 @@
 "use client";
 
 import {
-  ReactNode,
+  type MouseEvent,
   useEffect,
+  useMemo,
   useState,
+  useSyncExternalStore,
 } from "react";
 
 import { useRouter } from "next/navigation";
@@ -22,14 +24,8 @@ import {
   MapPin,
   Star,
   Bookmark,
-  Utensils,
-  Sparkles,
-  Shirt,
   Store,
-  Briefcase,
   Loader2,
-  Layers3,
-  Plug,
 } from "lucide-react";
 
 import Link from "next/link";
@@ -41,75 +37,11 @@ import {
   SAVED_BUSINESSES_CHANGED_EVENT,
 } from "@/lib/saved";
 
-const CATEGORY_STYLE: Record<
-  string,
-  {
-    bg: string;
-    icon: ReactNode;
-  }
-> = {
-  Fashion: {
-    bg: "#FFE0D6",
-    icon: <Shirt className="h-6 w-6" />,
-  },
-
-  Electronics: {
-    bg: "#DDF5EA",
-    icon: <Plug className="h-6 w-6" />,
-  },
-
-  Food: {
-    bg: "#FFF0C7",
-    icon: <Utensils className="h-6 w-6" />,
-  },
-
-  Beauty: {
-    bg: "#E7E5FF",
-    icon: <Sparkles className="h-6 w-6" />,
-  },
-
-  Textiles: {
-    bg: "#F9DCE8",
-    icon: <Layers3 className="h-6 w-6" />,
-  },
-
-  Services: {
-    bg: "#E4E9EF",
-    icon: <Briefcase className="h-6 w-6" />,
-  },
-};
-
-type Category = {
-  id: string;
-  name: string;
-};
-
-type Business = {
-  id: string;
-  name: string;
-
-  location: {
-    area?: string | null;
-    address?: string | null;
-  } | null;
-
-  products: {
-    id: string;
-    name: string;
-  }[];
-
-  categories: {
-    category: {
-      id: string;
-      name: string;
-    };
-  }[];
-
-  socialLinks: {
-    platform: string;
-    handle: string;
-  }[];
-};
+import {
+  DEFAULT_CATEGORIES,
+  mergeCategories,
+  type ReMarketCategory,
+} from "@/lib/categories";
 
 type FeaturedBusiness = {
   id: string;
@@ -159,44 +91,6 @@ type NearbyBusiness = {
   imageUrl?: string | null;
 };
 
-const DEFAULT_CATEGORIES: Category[] = [
-  {
-    id: "fashion",
-    name: "Fashion",
-  },
-  {
-    id: "electronics",
-    name: "Electronics",
-  },
-  {
-    id: "food",
-    name: "Food",
-  },
-  {
-    id: "beauty",
-    name: "Beauty",
-  },
-  {
-    id: "textiles",
-    name: "Textiles",
-  },
-  {
-    id: "services",
-    name: "Services",
-  },
-];
-
-function getCategoryStyle(name: string) {
-  return (
-    CATEGORY_STYLE[name] ?? {
-      bg: "#EEF1F4",
-      icon: (
-        <MoreHorizontal className="h-6 w-6" />
-      ),
-    }
-  );
-}
-
 const NAV_ITEMS = [
   {
     label: "Home",
@@ -220,35 +114,101 @@ const NAV_ITEMS = [
   },
 ];
 
+/*
+ * -----------------------------------------
+ * SAVED BUSINESS STORE
+ * -----------------------------------------
+ *
+ * The snapshot is represented as a stable
+ * primitive string so useSyncExternalStore
+ * can safely detect changes.
+ */
+function getSavedBusinessIdsSnapshot(): string {
+  if (
+    typeof window === "undefined"
+  ) {
+    return "";
+  }
+
+  const saved =
+    getSavedBusinesses();
+
+  return saved
+    .map(
+      (business) =>
+        business.id
+    )
+    .sort()
+    .join("|");
+}
+
+function subscribeSavedBusinesses(
+  onStoreChange: () => void
+) {
+  window.addEventListener(
+    SAVED_BUSINESSES_CHANGED_EVENT,
+    onStoreChange
+  );
+
+  window.addEventListener(
+    "storage",
+    onStoreChange
+  );
+
+  return () => {
+    window.removeEventListener(
+      SAVED_BUSINESSES_CHANGED_EVENT,
+      onStoreChange
+    );
+
+    window.removeEventListener(
+      "storage",
+      onStoreChange
+    );
+  };
+}
+
 export default function HomePage() {
   const [q, setQ] = useState("");
 
   const [categories, setCategories] =
-    useState<Category[]>(DEFAULT_CATEGORIES);
+    useState<ReMarketCategory[]>(
+      DEFAULT_CATEGORIES
+    );
 
-  const [loadingCategories, setLoadingCategories] =
-    useState(true);
+  const [
+    featuredBusinesses,
+    setFeaturedBusinesses,
+  ] = useState<FeaturedBusiness[]>(
+    []
+  );
 
-  const [featuredBusinesses, setFeaturedBusinesses] =
-    useState<FeaturedBusiness[]>([]);
+  const [
+    businessLoading,
+    setBusinessLoading,
+  ] = useState(true);
 
-  const [businessLoading, setBusinessLoading] =
-    useState(true);
+  const [
+    nearbyBusinesses,
+    setNearbyBusiness,
+  ] = useState<NearbyBusiness[]>(
+    []
+  );
 
-  const [nearbyBusinesses, setNearbyBusiness] =
-    useState<NearbyBusiness[]>([]);
+  const [
+    nearbyLoading,
+    setNearbyLoading,
+  ] = useState(false);
 
-  const [nearbyLoading, setNearbyLoading] =
-    useState(false);
+  const [
+    nearbyLocationRequested,
+    setNearbyLocationRequested,
+  ] = useState(false);
 
-  const [nearbyLocationRequested, setNearbyLocationRequested] =
-    useState(false);
-
-  const [nearbyError, setNearbyError] =
-    useState("");
-
-  const [savedBusinessIds, setSavedBusinessIds] =
-    useState<Set<string>>(new Set());
+  const [
+    nearbyError,
+    setNearbyError,
+  ] = useState("");
 
   const router = useRouter();
 
@@ -258,43 +218,65 @@ export default function HomePage() {
    * -----------------------------------------
    */
 
-  useEffect(() => {
-    const syncSavedBusinesses = () => {
-      const saved = getSavedBusinesses();
+  const savedBusinessIdsSnapshot =
+    useSyncExternalStore(
+      subscribeSavedBusinesses,
+      getSavedBusinessIdsSnapshot,
+      () => ""
+    );
 
-      setSavedBusinessIds(
+  const savedBusinessIds =
+    useMemo(
+      () =>
         new Set(
-          saved.map(
-            (business) => business.id
-          )
-        )
-      );
-    };
-
-    syncSavedBusinesses();
-
-    window.addEventListener(
-      SAVED_BUSINESSES_CHANGED_EVENT,
-      syncSavedBusinesses
+          savedBusinessIdsSnapshot
+            ? savedBusinessIdsSnapshot.split(
+                "|"
+              )
+            : []
+        ),
+      [savedBusinessIdsSnapshot]
     );
 
-    window.addEventListener(
-      "storage",
-      syncSavedBusinesses
-    );
+  /*
+   * -----------------------------------------
+   * CATEGORY VISUAL
+   * -----------------------------------------
+   */
 
-    return () => {
-      window.removeEventListener(
-        SAVED_BUSINESSES_CHANGED_EVENT,
-        syncSavedBusinesses
+  function getCategoryVisual(
+    name: string
+  ) {
+    const category =
+      categories.find(
+        (item) =>
+          item.name
+            .trim()
+            .toLowerCase() ===
+          name
+            .trim()
+            .toLowerCase()
       );
 
-      window.removeEventListener(
-        "storage",
-        syncSavedBusinesses
-      );
+    if (!category) {
+      return {
+        bg: "#EEF1F4",
+        icon: (
+          <MoreHorizontal className="h-6 w-6" />
+        ),
+      };
+    }
+
+    const Icon =
+      category.icon;
+
+    return {
+      bg: category.bg,
+      icon: (
+        <Icon className="h-6 w-6" />
+      ),
     };
-  }, []);
+  }
 
   /*
    * -----------------------------------------
@@ -310,33 +292,54 @@ export default function HomePage() {
         const [
           categoriesResponse,
           featuredResponse,
-        ] = await Promise.all([
-          fetch("/api/categories", {
-            cache: "no-store",
-          }),
+        ] =
+          await Promise.all([
+            fetch(
+              "/api/categories",
+              {
+                cache:
+                  "no-store",
+              }
+            ),
 
-          fetch("/api/featured", {
-            cache: "no-store",
-          }),
-        ]);
+            fetch(
+              "/api/featured",
+              {
+                cache:
+                  "no-store",
+              }
+            ),
+          ]);
 
         /*
          * Categories
          */
 
-        if (categoriesResponse.ok) {
+        if (
+          categoriesResponse.ok
+        ) {
           const categoryData =
             await categoriesResponse.json();
 
-          if (
+          const backendCategories =
             Array.isArray(
               categoryData.categories
-            ) &&
-            categoryData.categories.length > 0 &&
+            )
+              ? categoryData.categories
+              : [];
+
+          const mergedCategories =
+            mergeCategories(
+              backendCategories
+            );
+
+          if (
+            mergedCategories.length >
+              0 &&
             !cancelled
           ) {
             setCategories(
-              categoryData.categories
+              mergedCategories
             );
           }
         }
@@ -345,7 +348,9 @@ export default function HomePage() {
          * Featured businesses
          */
 
-        if (featuredResponse.ok) {
+        if (
+          featuredResponse.ok
+        ) {
           const featuredData =
             await featuredResponse.json();
 
@@ -369,13 +374,14 @@ export default function HomePage() {
         );
       } finally {
         if (!cancelled) {
-          setLoadingCategories(false);
-          setBusinessLoading(false);
+          setBusinessLoading(
+            false
+          );
         }
       }
     }
 
-    loadHomeData();
+    void loadHomeData();
 
     return () => {
       cancelled = true;
@@ -405,7 +411,7 @@ export default function HomePage() {
    */
 
   function handleSaveBusiness(
-    event: React.MouseEvent<HTMLButtonElement>,
+    event: MouseEvent<HTMLButtonElement>,
     business: FeaturedBusiness,
     category: string,
     location: string
@@ -414,7 +420,9 @@ export default function HomePage() {
     event.stopPropagation();
 
     const alreadySaved =
-      savedBusinessIds.has(business.id);
+      savedBusinessIds.has(
+        business.id
+      );
 
     if (alreadySaved) {
       removeSavedBusiness(
@@ -435,7 +443,8 @@ export default function HomePage() {
       availability:
         business.availability,
       imageUrl:
-        business.imageUrl ?? null,
+        business.imageUrl ??
+        null,
     });
   }
 
@@ -445,104 +454,119 @@ export default function HomePage() {
    * -----------------------------------------
    */
 
-  const loadNearbyBusinesses = () => {
-    if (!navigator.geolocation) {
-      setNearbyError(
-        "Location is not supported by this browser"
+  const loadNearbyBusinesses =
+    () => {
+      if (
+        !navigator.geolocation
+      ) {
+        setNearbyError(
+          "Location is not supported by this browser"
+        );
+
+        setNearbyLocationRequested(
+          true
+        );
+
+        return;
+      }
+
+      setNearbyLocationRequested(
+        true
       );
 
-      setNearbyLocationRequested(true);
+      setNearbyLoading(true);
+      setNearbyError("");
 
-      return;
-    }
+      /*
+       * Clear previous nearby results
+       * before starting a new search.
+       */
 
-    setNearbyLocationRequested(true);
-    setNearbyLoading(true);
-    setNearbyError("");
+      setNearbyBusiness([]);
 
-    /*
-     * Clear previous nearby results before
-     * starting a new search.
-     */
-    setNearbyBusiness([]);
+      navigator.geolocation.getCurrentPosition(
+        async (position) => {
+          try {
+            const {
+              latitude,
+              longitude,
+            } = position.coords;
 
-    navigator.geolocation.getCurrentPosition(
-      async (position) => {
-        try {
-          const {
-            latitude,
-            longitude,
-          } = position.coords;
+            const response =
+              await fetch(
+                `/api/near-me?lat=${latitude}&lng=${longitude}`,
+                {
+                  cache:
+                    "no-store",
+                }
+              );
 
-          const response = await fetch(
-            `/api/near-me?lat=${latitude}&lng=${longitude}`,
-            {
-              cache: "no-store",
+            if (!response.ok) {
+              throw new Error(
+                "Failed to load nearby businesses"
+              );
             }
-          );
 
-          if (!response.ok) {
-            throw new Error(
-              "Failed to load nearby businesses"
+            const data =
+              await response.json();
+
+            /*
+             * GPS can succeed even when
+             * there are no businesses nearby.
+             *
+             * An empty array is therefore
+             * not treated as an error.
+             */
+
+            setNearbyBusiness(
+              Array.isArray(
+                data.businesses
+              )
+                ? data.businesses.slice(
+                    0,
+                    4
+                  )
+                : []
+            );
+          } catch (error) {
+            console.error(
+              "Failed to load nearby businesses:",
+              error
+            );
+
+            setNearbyError(
+              "We couldn't load nearby sellers right now"
+            );
+          } finally {
+            setNearbyLoading(
+              false
             );
           }
+        },
 
-          const data =
-            await response.json();
-
-          /*
-           * IMPORTANT:
-           *
-           * An empty businesses array is NOT
-           * an error.
-           *
-           * It means GPS worked but there are
-           * currently no businesses nearby.
-           */
-          setNearbyBusiness(
-            Array.isArray(
-              data.businesses
-            )
-              ? data.businesses.slice(
-                  0,
-                  4
-                )
-              : []
-          );
-        } catch (error) {
+        (error) => {
           console.error(
-            "Failed to load nearby businesses:",
+            "Geolocation error:",
             error
           );
 
           setNearbyError(
-            "We couldn't load nearby sellers right now"
+            "Allow location access to discover sellers near you"
           );
-        } finally {
-          setNearbyLoading(false);
+
+          setNearbyLoading(
+            false
+          );
+        },
+
+        {
+          enableHighAccuracy:
+            false,
+          timeout: 100000,
+          maximumAge: 300000,
         }
-      },
-
-      (error) => {
-        console.error(
-          "Geolocation error:",
-          error
-        );
-
-        setNearbyError(
-          "Allow location access to discover sellers near you"
-        );
-
-        setNearbyLoading(false);
-      },
-
-      {
-        enableHighAccuracy: false,
-        timeout: 100000,
-        maximumAge: 300000,
-      }
-    );
-  };
+      );
+    };
 
   /*
    * -----------------------------------------
@@ -551,18 +575,21 @@ export default function HomePage() {
    */
 
   const submit = (
-    event: React.FormEvent<HTMLFormElement>
+    event: React.SubmitEvent<HTMLFormElement>
   ) => {
     event.preventDefault();
 
-    const query = q.trim();
+    const query =
+      q.trim();
 
     if (!query) {
       return;
     }
 
     router.push(
-      `/search?q=${encodeURIComponent(query)}`
+      `/search?q=${encodeURIComponent(
+        query
+      )}`
     );
   };
 
@@ -593,18 +620,26 @@ export default function HomePage() {
             {/* Desktop Navigation */}
 
             <nav className="hidden items-center gap-1 md:flex">
-              {NAV_ITEMS.map((item) => (
-                <button
-                  key={item.label}
-                  type="button"
-                  onClick={() =>
-                    router.push(item.href)
-                  }
-                  className="rounded-xl px-4 py-2 text-xs font-semibold text-gray-700 transition hover:bg-gray-50"
-                >
-                  {item.label}
-                </button>
-              ))}
+              {NAV_ITEMS.map(
+                (item) => (
+                  <button
+                    key={
+                      item.label
+                    }
+                    type="button"
+                    onClick={() =>
+                      router.push(
+                        item.href
+                      )
+                    }
+                    className="rounded-xl px-4 py-2 text-xs font-semibold text-gray-700 transition hover:bg-gray-50"
+                  >
+                    {
+                      item.label
+                    }
+                  </button>
+                )
+              )}
             </nav>
 
             {/* Right Action */}
@@ -629,7 +664,9 @@ export default function HomePage() {
               <button
                 type="button"
                 onClick={() =>
-                  router.push("/saved")
+                  router.push(
+                    "/saved"
+                  )
                 }
                 className="hidden h-9 w-9 items-center justify-center rounded-full hover:bg-gray-50 sm:flex"
                 aria-label="Saved"
@@ -648,7 +685,9 @@ export default function HomePage() {
               <button
                 type="button"
                 onClick={() =>
-                  router.push("/request")
+                  router.push(
+                    "/request"
+                  )
                 }
                 className="rounded-xl bg-[#FF5A36] px-3.5 py-2.5 text-[11px] font-bold text-white shadow-sm transition hover:opacity-90 sm:px-4 sm:text-xs"
               >
@@ -662,23 +701,35 @@ export default function HomePage() {
           <div className="flex">
             <aside className="hidden w-[190px] shrink-0 border-r border-[#EAE6DF] bg-[#FCFAF6] px-3 py-5 lg:block">
               <nav className="space-y-1">
-                {NAV_ITEMS.map((item) => {
-                  const Icon = item.icon;
+                {NAV_ITEMS.map(
+                  (item) => {
+                    const Icon =
+                      item.icon;
 
-                  return (
-                    <button
-                      key={item.label}
-                      type="button"
-                      onClick={() =>
-                        router.push(item.href)
-                      }
-                      className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-sm font-medium text-gray-700 transition hover:bg-white"
-                    >
-                      <Icon className="h-[18px] w-[18px]" />
-                      <span>{item.label}</span>
-                    </button>
-                  );
-                })}
+                    return (
+                      <button
+                        key={
+                          item.label
+                        }
+                        type="button"
+                        onClick={() =>
+                          router.push(
+                            item.href
+                          )
+                        }
+                        className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-sm font-medium text-gray-700 transition hover:bg-white"
+                      >
+                        <Icon className="h-[18px] w-[18px]" />
+
+                        <span>
+                          {
+                            item.label
+                          }
+                        </span>
+                      </button>
+                    );
+                  }
+                )}
               </nav>
 
               <div className="my-5 h-px bg-[#E7E2DB]" />
@@ -689,46 +740,50 @@ export default function HomePage() {
                 </p>
 
                 <div className="mt-3 space-y-1">
-                  {categories.map((category) => {
-                    const style =
-                      getCategoryStyle(
-                        category.name
-                      );
+                  {categories.map(
+                    (category) => {
+                      const Icon =
+                        category.icon;
 
-                    return (
-                      <button
-                        key={category.id}
-                        type="button"
-                        onClick={() =>
-                          handleCategory(
-                            category.name
-                          )
-                        }
-                        className="flex w-full items-center gap-3 rounded-xl px-3 py-2 text-left transition hover:bg-white"
-                      >
-                        <span
-                          className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full"
-                          style={{
-                            backgroundColor:
-                              style.bg,
-                          }}
+                      return (
+                        <button
+                          key={
+                            category.id
+                          }
+                          type="button"
+                          onClick={() =>
+                            handleCategory(
+                              category.name
+                            )
+                          }
+                          className="flex w-full items-center gap-3 rounded-xl px-3 py-2 text-left transition hover:bg-white"
                         >
-                          <span className="scale-[0.65]">
-                            {style.icon}
+                          <span
+                            className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full"
+                            style={{
+                              backgroundColor:
+                                category.bg,
+                            }}
+                          >
+                            <Icon className="h-4 w-4 text-[#9F2D18]" />
                           </span>
-                        </span>
 
-                        <span className="truncate text-xs font-medium text-gray-700">
-                          {category.name}
-                        </span>
-                      </button>
-                    );
-                  })}
+                          <span className="truncate text-xs font-medium text-gray-700">
+                            {
+                              category.name
+                            }
+                          </span>
+                        </button>
+                      );
+                    }
+                  )}
 
                   <button
                     type="button"
                     onClick={() =>
-                      router.push("/shop")
+                      router.push(
+                        "/shop"
+                      )
                     }
                     className="flex w-full items-center gap-3 rounded-xl px-3 py-2 text-left transition hover:bg-white"
                   >
@@ -752,6 +807,18 @@ export default function HomePage() {
                 {/* Hero */}
 
                 <section className="relative min-h-[260px] overflow-hidden rounded-[18px] bg-[#FF5A36] px-6 py-7 text-white shadow-soft sm:min-h-[275px] sm:px-8 sm:py-9 lg:min-h-[275px] lg:px-8">
+
+                  {/* Seller entry point */}
+
+                  <Link
+                    href="/seller/login"
+                    aria-label="Seller login"
+                    title="Seller login"
+                    className="absolute right-4 top-4 z-20 flex h-10 w-10 items-center justify-center rounded-full bg-white/15 text-white backdrop-blur-sm transition hover:bg-white/25 sm:right-5 sm:top-5"
+                  >
+                    <Store className="h-5 w-5" />
+                  </Link>
+
                   <div className="absolute -right-16 -top-24 h-[260px] w-[260px] rounded-full bg-white/5">
                     <div className="pointer-events-none absolute right-6 top-7 hidden opacity-90 md:block lg:right-12">
                       <div className="relative h-[190px] w-[220px]">
@@ -790,7 +857,9 @@ export default function HomePage() {
                     </p>
 
                     <form
-                      onSubmit={submit}
+                      onSubmit={
+                        submit
+                      }
                       className="mt-5 flex h-[48px] w-full max-w-[455px] items-center rounded-full bg-white p-1.5 shadow-sm"
                     >
                       <Search className="ml-3 h-[18px] w-[18px] shrink-0 text-gray-500" />
@@ -798,9 +867,12 @@ export default function HomePage() {
                       <input
                         id="homepage-search"
                         value={q}
-                        onChange={(event) =>
+                        onChange={(
+                          event
+                        ) =>
                           setQ(
-                            event.target.value
+                            event.target
+                              .value
                           )
                         }
                         placeholder="What are you looking for?"
@@ -834,7 +906,9 @@ export default function HomePage() {
                     <button
                       type="button"
                       onClick={() =>
-                        router.push("/shop")
+                        router.push(
+                          "/shop"
+                        )
                       }
                       className="flex items-center gap-1 text-xs font-medium text-[#9F2D18]"
                     >
@@ -844,44 +918,50 @@ export default function HomePage() {
                   </div>
 
                   <div className="grid grid-cols-3 gap-2.5 sm:grid-cols-3 lg:grid-cols-6">
-                    {categories.map((category) => {
-                      const style =
-                        getCategoryStyle(
-                          category.name
-                        );
+                    {categories.map(
+                      (category) => {
+                        const Icon =
+                          category.icon;
 
-                      return (
-                        <button
-                          key={category.id}
-                          type="button"
-                          onClick={() =>
-                            handleCategory(
-                              category.name
-                            )
-                          }
-                          className="group flex min-h-[112px] flex-col items-center justify-center rounded-xl border border-[#E8E4DE] bg-white px-2 py-2 transition hover:-translate-y-0.5 hover:shadow-md"
-                        >
-                          <span
-                            className="flex h-[58px] w-[58px] items-center justify-center rounded-full transition group-hover:scale-105"
-                            style={{
-                              background:
-                                style.bg,
-                            }}
+                        return (
+                          <button
+                            key={
+                              category.id
+                            }
+                            type="button"
+                            onClick={() =>
+                              handleCategory(
+                                category.name
+                              )
+                            }
+                            className="group flex min-h-[112px] flex-col items-center justify-center rounded-xl border border-[#E8E4DE] bg-white px-2 py-2 transition hover:-translate-y-0.5 hover:shadow-md"
                           >
-                            {style.icon}
-                          </span>
+                            <span
+                              className="flex h-[58px] w-[58px] items-center justify-center rounded-full transition group-hover:scale-105"
+                              style={{
+                                background:
+                                  category.bg,
+                              }}
+                            >
+                              <Icon className="h-6 w-6" />
+                            </span>
 
-                          <span className="mt-3 max-w-full truncate text-xs font-medium text-gray-800">
-                            {category.name}
-                          </span>
-                        </button>
-                      );
-                    })}
+                            <span className="mt-3 max-w-full truncate text-xs font-medium text-gray-800">
+                              {
+                                category.name
+                              }
+                            </span>
+                          </button>
+                        );
+                      }
+                    )}
 
                     <button
                       type="button"
                       onClick={() =>
-                        router.push("/shop")
+                        router.push(
+                          "/shop"
+                        )
                       }
                       className="group flex min-h-[112px] flex-col items-center justify-center rounded-xl border border-[#E8E4DE] bg-white px-2 py-3 transition hover:-translate-y-0.5 hover:shadow-md"
                     >
@@ -906,7 +986,7 @@ export default function HomePage() {
 
                     <div>
                       <h2 className="text-sm font-bold text-gray-800">
-                        Can't find what you need?
+                        Can&apos;t find what you need?
                       </h2>
 
                       <p className="mt-0.5 text-[11px] text-gray-600">
@@ -918,7 +998,9 @@ export default function HomePage() {
                   <button
                     type="button"
                     onClick={() =>
-                      router.push("/request")
+                      router.push(
+                        "/request"
+                      )
                     }
                     className="flex shrink-0 items-center justify-center gap-2 rounded-xl bg-[#FF5A36] px-5 py-3 text-xs font-bold text-white transition hover:opacity-90"
                   >
@@ -947,8 +1029,6 @@ export default function HomePage() {
                       </p>
                     </div>
 
-                    {/* ALWAYS SHOW VIEW ALL */}
-
                     <Link
                       href="/near-me"
                       className="flex shrink-0 items-center gap-1 text-xs font-semibold text-[#9F2D18]"
@@ -957,8 +1037,6 @@ export default function HomePage() {
                       <ArrowRight size={14} />
                     </Link>
                   </div>
-
-                  {/* Initial state */}
 
                   {!nearbyLocationRequested &&
                     !nearbyLoading && (
@@ -991,8 +1069,6 @@ export default function HomePage() {
                       </div>
                     )}
 
-                  {/* Loading */}
-
                   {nearbyLoading && (
                     <div className="mt-4 flex min-h-[150px] items-center justify-center rounded-2xl border border-orange-100 bg-white shadow-card">
                       <div className="flex items-center gap-2 text-sm text-muted">
@@ -1000,13 +1076,10 @@ export default function HomePage() {
                           size={17}
                           className="animate-spin text-[#FF5A36]"
                         />
-
                         Finding businesses near me
                       </div>
                     </div>
                   )}
-
-                  {/* Error */}
 
                   {!!nearbyError &&
                     !nearbyLoading && (
@@ -1017,11 +1090,13 @@ export default function HomePage() {
                         />
 
                         <p className="mt-3 text-sm font-semibold">
-                          We couldn't find your location
+                          We couldn&apos;t find your location
                         </p>
 
                         <p className="mt-1 text-xs text-muted">
-                          {nearbyError}
+                          {
+                            nearbyError
+                          }
                         </p>
 
                         <Link
@@ -1033,8 +1108,6 @@ export default function HomePage() {
                         </Link>
                       </div>
                     )}
-
-                  {/* SUCCESSFUL SEARCH BUT NO BUSINESSES */}
 
                   {!nearbyLoading &&
                     nearbyLocationRequested &&
@@ -1051,7 +1124,7 @@ export default function HomePage() {
                         </p>
 
                         <p className="mx-auto mt-1 max-w-[380px] text-xs leading-5 text-muted">
-                          We don't have businesses registered around your current location yet. You can explore all businesses or search for another area.
+                          We don&apos;t have businesses registered around your current location yet. You can explore all businesses or search for another area.
                         </p>
 
                         <div className="mt-4 flex flex-col justify-center gap-2 sm:flex-row">
@@ -1073,16 +1146,18 @@ export default function HomePage() {
                       </div>
                     )}
 
-                  {/* Businesses */}
-
                   {!nearbyLoading &&
                     nearbyBusinesses.length >
                       0 && (
                       <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
                         {nearbyBusinesses.map(
-                          (business) => (
+                          (
+                            business
+                          ) => (
                             <Link
-                              key={business.id}
+                              key={
+                                business.id
+                              }
                               href={`/seller/${business.id}`}
                               className="group rounded-2xl border border-orange-100 bg-white p-4 shadow-card transition hover:-translate-y-0.5 hover:shadow-soft"
                             >
@@ -1113,7 +1188,9 @@ export default function HomePage() {
 
                                   <div className="min-w-0">
                                     <p className="truncate text-sm font-bold">
-                                      {business.name}
+                                      {
+                                        business.name
+                                      }
                                     </p>
 
                                     <p className="mt-0.5 truncate text-[11px] text-muted">
@@ -1132,7 +1209,9 @@ export default function HomePage() {
                               <div className="mt-4 flex items-center gap-2 text-xs text-gray-600">
                                 {business.area && (
                                   <span className="truncate">
-                                    {business.area}
+                                    {
+                                      business.area
+                                    }
                                   </span>
                                 )}
 
@@ -1168,8 +1247,6 @@ export default function HomePage() {
                       </div>
                     )}
 
-                  {/* Explore all */}
-
                   {!nearbyLoading &&
                     nearbyBusinesses.length >
                       0 && (
@@ -1200,7 +1277,9 @@ export default function HomePage() {
                     <button
                       type="button"
                       onClick={() =>
-                        router.push("/shop")
+                        router.push(
+                          "/shop"
+                        )
                       }
                       className="flex items-center gap-1 text-xs font-medium text-[#9F2D18]"
                     >
@@ -1208,8 +1287,6 @@ export default function HomePage() {
                       <ArrowRight className="h-3.5 w-3.5" />
                     </button>
                   </div>
-
-                  {/* Loading */}
 
                   {businessLoading && (
                     <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
@@ -1223,8 +1300,6 @@ export default function HomePage() {
                       )}
                     </div>
                   )}
-
-                  {/* Empty */}
 
                   {!businessLoading &&
                     featuredBusinesses.length ===
@@ -1242,21 +1317,21 @@ export default function HomePage() {
                       </div>
                     )}
 
-                  {/* Real Featured Businesses */}
-
                   {!businessLoading &&
                     featuredBusinesses.length >
                       0 && (
                       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
                         {featuredBusinesses.map(
-                          (business) => {
+                          (
+                            business
+                          ) => {
                             const category =
                               business.category ||
                               business.categories?.[0] ||
                               "Services";
 
                             const style =
-                              getCategoryStyle(
+                              getCategoryVisual(
                                 category
                               );
 
@@ -1271,11 +1346,11 @@ export default function HomePage() {
 
                             return (
                               <article
-                                key={business.id}
+                                key={
+                                  business.id
+                                }
                                 className="overflow-hidden rounded-xl border border-[#E8E4DE] bg-white transition hover:-translate-y-0.5 hover:shadow-md"
                               >
-                                {/* Business Visual */}
-
                                 <Link
                                   href={`/seller/${business.id}`}
                                   className="relative flex h-[92px] items-center justify-center overflow-hidden"
@@ -1322,8 +1397,6 @@ export default function HomePage() {
                                         {location}
                                       </p>
                                     </div>
-
-                                    {/* Save */}
 
                                     <button
                                       type="button"
@@ -1420,30 +1493,40 @@ export default function HomePage() {
 
           <nav className="fixed bottom-0 left-0 right-0 z-50 border-t border-gray-200 bg-white/95 px-2 pb-[max(6px,safe-area-inset-bottom)] pt-1.5 backdrop-blur lg:hidden">
             <div className="mx-auto grid max-w-md grid-cols-4">
-              {NAV_ITEMS.map((item) => {
-                const Icon = item.icon;
+              {NAV_ITEMS.map(
+                (item) => {
+                  const Icon =
+                    item.icon;
 
-                return (
-                  <button
-                    key={item.label}
-                    type="button"
-                    onClick={() =>
-                      router.push(item.href)
-                    }
-                    className={`flex flex-col items-center justify-center gap-1 rounded-xl py-2 ${
-                      item.label === "Home"
-                        ? "text-[#9F2D18]"
-                        : "text-gray-500"
-                    }`}
-                  >
-                    <Icon className="h-[19px] w-[19px]" />
+                  return (
+                    <button
+                      key={
+                        item.label
+                      }
+                      type="button"
+                      onClick={() =>
+                        router.push(
+                          item.href
+                        )
+                      }
+                      className={`flex flex-col items-center justify-center gap-1 rounded-xl py-2 ${
+                        item.label ===
+                        "Home"
+                          ? "text-[#9F2D18]"
+                          : "text-gray-500"
+                      }`}
+                    >
+                      <Icon className="h-[19px] w-[19px]" />
 
-                    <span className="text-[9px] font-medium">
-                      {item.label}
-                    </span>
-                  </button>
-                );
-              })}
+                      <span className="text-[9px] font-medium">
+                        {
+                          item.label
+                        }
+                      </span>
+                    </button>
+                  );
+                }
+              )}
             </div>
           </nav>
         </div>

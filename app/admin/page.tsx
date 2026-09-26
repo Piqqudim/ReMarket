@@ -6,14 +6,16 @@ import {
   ClipboardList,
   Contact,
   LayoutDashboard,
+  MapPin,
   Package,
   Phone,
   Store,
+  Trash2,
   Users,
-  MapPin,
   ExternalLink,
 } from "lucide-react";
 import { useEffect, useState } from "react";
+import { usePathname } from "next/navigation";
 
 type ContactActivity = {
   WHATSAPP: number;
@@ -88,6 +90,11 @@ const ADMIN_NAV = [
     label: "Requests",
     href: "/admin/requests",
     icon: ClipboardList,
+  },
+  {
+    label: "Deletion requests",
+    href: "/admin/business-deletion-requests",
+    icon: Trash2,
   },
 ];
 
@@ -204,14 +211,12 @@ function StatCard({
     return content;
   }
 
-  return (
-    <Link href={href}>
-      {content}
-    </Link>
-  );
+  return <Link href={href}>{content}</Link>;
 }
 
 export default function AdminPage() {
+  const pathname = usePathname();
+
   const [data, setData] = useState<Overview | null>(null);
 
   const [contactActivity, setContactActivity] =
@@ -276,6 +281,7 @@ export default function AdminPage() {
     <div className="min-h-screen bg-[#FAF6EF] text-[#2E241F]">
       <div className="flex min-h-screen">
         {/* Sidebar */}
+
         <aside className="hidden w-64 shrink-0 border-r border-[#E8DED3] bg-[#FFFDFC] lg:block">
           <div className="sticky top-0 flex h-screen flex-col">
             <div className="border-b border-[#E8DED3] px-6 py-6">
@@ -307,8 +313,14 @@ export default function AdminPage() {
               <div className="space-y-1">
                 {ADMIN_NAV.map((item) => {
                   const Icon = item.icon;
+
                   const active =
-                    item.href === "/admin";
+                    item.href === "/admin"
+                      ? pathname === "/admin"
+                      : pathname === item.href ||
+                        pathname.startsWith(
+                          `${item.href}/`,
+                        );
 
                   return (
                     <Link
@@ -342,9 +354,11 @@ export default function AdminPage() {
         </aside>
 
         {/* Main */}
+
         <main className="min-w-0 flex-1">
           <div className="mx-auto max-w-7xl px-4 py-6 sm:px-6 lg:px-8 lg:py-8">
             {/* Header */}
+
             <div className="mb-8">
               <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
                 <div>
@@ -367,6 +381,7 @@ export default function AdminPage() {
             </div>
 
             {/* Error */}
+
             {error && (
               <div className="mb-6 rounded-2xl border border-[#F1C5BF] bg-[#FFF4F2] px-5 py-4">
                 <p className="text-sm font-medium text-[#B42318]">
@@ -376,6 +391,7 @@ export default function AdminPage() {
             )}
 
             {/* Loading */}
+
             {loading ? (
               <div className="space-y-6">
                 <div className="grid grid-cols-2 gap-4 xl:grid-cols-5">
@@ -400,6 +416,7 @@ export default function AdminPage() {
             ) : data ? (
               <>
                 {/* Stats */}
+
                 <section>
                   <div className="grid grid-cols-2 gap-4 xl:grid-cols-5">
                     <StatCard
@@ -438,6 +455,7 @@ export default function AdminPage() {
                 </section>
 
                 {/* Contact Activity */}
+
                 <section className="mt-6">
                   <div className="mb-4 flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between">
                     <div>
@@ -503,8 +521,10 @@ export default function AdminPage() {
                 </section>
 
                 {/* Recent data */}
+
                 <section className="mt-6 grid gap-6 xl:grid-cols-2">
                   {/* Recent Requests */}
+
                   <div className="rounded-2xl border border-[#E8DED3] bg-white">
                     <div className="flex items-center justify-between border-b border-[#E8DED3] px-5 py-4">
                       <div>
@@ -611,6 +631,7 @@ export default function AdminPage() {
                   </div>
 
                   {/* Recent Businesses */}
+
                   <div className="rounded-2xl border border-[#E8DED3] bg-white">
                     <div className="flex items-center justify-between border-b border-[#E8DED3] px-5 py-4">
                       <div>
@@ -677,9 +698,7 @@ export default function AdminPage() {
                                       business.status,
                                     )}`}
                                   >
-                                    {
-                                      business.status
-                                    }
+                                    {business.status}
                                   </span>
                                 </div>
                               </div>

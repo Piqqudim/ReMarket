@@ -1,10 +1,10 @@
-// app/seller/[id]/page.tsx
-
 "use client";
 
 import {
   type MouseEvent,
+  useCallback,
   useEffect,
+  useSyncExternalStore,
   useState,
 } from "react";
 
@@ -31,7 +31,6 @@ import {
 import { trackContactEvent } from "@/lib/contact-event";
 
 import {
-  getSavedBusinesses,
   isBusinessSaved,
   saveBusiness,
   removeSavedBusiness,
@@ -61,10 +60,7 @@ const NAV_ITEMS = [
   },
 ];
 
-const CATEGORY_COLORS: Record<
-  string,
-  string
-> = {
+const CATEGORY_COLORS: Record<string, string> = {
   Fashion: "#FFE0D6",
   Electronics: "#DDF5EA",
   Food: "#FFF0C7",
@@ -121,9 +117,7 @@ type Seller = {
   socialLinks: SocialLink[];
 };
 
-function getInitials(
-  name: string
-) {
+function getInitials(name: string) {
   const words = name
     .trim()
     .split(/\s+/)
@@ -134,9 +128,7 @@ function getInitials(
   }
 
   if (words.length === 1) {
-    return words[0]
-      .slice(0, 2)
-      .toUpperCase();
+    return words[0].slice(0, 2).toUpperCase();
   }
 
   return (
@@ -145,9 +137,7 @@ function getInitials(
   ).toUpperCase();
 }
 
-function getCategoryColor(
-  category?: string | null
-) {
+function getCategoryColor(category?: string | null) {
   if (!category) {
     return "#E4E9EF";
   }
@@ -158,9 +148,7 @@ function getCategoryColor(
   );
 }
 
-function formatPrice(
-  product: Product
-) {
+function formatPrice(product: Product) {
   if (
     product.priceMin != null &&
     product.priceMax != null
@@ -235,9 +223,7 @@ function getAvailabilityStyle(
  *
  * +2348012345678
  */
-function normalizeNigerianPhone(
-  value: string
-): string {
+function normalizeNigerianPhone(value: string): string {
   let clean = value
     .trim()
     .replace(/[^\d+]/g, "");
@@ -282,20 +268,14 @@ function buildContactUrl(
       }
 
       if (
-        clean.startsWith(
-          "http://"
-        ) ||
-        clean.startsWith(
-          "https://"
-        )
+        clean.startsWith("http://") ||
+        clean.startsWith("https://")
       ) {
         return clean;
       }
 
       const normalizedPhone =
-        normalizeNigerianPhone(
-          clean
-        );
+        normalizeNigerianPhone(clean);
 
       if (!normalizedPhone) {
         return "#";
@@ -318,12 +298,8 @@ function buildContactUrl(
         return "#";
       }
 
-      return clean.startsWith(
-        "http://"
-      ) ||
-        clean.startsWith(
-          "https://"
-        )
+      return clean.startsWith("http://") ||
+        clean.startsWith("https://")
         ? clean
         : `https://instagram.com/${clean}`;
 
@@ -332,12 +308,8 @@ function buildContactUrl(
         return "#";
       }
 
-      return clean.startsWith(
-        "http://"
-      ) ||
-        clean.startsWith(
-          "https://"
-        )
+      return clean.startsWith("http://") ||
+        clean.startsWith("https://")
         ? clean
         : `https://tiktok.com/@${clean}`;
 
@@ -346,12 +318,8 @@ function buildContactUrl(
         return "#";
       }
 
-      return clean.startsWith(
-        "http://"
-      ) ||
-        clean.startsWith(
-          "https://"
-        )
+      return clean.startsWith("http://") ||
+        clean.startsWith("https://")
         ? clean
         : `https://facebook.com/${clean}`;
 
@@ -361,9 +329,7 @@ function buildContactUrl(
       }
 
       const normalizedPhone =
-        normalizeNigerianPhone(
-          clean
-        );
+        normalizeNigerianPhone(clean);
 
       if (!normalizedPhone) {
         return "#";
@@ -374,10 +340,8 @@ function buildContactUrl(
 
     case "DIRECTIONS": {
       if (
-        typeof latitude !==
-          "number" ||
-        typeof longitude !==
-          "number"
+        typeof latitude !== "number" ||
+        typeof longitude !== "number"
       ) {
         return "#";
       }
@@ -397,42 +361,22 @@ function ContactIcon({
 }) {
   switch (platform) {
     case "WHATSAPP":
-      return (
-        <MessageCircle
-          size={16}
-        />
-      );
+      return <MessageCircle size={16} />;
 
     case "INSTAGRAM":
-      return (
-        <ExternalLink
-          size={16}
-        />
-      );
+      return <ExternalLink size={16} />;
 
     case "TIKTOK":
-      return (
-        <Music2 size={16} />
-      );
+      return <Music2 size={16} />;
 
     case "FACEBOOK":
-      return (
-        <ExternalLink
-          size={16}
-        />
-      );
+      return <ExternalLink size={16} />;
 
     case "PHONE":
-      return (
-        <Phone size={16} />
-      );
+      return <Phone size={16} />;
 
     default:
-      return (
-        <ExternalLink
-          size={16}
-        />
-      );
+      return <ExternalLink size={16} />;
   }
 }
 
@@ -446,19 +390,59 @@ function isTrackableContactPlatform(
   | "PHONE"
   | "DIRECTIONS" {
   return (
-    platform ===
-      "WHATSAPP" ||
-    platform ===
-      "INSTAGRAM" ||
-    platform ===
-      "TIKTOK" ||
-    platform ===
-      "FACEBOOK" ||
-    platform ===
-      "PHONE" ||
-    platform ===
-      "DIRECTIONS"
+    platform === "WHATSAPP" ||
+    platform === "INSTAGRAM" ||
+    platform === "TIKTOK" ||
+    platform === "FACEBOOK" ||
+    platform === "PHONE" ||
+    platform === "DIRECTIONS"
   );
+}
+
+/*
+ * -----------------------------------------
+ * SAVED BUSINESS STORE
+ * -----------------------------------------
+ *
+ * Keep seller-page saved state synchronized
+ * with other ReMarket pages.
+ *
+ * The custom event handles changes made by
+ * ReMarket's save helpers in the same tab.
+ *
+ * The storage event handles changes coming
+ * from another browser tab.
+ */
+function subscribeSavedBusinesses(
+  onStoreChange: () => void
+) {
+  window.addEventListener(
+    SAVED_BUSINESSES_CHANGED_EVENT,
+    onStoreChange
+  );
+
+  window.addEventListener(
+    "storage",
+    onStoreChange
+  );
+
+  return () => {
+    window.removeEventListener(
+      SAVED_BUSINESSES_CHANGED_EVENT,
+      onStoreChange
+    );
+
+    window.removeEventListener(
+      "storage",
+      onStoreChange
+    );
+  };
+}
+
+function getSavedBusinessesSnapshot(
+  id: string
+) {
+  return isBusinessSaved(id);
 }
 
 function SellerPageContent({
@@ -469,9 +453,7 @@ function SellerPageContent({
   const [
     seller,
     setSeller,
-  ] = useState<Seller | null>(
-    null
-  );
+  ] = useState<Seller | null>(null);
 
   const [
     loading,
@@ -483,38 +465,24 @@ function SellerPageContent({
     setError,
   ] = useState("");
 
-  const [
-    saved,
-    setSaved,
-  ] = useState(() =>
-    isBusinessSaved(id)
-  );
-
   /*
    * -----------------------------------------
    * SAVED BUSINESS SYNC
    * -----------------------------------------
    */
 
-  useEffect(() => {
-    function syncSaved() {
-      setSaved(
-        isBusinessSaved(id)
-      );
-    }
-
-    window.addEventListener(
-      SAVED_BUSINESSES_CHANGED_EVENT,
-      syncSaved
+  const getSavedSnapshot =
+    useCallback(
+      () => getSavedBusinessesSnapshot(id),
+      [id]
     );
 
-    return () => {
-      window.removeEventListener(
-        SAVED_BUSINESSES_CHANGED_EVENT,
-        syncSaved
-      );
-    };
-  }, [id]);
+  const saved =
+    useSyncExternalStore(
+      subscribeSavedBusinesses,
+      getSavedSnapshot,
+      () => false
+    );
 
   /*
    * -----------------------------------------
@@ -537,8 +505,7 @@ function SellerPageContent({
               id
             )}`,
             {
-              cache:
-                "no-store",
+              cache: "no-store",
               signal:
                 controller.signal,
             }
@@ -557,8 +524,7 @@ function SellerPageContent({
         }
 
         const business =
-          data?.business ??
-          data;
+          data?.business ?? data;
 
         if (!business?.id) {
           throw new Error(
@@ -570,8 +536,7 @@ function SellerPageContent({
           ...business,
 
           location:
-            business.location ??
-            null,
+            business.location ?? null,
 
           products:
             Array.isArray(
@@ -653,8 +618,6 @@ function SellerPageContent({
         seller.id
       );
 
-      setSaved(false);
-
       return;
     }
 
@@ -688,11 +651,8 @@ function SellerPageContent({
           seller as Seller & {
             imageUrl?: string | null;
           }
-        ).imageUrl ??
-        null,
+        ).imageUrl ?? null,
     });
-
-    setSaved(true);
   }
 
   /*
@@ -1798,8 +1758,7 @@ function SellerPageContent({
 }
 
 export default function SellerPage() {
-  const params =
-    useParams();
+  const params = useParams();
 
   const id =
     typeof params.id ===

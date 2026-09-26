@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+
 import {
   AlertTriangle,
   ArrowLeft,
@@ -17,7 +18,12 @@ import {
   Trash2,
   X,
 } from "lucide-react";
-import { useEffect, useState } from "react";
+
+import {
+  useCallback,
+  useEffect,
+  useState,
+} from "react";
 
 type Business = {
   id: string;
@@ -25,9 +31,17 @@ type Business = {
   ownerName: string | null;
   description: string | null;
   area: string;
-  status: "ACTIVE" | "INACTIVE" | "PENDING";
-  verification: "VERIFIED" | "UNVERIFIED";
-  availability: "AVAILABLE" | "ASK_SELLER" | "UNAVAILABLE";
+  status:
+    | "ACTIVE"
+    | "INACTIVE"
+    | "PENDING";
+  verification:
+    | "VERIFIED"
+    | "UNVERIFIED";
+  availability:
+    | "AVAILABLE"
+    | "ASK_SELLER"
+    | "UNAVAILABLE";
   phone: string | null;
   categories: {
     id: string;
@@ -38,7 +52,10 @@ type Business = {
   deletedAt: string | null;
 };
 
-type DeletionFilter = "ALL" | "ACTIVE" | "DELETED";
+type DeletionFilter =
+  | "ALL"
+  | "ACTIVE"
+  | "DELETED";
 
 const NAV_ITEMS = [
   {
@@ -59,91 +76,190 @@ const NAV_ITEMS = [
 ];
 
 export default function AdminBusinessesPage() {
-  const [businesses, setBusinesses] = useState<Business[]>([]);
-  const [query, setQuery] = useState("");
-  const [status, setStatus] = useState("");
-  const [verification, setVerification] = useState("");
-  const [deletionFilter, setDeletionFilter] =
-    useState<DeletionFilter>("ALL");
+  const [
+    businesses,
+    setBusinesses,
+  ] = useState<Business[]>([]);
 
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState("");
-  const [success, setSuccess] = useState("");
+  const [
+    query,
+    setQuery,
+  ] = useState("");
 
-  const [updatingId, setUpdatingId] =
-    useState<string | null>(null);
+  const [
+    status,
+    setStatus,
+  ] = useState("");
 
-  const [deletingId, setDeletingId] =
-    useState<string | null>(null);
+  const [
+    verification,
+    setVerification,
+  ] = useState("");
 
-  const [restoringId, setRestoringId] =
-    useState<string | null>(null);
+  const [
+    deletionFilter,
+    setDeletionFilter,
+  ] =
+    useState<DeletionFilter>(
+      "ALL"
+    );
 
-  const [confirmDeleteBusiness, setConfirmDeleteBusiness] =
-    useState<Business | null>(null);
+  const [
+    loading,
+    setLoading,
+  ] = useState(true);
 
-  async function loadBusinesses() {
-    try {
-      setLoading(true);
-      setError("");
+  const [
+    error,
+    setError,
+  ] = useState("");
 
-      const params = new URLSearchParams();
+  const [
+    success,
+    setSuccess,
+  ] = useState("");
 
-      if (query.trim()) {
-        params.set("q", query.trim());
-      }
+  const [
+    updatingId,
+    setUpdatingId,
+  ] =
+    useState<string | null>(
+      null
+    );
 
-      if (status) {
-        params.set("status", status);
-      }
+  const [
+    deletingId,
+    setDeletingId,
+  ] =
+    useState<string | null>(
+      null
+    );
 
-      if (verification) {
-        params.set("verification", verification);
-      }
+  const [
+    restoringId,
+    setRestoringId,
+  ] =
+    useState<string | null>(
+      null
+    );
 
-      params.set("deleted", deletionFilter);
+  const [
+    confirmDeleteBusiness,
+    setConfirmDeleteBusiness,
+  ] =
+    useState<Business | null>(
+      null
+    );
 
-      const response = await fetch(
-        `/api/admin/businesses?${params.toString()}`,
-        {
-          method: "GET",
-          cache: "no-store",
+  /*
+   * -----------------------------------------
+   * LOAD BUSINESSES
+   * -----------------------------------------
+   */
+
+  const loadBusinesses =
+    useCallback(async () => {
+      try {
+        setLoading(true);
+        setError("");
+
+        const params =
+          new URLSearchParams();
+
+        if (query.trim()) {
+          params.set(
+            "q",
+            query.trim()
+          );
         }
-      );
 
-      const data = await response.json();
+        if (status) {
+          params.set(
+            "status",
+            status
+          );
+        }
 
-      if (!response.ok) {
-        throw new Error(
-          data.error || "Unable to load businesses"
+        if (verification) {
+          params.set(
+            "verification",
+            verification
+          );
+        }
+
+        params.set(
+          "deleted",
+          deletionFilter
         );
-      }
 
-      setBusinesses(
-        Array.isArray(data.businesses)
-          ? data.businesses
-          : []
-      );
-    } catch (error) {
-      console.error(error);
-      setError("We couldn't load the businesses.");
-    } finally {
-      setLoading(false);
-    }
-  }
+        const response =
+          await fetch(
+            `/api/admin/businesses?${params.toString()}`,
+            {
+              method: "GET",
+              cache: "no-store",
+            }
+          );
+
+        const data =
+          await response.json();
+
+        if (!response.ok) {
+          throw new Error(
+            data.error ||
+              "Unable to load businesses"
+          );
+        }
+
+        setBusinesses(
+          Array.isArray(
+            data.businesses
+          )
+            ? data.businesses
+            : []
+        );
+      } catch (loadError) {
+        console.error(
+          "Load businesses error:",
+          loadError
+        );
+
+        setError(
+          "We couldn't load the businesses."
+        );
+      } finally {
+        setLoading(false);
+      }
+    }, [
+      query,
+      status,
+      verification,
+      deletionFilter,
+    ]);
+
+  /*
+   * -----------------------------------------
+   * LOAD WHEN FILTERS CHANGE
+   * -----------------------------------------
+   */
 
   useEffect(() => {
-    const timer = setTimeout(() => {
-      loadBusinesses();
-    }, 250);
+    const timer =
+      window.setTimeout(() => {
+        void loadBusinesses();
+      }, 250);
 
-    return () => clearTimeout(timer);
-  }, [
-    query,
-    status,
-    verification,
-    deletionFilter,
-  ]);
+    return () =>
+      window.clearTimeout(
+        timer
+      );
+  }, [loadBusinesses]);
+
+  /*
+   * -----------------------------------------
+   * UPDATE BUSINESS
+   * -----------------------------------------
+   */
 
   async function updateBusiness(
     id: string,
@@ -154,46 +270,64 @@ export default function AdminBusinessesPage() {
       setError("");
       setSuccess("");
 
-      const response = await fetch(
-        `/api/admin/businesses/${id}`,
-        {
-          method: "PATCH",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify(changes),
-        }
-      );
+      const response =
+        await fetch(
+          `/api/admin/businesses/${id}`,
+          {
+            method: "PATCH",
+            headers: {
+              "Content-Type":
+                "application/json",
+            },
+            body: JSON.stringify(
+              changes
+            ),
+          }
+        );
 
-      const data = await response.json();
+      const data =
+        await response.json();
 
       if (!response.ok) {
         throw new Error(
-          data.error || "Unable to update business"
+          data.error ||
+            "Unable to update business"
         );
       }
 
       const updatedBusiness =
-        data.business ?? data;
+        data.business ??
+        data;
 
-      setBusinesses((current) =>
-        current.map((business) =>
-          business.id === id
-            ? {
-                ...business,
-                ...updatedBusiness,
-              }
-            : business
-        )
+      setBusinesses(
+        (current) =>
+          current.map(
+            (business) =>
+              business.id === id
+                ? {
+                    ...business,
+                    ...updatedBusiness,
+                  }
+                : business
+          )
       );
 
-      setSuccess("Business updated successfully.");
+      setSuccess(
+        "Business updated successfully."
+      );
 
-      window.setTimeout(() => {
-        setSuccess("");
-      }, 2500);
-    } catch (error) {
-      console.error(error);
+      window.setTimeout(
+        () => {
+          setSuccess("");
+        },
+        2500
+      );
+    } catch (updateError) {
+      console.error(
+        "Update business error:",
+        updateError
+      );
+
       setError(
         "We couldn't update that business."
       );
@@ -202,73 +336,105 @@ export default function AdminBusinessesPage() {
     }
   }
 
+  /*
+   * -----------------------------------------
+   * SOFT DELETE BUSINESS
+   * -----------------------------------------
+   */
+
   async function deleteBusiness(
     business: Business
   ) {
     try {
-      setDeletingId(business.id);
+      setDeletingId(
+        business.id
+      );
+
       setError("");
       setSuccess("");
 
-      const response = await fetch(
-        `/api/admin/businesses/${business.id}`,
-        {
-          method: "DELETE",
-        }
-      );
+      const response =
+        await fetch(
+          `/api/admin/businesses/${business.id}`,
+          {
+            method: "DELETE",
+          }
+        );
 
-      const data = await response.json();
+      const data =
+        await response.json();
 
       if (!response.ok) {
         throw new Error(
-          data.error || "Unable to delete business"
+          data.error ||
+            "Unable to delete business"
         );
       }
 
       /*
-       * We keep the item in local state so the
-       * admin can immediately see it as deleted
-       * when viewing ALL businesses.
+       * Keep the business visible when
+       * viewing ALL so the admin can see
+       * that it is now soft-deleted.
        */
-      setBusinesses((current) =>
-        current.map((item) =>
-          item.id === business.id
-            ? {
-                ...item,
-                deletedAt:
-                  data.business?.deletedAt ??
-                  new Date().toISOString(),
-              }
-            : item
-        )
+      setBusinesses(
+        (current) =>
+          current.map(
+            (item) =>
+              item.id ===
+              business.id
+                ? {
+                    ...item,
+                    deletedAt:
+                      data.business
+                        ?.deletedAt ??
+                      new Date().toISOString(),
+                  }
+                : item
+          )
       );
 
-      setConfirmDeleteBusiness(null);
+      setConfirmDeleteBusiness(
+        null
+      );
+
       setSuccess(
         `${business.name} was moved to deleted businesses.`
       );
 
       /*
-       * If the current filter is ACTIVE,
-       * the deleted business should disappear
-       * immediately.
+       * Remove immediately when the current
+       * view is ACTIVE only.
        */
-      if (deletionFilter === "ACTIVE") {
-        setBusinesses((current) =>
-          current.filter(
-            (item) => item.id !== business.id
-          )
+      if (
+        deletionFilter ===
+        "ACTIVE"
+      ) {
+        setBusinesses(
+          (current) =>
+            current.filter(
+              (item) =>
+                item.id !==
+                business.id
+            )
         );
       }
 
-      window.setTimeout(() => {
-        setSuccess("");
-      }, 3000);
-    } catch (error) {
-      console.error(error);
+      window.setTimeout(
+        () => {
+          setSuccess("");
+        },
+        3000
+      );
+    } catch (deleteError) {
+      console.error(
+        "Delete business error:",
+        deleteError
+      );
+
       setError(
-        error instanceof Error
-          ? error.message
+        deleteError instanceof
+          Error
+          ? deleteError.message
           : "We couldn't delete that business."
       );
     } finally {
@@ -276,28 +442,40 @@ export default function AdminBusinessesPage() {
     }
   }
 
+  /*
+   * -----------------------------------------
+   * RESTORE BUSINESS
+   * -----------------------------------------
+   */
+
   async function restoreBusiness(
     business: Business
   ) {
     try {
-      setRestoringId(business.id);
+      setRestoringId(
+        business.id
+      );
+
       setError("");
       setSuccess("");
 
-      const response = await fetch(
-        `/api/admin/businesses/${business.id}`,
-        {
-          method: "PATCH",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            restore: true,
-          }),
-        }
-      );
+      const response =
+        await fetch(
+          `/api/admin/businesses/${business.id}`,
+          {
+            method: "PATCH",
+            headers: {
+              "Content-Type":
+                "application/json",
+            },
+            body: JSON.stringify({
+              restore: true,
+            }),
+          }
+        );
 
-      const data = await response.json();
+      const data =
+        await response.json();
 
       if (!response.ok) {
         throw new Error(
@@ -307,18 +485,22 @@ export default function AdminBusinessesPage() {
       }
 
       const restoredBusiness =
-        data.business ?? data;
+        data.business ??
+        data;
 
-      setBusinesses((current) =>
-        current.map((item) =>
-          item.id === business.id
-            ? {
-                ...item,
-                ...restoredBusiness,
-                deletedAt: null,
-              }
-            : item
-        )
+      setBusinesses(
+        (current) =>
+          current.map(
+            (item) =>
+              item.id ===
+              business.id
+                ? {
+                    ...item,
+                    ...restoredBusiness,
+                    deletedAt: null,
+                  }
+                : item
+          )
       );
 
       setSuccess(
@@ -326,25 +508,39 @@ export default function AdminBusinessesPage() {
       );
 
       /*
-       * If viewing DELETED only, the restored
-       * business should disappear immediately.
+       * Remove immediately when viewing
+       * DELETED only.
        */
-      if (deletionFilter === "DELETED") {
-        setBusinesses((current) =>
-          current.filter(
-            (item) => item.id !== business.id
-          )
+      if (
+        deletionFilter ===
+        "DELETED"
+      ) {
+        setBusinesses(
+          (current) =>
+            current.filter(
+              (item) =>
+                item.id !==
+                business.id
+            )
         );
       }
 
-      window.setTimeout(() => {
-        setSuccess("");
-      }, 3000);
-    } catch (error) {
-      console.error(error);
+      window.setTimeout(
+        () => {
+          setSuccess("");
+        },
+        3000
+      );
+    } catch (restoreError) {
+      console.error(
+        "Restore business error:",
+        restoreError
+      );
+
       setError(
-        error instanceof Error
-          ? error.message
+        restoreError instanceof
+          Error
+          ? restoreError.message
           : "We couldn't restore that business."
       );
     } finally {
@@ -352,13 +548,19 @@ export default function AdminBusinessesPage() {
     }
   }
 
-  const activeCount = businesses.filter(
-    (business) => !business.deletedAt
-  ).length;
+  const activeCount =
+    businesses.filter(
+      (business) =>
+        !business.deletedAt
+    ).length;
 
-  const deletedCount = businesses.filter(
-    (business) => Boolean(business.deletedAt)
-  ).length;
+  const deletedCount =
+    businesses.filter(
+      (business) =>
+        Boolean(
+          business.deletedAt
+        )
+    ).length;
 
   return (
     <main className="min-h-screen bg-[#FFF7ED] px-3 py-3 sm:px-5 sm:py-5">
@@ -372,6 +574,7 @@ export default function AdminBusinessesPage() {
               <span className="text-[#FF5A36]">
                 Re
               </span>
+
               <span className="text-[#17202A]">
                 Market
               </span>
@@ -383,25 +586,34 @@ export default function AdminBusinessesPage() {
               Admin
             </p>
 
-            {NAV_ITEMS.map((item) => {
-              const Icon = item.icon;
+            {NAV_ITEMS.map(
+              (item) => {
+                const Icon =
+                  item.icon;
 
-              return (
-                <Link
-                  key={item.href}
-                  href={item.href}
-                  className={`flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-semibold transition ${
-                    item.href ===
-                    "/admin/businesses"
-                      ? "bg-[#FFE0D6] text-[#9F2D18]"
-                      : "text-[#6F675F] hover:bg-[#FFF0D9]"
-                  }`}
-                >
-                  <Icon size={18} />
-                  {item.label}
-                </Link>
-              );
-            })}
+                return (
+                  <Link
+                    key={
+                      item.href
+                    }
+                    href={
+                      item.href
+                    }
+                    className={`flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-semibold transition ${
+                      item.href ===
+                      "/admin/businesses"
+                        ? "bg-[#FFE0D6] text-[#9F2D18]"
+                        : "text-[#6F675F] hover:bg-[#FFF0D9]"
+                    }`}
+                  >
+                    <Icon size={18} />
+                    {
+                      item.label
+                    }
+                  </Link>
+                );
+              }
+            )}
           </nav>
         </aside>
 
@@ -461,69 +673,90 @@ export default function AdminBusinessesPage() {
               <SummaryPill
                 label="All"
                 count={
-                  deletionFilter === "ALL"
+                  deletionFilter ===
+                  "ALL"
                     ? businesses.length
                     : undefined
                 }
                 active={
-                  deletionFilter === "ALL"
+                  deletionFilter ===
+                  "ALL"
                 }
                 onClick={() =>
-                  setDeletionFilter("ALL")
+                  setDeletionFilter(
+                    "ALL"
+                  )
                 }
               />
 
               <SummaryPill
                 label="Active"
                 count={
-                  deletionFilter === "ACTIVE"
+                  deletionFilter ===
+                  "ACTIVE"
                     ? activeCount
                     : undefined
                 }
                 active={
-                  deletionFilter === "ACTIVE"
+                  deletionFilter ===
+                  "ACTIVE"
                 }
                 onClick={() =>
-                  setDeletionFilter("ACTIVE")
+                  setDeletionFilter(
+                    "ACTIVE"
+                  )
                 }
               />
 
               <SummaryPill
                 label="Deleted"
                 count={
-                  deletionFilter === "DELETED"
+                  deletionFilter ===
+                  "DELETED"
                     ? deletedCount
                     : undefined
                 }
                 active={
-                  deletionFilter === "DELETED"
+                  deletionFilter ===
+                  "DELETED"
                 }
                 onClick={() =>
-                  setDeletionFilter("DELETED")
+                  setDeletionFilter(
+                    "DELETED"
+                  )
                 }
               />
             </div>
 
             <div className="mb-5 flex gap-2 overflow-x-auto lg:hidden">
-              {NAV_ITEMS.map((item) => {
-                const Icon = item.icon;
+              {NAV_ITEMS.map(
+                (item) => {
+                  const Icon =
+                    item.icon;
 
-                return (
-                  <Link
-                    key={item.href}
-                    href={item.href}
-                    className={`flex shrink-0 items-center gap-2 rounded-xl px-3 py-2 text-xs font-bold ${
-                      item.href ===
-                      "/admin/businesses"
-                        ? "bg-[#FF5A36] text-white"
-                        : "bg-[#FCFAF6] text-[#6F675F]"
-                    }`}
-                  >
-                    <Icon size={15} />
-                    {item.label}
-                  </Link>
-                );
-              })}
+                  return (
+                    <Link
+                      key={
+                        item.href
+                      }
+                      href={
+                        item.href
+                      }
+                      className={`flex shrink-0 items-center gap-2 rounded-xl px-3 py-2 text-xs font-bold ${
+                        item.href ===
+                        "/admin/businesses"
+                          ? "bg-[#FF5A36] text-white"
+                          : "bg-[#FCFAF6] text-[#6F675F]"
+                      }`}
+                    >
+                      <Icon size={15} />
+                      {
+                        item.label
+                      }
+                    </Link>
+                  );
+                }
+              )}
             </div>
 
             <div className="mb-5 rounded-2xl border border-[#EAE6DF] bg-white p-3">
@@ -536,9 +769,12 @@ export default function AdminBusinessesPage() {
 
                   <input
                     value={query}
-                    onChange={(event) =>
+                    onChange={(
+                      event
+                    ) =>
                       setQuery(
-                        event.target.value
+                        event.target
+                          .value
                       )
                     }
                     placeholder="Search businesses..."
@@ -547,36 +783,62 @@ export default function AdminBusinessesPage() {
                 </div>
 
                 <FilterSelect
-                  value={deletionFilter}
+                  value={
+                    deletionFilter
+                  }
                   onChange={(value) =>
                     setDeletionFilter(
                       value as DeletionFilter
                     )
                   }
                   options={[
-                    ["ALL", "All businesses"],
-                    ["ACTIVE", "Active"],
-                    ["DELETED", "Deleted"],
+                    [
+                      "ALL",
+                      "All businesses",
+                    ],
+                    [
+                      "ACTIVE",
+                      "Active",
+                    ],
+                    [
+                      "DELETED",
+                      "Deleted",
+                    ],
                   ]}
                 />
 
                 <FilterSelect
                   value={status}
-                  onChange={setStatus}
+                  onChange={
+                    setStatus
+                  }
                   options={[
-                    ["", "All status"],
-                    ["ACTIVE", "Active"],
+                    [
+                      "",
+                      "All status",
+                    ],
+                    [
+                      "ACTIVE",
+                      "Active",
+                    ],
                     [
                       "INACTIVE",
                       "Inactive",
                     ],
-                    ["PENDING", "Pending"],
+                    [
+                      "PENDING",
+                      "Pending",
+                    ],
                   ]}
                 />
 
                 <FilterSelect
-                  value={verification}
-                  onChange={setVerification}
+                  value={
+                    verification
+                  }
+                  onChange={
+                    setVerification
+                  }
                   options={[
                     [
                       "",
@@ -632,14 +894,19 @@ export default function AdminBusinessesPage() {
                   Loading businesses...
                 </p>
               </div>
-            ) : businesses.length === 0 ? (
+            ) : businesses.length ===
+              0 ? (
               <div className="rounded-2xl border border-[#EAE6DF] bg-white p-10 text-center">
                 <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-2xl bg-[#FFE0D6] text-[#FF5A36]">
                   {deletionFilter ===
                   "DELETED" ? (
-                    <Trash2 size={22} />
+                    <Trash2
+                      size={22}
+                    />
                   ) : (
-                    <Store size={22} />
+                    <Store
+                      size={22}
+                    />
                   )}
                 </div>
 
@@ -691,10 +958,16 @@ export default function AdminBusinessesPage() {
 
                     <tbody className="divide-y divide-[#EAE6DF]">
                       {businesses.map(
-                        (business) => (
+                        (
+                          business
+                        ) => (
                           <BusinessRow
-                            key={business.id}
-                            business={business}
+                            key={
+                              business.id
+                            }
+                            business={
+                              business
+                            }
                             updating={
                               updatingId ===
                               business.id
@@ -729,10 +1002,16 @@ export default function AdminBusinessesPage() {
 
                 <div className="divide-y divide-[#EAE6DF] md:hidden">
                   {businesses.map(
-                    (business) => (
+                    (
+                      business
+                    ) => (
                       <BusinessMobileCard
-                        key={business.id}
-                        business={business}
+                        key={
+                          business.id
+                        }
+                        business={
+                          business
+                        }
                         updating={
                           updatingId ===
                           business.id
@@ -767,7 +1046,8 @@ export default function AdminBusinessesPage() {
 
             <p className="mt-4 text-xs font-medium text-[#A39A91]">
               {businesses.length} business
-              {businesses.length === 1
+              {businesses.length ===
+              1
                 ? ""
                 : "es"}{" "}
               shown
@@ -778,13 +1058,17 @@ export default function AdminBusinessesPage() {
 
       {confirmDeleteBusiness && (
         <DeleteConfirmationModal
-          business={confirmDeleteBusiness}
+          business={
+            confirmDeleteBusiness
+          }
           loading={
             deletingId ===
             confirmDeleteBusiness.id
           }
           onCancel={() =>
-            setConfirmDeleteBusiness(null)
+            setConfirmDeleteBusiness(
+              null
+            )
           }
           onConfirm={() =>
             deleteBusiness(
@@ -817,9 +1101,10 @@ function BusinessRow({
   onDelete: () => void;
   onRestore: () => void;
 }) {
-  const deleted = Boolean(
-    business.deletedAt
-  );
+  const deleted =
+    Boolean(
+      business.deletedAt
+    );
 
   return (
     <tr
@@ -843,7 +1128,9 @@ function BusinessRow({
 
           {business.ownerName && (
             <p className="mt-1 text-xs text-[#8A8178]">
-              {business.ownerName}
+              {
+                business.ownerName
+              }
             </p>
           )}
         </div>
@@ -854,27 +1141,39 @@ function BusinessRow({
       </td>
 
       <td className="px-4 py-4 text-sm font-semibold text-[#17202A]">
-        {business.productCount}
+        {
+          business.productCount
+        }
       </td>
 
       <td className="px-4 py-4">
         <VerificationButton
-          business={business}
-          updating={
-            updating || deleted
+          business={
+            business
           }
-          onUpdate={onUpdate}
+          updating={
+            updating ||
+            deleted
+          }
+          onUpdate={
+            onUpdate
+          }
         />
       </td>
 
       <td className="px-4 py-4">
         <div className="flex flex-wrap items-center gap-2">
           <StatusButton
-            business={business}
-            updating={
-              updating || deleted
+            business={
+              business
             }
-            onUpdate={onUpdate}
+            updating={
+              updating ||
+              deleted
+            }
+            onUpdate={
+              onUpdate
+            }
           />
 
           {deleted && (
@@ -898,7 +1197,9 @@ function BusinessRow({
               href={`/admin/businesses/${business.id}/products/new`}
               className="inline-flex items-center gap-1.5 rounded-xl bg-[#FF5A36] px-3 py-2 text-[11px] font-bold text-white transition hover:bg-[#E94B29]"
             >
-              <PackagePlus size={14} />
+              <PackagePlus
+                size={14}
+              />
               Add Product
             </Link>
           )}
@@ -914,12 +1215,16 @@ function BusinessRow({
           {!deleted && (
             <>
               <AvailabilityButton
-                business={business}
+                business={
+                  business
+                }
                 updating={
                   updating ||
                   deleting
                 }
-                onUpdate={onUpdate}
+                onUpdate={
+                  onUpdate
+                }
               />
 
               <button
@@ -929,10 +1234,15 @@ function BusinessRow({
                   deleting ||
                   restoring
                 }
-                onClick={onDelete}
+                onClick={
+                  onDelete
+                }
                 className="inline-flex items-center gap-1.5 rounded-xl border border-[#F2C7BC] bg-[#FFF5F2] px-3 py-2 text-[11px] font-bold text-[#9F2D18] transition hover:bg-[#FFE9E3] disabled:cursor-not-allowed disabled:opacity-50"
               >
-                <Trash2 size={14} />
+                <Trash2
+                  size={14}
+                />
+
                 {deleting
                   ? "Deleting..."
                   : "Delete"}
@@ -948,10 +1258,15 @@ function BusinessRow({
                 deleting ||
                 restoring
               }
-              onClick={onRestore}
+              onClick={
+                onRestore
+              }
               className="inline-flex items-center gap-1.5 rounded-xl bg-[#E7F7EF] px-3 py-2 text-[11px] font-bold text-[#287A4B] transition hover:bg-[#D8F1E3] disabled:cursor-not-allowed disabled:opacity-50"
             >
-              <RotateCcw size={14} />
+              <RotateCcw
+                size={14}
+              />
+
               {restoring
                 ? "Restoring..."
                 : "Restore"}
@@ -983,14 +1298,17 @@ function BusinessMobileCard({
   onDelete: () => void;
   onRestore: () => void;
 }) {
-  const deleted = Boolean(
-    business.deletedAt
-  );
+  const deleted =
+    Boolean(
+      business.deletedAt
+    );
 
   return (
     <article
       className={`p-4 ${
-        deleted ? "bg-[#FFFBF8]" : ""
+        deleted
+          ? "bg-[#FFFBF8]"
+          : ""
       }`}
     >
       <div className="flex items-start justify-between gap-3">
@@ -1011,38 +1329,59 @@ function BusinessMobileCard({
         </div>
 
         <span className="shrink-0 rounded-full bg-[#FCFAF6] px-2.5 py-1 text-[11px] font-bold text-[#6F675F]">
-          {business.productCount} products
+          {business.productCount}{" "}
+          {business.productCount ===
+          1
+            ? "product"
+            : "products"}
         </span>
       </div>
 
       <div className="mt-4 flex flex-wrap gap-2">
         {business.categories
           .slice(0, 3)
-          .map((category, index) => (
-            <span
-              key={`${category.id}-${category.name}-${index}`}
-              className="rounded-full bg-[#FCFAF6] px-2.5 py-1 text-[11px] font-medium text-[#6F675F]"
-            >
-              {category.name}
-            </span>
-          ))}
+          .map(
+            (
+              category,
+              index
+            ) => (
+              <span
+                key={`${category.id}-${category.name}-${index}`}
+                className="rounded-full bg-[#FCFAF6] px-2.5 py-1 text-[11px] font-medium text-[#6F675F]"
+              >
+                {
+                  category.name
+                }
+              </span>
+            )
+          )}
       </div>
 
       <div className="mt-4 flex flex-wrap gap-2">
         <VerificationButton
-          business={business}
-          updating={
-            updating || deleted
+          business={
+            business
           }
-          onUpdate={onUpdate}
+          updating={
+            updating ||
+            deleted
+          }
+          onUpdate={
+            onUpdate
+          }
         />
 
         <StatusButton
-          business={business}
-          updating={
-            updating || deleted
+          business={
+            business
           }
-          onUpdate={onUpdate}
+          updating={
+            updating ||
+            deleted
+          }
+          onUpdate={
+            onUpdate
+          }
         />
 
         {deleted && (
@@ -1051,12 +1390,16 @@ function BusinessMobileCard({
 
         {!deleted && (
           <AvailabilityButton
-            business={business}
+            business={
+              business
+            }
             updating={
               updating ||
               deleting
             }
-            onUpdate={onUpdate}
+            onUpdate={
+              onUpdate
+            }
           />
         )}
       </div>
@@ -1075,7 +1418,9 @@ function BusinessMobileCard({
             href={`/admin/businesses/${business.id}/products/new`}
             className="inline-flex items-center justify-center gap-1.5 rounded-xl bg-[#FF5A36] px-3 py-2.5 text-[11px] font-bold text-white transition hover:bg-[#E94B29]"
           >
-            <PackagePlus size={14} />
+            <PackagePlus
+              size={14}
+            />
             Add Product
           </Link>
         )}
@@ -1096,10 +1441,13 @@ function BusinessMobileCard({
               deleting ||
               restoring
             }
-            onClick={onDelete}
+            onClick={
+              onDelete
+            }
             className="inline-flex items-center justify-center gap-1.5 rounded-xl border border-[#F2C7BC] bg-[#FFF5F2] px-3 py-2.5 text-[11px] font-bold text-[#9F2D18] transition hover:bg-[#FFE9E3] disabled:cursor-not-allowed disabled:opacity-50"
           >
             <Trash2 size={14} />
+
             {deleting
               ? "Deleting..."
               : "Delete"}
@@ -1114,10 +1462,15 @@ function BusinessMobileCard({
               deleting ||
               restoring
             }
-            onClick={onRestore}
+            onClick={
+              onRestore
+            }
             className="inline-flex items-center justify-center gap-1.5 rounded-xl bg-[#E7F7EF] px-3 py-2.5 text-[11px] font-bold text-[#287A4B] transition hover:bg-[#D8F1E3] disabled:cursor-not-allowed disabled:opacity-50"
           >
-            <RotateCcw size={14} />
+            <RotateCcw
+              size={14}
+            />
+
             {restoring
               ? "Restoring..."
               : "Restore"}
@@ -1149,11 +1502,15 @@ function VerificationButton({
       type="button"
       disabled={updating}
       onClick={() =>
-        onUpdate(business.id, {
-          verification: verified
-            ? "UNVERIFIED"
-            : "VERIFIED",
-        })
+        onUpdate(
+          business.id,
+          {
+            verification:
+              verified
+                ? "UNVERIFIED"
+                : "VERIFIED",
+          }
+        )
       }
       className={`rounded-full px-2.5 py-1 text-[11px] font-bold transition disabled:cursor-not-allowed disabled:opacity-50 ${
         verified
@@ -1185,27 +1542,54 @@ function StatusButton({
     changes: Partial<Business>
   ) => void;
 }) {
-  const active =
-    business.status === "ACTIVE";
+  const pending =
+    business.status ===
+    "PENDING";
 
+  const active =
+    business.status ===
+    "ACTIVE";
+
+  /*
+   * PENDING is displayed accurately.
+   *
+   * Existing toggle behavior remains:
+   * ACTIVE -> INACTIVE
+   * INACTIVE -> ACTIVE
+   *
+   * Pending can be moved to ACTIVE
+   * deliberately rather than being falsely
+   * shown as Inactive.
+   */
   return (
     <button
       type="button"
       disabled={updating}
       onClick={() =>
-        onUpdate(business.id, {
-          status: active
-            ? "INACTIVE"
-            : "ACTIVE",
-        })
+        onUpdate(
+          business.id,
+          {
+            status:
+              active ||
+              pending
+                ? "INACTIVE"
+                : "ACTIVE",
+          }
+        )
       }
       className={`rounded-full px-2.5 py-1 text-[11px] font-bold transition disabled:cursor-not-allowed disabled:opacity-50 ${
-        active
-          ? "bg-[#E7F7EF] text-[#287A4B]"
-          : "bg-[#F0ECE7] text-[#6F675F]"
+        pending
+          ? "bg-[#FFF0D9] text-[#9F5A18]"
+          : active
+            ? "bg-[#E7F7EF] text-[#287A4B]"
+            : "bg-[#F0ECE7] text-[#6F675F]"
       }`}
     >
-      {active ? "Active" : "Inactive"}
+      {pending
+        ? "Pending"
+        : active
+          ? "Active"
+          : "Inactive"}
     </button>
   );
 }
@@ -1227,27 +1611,31 @@ function AvailabilityButton({
     "AVAILABLE"
       ? "ASK_SELLER"
       : business.availability ===
-        "ASK_SELLER"
-      ? "UNAVAILABLE"
-      : "AVAILABLE";
+          "ASK_SELLER"
+        ? "UNAVAILABLE"
+        : "AVAILABLE";
 
   const label =
     business.availability ===
     "AVAILABLE"
       ? "Available"
       : business.availability ===
-        "ASK_SELLER"
-      ? "Ask seller"
-      : "Unavailable";
+          "ASK_SELLER"
+        ? "Ask seller"
+        : "Unavailable";
 
   return (
     <button
       type="button"
       disabled={updating}
       onClick={() =>
-        onUpdate(business.id, {
-          availability: next,
-        })
+        onUpdate(
+          business.id,
+          {
+            availability:
+              next,
+          }
+        )
       }
       className="inline-flex items-center gap-1 rounded-xl border border-[#EAE6DF] bg-[#FCFAF6] px-3 py-2 text-[11px] font-bold text-[#6F675F] transition hover:bg-[#FFF0D9] disabled:cursor-not-allowed disabled:opacity-50"
     >
@@ -1280,7 +1668,9 @@ function SummaryPill({
   return (
     <button
       type="button"
-      onClick={onClick}
+      onClick={
+        onClick
+      }
       className={`rounded-full px-3 py-1.5 text-xs font-bold transition ${
         active
           ? "bg-[#FF5A36] text-white"
@@ -1288,7 +1678,9 @@ function SummaryPill({
       }`}
     >
       {label}
-      {typeof count === "number" && (
+
+      {typeof count ===
+        "number" && (
         <span className="ml-1 opacity-80">
           {count}
         </span>
@@ -1303,25 +1695,40 @@ function FilterSelect({
   options,
 }: {
   value: string;
-  onChange: (value: string) => void;
-  options: [string, string][];
+  onChange: (
+    value: string
+  ) => void;
+  options: [
+    string,
+    string
+  ][];
 }) {
   return (
     <div className="relative">
       <select
         value={value}
-        onChange={(event) =>
+        onChange={(
+          event
+        ) =>
           onChange(
-            event.target.value
+            event.target
+              .value
           )
         }
         className="h-11 min-w-[155px] appearance-none rounded-xl border border-[#EAE6DF] bg-[#FCFAF6] pl-3 pr-9 text-sm font-medium text-[#6F675F] outline-none focus:border-[#FF5A36]"
       >
         {options.map(
-          ([optionValue, label]) => (
+          ([
+            optionValue,
+            label,
+          ]) => (
             <option
-              key={optionValue}
-              value={optionValue}
+              key={
+                optionValue
+              }
+              value={
+                optionValue
+              }
             >
               {label}
             </option>
@@ -1353,7 +1760,9 @@ function DeleteConfirmationModal({
       <div className="w-full max-w-md rounded-2xl border border-[#EAE6DF] bg-[#FFFDFC] p-5 shadow-xl">
         <div className="flex items-start gap-3">
           <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-[#FFF0ED] text-[#FF5A36]">
-            <AlertTriangle size={21} />
+            <AlertTriangle
+              size={21}
+            />
           </div>
 
           <div className="min-w-0">
@@ -1363,7 +1772,9 @@ function DeleteConfirmationModal({
 
             <p className="mt-1 text-sm leading-6 text-[#6F675F]">
               <span className="font-bold text-[#17202A]">
-                {business.name}
+                {
+                  business.name
+                }
               </span>{" "}
               will be removed from customer-facing
               ReMarket results. Its data will remain
@@ -1376,7 +1787,9 @@ function DeleteConfirmationModal({
           <button
             type="button"
             disabled={loading}
-            onClick={onCancel}
+            onClick={
+              onCancel
+            }
             className="h-10 rounded-xl border border-[#EAE6DF] bg-[#FCFAF6] px-4 text-sm font-bold text-[#6F675F] transition hover:bg-[#FFF0D9] disabled:cursor-not-allowed disabled:opacity-50"
           >
             Cancel
@@ -1385,7 +1798,9 @@ function DeleteConfirmationModal({
           <button
             type="button"
             disabled={loading}
-            onClick={onConfirm}
+            onClick={
+              onConfirm
+            }
             className="h-10 rounded-xl bg-[#FF5A36] px-4 text-sm font-extrabold text-white transition hover:bg-[#E94B29] disabled:cursor-not-allowed disabled:opacity-50"
           >
             {loading

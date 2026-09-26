@@ -1,4 +1,8 @@
-import { NextRequest, NextResponse } from "next/server";
+import {
+  NextRequest,
+  NextResponse,
+} from "next/server";
+
 import {
   Availability,
   BusinessStatus,
@@ -14,7 +18,15 @@ type RouteContext = {
   }>;
 };
 
-function cleanString(value: unknown): string {
+type ProductImageInput = {
+  url: string;
+  publicId: string | null;
+  sortOrder: number;
+};
+
+function cleanString(
+  value: unknown
+): string {
   return typeof value === "string"
     ? value.trim()
     : "";
@@ -40,7 +52,12 @@ function parseOptionalInt(
     return null;
   }
 
-  const parsed = Number(value);
+  const parsed =
+    typeof value === "number"
+      ? value
+      : typeof value === "string"
+        ? Number(value.trim())
+        : Number.NaN;
 
   if (!Number.isInteger(parsed)) {
     return undefined;
@@ -83,42 +100,96 @@ function parseKeywords(
           (
             item
           ): item is string =>
-            typeof item ===
-            "string"
+            typeof item === "string"
         )
-        .map(
-          (item) =>
-            item.trim()
+        .map((item) =>
+          item.trim()
         )
         .filter(Boolean)
     )
   );
 }
 
+function isNonNegativeInteger(
+  value: unknown
+): value is number {
+  return (
+    typeof value === "number" &&
+    Number.isInteger(value) &&
+    value >= 0
+  );
+}
+
 function parseImages(
   value: unknown
-): string[] | null {
+): ProductImageInput[] | null {
   if (!Array.isArray(value)) {
     return null;
   }
 
-  return Array.from(
-    new Set(
-      value
-        .filter(
-          (
-            item
-          ): item is string =>
-            typeof item ===
-            "string"
-        )
-        .map(
-          (item) =>
-            item.trim()
-        )
-        .filter(Boolean)
-    )
-  );
+  const images: ProductImageInput[] = [];
+
+  for (
+    const [index, item] of value.entries()
+  ) {
+    if (
+      typeof item === "string"
+    ) {
+      const url =
+        item.trim();
+
+      if (url) {
+        images.push({
+          url,
+          publicId: null,
+          sortOrder: index,
+        });
+      }
+
+      continue;
+    }
+
+    if (
+      !item ||
+      typeof item !== "object" ||
+      Array.isArray(item)
+    ) {
+      continue;
+    }
+
+    const image =
+      item as Record<
+        string,
+        unknown
+      >;
+
+    const url =
+      cleanString(image.url);
+
+    if (!url) {
+      continue;
+    }
+
+    const publicId =
+      nullableString(
+        image.publicId
+      );
+
+    const sortOrder =
+      isNonNegativeInteger(
+        image.sortOrder
+      )
+        ? image.sortOrder
+        : index;
+
+    images.push({
+      url,
+      publicId,
+      sortOrder,
+    });
+  }
+
+  return images;
 }
 
 async function getProduct(
@@ -130,11 +201,13 @@ async function getProduct(
       id: productId,
       businessId,
     },
+
     include: {
       business: {
         select: {
           id: true,
           name: true,
+          deletedAt: true,
         },
       },
 
@@ -153,7 +226,8 @@ export async function GET(
   _request: NextRequest,
   context: RouteContext
 ) {
-  const auth = await requireAdmin();
+  const auth =
+    await requireAdmin();
 
   if (!auth.authorized) {
     return auth.response;
@@ -223,7 +297,8 @@ export async function PATCH(
   request: NextRequest,
   context: RouteContext
 ) {
-  const auth = await requireAdmin();
+  const auth =
+    await requireAdmin();
 
   if (!auth.authorized) {
     return auth.response;
@@ -251,28 +326,21 @@ export async function PATCH(
 
   try {
     const existing =
-      await prisma.product.findFirst(
-        {
-          where: {
-            id: productId,
-            businessId,
+      await prisma.product.findFirst({
+        where: {
+          id: productId,
+          businessId,
+        },
+
+        include: {
+          business: {
+            select: {
+              id: true,
+              deletedAt: true,
+            },
           },
-          select: {
-            id: true,
-            name: true,
-            description: true,
-            categoryId: true,
-            price: true,
-            priceMin: true,
-            priceMax: true,
-            availability: true,
-            keywords: true,
-            imageUrl: true,
-            status: true,
-            deletedAt: true,
-          },
-        }
-      );
+        },
+      });
 
     if (!existing) {
       return NextResponse.json(
@@ -282,6 +350,30 @@ export async function PATCH(
         },
         {
           status: 404,
+        }
+      );
+    }
+
+    if (existing.deletedAt) {
+      return NextResponse.json(
+        {
+          error:
+            "This product has been deleted and cannot be edited.",
+        },
+        {
+          status: 409,
+        }
+      );
+    }
+
+    if (existing.business.deletedAt) {
+      return NextResponse.json(
+        {
+          error:
+            "This business has been deleted and its products cannot be edited.",
+        },
+        {
+          status: 409,
         }
       );
     }
@@ -306,7 +398,10 @@ export async function PATCH(
     }
 
     const payload =
-      body as Record<string, unknown>;
+      body as Record<
+        string,
+        unknown
+      >;
 
     const data: {
       name?: string;
@@ -319,7 +414,6 @@ export async function PATCH(
       keywords?: string[];
       imageUrl?: string | null;
       status?: BusinessStatus;
-      deletedAt?: Date | null;
     } = {};
 
     if ("name" in payload) {
@@ -406,8 +500,22 @@ export async function PATCH(
     }
 
     if ("price" in payload) {
-      data.price =
-        price;
+      if (
+        price !== null &&
+        price < 0
+      ) {
+        return NextResponse.json(
+          {
+            error:
+              "Price cannot be negative.",
+          },
+          {
+            status: 400,
+          }
+        );
+      }
+
+      data.price = price;
     }
 
     const priceMin =
@@ -430,6 +538,21 @@ export async function PATCH(
     }
 
     if ("priceMin" in payload) {
+      if (
+        priceMin !== null &&
+        priceMin < 0
+      ) {
+        return NextResponse.json(
+          {
+            error:
+              "Minimum price cannot be negative.",
+          },
+          {
+            status: 400,
+          }
+        );
+      }
+
       data.priceMin =
         priceMin;
     }
@@ -454,6 +577,21 @@ export async function PATCH(
     }
 
     if ("priceMax" in payload) {
+      if (
+        priceMax !== null &&
+        priceMax < 0
+      ) {
+        return NextResponse.json(
+          {
+            error:
+              "Maximum price cannot be negative.",
+          },
+          {
+            status: 400,
+          }
+        );
+      }
+
       data.priceMax =
         priceMax;
     }
@@ -552,17 +690,17 @@ export async function PATCH(
         keywords;
     }
 
-    let imageUrls:
-      | string[]
+    let imageInputs:
+      | ProductImageInput[]
       | null = null;
 
     if ("images" in payload) {
-      imageUrls =
+      imageInputs =
         parseImages(
           payload.images
         );
 
-      if (!imageUrls) {
+      if (!imageInputs) {
         return NextResponse.json(
           {
             error:
@@ -575,7 +713,7 @@ export async function PATCH(
       }
 
       data.imageUrl =
-        imageUrls[0] ??
+        imageInputs[0]?.url ??
         null;
     }
 
@@ -583,18 +721,15 @@ export async function PATCH(
       await prisma.$transaction(
         async (tx) => {
           const product =
-            await tx.product.update(
-              {
-                where: {
-                  id: productId,
-                },
-                data,
-              }
-            );
+            await tx.product.update({
+              where: {
+                id: productId,
+              },
+              data,
+            });
 
           if (
-            imageUrls !==
-            null
+            imageInputs !== null
           ) {
             await tx.productImage.deleteMany(
               {
@@ -605,22 +740,23 @@ export async function PATCH(
             );
 
             if (
-              imageUrls.length >
+              imageInputs.length >
               0
             ) {
               await tx.productImage.createMany(
                 {
                   data:
-                    imageUrls.map(
+                    imageInputs.map(
                       (
-                        url,
+                        image,
                         index
                       ) => ({
                         productId,
-                        url,
+                        url: image.url,
                         publicId:
-                          null,
+                          image.publicId,
                         sortOrder:
+                          image.sortOrder ??
                           index,
                       })
                     ),
@@ -641,8 +777,7 @@ export async function PATCH(
 
     return NextResponse.json({
       success: true,
-      product:
-        refreshed,
+      product: refreshed,
     });
   } catch (error) {
     console.error(
@@ -666,7 +801,8 @@ export async function DELETE(
   _request: NextRequest,
   context: RouteContext
 ) {
-  const auth = await requireAdmin();
+  const auth =
+    await requireAdmin();
 
   if (!auth.authorized) {
     return auth.response;
@@ -694,18 +830,16 @@ export async function DELETE(
 
   try {
     const existing =
-      await prisma.product.findFirst(
-        {
-          where: {
-            id: productId,
-            businessId,
-          },
-          select: {
-            id: true,
-            deletedAt: true,
-          },
-        }
-      );
+      await prisma.product.findFirst({
+        where: {
+          id: productId,
+          businessId,
+        },
+        select: {
+          id: true,
+          deletedAt: true,
+        },
+      });
 
     if (!existing) {
       return NextResponse.json(
@@ -719,23 +853,25 @@ export async function DELETE(
       );
     }
 
+    /*
+     * Soft delete only.
+     * The product remains in the database
+     * for admin reference.
+     */
     if (existing.deletedAt) {
       return NextResponse.json({
         success: true,
       });
     }
 
-    await prisma.product.update(
-      {
-        where: {
-          id: productId,
-        },
-        data: {
-          deletedAt:
-            new Date(),
-        },
-      }
-    );
+    await prisma.product.update({
+      where: {
+        id: productId,
+      },
+      data: {
+        deletedAt: new Date(),
+      },
+    });
 
     return NextResponse.json({
       success: true,

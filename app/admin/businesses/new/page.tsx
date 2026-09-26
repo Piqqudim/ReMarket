@@ -8,7 +8,9 @@ import {
 import {
   ArrowLeft,
   Loader2,
+  MapPin,
   Plus,
+  RefreshCw,
   Store,
 } from "lucide-react";
 
@@ -17,10 +19,14 @@ import { useRouter } from "next/navigation";
 
 import ImageUpload from "@/components/ImageUpload";
 
-type Category = {
-  id: string;
-  name: string;
-};
+import {
+  DEFAULT_CATEGORIES,
+  mergeCategories,
+  type ApiCategory,
+  type ReMarketCategory,
+} from "@/lib/categories";
+
+type Category = ReMarketCategory;
 
 type SocialLinkInput = {
   platform:
@@ -34,8 +40,7 @@ type SocialLinkInput = {
 };
 
 export default function NewBusinessPage() {
-  const router =
-    useRouter();
+  const router = useRouter();
 
   const [name, setName] =
     useState("");
@@ -49,6 +54,10 @@ export default function NewBusinessPage() {
   const [area, setArea] =
     useState("");
 
+  /*
+   * Coordinates are captured internally.
+   * The admin never types latitude or longitude.
+   */
   const [lat, setLat] =
     useState("");
 
@@ -87,19 +96,39 @@ export default function NewBusinessPage() {
   const [imageUrl, setImageUrl] =
     useState("");
 
+  /*
+   * Shared ReMarket category system.
+   *
+   * Backend categories are the only categories
+   * whose IDs can be submitted to the database.
+   *
+   * DEFAULT_CATEGORIES is display fallback only.
+   */
   const [categories, setCategories] =
-    useState<Category[]>([]);
+    useState<Category[]>(
+      DEFAULT_CATEGORIES
+    );
+
+  const [usingCategoryFallback, setUsingCategoryFallback] =
+    useState(true);
 
   const [selectedCategoryIds, setSelectedCategoryIds] =
     useState<string[]>([]);
 
   const [socialLinks, setSocialLinks] =
-    useState<SocialLinkInput[]>(
-      []
-    );
+    useState<SocialLinkInput[]>([]);
 
   const [loadingCategories, setLoadingCategories] =
     useState(true);
+
+  const [locating, setLocating] =
+    useState(false);
+
+  const [locationStatus, setLocationStatus] =
+    useState("");
+
+  const [locationError, setLocationError] =
+    useState("");
 
   const [saving, setSaving] =
     useState(false);
@@ -117,8 +146,7 @@ export default function NewBusinessPage() {
           await fetch(
             "/api/categories",
             {
-              cache:
-                "no-store",
+              cache: "no-store",
               signal:
                 controller.signal,
             }
@@ -130,20 +158,91 @@ export default function NewBusinessPage() {
           );
         }
 
-        const data =
+        const data: unknown =
           await response.json();
 
-        setCategories(
-          Array.isArray(
-            data.categories
-          )
-            ? data.categories
-            : []
-        );
-      } catch (error) {
         if (
-          error instanceof DOMException &&
-          error.name ===
+          !data ||
+          typeof data !== "object" ||
+          Array.isArray(data)
+        ) {
+          throw new Error(
+            "Invalid categories response."
+          );
+        }
+
+        const payload =
+          data as {
+            categories?: unknown;
+          };
+
+        const backendCategories =
+          Array.isArray(
+            payload.categories
+          )
+            ? payload.categories.filter(
+                (
+                  item
+                ): item is ApiCategory =>
+                  Boolean(
+                    item &&
+                      typeof item ===
+                        "object" &&
+                      !Array.isArray(
+                        item
+                      ) &&
+                      typeof (
+                        item as Record<
+                          string,
+                          unknown
+                        >
+                      ).id ===
+                        "string" &&
+                      typeof (
+                        item as Record<
+                          string,
+                          unknown
+                        >
+                      ).name ===
+                        "string"
+                  )
+              )
+            : [];
+
+        /*
+         * Use the shared category merge utility.
+         * This preserves backend IDs and backend
+         * active-state behavior.
+         */
+        const mergedCategories =
+          mergeCategories(
+            backendCategories
+          );
+
+        if (
+          mergedCategories.length > 0
+        ) {
+          setCategories(
+            mergedCategories
+          );
+
+          setUsingCategoryFallback(
+            false
+          );
+        } else {
+          setCategories(
+            DEFAULT_CATEGORIES
+          );
+
+          setUsingCategoryFallback(
+            true
+          );
+        }
+      } catch (loadError) {
+        if (
+          loadError instanceof
+            DOMException &&
+          loadError.name ===
             "AbortError"
         ) {
           return;
@@ -151,7 +250,20 @@ export default function NewBusinessPage() {
 
         console.error(
           "Categories error:",
-          error
+          loadError
+        );
+
+        /*
+         * The built-in categories remain visible,
+         * but their synthetic fallback IDs must
+         * never be sent to the database.
+         */
+        setCategories(
+          DEFAULT_CATEGORIES
+        );
+
+        setUsingCategoryFallback(
+          true
         );
       } finally {
         if (
@@ -174,6 +286,18 @@ export default function NewBusinessPage() {
   function toggleCategory(
     categoryId: string
   ) {
+    /*
+     * Never submit fallback/synthetic IDs.
+     */
+    if (usingCategoryFallback) {
+      setError(
+        "Categories could not be loaded from the database. Please refresh and try again before assigning categories."
+      );
+      return;
+    }
+
+    setError("");
+
     setSelectedCategoryIds(
       (current) =>
         current.includes(
@@ -181,8 +305,7 @@ export default function NewBusinessPage() {
         )
           ? current.filter(
               (id) =>
-                id !==
-                categoryId
+                id !== categoryId
             )
           : [
               ...current,
@@ -191,13 +314,118 @@ export default function NewBusinessPage() {
     );
   }
 
+  function captureCurrentLocation() {
+    setLocationError("");
+    setLocationStatus("");
+
+    if (
+      typeof window ===
+      "undefined"
+    ) {
+      return;
+    }
+
+    if (
+      !navigator.geolocation
+    ) {
+      setLocationError(
+        "Location services are not available on this device."
+      );
+      return;
+    }
+
+    setLocating(true);
+
+    navigator.geolocation.getCurrentPosition(
+      (position) => {
+        const latitude =
+          position.coords.latitude;
+
+        const longitude =
+          position.coords.longitude;
+
+        if (
+          !Number.isFinite(
+            latitude
+          ) ||
+          !Number.isFinite(
+            longitude
+          )
+        ) {
+          setLocationError(
+            "We couldn't get a valid business location."
+          );
+
+          setLocating(false);
+
+          return;
+        }
+
+        setLat(
+          String(latitude)
+        );
+
+        setLng(
+          String(longitude)
+        );
+
+        setLocationStatus(
+          "Exact business location captured."
+        );
+
+        setLocating(false);
+      },
+
+      (geoError) => {
+        console.error(
+          "Business location error:",
+          geoError
+        );
+
+        let message =
+          "We couldn't get the business location.";
+
+        if (
+          geoError.code ===
+          geoError.PERMISSION_DENIED
+        ) {
+          message =
+            "Location permission was denied. Allow location access and try again.";
+        } else if (
+          geoError.code ===
+          geoError.POSITION_UNAVAILABLE
+        ) {
+          message =
+            "Your device could not determine its current location.";
+        } else if (
+          geoError.code ===
+          geoError.TIMEOUT
+        ) {
+          message =
+            "Location detection timed out. Please try again.";
+        }
+
+        setLocationError(
+          message
+        );
+
+        setLocating(false);
+      },
+
+      {
+        enableHighAccuracy: true,
+        timeout: 15000,
+        maximumAge: 60000,
+      }
+    );
+  }
+
   function addSocialLink() {
     setSocialLinks(
       (current) => [
         ...current,
         {
-          platform:
-            "WHATSAPP",
+          platform: "WHATSAPP",
           handle: "",
         },
       ]
@@ -214,9 +442,11 @@ export default function NewBusinessPage() {
     setSocialLinks(
       (current) =>
         current.map(
-          (link, linkIndex) =>
-            linkIndex ===
-            index
+          (
+            link,
+            linkIndex
+          ) =>
+            linkIndex === index
               ? {
                   ...link,
                   [field]:
@@ -237,8 +467,7 @@ export default function NewBusinessPage() {
             _,
             linkIndex
           ) =>
-            linkIndex !==
-            index
+            linkIndex !== index
         )
     );
   }
@@ -270,6 +499,113 @@ export default function NewBusinessPage() {
       return;
     }
 
+    /*
+     * The business must have an exact
+     * device-captured location.
+     */
+    const parsedLat =
+      lat.trim()
+        ? Number(lat)
+        : null;
+
+    const parsedLng =
+      lng.trim()
+        ? Number(lng)
+        : null;
+
+    if (
+      parsedLat === null ||
+      parsedLng === null
+    ) {
+      setError(
+        "Capture the exact business location before creating the business."
+      );
+      return;
+    }
+
+    if (
+      !Number.isFinite(
+        parsedLat
+      ) ||
+      parsedLat < -90 ||
+      parsedLat > 90
+    ) {
+      setError(
+        "The captured business latitude is invalid."
+      );
+      return;
+    }
+
+    if (
+      !Number.isFinite(
+        parsedLng
+      ) ||
+      parsedLng < -180 ||
+      parsedLng > 180
+    ) {
+      setError(
+        "The captured business longitude is invalid."
+      );
+      return;
+    }
+
+    const parsedPriceMin =
+      priceMin.trim()
+        ? Number(priceMin)
+        : null;
+
+    const parsedPriceMax =
+      priceMax.trim()
+        ? Number(priceMax)
+        : null;
+
+    if (
+      parsedPriceMin !== null &&
+      (!Number.isInteger(
+        parsedPriceMin
+      ) ||
+        parsedPriceMin < 0)
+    ) {
+      setError(
+        "Minimum price must be a valid positive integer."
+      );
+      return;
+    }
+
+    if (
+      parsedPriceMax !== null &&
+      (!Number.isInteger(
+        parsedPriceMax
+      ) ||
+        parsedPriceMax < 0)
+    ) {
+      setError(
+        "Maximum price must be a valid positive integer."
+      );
+      return;
+    }
+
+    if (
+      parsedPriceMin !== null &&
+      parsedPriceMax !== null &&
+      parsedPriceMin >
+        parsedPriceMax
+    ) {
+      setError(
+        "Minimum price cannot be greater than maximum price."
+      );
+      return;
+    }
+
+    /*
+     * Never submit synthetic category IDs from
+     * the fallback UI.
+     */
+    const categoryIds =
+      usingCategoryFallback
+        ? []
+        : selectedCategoryIds;
+
     setSaving(true);
 
     try {
@@ -285,61 +621,121 @@ export default function NewBusinessPage() {
             body: JSON.stringify({
               name:
                 trimmedName,
+
               ownerName:
                 ownerName.trim() ||
                 null,
+
               description:
                 description.trim() ||
                 null,
+
               area:
                 trimmedArea,
+
+              /*
+               * These coordinates came from
+               * browser geolocation.
+               */
               lat:
-                lat.trim() ||
-                null,
+                parsedLat,
+
               lng:
-                lng.trim() ||
-                null,
+                parsedLng,
+
               phone:
                 phone.trim() ||
                 null,
+
               priceMin:
-                priceMin.trim() ||
-                null,
+                parsedPriceMin,
+
               priceMax:
-                priceMax.trim() ||
-                null,
+                parsedPriceMax,
+
               availability,
+
               status,
+
               verification,
+
               imageUrl:
                 imageUrl.trim() ||
                 null,
-              categoryIds:
-                selectedCategoryIds,
+
+              categoryIds,
+
               socialLinks:
-                socialLinks.filter(
-                  (link) =>
-                    link.handle.trim()
-                ),
+                socialLinks
+                  .map(
+                    (link) => ({
+                      platform:
+                        link.platform,
+
+                      handle:
+                        link.handle.trim(),
+                    })
+                  )
+                  .filter(
+                    (link) =>
+                      link.handle
+                  ),
             }),
           }
         );
 
-      const data =
+      const data: unknown =
         await response.json();
 
       if (!response.ok) {
+        const apiError =
+          data &&
+          typeof data ===
+            "object" &&
+          !Array.isArray(data)
+            ? (
+                data as Record<
+                  string,
+                  unknown
+                >
+              ).error
+            : null;
+
         throw new Error(
-          typeof data?.error ===
+          typeof apiError ===
             "string"
-            ? data.error
+            ? apiError
             : "Unable to create business."
         );
       }
 
+      const createdBusiness =
+        data &&
+        typeof data ===
+          "object" &&
+        !Array.isArray(data)
+          ? (
+              data as Record<
+                string,
+                unknown
+              >
+            ).business
+          : null;
+
       const createdBusinessId =
-        data.business?.id ??
-        data.id;
+        createdBusiness &&
+        typeof createdBusiness ===
+          "object" &&
+        !Array.isArray(
+          createdBusiness
+        )
+          ? (
+              createdBusiness as Record<
+                string,
+                unknown
+              >
+            ).id
+          : null;
 
       if (
         typeof createdBusinessId !==
@@ -353,15 +749,16 @@ export default function NewBusinessPage() {
       router.push(
         `/admin/businesses/${createdBusinessId}`
       );
-    } catch (error) {
+    } catch (submitError) {
       console.error(
         "Create business error:",
-        error
+        submitError
       );
 
       setError(
-        error instanceof Error
-          ? error.message
+        submitError instanceof
+          Error
+          ? submitError.message
           : "Unable to create business."
       );
     } finally {
@@ -377,6 +774,7 @@ export default function NewBusinessPage() {
           className="inline-flex items-center gap-2 text-xs font-semibold text-gray-600 transition hover:text-[#9F2D18]"
         >
           <ArrowLeft className="h-4 w-4" />
+
           Back to businesses
         </Link>
 
@@ -400,7 +798,9 @@ export default function NewBusinessPage() {
           </div>
 
           <form
-            onSubmit={submit}
+            onSubmit={
+              submit
+            }
             className="space-y-7 p-5 sm:p-7"
           >
             {error && (
@@ -424,9 +824,13 @@ export default function NewBusinessPage() {
 
                   <input
                     value={name}
-                    onChange={(event) =>
+                    onChange={(
+                      event
+                    ) =>
                       setName(
-                        event.target.value
+                        event
+                          .target
+                          .value
                       )
                     }
                     placeholder="e.g. Mandy Treasures"
@@ -440,10 +844,16 @@ export default function NewBusinessPage() {
                   </label>
 
                   <input
-                    value={ownerName}
-                    onChange={(event) =>
+                    value={
+                      ownerName
+                    }
+                    onChange={(
+                      event
+                    ) =>
                       setOwnerName(
-                        event.target.value
+                        event
+                          .target
+                          .value
                       )
                     }
                     placeholder="Optional"
@@ -457,14 +867,22 @@ export default function NewBusinessPage() {
                   </label>
 
                   <textarea
-                    value={description}
-                    onChange={(event) =>
+                    value={
+                      description
+                    }
+                    onChange={(
+                      event
+                    ) =>
                       setDescription(
-                        event.target.value
+                        event
+                          .target
+                          .value
                       )
                     }
                     placeholder="What does this business sell or offer?"
-                    rows={4}
+                    rows={
+                      4
+                    }
                     className="mt-2 w-full resize-none rounded-xl border border-[#E8E4DE] bg-white px-3 py-3 text-xs outline-none focus:border-[#FF9B82] focus:ring-4 focus:ring-[#FF5A36]/10"
                   />
                 </div>
@@ -491,7 +909,9 @@ export default function NewBusinessPage() {
                   onChange={
                     setImageUrl
                   }
-                  disabled={saving}
+                  disabled={
+                    saving
+                  }
                 />
               </div>
             </section>
@@ -503,59 +923,106 @@ export default function NewBusinessPage() {
                 Location
               </h2>
 
-              <div className="mt-4 grid gap-4 sm:grid-cols-3">
-                <div className="sm:col-span-3">
-                  <label className="text-xs font-semibold text-gray-700">
-                    Area
-                  </label>
+              <p className="mt-1 max-w-[700px] text-[11px] leading-5 text-gray-500">
+                Enter the business area, then capture its exact
+                location from the device. You do not need to type
+                latitude or longitude.
+              </p>
 
-                  <input
-                    value={area}
-                    onChange={(event) =>
-                      setArea(
-                        event.target.value
-                      )
+              <div className="mt-4">
+                <label className="text-xs font-semibold text-gray-700">
+                  Area
+                </label>
+
+                <input
+                  value={area}
+                  onChange={(
+                    event
+                  ) =>
+                    setArea(
+                      event
+                        .target
+                        .value
+                    )
+                  }
+                  placeholder="e.g. Ogba"
+                  className="mt-2 h-11 w-full rounded-xl border border-[#E8E4DE] bg-white px-3 text-xs outline-none focus:border-[#FF9B82] focus:ring-4 focus:ring-[#FF5A36]/10"
+                />
+              </div>
+
+              <div className="mt-4 rounded-xl border border-[#E8E4DE] bg-white p-4">
+                <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+                  <div className="flex items-start gap-3">
+                    <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-[#FFF1ED] text-[#9F2D18]">
+                      <MapPin className="h-5 w-5" />
+                    </div>
+
+                    <div>
+                      <p className="text-xs font-bold text-[#17202A]">
+                        Exact business location
+                      </p>
+
+                      <p className="mt-1 text-[10px] leading-4 text-gray-500">
+                        Used internally for Near Me and Directions.
+                      </p>
+
+                      {locationStatus && (
+                        <p className="mt-2 text-[10px] font-semibold text-[#137A59]">
+                          {
+                            locationStatus
+                          }
+                        </p>
+                      )}
+
+                      {locationError && (
+                        <p className="mt-2 text-[10px] font-medium text-red-600">
+                          {
+                            locationError
+                          }
+                        </p>
+                      )}
+                    </div>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={
+                      captureCurrentLocation
                     }
-                    placeholder="e.g. Ogba"
-                    className="mt-2 h-11 w-full rounded-xl border border-[#E8E4DE] bg-white px-3 text-xs outline-none focus:border-[#FF9B82] focus:ring-4 focus:ring-[#FF5A36]/10"
-                  />
+                    disabled={
+                      locating ||
+                      saving
+                    }
+                    className="inline-flex shrink-0 items-center justify-center gap-2 rounded-xl bg-[#FF5A36] px-4 py-2.5 text-[11px] font-bold text-white shadow-sm transition hover:bg-[#E94F2D] disabled:cursor-not-allowed disabled:opacity-60"
+                  >
+                    {locating ? (
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                    ) : lat &&
+                      lng ? (
+                      <RefreshCw className="h-4 w-4" />
+                    ) : (
+                      <MapPin className="h-4 w-4" />
+                    )}
+
+                    {locating
+                      ? "Getting location..."
+                      : lat &&
+                          lng
+                        ? "Recapture location"
+                        : "Use current location"}
+                  </button>
                 </div>
 
-                <div>
-                  <label className="text-xs font-semibold text-gray-700">
-                    Latitude
-                  </label>
+                {lat &&
+                  lng && (
+                    <div className="mt-3 flex items-center gap-2 rounded-lg bg-[#F7FBF8] px-3 py-2.5">
+                      <MapPin className="h-3.5 w-3.5 text-[#137A59]" />
 
-                  <input
-                    value={lat}
-                    onChange={(event) =>
-                      setLat(
-                        event.target.value
-                      )
-                    }
-                    placeholder="Optional"
-                    inputMode="decimal"
-                    className="mt-2 h-11 w-full rounded-xl border border-[#E8E4DE] bg-white px-3 text-xs outline-none focus:border-[#FF9B82] focus:ring-4 focus:ring-[#FF5A36]/10"
-                  />
-                </div>
-
-                <div>
-                  <label className="text-xs font-semibold text-gray-700">
-                    Longitude
-                  </label>
-
-                  <input
-                    value={lng}
-                    onChange={(event) =>
-                      setLng(
-                        event.target.value
-                      )
-                    }
-                    placeholder="Optional"
-                    inputMode="decimal"
-                    className="mt-2 h-11 w-full rounded-xl border border-[#E8E4DE] bg-white px-3 text-xs outline-none focus:border-[#FF9B82] focus:ring-4 focus:ring-[#FF5A36]/10"
-                  />
-                </div>
+                      <p className="text-[10px] font-medium text-[#137A59]">
+                        Exact location saved for this business.
+                      </p>
+                    </div>
+                  )}
               </div>
             </section>
 
@@ -566,36 +1033,62 @@ export default function NewBusinessPage() {
                 Categories
               </h2>
 
+              <p className="mt-1 text-[11px] text-gray-500">
+                Select all categories that describe this business.
+              </p>
+
+              {usingCategoryFallback &&
+                !loadingCategories && (
+                  <p className="mt-2 text-[10px] font-medium text-amber-600">
+                    Built-in categories are shown while the database categories are unavailable. Refresh before assigning categories.
+                  </p>
+                )}
+
               {loadingCategories ? (
                 <div className="mt-4 flex items-center gap-2 text-xs text-gray-500">
                   <Loader2 className="h-4 w-4 animate-spin" />
+
                   Loading categories...
                 </div>
               ) : (
                 <div className="mt-4 flex flex-wrap gap-2">
                   {categories.map(
-                    (item) => {
+                    (
+                      item
+                    ) => {
                       const active =
                         selectedCategoryIds.includes(
                           item.id
                         );
 
+                      const disabled =
+                        usingCategoryFallback;
+
                       return (
                         <button
-                          key={item.id}
+                          key={
+                            item.id
+                          }
                           type="button"
+                          disabled={
+                            disabled
+                          }
                           onClick={() =>
                             toggleCategory(
                               item.id
                             )
                           }
                           className={`rounded-full border px-3 py-2 text-[11px] font-semibold transition ${
-                            active
-                              ? "border-[#FFB09B] bg-[#FFF1ED] text-[#9F2D18]"
-                              : "border-[#E8E4DE] bg-white text-gray-700 hover:bg-gray-50"
+                            disabled
+                              ? "cursor-not-allowed border-[#E8E4DE] bg-gray-50 text-gray-400"
+                              : active
+                                ? "border-[#FFB09B] bg-[#FFF1ED] text-[#9F2D18]"
+                                : "border-[#E8E4DE] bg-white text-gray-700 hover:bg-gray-50"
                           }`}
                         >
-                          {item.name}
+                          {
+                            item.name
+                          }
                         </button>
                       );
                     }
@@ -618,10 +1111,16 @@ export default function NewBusinessPage() {
                   </label>
 
                   <input
-                    value={phone}
-                    onChange={(event) =>
+                    value={
+                      phone
+                    }
+                    onChange={(
+                      event
+                    ) =>
                       setPhone(
-                        event.target.value
+                        event
+                          .target
+                          .value
                       )
                     }
                     placeholder="Optional"
@@ -635,10 +1134,16 @@ export default function NewBusinessPage() {
                   </label>
 
                   <input
-                    value={priceMin}
-                    onChange={(event) =>
+                    value={
+                      priceMin
+                    }
+                    onChange={(
+                      event
+                    ) =>
                       setPriceMin(
-                        event.target.value
+                        event
+                          .target
+                          .value
                       )
                     }
                     inputMode="numeric"
@@ -653,10 +1158,16 @@ export default function NewBusinessPage() {
                   </label>
 
                   <input
-                    value={priceMax}
-                    onChange={(event) =>
+                    value={
+                      priceMax
+                    }
+                    onChange={(
+                      event
+                    ) =>
                       setPriceMax(
-                        event.target.value
+                        event
+                          .target
+                          .value
                       )
                     }
                     inputMode="numeric"
@@ -684,9 +1195,12 @@ export default function NewBusinessPage() {
                     value={
                       availability
                     }
-                    onChange={(event) =>
+                    onChange={(
+                      event
+                    ) =>
                       setAvailability(
-                        event.target
+                        event
+                          .target
                           .value as typeof availability
                       )
                     }
@@ -712,10 +1226,15 @@ export default function NewBusinessPage() {
                   </label>
 
                   <select
-                    value={status}
-                    onChange={(event) =>
+                    value={
+                      status
+                    }
+                    onChange={(
+                      event
+                    ) =>
                       setStatus(
-                        event.target
+                        event
+                          .target
                           .value as typeof status
                       )
                     }
@@ -744,9 +1263,12 @@ export default function NewBusinessPage() {
                     value={
                       verification
                     }
-                    onChange={(event) =>
+                    onChange={(
+                      event
+                    ) =>
                       setVerification(
-                        event.target
+                        event
+                          .target
                           .value as typeof verification
                       )
                     }
@@ -786,15 +1308,21 @@ export default function NewBusinessPage() {
                   className="inline-flex items-center gap-1.5 rounded-xl border border-[#E8E4DE] bg-white px-3 py-2 text-[11px] font-semibold text-gray-700 hover:border-[#FFB09B] hover:text-[#9F2D18]"
                 >
                   <Plus className="h-3.5 w-3.5" />
+
                   Add link
                 </button>
               </div>
 
               <div className="mt-4 space-y-3">
                 {socialLinks.map(
-                  (link, index) => (
+                  (
+                    link,
+                    index
+                  ) => (
                     <div
-                      key={index}
+                      key={
+                        index
+                      }
                       className="grid gap-2 sm:grid-cols-[180px_1fr_auto]"
                     >
                       <select
@@ -807,7 +1335,8 @@ export default function NewBusinessPage() {
                           updateSocialLink(
                             index,
                             "platform",
-                            event.target
+                            event
+                              .target
                               .value
                           )
                         }
@@ -848,7 +1377,8 @@ export default function NewBusinessPage() {
                           updateSocialLink(
                             index,
                             "handle",
-                            event.target
+                            event
+                              .target
                               .value
                           )
                         }
@@ -885,7 +1415,10 @@ export default function NewBusinessPage() {
 
               <button
                 type="submit"
-                disabled={saving}
+                disabled={
+                  saving ||
+                  locating
+                }
                 className="inline-flex items-center gap-2 rounded-xl bg-[#FF5A36] px-5 py-3 text-xs font-bold text-white shadow-sm disabled:cursor-not-allowed disabled:opacity-60"
               >
                 {saving && (
