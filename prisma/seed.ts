@@ -1,4 +1,5 @@
 import "dotenv/config";
+import bcrypt from "bcryptjs";
 import { PrismaClient } from "@prisma/client";
 
 const prisma = new PrismaClient();
@@ -42,7 +43,7 @@ const categories = [
   },
 ];
 
-async function main() {
+async function seedCategories() {
   for (const category of categories) {
     const existing = await prisma.category.findUnique({
       where: {
@@ -78,13 +79,73 @@ async function main() {
 
     console.log(`Created category: ${category.name}`);
   }
+}
 
-  console.log("ReMarket category seed completed.");
+async function seedAdmin() {
+  const adminEmail = process.env.ADMIN_EMAIL?.trim().toLowerCase();
+  const adminPassword = process.env.ADMIN_PASSWORD;
+
+  if (!adminEmail) {
+    throw new Error(
+      "ADMIN_EMAIL environment variable is required."
+    );
+  }
+
+  if (!adminPassword) {
+    throw new Error(
+      "ADMIN_PASSWORD environment variable is required."
+    );
+  }
+
+  if (adminPassword.length < 8) {
+    throw new Error(
+      "ADMIN_PASSWORD must be at least 8 characters long."
+    );
+  }
+
+  const hashedPassword = await bcrypt.hash(
+    adminPassword,
+    12
+  );
+
+  const admin = await prisma.user.upsert({
+    where: {
+      email: adminEmail,
+    },
+    update: {
+      password: hashedPassword,
+      role: "ADMIN",
+      name: "ReMarket Admin",
+    },
+    create: {
+      email: adminEmail,
+      password: hashedPassword,
+      role: "ADMIN",
+      name: "ReMarket Admin",
+    },
+  });
+
+  console.log(`Admin account ready: ${admin.email}`);
+}
+
+async function main() {
+  console.log("🌱 Starting ReMarket seed...");
+  console.log("");
+
+  await seedCategories();
+  await seedAdmin();
+
+  console.log("");
+  console.log("=================================");
+  console.log("🌱 ReMarket seed completed");
+  console.log("=================================");
+  console.log("No marketplace data was deleted.");
 }
 
 main()
   .catch((error) => {
-    console.error("Category seed failed:", error);
+    console.error("❌ Seed failed:");
+    console.error(error);
     process.exit(1);
   })
   .finally(async () => {
