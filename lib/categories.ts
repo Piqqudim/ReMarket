@@ -13,6 +13,7 @@ import {
   Laptop,
   MapPin,
   Package,
+  Plug,
   Scissors,
   Shirt,
   Smartphone,
@@ -93,6 +94,7 @@ export const CATEGORY_ICON_MAP: Record<
   Smartphone,
   Laptop,
   Cpu,
+  Plug,
   Utensils,
   Coffee,
   Sparkles,
@@ -118,7 +120,10 @@ export function getCategoryIcon(
     return Store;
   }
 
-  return CATEGORY_ICON_MAP[iconKey] ?? Store;
+  return (
+    CATEGORY_ICON_MAP[iconKey] ??
+    Store
+  );
 }
 
 export function getDefaultCategory(
@@ -138,37 +143,49 @@ export function mergeCategories(
   const seen = new Set<string>();
 
   for (const backendCategory of backendCategories) {
-    if (backendCategory.isActive === false) {
+    if (
+      backendCategory.isActive === false
+    ) {
       continue;
     }
 
     const normalizedName =
-      backendCategory.name.trim().toLowerCase();
+      backendCategory.name
+        .trim()
+        .toLowerCase();
 
-    if (!normalizedName || seen.has(normalizedName)) {
+    if (
+      !normalizedName ||
+      seen.has(normalizedName)
+    ) {
       continue;
     }
 
-    const fallback = getDefaultCategory(
-      backendCategory.name
-    );
+    const fallback =
+      getDefaultCategory(
+        backendCategory.name
+      );
+
+    const iconKey =
+      backendCategory.iconKey ||
+      fallback?.iconKey ||
+      "Store";
 
     result.push({
       id: backendCategory.id,
       name: backendCategory.name,
-      iconKey:
-        backendCategory.iconKey ||
-        fallback?.iconKey ||
-        "Store",
-      icon:
-        getCategoryIcon(
-          backendCategory.iconKey ||
-            fallback?.iconKey
-        ),
-      bg: fallback?.bg || "#F3F4F6",
+      iconKey,
+      icon: getCategoryIcon(
+        iconKey
+      ),
+      bg:
+        fallback?.bg ||
+        "#F3F4F6",
     });
 
-    seen.add(normalizedName);
+    seen.add(
+      normalizedName
+    );
   }
 
   return result;

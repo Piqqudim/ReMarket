@@ -2,7 +2,7 @@
 
 import {
   ClipboardList,
-  Home,
+  LayoutDashboard,
   Package,
   Search,
   Store,
@@ -12,13 +12,13 @@ import {
   Clock3,
   Phone,
   MapPin,
+  Trash2,
 } from "lucide-react";
 import Link from "next/link";
-import {
+import React, {
   useCallback,
   useEffect,
   useState,
-  type FormEvent,
 } from "react";
 
 type RequestStatus =
@@ -70,11 +70,11 @@ const STATUS_OPTIONS: {
   { value: "NEW", label: "New" },
   { value: "MATCHED", label: "Matched" },
   { value: "CONTACTED", label: "Contacted" },
-  { value: "FULFILLED", label: "Fulfilled" },
   {
     value: "UNFULFILLED",
     label: "Unfulfilled",
   },
+  { value: "FULFILLED", label: "Fulfilled" },
   { value: "CLOSED", label: "Closed" },
 ];
 
@@ -82,7 +82,7 @@ const NAV_ITEMS = [
   {
     label: "Overview",
     href: "/admin",
-    icon: Home,
+    icon: LayoutDashboard,
   },
   {
     label: "Businesses",
@@ -98,6 +98,11 @@ const NAV_ITEMS = [
     label: "Requests",
     href: "/admin/requests",
     icon: ClipboardList,
+  },
+  {
+    label: "Deletion requests",
+    href: "/admin/business-deletion-requests",
+    icon: Trash2,
   },
 ];
 
@@ -244,7 +249,7 @@ export default function AdminRequestsPage() {
   }, [loadRequests, search]);
 
   async function handleSearch(
-    event: FormEvent<HTMLFormElement>
+    event: React.SubmitEvent<HTMLFormElement>
   ) {
     event.preventDefault();
 
@@ -681,7 +686,7 @@ export default function AdminRequestsPage() {
         </div>
 
         <nav className="fixed bottom-0 left-0 right-0 z-40 border-t border-[#EAE6DF] bg-white px-2 py-2 lg:hidden">
-          <div className="mx-auto flex max-w-[600px] justify-around">
+          <div className="mx-auto flex max-w-[700px] justify-around overflow-x-auto">
             {NAV_ITEMS.map((item) => {
               const Icon = item.icon;
 
@@ -693,7 +698,7 @@ export default function AdminRequestsPage() {
                 <Link
                   key={item.href}
                   href={item.href}
-                  className={`flex min-w-[70px] flex-col items-center gap-1 rounded-xl px-3 py-2 text-[11px] font-semibold ${
+                  className={`flex min-w-[78px] shrink-0 flex-col items-center gap-1 rounded-xl px-3 py-2 text-[11px] font-semibold ${
                     active
                       ? "bg-[#FFE0D6] text-[#9F2D18]"
                       : "text-gray-500"

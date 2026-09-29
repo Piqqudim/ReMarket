@@ -13,6 +13,10 @@ import {
   Trash2,
   Users,
   ExternalLink,
+  UserRound,
+  Tags,
+  Eye,
+  AlertCircle,
 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { usePathname } from "next/navigation";
@@ -42,6 +46,15 @@ type Overview = {
     requests: number;
     matches: number;
     contacts: number;
+    businessViews: number;
+  };
+
+  operations: {
+    sellerAccounts: number;
+    pendingDeletionRequests: number;
+    pendingClaimRequests: number;
+    categories: number;
+    activeCategories: number;
   };
 
   contactActivity: ContactActivity;
@@ -194,6 +207,75 @@ function StatCard({
         </div>
 
         <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-[#FFF0E8] text-[#9F2D18]">
+          <Icon className="h-5 w-5" />
+        </div>
+      </div>
+
+      {href && (
+        <div className="mt-4 flex items-center gap-1 text-xs font-medium text-[#9F2D18]">
+          View details
+          <ArrowRight className="h-3.5 w-3.5" />
+        </div>
+      )}
+    </div>
+  );
+
+  if (!href) {
+    return content;
+  }
+
+  return <Link href={href}>{content}</Link>;
+}
+
+function OperationCard({
+  label,
+  value,
+  description,
+  icon: Icon,
+  href,
+  attention = false,
+}: {
+  label: string;
+  value: number;
+  description: string;
+  icon: typeof Store;
+  href?: string;
+  attention?: boolean;
+}) {
+  const content = (
+    <div
+      className={`rounded-2xl border bg-white p-5 transition ${
+        attention
+          ? "border-[#F1D1C9]"
+          : "border-[#E8DED3]"
+      } ${
+        href
+          ? "hover:border-[#D8C9BC]"
+          : ""
+      }`}
+    >
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <p className="text-sm font-medium text-[#6F675F]">
+            {label}
+          </p>
+
+          <p className="mt-2 text-3xl font-semibold tracking-tight text-[#2E241F]">
+            {value}
+          </p>
+
+          <p className="mt-2 text-xs leading-5 text-[#8B8178]">
+            {description}
+          </p>
+        </div>
+
+        <div
+          className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-xl ${
+            attention
+              ? "bg-[#FFF0E8] text-[#9F2D18]"
+              : "bg-[#F7F1EB] text-[#6F675F]"
+          }`}
+        >
           <Icon className="h-5 w-5" />
         </div>
       </div>
@@ -372,9 +454,9 @@ export default function AdminPage() {
 
                   <p className="mt-2 max-w-2xl text-sm leading-6 text-[#766C63]">
                     Monitor businesses, products,
-                    buyer requests, matches, and
-                    seller contact activity across
-                    ReMarket.
+                    buyer requests, matches, seller
+                    contacts, and the operational
+                    activity across ReMarket.
                   </p>
                 </div>
               </div>
@@ -394,15 +476,30 @@ export default function AdminPage() {
 
             {loading ? (
               <div className="space-y-6">
-                <div className="grid grid-cols-2 gap-4 xl:grid-cols-5">
+                <div className="grid grid-cols-2 gap-4 xl:grid-cols-6">
                   {Array.from({
-                    length: 5,
+                    length: 6,
                   }).map((_, index) => (
                     <div
                       key={index}
                       className="h-32 animate-pulse rounded-2xl border border-[#E8DED3] bg-white"
                     />
                   ))}
+                </div>
+
+                <div>
+                  <div className="h-7 w-40 animate-pulse rounded bg-[#EAE3DC]" />
+
+                  <div className="mt-4 grid grid-cols-2 gap-4 md:grid-cols-3 xl:grid-cols-5">
+                    {Array.from({
+                      length: 5,
+                    }).map((_, index) => (
+                      <div
+                        key={index}
+                        className="h-36 animate-pulse rounded-2xl border border-[#E8DED3] bg-white"
+                      />
+                    ))}
+                  </div>
                 </div>
 
                 <div className="h-64 animate-pulse rounded-2xl border border-[#E8DED3] bg-white" />
@@ -418,7 +515,7 @@ export default function AdminPage() {
                 {/* Stats */}
 
                 <section>
-                  <div className="grid grid-cols-2 gap-4 xl:grid-cols-5">
+                  <div className="grid grid-cols-2 gap-4 xl:grid-cols-6">
                     <StatCard
                       label="Businesses"
                       value={data.stats.businesses}
@@ -450,6 +547,91 @@ export default function AdminPage() {
                       label="Seller contacts"
                       value={data.stats.contacts}
                       icon={Contact}
+                    />
+
+                    <StatCard
+                      label="Business views"
+                      value={data.stats.businessViews}
+                      icon={Eye}
+                    />
+                  </div>
+                </section>
+
+                {/* Operations */}
+
+                <section className="mt-6">
+                  <div className="mb-4">
+                    <h2 className="text-lg font-semibold text-[#2E241F]">
+                      Platform operations
+                    </h2>
+
+                    <p className="text-sm text-[#766C63]">
+                      Current seller, moderation, and
+                      catalog activity that may need
+                      attention.
+                    </p>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-4 md:grid-cols-3 xl:grid-cols-5">
+                    <OperationCard
+                      label="Seller accounts"
+                      value={
+                        data.operations.sellerAccounts
+                      }
+                      description="Registered seller accounts"
+                      icon={UserRound}
+                    />
+
+                    <OperationCard
+                      label="Pending deletions"
+                      value={
+                        data.operations
+                          .pendingDeletionRequests
+                      }
+                      description="Business deletion requests awaiting review"
+                      icon={Trash2}
+                      href="/admin/business-deletion-requests"
+                      attention={
+                        data.operations
+                          .pendingDeletionRequests >
+                        0
+                      }
+                    />
+
+                    <OperationCard
+                      label="Pending claims"
+                      value={
+                        data.operations
+                          .pendingClaimRequests
+                      }
+                      description="Business ownership claims awaiting review"
+                      icon={AlertCircle}
+                      attention={
+                        data.operations
+                          .pendingClaimRequests >
+                        0
+                      }
+                    />
+
+                    <OperationCard
+                      label="Categories"
+                      value={
+                        data.operations.categories
+                      }
+                      description={`${data.operations.activeCategories} active categories`}
+                      icon={Tags}
+                      href="/admin/categories"
+                    />
+
+                    <OperationCard
+                      label="Active categories"
+                      value={
+                        data.operations
+                          .activeCategories
+                      }
+                      description="Categories currently available to the platform"
+                      icon={Tags}
+                      href="/admin/categories"
                     />
                   </div>
                 </section>

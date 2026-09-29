@@ -5,11 +5,13 @@ import {
   ArrowLeft,
   Check,
   ChevronDown,
+  ClipboardList,
   LayoutDashboard,
   Package,
   Pencil,
   Search,
   Store,
+  Trash2,
   X,
 } from "lucide-react";
 import {
@@ -63,6 +65,16 @@ const NAV_ITEMS = [
     label: "Products",
     href: "/admin/products",
     icon: Package,
+  },
+  {
+    label: "Requests",
+    href: "/admin/requests",
+    icon: ClipboardList,
+  },
+  {
+    label: "Deletion requests",
+    href: "/admin/business-deletion-requests",
+    icon: Trash2,
   },
 ];
 

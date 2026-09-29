@@ -20,6 +20,7 @@ import ProductImageUpload from "@/components/ProductImageUpload";
 import {
   DEFAULT_CATEGORIES,
   mergeCategories,
+  type ApiCategory,
   type ReMarketCategory,
 } from "@/lib/categories";
 
@@ -181,7 +182,33 @@ export default function NewProductPage() {
           Array.isArray(
             categoriesData?.categories
           )
-            ? categoriesData.categories
+            ? categoriesData.categories.filter(
+                (
+                  item:unknown
+                ): item is ApiCategory =>
+                  Boolean(
+                    item &&
+                      typeof item ===
+                        "object" &&
+                      !Array.isArray(
+                        item
+                      ) &&
+                      typeof (
+                        item as Record<
+                          string,
+                          unknown
+                        >
+                      ).id ===
+                        "string" &&
+                      typeof (
+                        item as Record<
+                          string,
+                          unknown
+                        >
+                      ).name ===
+                        "string"
+                  )
+              )
             : [];
 
         const mergedCategories =
@@ -195,6 +222,7 @@ export default function NewProductPage() {
           setCategories(
             mergedCategories
           );
+
           setUsingCategoryFallback(
             false
           );
@@ -202,15 +230,18 @@ export default function NewProductPage() {
           setCategories(
             DEFAULT_CATEGORIES
           );
+
           setUsingCategoryFallback(
             true
           );
+
           setCategoryId("");
         }
-      } catch (error) {
+      } catch (loadError) {
         if (
-          error instanceof DOMException &&
-          error.name ===
+          loadError instanceof
+            DOMException &&
+          loadError.name ===
             "AbortError"
         ) {
           return;
@@ -218,12 +249,13 @@ export default function NewProductPage() {
 
         console.error(
           "New product load error:",
-          error
+          loadError
         );
 
         setError(
-          error instanceof Error
-            ? error.message
+          loadError instanceof
+            Error
+            ? loadError.message
             : "Unable to load product form."
         );
       } finally {
@@ -258,8 +290,6 @@ export default function NewProductPage() {
       return;
     }
 
-    setSaving(true);
-
     const trimmedName =
       name.trim();
 
@@ -267,9 +297,92 @@ export default function NewProductPage() {
       setError(
         "Product name is required."
       );
-      setSaving(false);
       return;
     }
+
+    const parsedPrice =
+      price.trim()
+        ? Number(
+            price.trim()
+          )
+        : null;
+
+    const parsedPriceMin =
+      priceMin.trim()
+        ? Number(
+            priceMin.trim()
+          )
+        : null;
+
+    const parsedPriceMax =
+      priceMax.trim()
+        ? Number(
+            priceMax.trim()
+          )
+        : null;
+
+    if (
+      parsedPrice !== null &&
+      (!Number.isInteger(
+        parsedPrice
+      ) ||
+        parsedPrice < 0)
+    ) {
+      setError(
+        "Exact price must be a valid non-negative integer."
+      );
+      return;
+    }
+
+    if (
+      parsedPriceMin !== null &&
+      (!Number.isInteger(
+        parsedPriceMin
+      ) ||
+        parsedPriceMin < 0)
+    ) {
+      setError(
+        "Minimum price must be a valid non-negative integer."
+      );
+      return;
+    }
+
+    if (
+      parsedPriceMax !== null &&
+      (!Number.isInteger(
+        parsedPriceMax
+      ) ||
+        parsedPriceMax < 0)
+    ) {
+      setError(
+        "Maximum price must be a valid non-negative integer."
+      );
+      return;
+    }
+
+    if (
+      parsedPriceMin !== null &&
+      parsedPriceMax !== null &&
+      parsedPriceMin >
+        parsedPriceMax
+    ) {
+      setError(
+        "Minimum price cannot be greater than maximum price."
+      );
+      return;
+    }
+
+    /*
+     * Fallback categories use synthetic display IDs.
+     * They must never be submitted to the database.
+     */
+    const selectedCategoryId =
+      usingCategoryFallback
+        ? null
+        : categoryId.trim() ||
+          null;
+
+    setSaving(true);
 
     try {
       const response =
@@ -293,20 +406,16 @@ export default function NewProductPage() {
                 null,
 
               categoryId:
-                categoryId ||
-                null,
+                selectedCategoryId,
 
               price:
-                price.trim() ||
-                null,
+                parsedPrice,
 
               priceMin:
-                priceMin.trim() ||
-                null,
+                parsedPriceMin,
 
               priceMax:
-                priceMax.trim() ||
-                null,
+                parsedPriceMax,
 
               availability,
 
@@ -326,14 +435,27 @@ export default function NewProductPage() {
           }
         );
 
-      const data =
+      const data: unknown =
         await response.json();
 
       if (!response.ok) {
+        const apiError =
+          data &&
+          typeof data ===
+            "object" &&
+          !Array.isArray(data)
+            ? (
+                data as Record<
+                  string,
+                  unknown
+                >
+              ).error
+            : null;
+
         throw new Error(
-          typeof data?.error ===
+          typeof apiError ===
             "string"
-            ? data.error
+            ? apiError
             : "Unable to create product."
         );
       }
@@ -341,15 +463,16 @@ export default function NewProductPage() {
       router.push(
         `/admin/businesses/${businessId}`
       );
-    } catch (error) {
+    } catch (submitError) {
       console.error(
         "Create product error:",
-        error
+        submitError
       );
 
       setError(
-        error instanceof Error
-          ? error.message
+        submitError instanceof
+          Error
+          ? submitError.message
           : "Unable to create product."
       );
     } finally {
@@ -363,6 +486,7 @@ export default function NewProductPage() {
         <div className="mx-auto flex min-h-[70vh] max-w-[900px] items-center justify-center">
           <div className="flex items-center gap-2 text-xs text-gray-500">
             <Loader2 className="h-4 w-4 animate-spin" />
+
             Loading...
           </div>
         </div>
@@ -381,6 +505,7 @@ export default function NewProductPage() {
           className="inline-flex items-center gap-2 text-xs font-semibold text-gray-600 hover:text-[#9F2D18]"
         >
           <ArrowLeft className="h-4 w-4" />
+
           Back to {businessName || "business"}
         </Link>
 
@@ -434,7 +559,9 @@ export default function NewProductPage() {
 
                   <input
                     value={name}
-                    onChange={(event) =>
+                    onChange={(
+                      event
+                    ) =>
                       setName(
                         event.target
                           .value
@@ -442,7 +569,8 @@ export default function NewProductPage() {
                     }
                     placeholder="e.g. Men's Sneakers"
                     disabled={
-                      businessDeleted
+                      businessDeleted ||
+                      saving
                     }
                     className="mt-2 h-11 w-full rounded-xl border border-[#E8E4DE] bg-white px-3 text-xs outline-none focus:border-[#FF9B82] focus:ring-4 focus:ring-[#FF5A36]/10 disabled:cursor-not-allowed disabled:bg-gray-50"
                   />
@@ -457,7 +585,9 @@ export default function NewProductPage() {
                     value={
                       description
                     }
-                    onChange={(event) =>
+                    onChange={(
+                      event
+                    ) =>
                       setDescription(
                         event.target
                           .value
@@ -465,10 +595,11 @@ export default function NewProductPage() {
                     }
                     rows={4}
                     disabled={
-                      businessDeleted
+                      businessDeleted ||
+                      saving
                     }
                     placeholder="Describe the product."
-                    className="mt-2 w-full resize-none rounded-xl border border-[#E8E4DE] bg-white px-3 py-3 text-xs outline-none focus:border-[#FF9B82] disabled:cursor-not-allowed disabled:bg-gray-50"
+                    className="mt-2 w-full resize-none rounded-xl border border-[#E8E4DE] bg-white px-3 py-3 text-xs outline-none focus:border-[#FF9B82] focus:ring-4 focus:ring-[#FF5A36]/10 disabled:cursor-not-allowed disabled:bg-gray-50"
                   />
                 </div>
               </div>
@@ -532,7 +663,9 @@ export default function NewProductPage() {
                     </option>
 
                     {categories.map(
-                      (category) => (
+                      (
+                        category
+                      ) => (
                         <option
                           key={
                             category.id
@@ -563,7 +696,9 @@ export default function NewProductPage() {
 
                   <input
                     value={price}
-                    onChange={(event) =>
+                    onChange={(
+                      event
+                    ) =>
                       setPrice(
                         event.target
                           .value
@@ -572,9 +707,10 @@ export default function NewProductPage() {
                     inputMode="numeric"
                     placeholder="Optional"
                     disabled={
-                      businessDeleted
+                      businessDeleted ||
+                      saving
                     }
-                    className="mt-2 h-11 w-full rounded-xl border border-[#E8E4DE] bg-white px-3 text-xs disabled:cursor-not-allowed disabled:bg-gray-50"
+                    className="mt-2 h-11 w-full rounded-xl border border-[#E8E4DE] bg-white px-3 text-xs outline-none focus:border-[#FF9B82] focus:ring-4 focus:ring-[#FF5A36]/10 disabled:cursor-not-allowed disabled:bg-gray-50"
                   />
                 </div>
 
@@ -587,7 +723,9 @@ export default function NewProductPage() {
                     value={
                       priceMin
                     }
-                    onChange={(event) =>
+                    onChange={(
+                      event
+                    ) =>
                       setPriceMin(
                         event.target
                           .value
@@ -596,9 +734,10 @@ export default function NewProductPage() {
                     inputMode="numeric"
                     placeholder="Optional"
                     disabled={
-                      businessDeleted
+                      businessDeleted ||
+                      saving
                     }
-                    className="mt-2 h-11 w-full rounded-xl border border-[#E8E4DE] bg-white px-3 text-xs disabled:cursor-not-allowed disabled:bg-gray-50"
+                    className="mt-2 h-11 w-full rounded-xl border border-[#E8E4DE] bg-white px-3 text-xs outline-none focus:border-[#FF9B82] focus:ring-4 focus:ring-[#FF5A36]/10 disabled:cursor-not-allowed disabled:bg-gray-50"
                   />
                 </div>
 
@@ -611,7 +750,9 @@ export default function NewProductPage() {
                     value={
                       priceMax
                     }
-                    onChange={(event) =>
+                    onChange={(
+                      event
+                    ) =>
                       setPriceMax(
                         event.target
                           .value
@@ -620,9 +761,10 @@ export default function NewProductPage() {
                     inputMode="numeric"
                     placeholder="Optional"
                     disabled={
-                      businessDeleted
+                      businessDeleted ||
+                      saving
                     }
-                    className="mt-2 h-11 w-full rounded-xl border border-[#E8E4DE] bg-white px-3 text-xs disabled:cursor-not-allowed disabled:bg-gray-50"
+                    className="mt-2 h-11 w-full rounded-xl border border-[#E8E4DE] bg-white px-3 text-xs outline-none focus:border-[#FF9B82] focus:ring-4 focus:ring-[#FF5A36]/10 disabled:cursor-not-allowed disabled:bg-gray-50"
                   />
                 </div>
               </div>
@@ -652,7 +794,8 @@ export default function NewProductPage() {
                       )
                     }
                     disabled={
-                      businessDeleted
+                      businessDeleted ||
+                      saving
                     }
                     className="mt-2 h-11 w-full rounded-xl border border-[#E8E4DE] bg-white px-3 text-xs disabled:cursor-not-allowed disabled:bg-gray-50"
                   >
@@ -686,7 +829,8 @@ export default function NewProductPage() {
                       )
                     }
                     disabled={
-                      businessDeleted
+                      businessDeleted ||
+                      saving
                     }
                     className="mt-2 h-11 w-full rounded-xl border border-[#E8E4DE] bg-white px-3 text-xs disabled:cursor-not-allowed disabled:bg-gray-50"
                   >
@@ -713,7 +857,9 @@ export default function NewProductPage() {
 
               <input
                 value={keywords}
-                onChange={(event) =>
+                onChange={(
+                  event
+                ) =>
                   setKeywords(
                     event.target
                       .value
@@ -721,9 +867,10 @@ export default function NewProductPage() {
                 }
                 placeholder="e.g. sneakers, shoes, footwear"
                 disabled={
-                  businessDeleted
+                  businessDeleted ||
+                  saving
                 }
-                className="mt-3 h-11 w-full rounded-xl border border-[#E8E4DE] bg-white px-3 text-xs outline-none focus:border-[#FF9B82] disabled:cursor-not-allowed disabled:bg-gray-50"
+                className="mt-3 h-11 w-full rounded-xl border border-[#E8E4DE] bg-white px-3 text-xs outline-none focus:border-[#FF9B82] focus:ring-4 focus:ring-[#FF5A36]/10 disabled:cursor-not-allowed disabled:bg-gray-50"
               />
 
               <p className="mt-1.5 text-[10px] text-gray-400">
@@ -734,7 +881,7 @@ export default function NewProductPage() {
             <div className="flex justify-end gap-2 border-t border-[#EAE6DF] pt-5">
               <Link
                 href={`/admin/businesses/${businessId}`}
-                className="rounded-xl border border-[#E8E4DE] bg-white px-4 py-3 text-xs font-bold text-gray-700"
+                className="rounded-xl border border-[#E8E4DE] bg-white px-4 py-3 text-xs font-bold text-gray-700 hover:bg-gray-50"
               >
                 Cancel
               </Link>

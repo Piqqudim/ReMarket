@@ -48,7 +48,18 @@ enum VerificationStatus {
   VERIFIED
 }
 
+enum LocationVerificationStatus {
+  UNVERIFIED
+  VERIFIED
+}
+
 enum DeletionRequestStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+enum ClaimRequestStatus {
   PENDING
   APPROVED
   REJECTED
@@ -62,17 +73,24 @@ model User {
   name      String?
   createdAt DateTime @default(now())
 
-  // Seller-owned business
+  // Seller-owned business.
+  // ownerId on Business is unique, so V1 supports one business per seller.
   business Business?
 
-  // Products soft-deleted by this user
+  // Products soft-deleted by this user.
   deletedProducts Product[] @relation("ProductDeletedBy")
 
-  // Business deletion requests created by this user
+  // Business deletion requests created by this user.
   deletionRequestsRequested BusinessDeletionRequest[] @relation("BusinessDeletionRequestedBy")
 
-  // Business deletion requests reviewed by this user
+  // Business deletion requests reviewed by this user.
   deletionRequestsReviewed BusinessDeletionRequest[] @relation("BusinessDeletionReviewedBy")
+
+  // Business claim requests created by this user.
+  claimRequestsRequested BusinessClaimRequest[] @relation("BusinessClaimRequestedBy")
+
+  // Business claim requests reviewed by this user.
+  claimRequestsReviewed BusinessClaimRequest[] @relation("BusinessClaimReviewedBy")
 }
 
 model Location {
@@ -82,21 +100,28 @@ model Location {
   // NOT unique because many businesses can exist in the same area.
   area String
 
+  // Human-readable business location/address.
+  address String?
+
   // Stored internally for exact location / Near Me / Directions.
   lat  Float?
   long Float?
+
+  // Location verification is separate from Business verification.
+  verification LocationVerificationStatus @default(UNVERIFIED)
 
   businesses Business[]
 
   @@index([area])
   @@index([lat, long])
+  @@index([verification])
 }
 
 model BusinessSocialLink {
   id         String @id @default(cuid())
   businessId String
 
-  business Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  business Business @relation(fields: [businessId],references: [id],onDelete: Cascade)
 
   platform SocialPlatform
   handle   String
@@ -109,7 +134,7 @@ model Category {
   id   String @id @default(cuid())
   name String @unique
 
-  // Lucide icon key, e.g. "Shirt", "Utensils", "Briefcase"
+  // Lucide icon key, e.g. "Shirt", "Utensils", "Briefcase".
   iconKey String @default("Store")
 
   // Admin controls whether this category is available
@@ -130,16 +155,16 @@ model BusinessCategory {
   businessId String
   categoryId String
 
-  business Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  business Business @relation(fields: [businessId],references: [id],onDelete: Cascade)
 
-  category Category @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+  category Category @relation(fields: [categoryId],references: [id],onDelete: Cascade)
 
   @@id([businessId, categoryId])
   @@index([categoryId])
 }
 
 model Business {
-  id        String  @id @default(cuid())
+  id        String @id @default(cuid())
   name      String
   ownerName String?
 
@@ -152,13 +177,14 @@ model Business {
   description String?
 
   locationId String?
-  location   Location? @relation(fields: [locationId], references: [id])
+  location   Location? @relation(fields: [locationId],references: [id],onDelete: SetNull)
 
   priceMin Int?
   priceMax Int?
 
   availability Availability @default(ASK_SELLER)
-  phone        String?
+
+  phone String?
 
   status       BusinessStatus     @default(ACTIVE)
   verification VerificationStatus @default(UNVERIFIED)
@@ -174,16 +200,15 @@ model Business {
   // timestamp = soft-deleted
   deletedAt DateTime?
 
-  categories BusinessCategory[]
-  products   Product[]
-
-  socialLinks BusinessSocialLink[]
-
-  matches Match[]
-
+  categories   BusinessCategory[]
+  products     Product[]
+  socialLinks  BusinessSocialLink[]
+  matches      Match[]
   contactEvents ContactEvent[]
 
   deletionRequests BusinessDeletionRequest[]
+  claimRequests    BusinessClaimRequest[]
+  viewEvents       BusinessViewEvent[]
 
   @@index([status])
   @@index([verification])
@@ -197,7 +222,7 @@ model Product {
   id         String @id @default(cuid())
   businessId String
 
-  business Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  business Business @relation(fields: [businessId],references: [id],onDelete: Cascade)
 
   name        String
   description String?
@@ -224,7 +249,8 @@ model Product {
 
   // Audit: which authenticated user deleted this product?
   deletedById String?
-  deletedBy   User?   @relation("ProductDeletedBy", fields: [deletedById], references: [id], onDelete: SetNull)
+
+  deletedBy User? @relation("ProductDeletedBy",fields: [deletedById],references: [id],onDelete: SetNull)
 
   updatedAt DateTime @updatedAt
 
@@ -238,7 +264,7 @@ model ProductImage {
   id        String @id @default(cuid())
   productId String
 
-  product Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+  product Product @relation(fields: [productId],references: [id],onDelete: Cascade)
 
   url       String
   publicId  String?
@@ -255,7 +281,10 @@ model BuyerRequest {
   requestCode String @unique
 
   categoryId String?
-  category   Category? @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+
+  // A category can be deactivated/deleted without destroying
+  // historical buyer requests.
+  category Category? @relation(fields: [categoryId],references: [id],onDelete: SetNull)
 
   budget       Int?
   locationArea String?
@@ -280,15 +309,16 @@ model Match {
   id String @id @default(cuid())
 
   requestId String
-  request   BuyerRequest @relation(fields: [requestId], references: [id], onDelete: Cascade)
+
+  request BuyerRequest @relation(fields: [requestId],references: [id],onDelete: Cascade)
 
   businessId String
-  business   Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+
+  business Business @relation(fields: [businessId],references: [id],onDelete: Cascade)
 
   score         Int     @default(0)
   addedManually Boolean @default(false)
-
-  createdAt DateTime @default(now())
+  createdAt     DateTime @default(now())
 
   @@unique([requestId, businessId])
   @@index([businessId])
@@ -298,12 +328,13 @@ model ContactEvent {
   id String @id @default(cuid())
 
   businessId String
-  business   Business @relation(fields: [businessId], references: [id])
 
+  business Business @relation(fields: [businessId],references: [id])
+
+  // Existing request reference preserved as a scalar.
   requestId String?
 
-  platform SocialPlatform
-
+  platform  SocialPlatform
   createdAt DateTime @default(now())
 
   @@index([businessId])
@@ -316,17 +347,34 @@ model SearchEvent {
 
   query       String
   category    String?
-  resultCount Int     @default(0)
-
-  location String?
-
-  minPrice Int?
-  maxPrice Int?
+  resultCount Int @default(0)
+  location    String?
+  minPrice    Int?
+  maxPrice    Int?
 
   createdAt DateTime @default(now())
 
   @@index([createdAt])
   @@index([category])
+}
+
+model BusinessViewEvent {
+  id String @id @default(cuid())
+
+  businessId String
+
+  business Business @relation(fields: [businessId],references: [id])
+
+  // Anonymous stable visitor identifier generated by the application.
+  // This is not the user's email or phone number.
+  visitorId String
+
+  createdAt DateTime @default(now())
+
+  @@index([businessId])
+  @@index([businessId, createdAt])
+  @@index([businessId, visitorId])
+  @@index([visitorId, createdAt])
 }
 
 model AdminNote {
@@ -347,12 +395,14 @@ model BusinessDeletionRequest {
 
   businessId String
 
-  business Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  // Preserve deletion-request history rather than cascading it away
+  // during an accidental hard-delete of a business.
+  business Business @relation(fields: [businessId],references: [id],onDelete: Restrict)
 
   // Seller/admin account that submitted the request.
   requestedById String
 
-  requestedBy User @relation("BusinessDeletionRequestedBy", fields: [requestedById], references: [id], onDelete: Cascade)
+  requestedBy User @relation("BusinessDeletionRequestedBy",fields: [requestedById],references: [id],onDelete: Restrict)
 
   reason String?
 
@@ -361,13 +411,46 @@ model BusinessDeletionRequest {
   // Admin who reviewed the request.
   reviewedById String?
 
-  reviewedBy User? @relation("BusinessDeletionReviewedBy", fields: [reviewedById], references: [id], onDelete: SetNull)
+  reviewedBy User? @relation("BusinessDeletionReviewedBy",fields: [reviewedById],references: [id],onDelete: SetNull)
 
   reviewedAt DateTime?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
+  @@index([businessId, status])
+  @@index([requestedById])
+  @@index([reviewedById])
+  @@index([status])
+}
+
+model BusinessClaimRequest {
+  id String @id @default(cuid())
+
+  businessId String
+
+  business Business @relation(fields: [businessId],references: [id],onDelete: Restrict)
+
+  // Seller account requesting ownership.
+  requestedById String
+
+  requestedBy User @relation("BusinessClaimRequestedBy",fields: [requestedById],references: [id],onDelete: Restrict)
+
+  reason String?
+
+  status ClaimRequestStatus @default(PENDING)
+
+  // Admin who reviewed the claim.
+  reviewedById String?
+
+  reviewedBy User? @relation("BusinessClaimReviewedBy",fields: [reviewedById],references: [id],onDelete: SetNull)
+
+  reviewedAt DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([businessId, requestedById, status])
   @@index([businessId, status])
   @@index([requestedById])
   @@index([reviewedById])

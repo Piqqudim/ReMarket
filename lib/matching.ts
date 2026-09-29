@@ -5,6 +5,7 @@ export type ParsedQuery = {
   location?: string;
   budget?: number;
   category?: string;
+  budgetIsUpperBound?: boolean;
 };
 
 const GENERIC_WORDS = new Set([
@@ -53,6 +54,37 @@ function tokenize(value: string): string[] {
     .filter(Boolean);
 }
 
+function parseBudgetAmount(
+  value: string,
+  suffix?: string
+): number | null {
+  const numericValue = Number(
+    value.replace(/,/g, "")
+  );
+
+  if (!Number.isFinite(numericValue)) {
+    return null;
+  }
+
+  const normalizedSuffix =
+    suffix?.toLowerCase();
+
+  let multiplier = 1;
+
+  if (normalizedSuffix === "k") {
+    multiplier = 1_000;
+  } else if (normalizedSuffix === "m") {
+    multiplier = 1_000_000;
+  }
+
+  const result =
+    numericValue * multiplier;
+
+  return Number.isFinite(result)
+    ? result
+    : null;
+}
+
 export function parseQuery(
   raw: string,
   explicitLocation?: string,
@@ -67,16 +99,31 @@ export function parseQuery(
 
   let budget = explicitBudget;
 
+  let budgetIsUpperBound = false;
+
   const category = explicitCategory
     ? normalize(explicitCategory)
     : undefined;
 
+  /*
+   * -----------------------------------------
+   * LOCATION
+   * -----------------------------------------
+   *
+   * Only treat text beginning with a letter
+   * as a location. This prevents phrases such
+   * as "phone at 50k" from treating "50k"
+   * as a location.
+   */
+
   const locationMatch = text.match(
-    /\b(?:near|in|at|around)\s+([a-z0-9\s-]+?)(?=\s+(?:under|below|less|budget|for)\b|$)/
+    /\b(?:near|in|at|around)\s+([a-z][a-z0-9\s-]*?)(?=\s+(?:under|below|less|budget|for)\b|$)/
   );
 
   if (!location && locationMatch?.[1]) {
-    location = normalize(locationMatch[1]);
+    location = normalize(
+      locationMatch[1]
+    );
   }
 
   if (locationMatch) {
@@ -86,20 +133,49 @@ export function parseQuery(
     );
   }
 
+  /*
+   * -----------------------------------------
+   * BUDGET
+   * -----------------------------------------
+   *
+   * Supports examples such as:
+   *
+   * under 50k
+   * below ₦50,000
+   * less than 100k
+   * budget of 200k
+   * up to 150k
+   * maximum 300k
+   */
+
   const budgetMatch = text.match(
-    /\b(?:under|below|less than|budget(?: of)?|up to|upto|max(?:imum)?)\s*₦?\s*([\d,]+)/
+    /\b(under|below|less than|budget(?: of)?|up to|upto|max(?:imum)?)\s*[₦n]?\s*([\d,]+(?:\.\d+)?)\s*(k|m)?\s*(?:naira)?\b/
   );
 
   if (
     budget == null &&
-    budgetMatch?.[1]
+    budgetMatch?.[2]
   ) {
-    const parsedBudget = Number(
-      budgetMatch[1].replace(/,/g, "")
-    );
+    const parsedBudget =
+      parseBudgetAmount(
+        budgetMatch[2],
+        budgetMatch[3]
+      );
 
-    if (Number.isFinite(parsedBudget)) {
+    if (parsedBudget != null) {
       budget = parsedBudget;
+
+      const qualifier =
+        budgetMatch[1].toLowerCase();
+
+      budgetIsUpperBound =
+        qualifier === "under" ||
+        qualifier === "below" ||
+        qualifier === "less than" ||
+        qualifier === "up to" ||
+        qualifier === "upto" ||
+        qualifier === "max" ||
+        qualifier === "maximum";
     }
   }
 
@@ -117,6 +193,7 @@ export function parseQuery(
     location,
     budget,
     category,
+    budgetIsUpperBound,
   };
 }
 
@@ -138,7 +215,9 @@ function containsPhrase(
   text: string,
   phrase: string
 ): boolean {
-  const normalizedText = normalize(text);
+  const normalizedText =
+    normalize(text);
+
   const normalizedPhrase =
     normalize(phrase);
 
@@ -182,6 +261,36 @@ export async function findMatches(
       },
     });
 
+  /*
+   * -----------------------------------------
+   * LOCATION FILTER
+   * -----------------------------------------
+   *
+   * A location contained in the search query
+   * is treated as an actual search constraint,
+   * not merely as a ranking bonus.
+   */
+
+  const locationFiltered =
+    parsed.location
+      ? businesses.filter(
+          (business) => {
+            const businessArea =
+              normalize(
+                business.location?.area
+              );
+
+            return (
+              businessArea &&
+              containsPhrase(
+                businessArea,
+                parsed.location!
+              )
+            );
+          }
+        )
+      : businesses;
+
   const meaningfulKeywords =
     parsed.keywords.filter(
       (keyword) =>
@@ -199,278 +308,334 @@ export async function findMatches(
   const normalizedCategory =
     normalize(parsed.category);
 
-  const matches = businesses
-    .map((business) => {
-      const businessName =
-        normalize(business.name);
+  const matches =
+    locationFiltered
+      .map((business) => {
+        const businessName =
+          normalize(business.name);
 
-      const description =
-        normalize(business.description);
-
-      const categoryNames =
-        business.categories
-          .map((item) =>
-            normalize(
-              item.category.name
-            )
-          )
-          .join(" ");
-
-      const productNames =
-        business.products
-          .map((product) =>
-            normalize(product.name)
-          )
-          .join(" ");
-
-      const productDescriptions =
-        business.products
-          .map((product) =>
-            normalize(product.description)
-          )
-          .join(" ");
-
-      const productKeywords =
-        business.products
-          .flatMap(
-            (product) =>
-              product.keywords ?? []
-          )
-          .map(normalize)
-          .join(" ");
-
-      const searchableText = [
-        businessName,
-        description,
-        categoryNames,
-        productNames,
-        productDescriptions,
-        productKeywords,
-      ].join(" ");
-
-      let score = 0;
-      let keywordHits = 0;
-
-      /*
-       * Strong business-name phrase match.
-       */
-      if (
-        queryPhrase &&
-        containsPhrase(
-          businessName,
-          queryPhrase
-        )
-      ) {
-        score += 100;
-        keywordHits += 1;
-      }
-
-      /*
-       * Match individual query terms.
-       */
-      for (const keyword of searchKeywords) {
-        if (!keyword) {
-          continue;
-        }
-
-        if (
-          containsWord(
-            businessName,
-            keyword
-          )
-        ) {
-          score += 45;
-          keywordHits += 1;
-          continue;
-        }
-
-        if (
-          containsWord(
-            productNames,
-            keyword
-          )
-        ) {
-          score += 35;
-          keywordHits += 1;
-          continue;
-        }
-
-        if (
-          containsWord(
-            categoryNames,
-            keyword
-          )
-        ) {
-          score += 25;
-          keywordHits += 1;
-          continue;
-        }
-
-        if (
-          containsWord(
-            productDescriptions,
-            keyword
-          ) ||
-          containsWord(
-            productKeywords,
-            keyword
-          )
-        ) {
-          score += 20;
-          keywordHits += 1;
-          continue;
-        }
-
-        if (
-          searchableText.includes(
-            keyword
-          )
-        ) {
-          score += 10;
-          keywordHits += 1;
-        }
-      }
-
-      /*
-       * If a query exists but nothing
-       * matched, this business is not
-       * considered a match.
-       */
-      if (
-        searchKeywords.length > 0 &&
-        keywordHits === 0
-      ) {
-        return null;
-      }
-
-      /*
-       * Explicit category bonus.
-       *
-       * Example:
-       * category = Fashion
-       */
-      if (normalizedCategory) {
-        if (
-          containsWord(
-            categoryNames,
-            normalizedCategory
-          )
-        ) {
-          score += 30;
-        }
-      }
-
-      /*
-       * Location bonus.
-       */
-      if (parsed.location) {
-        const businessArea =
+        const description =
           normalize(
-            business.location?.area
+            business.description
           );
+
+        const categoryNames =
+          business.categories
+            .map((item) =>
+              normalize(
+                item.category.name
+              )
+            )
+            .join(" ");
+
+        const productNames =
+          business.products
+            .map((product) =>
+              normalize(product.name)
+            )
+            .join(" ");
+
+        const productDescriptions =
+          business.products
+            .map((product) =>
+              normalize(
+                product.description
+              )
+            )
+            .join(" ");
+
+        const productKeywords =
+          business.products
+            .flatMap(
+              (product) =>
+                product.keywords ?? []
+            )
+            .map(normalize)
+            .join(" ");
+
+        const searchableText = [
+          businessName,
+          description,
+          categoryNames,
+          productNames,
+          productDescriptions,
+          productKeywords,
+        ].join(" ");
+
+        let score = 0;
+        let keywordHits = 0;
+
+        /*
+         * Strong business-name phrase match.
+         */
 
         if (
-          businessArea &&
+          queryPhrase &&
           containsPhrase(
-            businessArea,
-            parsed.location
+            businessName,
+            queryPhrase
           )
         ) {
-          score += 35;
+          score += 100;
+          keywordHits += 1;
         }
-      }
 
-      /*
-       * Budget bonus.
-       *
-       * A product is affordable when the
-       * buyer's budget falls within the
-       * product's known price/range.
-       */
-      if (parsed.budget != null) {
-        const hasAffordableProduct =
-          business.products.some(
-            (product) => {
-              const min =
-                product.priceMin ??
-                product.price;
+        /*
+         * Match individual query terms.
+         */
 
-              const max =
-                product.priceMax ??
-                product.price;
+        for (const keyword of searchKeywords) {
+          if (!keyword) {
+            continue;
+          }
 
-              if (
-                min == null &&
-                max == null
-              ) {
-                return false;
-              }
+          if (
+            containsWord(
+              businessName,
+              keyword
+            )
+          ) {
+            score += 45;
+            keywordHits += 1;
+            continue;
+          }
 
-              if (
-                min != null &&
-                parsed.budget! < min
-              ) {
-                return false;
-              }
+          if (
+            containsWord(
+              productNames,
+              keyword
+            )
+          ) {
+            score += 35;
+            keywordHits += 1;
+            continue;
+          }
 
-              if (
-                max != null &&
-                parsed.budget! > max
-              ) {
-                return false;
-              }
+          if (
+            containsWord(
+              categoryNames,
+              keyword
+            )
+          ) {
+            score += 25;
+            keywordHits += 1;
+            continue;
+          }
 
-              return true;
-            }
-          );
+          if (
+            containsWord(
+              productDescriptions,
+              keyword
+            ) ||
+            containsWord(
+              productKeywords,
+              keyword
+            )
+          ) {
+            score += 20;
+            keywordHits += 1;
+            continue;
+          }
 
-        if (hasAffordableProduct) {
-          score += 25;
+          if (
+            searchableText.includes(
+              keyword
+            )
+          ) {
+            score += 10;
+            keywordHits += 1;
+          }
         }
-      }
 
-      /*
-       * Business availability bonus.
-       */
-      if (
-        business.availability ===
-        "AVAILABLE"
-      ) {
-        score += 8;
-      } else if (
-        business.availability ===
-        "ASK_SELLER"
-      ) {
-        score += 3;
-      }
+        /*
+         * If a query exists but nothing
+         * matched, this business is not
+         * considered a match.
+         *
+         * A location-only query is allowed
+         * because the location filter above
+         * already provides the constraint.
+         */
 
-      /*
-       * Verification bonus.
-       */
-      if (
-        business.verification ===
-        "VERIFIED"
-      ) {
-        score += 5;
-      }
+        if (
+          searchKeywords.length > 0 &&
+          keywordHits === 0
+        ) {
+          return null;
+        }
 
-      return {
-        business,
-        score,
-      };
-    })
-    .filter(
-      (
-        item
-      ): item is {
-        business: (typeof businesses)[number];
-        score: number;
-      } => item !== null
-    )
-    .sort(
-      (a, b) =>
-        b.score - a.score
-    );
+        /*
+         * Explicit category bonus.
+         */
+
+        if (normalizedCategory) {
+          if (
+            containsWord(
+              categoryNames,
+              normalizedCategory
+            )
+          ) {
+            score += 30;
+          }
+        }
+
+        /*
+         * Location bonus.
+         */
+
+        if (parsed.location) {
+          const businessArea =
+            normalize(
+              business.location?.area
+            );
+
+          if (
+            businessArea &&
+            containsPhrase(
+              businessArea,
+              parsed.location
+            )
+          ) {
+            score += 35;
+          }
+        }
+
+        /*
+         * Budget bonus.
+         *
+         * Upper-bound queries such as:
+         * "under 50k"
+         * "below 100k"
+         * "up to 200k"
+         *
+         * are treated as maximum budgets.
+         *
+         * For normal budget values, the budget
+         * must fall within the known product range.
+         */
+
+        const parsedBudget =
+          parsed.budget;
+
+        if (parsedBudget != null) {
+          const hasAffordableProduct =
+            business.products.some(
+              (product) => {
+                const min =
+                  product.priceMin ??
+                  product.price;
+
+                const max =
+                  product.priceMax ??
+                  product.price;
+
+                /*
+                 * No price information:
+                 * do not award a budget bonus.
+                 */
+
+                if (
+                  min == null &&
+                  max == null
+                ) {
+                  return false;
+                }
+
+                /*
+                 * Upper-bound budget.
+                 *
+                 * A product qualifies when its
+                 * minimum known price does not
+                 * exceed the buyer's maximum.
+                 */
+
+                if (
+                  parsed.budgetIsUpperBound
+                ) {
+                  if (
+                    min != null &&
+                    parsedBudget < min
+                  ) {
+                    return false;
+                  }
+
+                  return true;
+                }
+
+                /*
+                 * Normal budget.
+                 *
+                 * The buyer's budget falls within
+                 * the product's known price range.
+                 */
+
+                if (
+                  min != null &&
+                  parsedBudget < min
+                ) {
+                  return false;
+                }
+
+                if (
+                  max != null &&
+                  parsedBudget > max
+                ) {
+                  return false;
+                }
+
+                return true;
+              }
+            );
+
+          if (hasAffordableProduct) {
+            score += 25;
+          }
+        }
+
+        /*
+         * Business availability bonus.
+         */
+
+        if (
+          business.availability ===
+          "AVAILABLE"
+        ) {
+          score += 8;
+        } else if (
+          business.availability ===
+          "ASK_SELLER"
+        ) {
+          score += 3;
+        }
+
+        /*
+         * Verification bonus.
+         */
+
+        if (
+          business.verification ===
+          "VERIFIED"
+        ) {
+          score += 5;
+        }
+
+        return {
+          business,
+          score,
+        };
+      })
+      .filter(
+        (
+          item
+        ): item is {
+          business: (typeof businesses)[number];
+          score: number;
+        } => item !== null
+      )
+      .sort(
+        (a, b) =>
+          b.score - a.score
+      );
 
   return matches;
 }

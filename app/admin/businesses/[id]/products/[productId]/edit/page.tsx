@@ -2,10 +2,12 @@
 
 import {
   useEffect,
+  useMemo,
   useState,
 } from "react";
 
 import {
+  AlertTriangle,
   ArrowLeft,
   Loader2,
   Package,
@@ -26,6 +28,16 @@ import {
   type ReMarketCategory,
 } from "@/lib/categories";
 
+type Availability =
+  | "AVAILABLE"
+  | "ASK_SELLER"
+  | "UNAVAILABLE";
+
+type BusinessStatus =
+  | "ACTIVE"
+  | "INACTIVE"
+  | "PENDING";
+
 type ProductImage = {
   id: string;
   url: string;
@@ -38,32 +50,406 @@ type Product = {
   name: string;
   description: string | null;
   categoryId: string | null;
+  categoryName: string | null;
   price: number | null;
   priceMin: number | null;
   priceMax: number | null;
-  availability:
-    | "AVAILABLE"
-    | "ASK_SELLER"
-    | "UNAVAILABLE";
+  availability: Availability;
   keywords: string[];
   imageUrl: string | null;
-  status:
-    | "ACTIVE"
-    | "INACTIVE"
-    | "PENDING";
+  status: BusinessStatus;
   images: ProductImage[];
-  deletedAt?: string | null;
+  deletedAt: string | null;
 };
 
-export default function EditProductPage() {
-  const router =
-    useRouter();
+type ApiCategory = {
+  id: string;
+  name: string;
+  iconKey?: string;
+  isActive?: boolean;
+  sortOrder?: number;
+};
 
+function isRecord(
+  value: unknown
+): value is Record<string, unknown> {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    !Array.isArray(value)
+  );
+}
+
+function isApiCategory(
+  value: unknown
+): value is ApiCategory {
+  return (
+    isRecord(value) &&
+    typeof value.id === "string" &&
+    typeof value.name === "string"
+  );
+}
+
+function isAvailability(
+  value: unknown
+): value is Availability {
+  return (
+    value === "AVAILABLE" ||
+    value === "ASK_SELLER" ||
+    value === "UNAVAILABLE"
+  );
+}
+
+function isBusinessStatus(
+  value: unknown
+): value is BusinessStatus {
+  return (
+    value === "ACTIVE" ||
+    value === "INACTIVE" ||
+    value === "PENDING"
+  );
+}
+
+function getString(
+  record: Record<string, unknown>,
+  key: string
+): string | null {
+  return typeof record[key] === "string"
+    ? record[key]
+    : null;
+}
+
+function getNumber(
+  record: Record<string, unknown>,
+  key: string
+): number | null {
+  const value = record[key];
+
+  return (
+    typeof value === "number" &&
+    Number.isFinite(value)
+  )
+    ? value
+    : null;
+}
+
+function getOptionalIntegerFromString(
+  value: string
+): number | null | "INVALID" {
+  const trimmed = value.trim();
+
+  if (!trimmed) {
+    return null;
+  }
+
+  if (!/^\d+$/.test(trimmed)) {
+    return "INVALID";
+  }
+
+  const parsed = Number(trimmed);
+
+  if (!Number.isSafeInteger(parsed)) {
+    return "INVALID";
+  }
+
+  return parsed;
+}
+
+function formatPriceInput(
+  value: number | null
+): string {
+  return value === null
+    ? ""
+    : String(value);
+}
+
+function normalizeProductImage(
+  value: unknown,
+  fallbackIndex: number
+): ProductImage | null {
+  if (!isRecord(value)) {
+    return null;
+  }
+
+  const url = getString(
+    value,
+    "url"
+  );
+
+  if (!url) {
+    return null;
+  }
+
+  const id =
+    getString(
+      value,
+      "id"
+    ) ??
+    `${fallbackIndex}-${url}`;
+
+  const publicId =
+    getString(
+      value,
+      "publicId"
+    );
+
+  const sortOrder =
+    getNumber(
+      value,
+      "sortOrder"
+    );
+
+  return {
+    id,
+    url,
+    publicId,
+    sortOrder:
+      sortOrder !== null &&
+      Number.isInteger(sortOrder)
+        ? sortOrder
+        : fallbackIndex,
+  };
+}
+
+function normalizeProduct(
+  value: unknown
+): Product | null {
+  if (!isRecord(value)) {
+    return null;
+  }
+
+  const id = getString(
+    value,
+    "id"
+  );
+
+  const name = getString(
+    value,
+    "name"
+  );
+
+  if (!id || !name) {
+    return null;
+  }
+
+  const rawImages =
+    Array.isArray(value.images)
+      ? value.images
+      : [];
+
+  const images = rawImages
+    .map(
+      (image, index) =>
+        normalizeProductImage(
+          image,
+          index
+        )
+    )
+    .filter(
+      (
+        image
+      ): image is ProductImage =>
+        image !== null
+    )
+    .sort(
+      (a, b) =>
+        a.sortOrder -
+        b.sortOrder
+    );
+
+  const imageUrl =
+    getString(
+      value,
+      "imageUrl"
+    );
+
+  if (
+    images.length === 0 &&
+    imageUrl
+  ) {
+    images.push({
+      id: `legacy-${id}`,
+      url: imageUrl,
+      publicId: null,
+      sortOrder: 0,
+    });
+  }
+
+  const rawKeywords =
+    Array.isArray(
+      value.keywords
+    )
+      ? value.keywords
+      : [];
+
+  const keywords =
+    rawKeywords.filter(
+      (
+        item
+      ): item is string =>
+        typeof item === "string"
+    );
+
+  const availability =
+    isAvailability(
+      value.availability
+    )
+      ? value.availability
+      : "ASK_SELLER";
+
+  const status =
+    isBusinessStatus(
+      value.status
+    )
+      ? value.status
+      : "ACTIVE";
+
+  const rawCategory =
+    isRecord(
+      value.category
+    )
+      ? value.category
+      : null;
+
+  return {
+    id,
+    name,
+    description:
+      getString(
+        value,
+        "description"
+      ),
+
+    categoryId:
+      getString(
+        value,
+        "categoryId"
+      ),
+
+    categoryName:
+      rawCategory &&
+      typeof rawCategory.name ===
+        "string"
+        ? rawCategory.name
+        : null,
+
+    price:
+      getNumber(
+        value,
+        "price"
+      ),
+
+    priceMin:
+      getNumber(
+        value,
+        "priceMin"
+      ),
+
+    priceMax:
+      getNumber(
+        value,
+        "priceMax"
+      ),
+
+    availability,
+
+    keywords,
+
+    imageUrl,
+
+    status,
+
+    images,
+
+    deletedAt:
+      getString(
+        value,
+        "deletedAt"
+      ),
+  };
+}
+
+function normalizeBusinessProducts(
+  value: unknown
+): Product[] {
+  if (!isRecord(value)) {
+    return [];
+  }
+
+  if (!Array.isArray(value.products)) {
+    return [];
+  }
+
+  return value.products
+    .map(
+      (product) =>
+        normalizeProduct(product)
+    )
+    .filter(
+      (
+        product
+      ): product is Product =>
+        product !== null
+    );
+}
+
+function getCategoryList(
+  value: unknown
+): {
+  categories: ReMarketCategory[];
+  fallback: boolean;
+} {
+  const rawCategories =
+    isRecord(value)
+      ? value.categories
+      : undefined;
+
+  if (
+    !Array.isArray(
+      rawCategories
+    )
+  ) {
+    return {
+      categories:
+        DEFAULT_CATEGORIES,
+      fallback: true,
+    };
+  }
+
+  const backendCategories =
+    rawCategories.filter(
+      isApiCategory
+    );
+
+  if (
+    backendCategories.length ===
+    0
+  ) {
+    return {
+      categories:
+        DEFAULT_CATEGORIES,
+      fallback: true,
+    };
+  }
+
+  return {
+    categories:
+      mergeCategories(
+        backendCategories
+      ),
+    fallback: false,
+  };
+}
+
+export default function EditProductPage() {
   const params =
     useParams<{
       id: string;
       productId: string;
     }>();
+
+  const router =
+    useRouter();
 
   const businessId =
     params.id;
@@ -74,59 +460,91 @@ export default function EditProductPage() {
   const [businessName, setBusinessName] =
     useState("");
 
-  const [businessDeletedAt, setBusinessDeletedAt] =
-    useState<string | null>(null);
-
-  const [categories, setCategories] =
-    useState<ReMarketCategory[]>(
-      DEFAULT_CATEGORIES
-    );
-
-  const [usingCategoryFallback, setUsingCategoryFallback] =
-    useState(true);
+  const [
+    businessDeletedAt,
+    setBusinessDeletedAt,
+  ] =
+    useState<
+      string | null
+    >(null);
 
   const [product, setProduct] =
     useState<Product | null>(
       null
     );
 
+  const [
+    categories,
+    setCategories,
+  ] =
+    useState<
+      ReMarketCategory[]
+    >(
+      DEFAULT_CATEGORIES
+    );
+
+  const [
+    categoriesFallback,
+    setCategoriesFallback,
+  ] =
+    useState(false);
+
   const [name, setName] =
     useState("");
 
-  const [description, setDescription] =
+  const [
+    description,
+    setDescription,
+  ] =
     useState("");
 
-  const [categoryId, setCategoryId] =
+  const [
+    categoryId,
+    setCategoryId,
+  ] =
     useState("");
 
   const [price, setPrice] =
     useState("");
 
-  const [priceMin, setPriceMin] =
+  const [
+    priceMin,
+    setPriceMin,
+  ] =
     useState("");
 
-  const [priceMax, setPriceMax] =
+  const [
+    priceMax,
+    setPriceMax,
+  ] =
     useState("");
 
-  const [availability, setAvailability] =
-    useState<
-      | "AVAILABLE"
-      | "ASK_SELLER"
-      | "UNAVAILABLE"
-    >("ASK_SELLER");
+  const [
+    availability,
+    setAvailability,
+  ] =
+    useState<Availability>(
+      "ASK_SELLER"
+    );
 
   const [status, setStatus] =
-    useState<
-      | "ACTIVE"
-      | "INACTIVE"
-      | "PENDING"
-    >("ACTIVE");
+    useState<BusinessStatus>(
+      "ACTIVE"
+    );
 
-  const [keywords, setKeywords] =
+  const [
+    keywords,
+    setKeywords,
+  ] =
     useState("");
 
-  const [images, setImages] =
-    useState<string[]>([]);
+  const [
+    images,
+    setImages,
+  ] =
+    useState<string[]>(
+      []
+    );
 
   const [loading, setLoading] =
     useState(true);
@@ -182,46 +600,69 @@ export default function EditProductPage() {
             ),
           ]);
 
-        const businessData =
+        const businessData: unknown =
           await businessResponse.json();
 
-        const categoriesData =
+        const categoriesData: unknown =
           await categoriesResponse.json();
 
         if (
           !businessResponse.ok
         ) {
           throw new Error(
-            typeof businessData?.error ===
+            isRecord(
+              businessData
+            ) &&
+            typeof businessData.error ===
               "string"
               ? businessData.error
               : "Unable to load business."
           );
         }
 
-        const business =
-          businessData?.business;
-
-        if (!business) {
+        if (
+          !categoriesResponse.ok
+        ) {
           throw new Error(
-            "Business not found."
+            isRecord(
+              categoriesData
+            ) &&
+            typeof categoriesData.error ===
+              "string"
+              ? categoriesData.error
+              : "Unable to load categories."
           );
         }
 
-        const loadedProduct =
-          Array.isArray(
-            business.products
+        if (
+          !isRecord(
+            businessData
+          ) ||
+          !isRecord(
+            businessData.business
           )
-            ? business.products.find(
-                (
-                  item: Product
-                ) =>
-                  item.id ===
-                  productId
-              )
-            : undefined;
+        ) {
+          throw new Error(
+            "Unable to load business."
+          );
+        }
 
-        if (!loadedProduct) {
+        const business =
+          businessData.business;
+
+        const rawProducts =
+          normalizeBusinessProducts(
+            business
+          );
+
+        const foundProduct =
+          rawProducts.find(
+            (item) =>
+              item.id ===
+              productId
+          );
+
+        if (!foundProduct) {
           throw new Error(
             "Product not found."
           );
@@ -241,140 +682,82 @@ export default function EditProductPage() {
             : null
         );
 
-        const backendCategories =
-          categoriesResponse.ok &&
-          Array.isArray(
-            categoriesData.categories
-          )
-            ? categoriesData.categories
-            : [];
-
-        const mergedCategories =
-          mergeCategories(
-            backendCategories
-          );
-
-        if (
-          mergedCategories.length >
-          0
-        ) {
-          setCategories(
-            mergedCategories
-          );
-          setUsingCategoryFallback(
-            false
-          );
-        } else {
-          setCategories(
-            DEFAULT_CATEGORIES
-          );
-          setUsingCategoryFallback(
-            true
-          );
-        }
-
-        const typedProduct =
-          loadedProduct as Product;
-
         setProduct(
-          typedProduct
+          foundProduct
         );
 
         setName(
-          typedProduct.name
+          foundProduct.name
         );
 
         setDescription(
-          typedProduct.description ??
+          foundProduct.description ??
             ""
         );
 
         setCategoryId(
-          typedProduct.categoryId ??
+          foundProduct.categoryId ??
             ""
         );
 
         setPrice(
-          typedProduct.price !=
-            null
-            ? String(
-                typedProduct.price
-              )
-            : ""
+          formatPriceInput(
+            foundProduct.price
+          )
         );
 
         setPriceMin(
-          typedProduct.priceMin !=
-            null
-            ? String(
-                typedProduct.priceMin
-              )
-            : ""
+          formatPriceInput(
+            foundProduct.priceMin
+          )
         );
 
         setPriceMax(
-          typedProduct.priceMax !=
-            null
-            ? String(
-                typedProduct.priceMax
-              )
-            : ""
+          formatPriceInput(
+            foundProduct.priceMax
+          )
         );
 
         setAvailability(
-          typedProduct.availability
+          foundProduct.availability
         );
 
         setStatus(
-          typedProduct.status
+          foundProduct.status
         );
 
         setKeywords(
-          Array.isArray(
-            typedProduct.keywords
+          foundProduct.keywords.join(
+            ", "
           )
-            ? typedProduct.keywords.join(
-                ", "
-              )
-            : ""
         );
 
-        const gallery =
-          Array.isArray(
-            typedProduct.images
-          )
-            ? typedProduct.images
-                .slice()
-                .sort(
-                  (a, b) =>
-                    a.sortOrder -
-                    b.sortOrder
-                )
-                .map(
-                  (
-                    image
-                  ) =>
-                    image.url
-                )
-            : [];
-
-        /*
-         * Backwards compatibility:
-         * older products may only have imageUrl.
-         */
         setImages(
-          gallery.length > 0
-            ? gallery
-            : typedProduct.imageUrl
-              ? [
-                  typedProduct.imageUrl,
-                ]
-              : []
+          foundProduct.images.map(
+            (image) =>
+              image.url
+          )
         );
-      } catch (error) {
+
+        const categoryState =
+          getCategoryList(
+            categoriesData
+          );
+
+        setCategories(
+          categoryState.categories
+        );
+
+        setCategoriesFallback(
+          categoryState.fallback
+        );
+      } catch (
+        loadError
+      ) {
         if (
-          error instanceof DOMException &&
-          error.name ===
+          loadError instanceof
+            DOMException &&
+          loadError.name ===
             "AbortError"
         ) {
           return;
@@ -382,12 +765,13 @@ export default function EditProductPage() {
 
         console.error(
           "Edit product load error:",
-          error
+          loadError
         );
 
         setError(
-          error instanceof Error
-            ? error.message
+          loadError instanceof
+            Error
+            ? loadError.message
             : "Unable to load product."
         );
       } finally {
@@ -410,49 +794,199 @@ export default function EditProductPage() {
   ]);
 
   const businessDeleted =
-    Boolean(
-      businessDeletedAt
-    );
+    businessDeletedAt !==
+    null;
 
   const productDeleted =
-    Boolean(
-      product?.deletedAt
-    );
+    product?.deletedAt !==
+    null;
 
   const editingDisabled =
     businessDeleted ||
     productDeleted;
+
+  const currentCategoryName =
+    product?.categoryName ??
+    "Existing category";
+
+  const categoryOptions =
+    useMemo(() => {
+      if (
+        categoriesFallback
+      ) {
+        return [];
+      }
+
+      return categories;
+    }, [
+      categories,
+      categoriesFallback,
+    ]);
+
+  function parsePriceField(
+    value: string,
+    label: string
+  ): number | null {
+    const parsed =
+      getOptionalIntegerFromString(
+        value
+      );
+
+    if (
+      parsed ===
+      "INVALID"
+    ) {
+      throw new Error(
+        `${label} must be a whole number.`
+      );
+    }
+
+    return parsed;
+  }
 
   async function submit(
     event: React.SubmitEvent<HTMLFormElement>
   ) {
     event.preventDefault();
 
-    setError("");
-
-    if (businessDeleted) {
+    if (!product) {
       setError(
-        "This business has been deleted and cannot be edited."
+        "Product could not be loaded."
       );
       return;
     }
 
-    if (productDeleted) {
+    if (
+      editingDisabled
+    ) {
       setError(
-        "This product has been deleted and is retained for administrative reference."
+        productDeleted
+          ? "This product has been deleted."
+          : "This business has been deleted."
       );
       return;
     }
 
     setSaving(true);
+    setError("");
 
-    if (!name.trim()) {
+    const trimmedName =
+      name.trim();
+
+    const trimmedDescription =
+      description.trim();
+
+    if (!trimmedName) {
       setError(
         "Product name is required."
       );
       setSaving(false);
       return;
     }
+
+    let parsedPrice:
+      | number
+      | null;
+
+    let parsedPriceMin:
+      | number
+      | null;
+
+    let parsedPriceMax:
+      | number
+      | null;
+
+    try {
+      parsedPrice =
+        parsePriceField(
+          price,
+          "Exact price"
+        );
+
+      parsedPriceMin =
+        parsePriceField(
+          priceMin,
+          "Minimum price"
+        );
+
+      parsedPriceMax =
+        parsePriceField(
+          priceMax,
+          "Maximum price"
+        );
+    } catch (
+      priceError
+    ) {
+      setError(
+        priceError instanceof
+          Error
+          ? priceError.message
+          : "Price values are invalid."
+      );
+
+      setSaving(false);
+      return;
+    }
+
+    if (
+      parsedPrice !==
+        null &&
+      parsedPrice < 0
+    ) {
+      setError(
+        "Exact price cannot be negative."
+      );
+      setSaving(false);
+      return;
+    }
+
+    if (
+      parsedPriceMin !==
+        null &&
+      parsedPriceMin < 0
+    ) {
+      setError(
+        "Minimum price cannot be negative."
+      );
+      setSaving(false);
+      return;
+    }
+
+    if (
+      parsedPriceMax !==
+        null &&
+      parsedPriceMax < 0
+    ) {
+      setError(
+        "Maximum price cannot be negative."
+      );
+      setSaving(false);
+      return;
+    }
+
+    if (
+      parsedPriceMin !==
+        null &&
+      parsedPriceMax !==
+        null &&
+      parsedPriceMin >
+        parsedPriceMax
+    ) {
+      setError(
+        "Minimum price cannot be greater than maximum price."
+      );
+      setSaving(false);
+      return;
+    }
+
+    const keywordValues =
+      keywords
+        .split(",")
+        .map(
+          (value: string) =>
+            value.trim()
+        )
+        .filter(Boolean);
 
     try {
       const response =
@@ -467,76 +1001,68 @@ export default function EditProductPage() {
                 "application/json",
             },
 
-            body: JSON.stringify({
-              name:
-                name.trim(),
+            body:
+              JSON.stringify({
+                name:
+                  trimmedName,
 
-              description:
-                description.trim() ||
-                null,
+                description:
+                  trimmedDescription ||
+                  null,
 
-              categoryId:
-                categoryId ||
-                null,
+                categoryId:
+                  categoryId ||
+                  null,
 
-              price:
-                price.trim() ||
-                null,
+                price:
+                  parsedPrice,
 
-              priceMin:
-                priceMin.trim() ||
-                null,
+                priceMin:
+                  parsedPriceMin,
 
-              priceMax:
-                priceMax.trim() ||
-                null,
+                priceMax:
+                  parsedPriceMax,
 
-              availability,
+                availability,
 
-              status,
+                status,
 
-              keywords:
-                keywords
-                  .split(",")
-                  .map(
-                    (item) =>
-                      item.trim()
-                  )
-                  .filter(Boolean),
+                keywords:
+                  keywordValues,
 
-              images,
-            }),
+                images,
+              }),
           }
         );
 
-      const data =
+      const data: unknown =
         await response.json();
 
       if (!response.ok) {
         throw new Error(
-          typeof data?.error ===
+          isRecord(data) &&
+          typeof data.error ===
             "string"
             ? data.error
             : "Unable to update product."
         );
       }
 
-      setProduct(
-        data.product as Product
-      );
-
       router.push(
         `/admin/businesses/${businessId}`
       );
-    } catch (error) {
+    } catch (
+      submitError
+    ) {
       console.error(
         "Update product error:",
-        error
+        submitError
       );
 
       setError(
-        error instanceof Error
-          ? error.message
+        submitError instanceof
+          Error
+          ? submitError.message
           : "Unable to update product."
       );
     } finally {
@@ -546,15 +1072,15 @@ export default function EditProductPage() {
 
   async function deleteProduct() {
     if (
-      businessDeleted ||
-      productDeleted
+      !product ||
+      editingDisabled
     ) {
       return;
     }
 
     const confirmed =
       window.confirm(
-        "Delete this product?"
+        "Delete this product? The product will be soft-deleted and kept in the admin record."
       );
 
     if (!confirmed) {
@@ -574,12 +1100,13 @@ export default function EditProductPage() {
           }
         );
 
-      const data =
+      const data: unknown =
         await response.json();
 
       if (!response.ok) {
         throw new Error(
-          typeof data?.error ===
+          isRecord(data) &&
+          typeof data.error ===
             "string"
             ? data.error
             : "Unable to delete product."
@@ -589,15 +1116,18 @@ export default function EditProductPage() {
       router.push(
         `/admin/businesses/${businessId}`
       );
-    } catch (error) {
+    } catch (
+      deleteError
+    ) {
       console.error(
         "Delete product error:",
-        error
+        deleteError
       );
 
       setError(
-        error instanceof Error
-          ? error.message
+        deleteError instanceof
+          Error
+          ? deleteError.message
           : "Unable to delete product."
       );
     } finally {
@@ -607,7 +1137,7 @@ export default function EditProductPage() {
 
   if (loading) {
     return (
-      <main className="min-h-screen bg-[#FFF7ED] p-6">
+      <main className="min-h-screen bg-[#FFF7ED] p-4 sm:p-6">
         <div className="mx-auto flex min-h-[70vh] max-w-[900px] items-center justify-center">
           <div className="flex items-center gap-2 text-xs text-gray-500">
             <Loader2 className="h-4 w-4 animate-spin" />
@@ -618,35 +1148,105 @@ export default function EditProductPage() {
     );
   }
 
+  if (!product) {
+    return (
+      <main className="min-h-screen bg-[#FFF7ED] p-4 sm:p-6">
+        <div className="mx-auto max-w-[900px]">
+          <Link
+            href={`/admin/businesses/${businessId}`}
+            className="inline-flex items-center gap-2 text-xs font-semibold text-gray-600 hover:text-[#9F2D18]"
+          >
+            <ArrowLeft className="h-4 w-4" />
+            Back to business
+          </Link>
+
+          <div className="mt-5 rounded-[22px] border border-red-200 bg-red-50 p-6 text-xs text-red-700">
+            {error ||
+              "Product not found."}
+          </div>
+        </div>
+      </main>
+    );
+  }
+
   return (
     <main className="min-h-screen bg-[#FFF7ED] p-4 sm:p-6">
       <div className="mx-auto max-w-[900px]">
-        <Link
-          href={`/admin/businesses/${businessId}`}
-          className="inline-flex items-center gap-2 text-xs font-semibold text-gray-600 hover:text-[#9F2D18]"
-        >
-          <ArrowLeft className="h-4 w-4" />
-          Back to {businessName || "business"}
-        </Link>
+        <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+          <Link
+            href={`/admin/businesses/${businessId}`}
+            className="inline-flex items-center gap-2 text-xs font-semibold text-gray-600 hover:text-[#9F2D18]"
+          >
+            <ArrowLeft className="h-4 w-4" />
+            Back to{" "}
+            {businessName ||
+              "business"}
+          </Link>
+
+          {!editingDisabled && (
+            <button
+              type="button"
+              onClick={() =>
+                void deleteProduct()
+              }
+              disabled={
+                deleting ||
+                saving
+              }
+              className="inline-flex items-center justify-center gap-2 rounded-xl border border-red-200 bg-white px-4 py-2.5 text-xs font-bold text-red-600 hover:bg-red-50 disabled:opacity-60"
+            >
+              {deleting ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <Trash2 className="h-4 w-4" />
+              )}
+
+              {deleting
+                ? "Deleting..."
+                : "Delete product"}
+            </button>
+          )}
+        </div>
 
         <div className="mt-5 overflow-hidden rounded-[22px] border border-[#E8E4DE] bg-[#FFFDFC] shadow-sm">
           <div className="border-b border-[#EAE6DF] bg-white px-5 py-5 sm:px-7">
-            <div className="flex items-center gap-3">
-              <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-[#FF5A36] text-white">
+            <div className="flex items-start gap-3">
+              <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-[#FF5A36] text-white">
                 <Package className="h-5 w-5" />
               </div>
 
               <div className="min-w-0">
-                <h1 className="truncate text-xl font-bold text-[#17202A]">
+                <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-gray-400">
+                  Product
+                </p>
+
+                <h1 className="mt-1 truncate text-xl font-bold text-[#17202A]">
                   Edit product
                 </h1>
 
-                <p className="mt-0.5 truncate text-xs text-gray-500">
-                  {product?.name ||
-                    "Product"}
+                <p className="mt-0.5 text-xs text-gray-500">
+                  Update{" "}
+                  {product.name}{" "}
+                  for{" "}
+                  {businessName ||
+                    "this business"}
+                  .
                 </p>
               </div>
             </div>
+
+            {(businessDeleted ||
+              productDeleted) && (
+              <div className="mt-4 flex items-start gap-2 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs text-amber-800">
+                <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+
+                <span>
+                  {productDeleted
+                    ? "This product has been soft-deleted and can no longer be edited."
+                    : "This business has been deleted and its products can no longer be edited."}
+                </span>
+              </div>
+            )}
           </div>
 
           <form
@@ -658,19 +1258,6 @@ export default function EditProductPage() {
                 {error}
               </div>
             )}
-
-            {businessDeleted && (
-              <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-xs font-medium text-red-700">
-                This business has been deleted and is retained for administrative reference. Its products cannot be edited.
-              </div>
-            )}
-
-            {!businessDeleted &&
-              productDeleted && (
-                <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-xs font-medium text-red-700">
-                  This product has been deleted and is retained for administrative reference.
-                </div>
-              )}
 
             <section>
               <h2 className="text-sm font-bold text-[#17202A]">
@@ -685,16 +1272,20 @@ export default function EditProductPage() {
 
                   <input
                     value={name}
-                    onChange={(event) =>
+                    onChange={(
+                      event
+                    ) =>
                       setName(
-                        event.target
-                          .value
+                        event.target.value
                       )
                     }
                     disabled={
-                      editingDisabled
+                      editingDisabled ||
+                      saving ||
+                      deleting
                     }
-                    className="mt-2 h-11 w-full rounded-xl border border-[#E8E4DE] bg-white px-3 text-xs outline-none focus:border-[#FF9B82] disabled:cursor-not-allowed disabled:bg-gray-50"
+                    placeholder="e.g. Men's Sneakers"
+                    className="mt-2 h-11 w-full rounded-xl border border-[#E8E4DE] bg-white px-3 text-xs outline-none focus:border-[#FF9B82] focus:ring-4 focus:ring-[#FF5A36]/10 disabled:bg-gray-50 disabled:text-gray-500"
                   />
                 </div>
 
@@ -707,17 +1298,21 @@ export default function EditProductPage() {
                     value={
                       description
                     }
-                    onChange={(event) =>
+                    onChange={(
+                      event
+                    ) =>
                       setDescription(
-                        event.target
-                          .value
+                        event.target.value
                       )
                     }
-                    rows={4}
                     disabled={
-                      editingDisabled
+                      editingDisabled ||
+                      saving ||
+                      deleting
                     }
-                    className="mt-2 w-full resize-none rounded-xl border border-[#E8E4DE] bg-white px-3 py-3 text-xs outline-none focus:border-[#FF9B82] disabled:cursor-not-allowed disabled:bg-gray-50"
+                    rows={4}
+                    placeholder="Describe the product."
+                    className="mt-2 w-full resize-none rounded-xl border border-[#E8E4DE] bg-white px-3 py-3 text-xs outline-none focus:border-[#FF9B82] disabled:bg-gray-50 disabled:text-gray-500"
                   />
                 </div>
               </div>
@@ -729,7 +1324,10 @@ export default function EditProductPage() {
               </h2>
 
               <p className="mt-1 text-[11px] text-gray-500">
-                The first image is the cover image.
+                Add individual
+                images or an image
+                folder. The first
+                image is the cover.
               </p>
 
               <div className="mt-4">
@@ -739,9 +1337,9 @@ export default function EditProductPage() {
                     setImages
                   }
                   disabled={
+                    editingDisabled ||
                     saving ||
-                    deleting ||
-                    editingDisabled
+                    deleting
                   }
                 />
               </div>
@@ -758,50 +1356,60 @@ export default function EditProductPage() {
                     Category
                   </label>
 
-                  <select
-                    value={
-                      categoryId
-                    }
-                    onChange={(
-                      event
-                    ) =>
-                      setCategoryId(
-                        event.target
-                          .value
-                      )
-                    }
-                    disabled={
-                      editingDisabled ||
-                      usingCategoryFallback
-                    }
-                    className="mt-2 h-11 w-full rounded-xl border border-[#E8E4DE] bg-white px-3 text-xs disabled:cursor-not-allowed disabled:bg-gray-50"
-                  >
-                    <option value="">
-                      No category
-                    </option>
+                  {categoriesFallback ? (
+                    <div className="mt-2 rounded-xl border border-[#E8E4DE] bg-gray-50 px-3 py-3 text-xs text-gray-600">
+                      {currentCategoryName}
 
-                    {categories.map(
-                      (category) => (
-                        <option
-                          key={
-                            category.id
-                          }
-                          value={
-                            category.id
-                          }
-                        >
-                          {
-                            category.name
-                          }
-                        </option>
-                      )
-                    )}
-                  </select>
+                      <p className="mt-1 text-[10px] text-gray-400">
+                        Categories could
+                        not be loaded.
+                        The existing
+                        category will
+                        be preserved.
+                      </p>
+                    </div>
+                  ) : (
+                    <select
+                      value={
+                        categoryId
+                      }
+                      onChange={(
+                        event
+                      ) =>
+                        setCategoryId(
+                          event.target.value
+                        )
+                      }
+                      disabled={
+                        editingDisabled ||
+                        saving ||
+                        deleting
+                      }
+                      className="mt-2 h-11 w-full rounded-xl border border-[#E8E4DE] bg-white px-3 text-xs disabled:bg-gray-50 disabled:text-gray-500"
+                    >
+                      <option value="">
+                        No category
+                      </option>
 
-                  {usingCategoryFallback && (
-                    <p className="mt-1.5 text-[10px] text-gray-400">
-                      Categories are temporarily unavailable. The existing category will be preserved.
-                    </p>
+                      {categoryOptions.map(
+                        (
+                          category
+                        ) => (
+                          <option
+                            key={
+                              category.id
+                            }
+                            value={
+                              category.id
+                            }
+                          >
+                            {
+                              category.name
+                            }
+                          </option>
+                        )
+                      )}
+                    </select>
                   )}
                 </div>
 
@@ -811,18 +1419,24 @@ export default function EditProductPage() {
                   </label>
 
                   <input
-                    value={price}
-                    onChange={(event) =>
+                    value={
+                      price
+                    }
+                    onChange={(
+                      event
+                    ) =>
                       setPrice(
-                        event.target
-                          .value
+                        event.target.value
                       )
                     }
-                    inputMode="numeric"
                     disabled={
-                      editingDisabled
+                      editingDisabled ||
+                      saving ||
+                      deleting
                     }
-                    className="mt-2 h-11 w-full rounded-xl border border-[#E8E4DE] bg-white px-3 text-xs disabled:cursor-not-allowed disabled:bg-gray-50"
+                    inputMode="numeric"
+                    placeholder="Optional"
+                    className="mt-2 h-11 w-full rounded-xl border border-[#E8E4DE] bg-white px-3 text-xs disabled:bg-gray-50 disabled:text-gray-500"
                   />
                 </div>
 
@@ -835,17 +1449,21 @@ export default function EditProductPage() {
                     value={
                       priceMin
                     }
-                    onChange={(event) =>
+                    onChange={(
+                      event
+                    ) =>
                       setPriceMin(
-                        event.target
-                          .value
+                        event.target.value
                       )
                     }
-                    inputMode="numeric"
                     disabled={
-                      editingDisabled
+                      editingDisabled ||
+                      saving ||
+                      deleting
                     }
-                    className="mt-2 h-11 w-full rounded-xl border border-[#E8E4DE] bg-white px-3 text-xs disabled:cursor-not-allowed disabled:bg-gray-50"
+                    inputMode="numeric"
+                    placeholder="Optional"
+                    className="mt-2 h-11 w-full rounded-xl border border-[#E8E4DE] bg-white px-3 text-xs disabled:bg-gray-50 disabled:text-gray-500"
                   />
                 </div>
 
@@ -858,17 +1476,21 @@ export default function EditProductPage() {
                     value={
                       priceMax
                     }
-                    onChange={(event) =>
+                    onChange={(
+                      event
+                    ) =>
                       setPriceMax(
-                        event.target
-                          .value
+                        event.target.value
                       )
                     }
-                    inputMode="numeric"
                     disabled={
-                      editingDisabled
+                      editingDisabled ||
+                      saving ||
+                      deleting
                     }
-                    className="mt-2 h-11 w-full rounded-xl border border-[#E8E4DE] bg-white px-3 text-xs disabled:cursor-not-allowed disabled:bg-gray-50"
+                    inputMode="numeric"
+                    placeholder="Optional"
+                    className="mt-2 h-11 w-full rounded-xl border border-[#E8E4DE] bg-white px-3 text-xs disabled:bg-gray-50 disabled:text-gray-500"
                   />
                 </div>
               </div>
@@ -891,16 +1513,23 @@ export default function EditProductPage() {
                     }
                     onChange={(
                       event
-                    ) =>
-                      setAvailability(
-                        event.target
-                          .value as typeof availability
-                      )
-                    }
+                    ) => {
+                      if (
+                        isAvailability(
+                          event.target.value
+                        )
+                      ) {
+                        setAvailability(
+                          event.target.value
+                        );
+                      }
+                    }}
                     disabled={
-                      editingDisabled
+                      editingDisabled ||
+                      saving ||
+                      deleting
                     }
-                    className="mt-2 h-11 w-full rounded-xl border border-[#E8E4DE] bg-white px-3 text-xs disabled:cursor-not-allowed disabled:bg-gray-50"
+                    className="mt-2 h-11 w-full rounded-xl border border-[#E8E4DE] bg-white px-3 text-xs disabled:bg-gray-50 disabled:text-gray-500"
                   >
                     <option value="AVAILABLE">
                       Available
@@ -922,19 +1551,28 @@ export default function EditProductPage() {
                   </label>
 
                   <select
-                    value={status}
+                    value={
+                      status
+                    }
                     onChange={(
                       event
-                    ) =>
-                      setStatus(
-                        event.target
-                          .value as typeof status
-                      )
-                    }
+                    ) => {
+                      if (
+                        isBusinessStatus(
+                          event.target.value
+                        )
+                      ) {
+                        setStatus(
+                          event.target.value
+                        );
+                      }
+                    }}
                     disabled={
-                      editingDisabled
+                      editingDisabled ||
+                      saving ||
+                      deleting
                     }
-                    className="mt-2 h-11 w-full rounded-xl border border-[#E8E4DE] bg-white px-3 text-xs disabled:cursor-not-allowed disabled:bg-gray-50"
+                    className="mt-2 h-11 w-full rounded-xl border border-[#E8E4DE] bg-white px-3 text-xs disabled:bg-gray-50 disabled:text-gray-500"
                   >
                     <option value="ACTIVE">
                       Active
@@ -958,37 +1596,43 @@ export default function EditProductPage() {
               </h2>
 
               <input
-                value={keywords}
-                onChange={(event) =>
+                value={
+                  keywords
+                }
+                onChange={(
+                  event
+                ) =>
                   setKeywords(
-                    event.target
-                      .value
+                    event.target.value
                   )
                 }
-                placeholder="e.g. sneakers, shoes, footwear"
                 disabled={
-                  editingDisabled
+                  editingDisabled ||
+                  saving ||
+                  deleting
                 }
-                className="mt-3 h-11 w-full rounded-xl border border-[#E8E4DE] bg-white px-3 text-xs disabled:cursor-not-allowed disabled:bg-gray-50"
+                placeholder="e.g. sneakers, shoes, footwear"
+                className="mt-3 h-11 w-full rounded-xl border border-[#E8E4DE] bg-white px-3 text-xs outline-none focus:border-[#FF9B82] disabled:bg-gray-50 disabled:text-gray-500"
               />
 
               <p className="mt-1.5 text-[10px] text-gray-400">
-                Separate keywords with commas.
+                Separate keywords
+                with commas.
               </p>
             </section>
 
-            <div className="flex flex-wrap items-center justify-between gap-3 border-t border-[#EAE6DF] pt-5">
+            <div className="flex flex-col-reverse gap-2 border-t border-[#EAE6DF] pt-5 sm:flex-row sm:items-center sm:justify-between">
               <button
                 type="button"
-                onClick={
-                  deleteProduct
+                onClick={() =>
+                  void deleteProduct()
                 }
                 disabled={
-                  saving ||
+                  editingDisabled ||
                   deleting ||
-                  editingDisabled
+                  saving
                 }
-                className="inline-flex items-center gap-2 rounded-xl border border-red-200 bg-white px-4 py-3 text-xs font-bold text-red-600 disabled:cursor-not-allowed disabled:opacity-50"
+                className="inline-flex items-center justify-center gap-2 rounded-xl border border-red-200 bg-white px-4 py-3 text-xs font-bold text-red-600 hover:bg-red-50 disabled:opacity-50 sm:mr-auto"
               >
                 {deleting ? (
                   <Loader2 className="h-4 w-4 animate-spin" />
@@ -998,12 +1642,10 @@ export default function EditProductPage() {
 
                 {deleting
                   ? "Deleting..."
-                  : productDeleted
-                    ? "Product deleted"
-                    : "Delete product"}
+                  : "Delete product"}
               </button>
 
-              <div className="flex gap-2">
+              <div className="flex justify-end gap-2">
                 <Link
                   href={`/admin/businesses/${businessId}`}
                   className="rounded-xl border border-[#E8E4DE] bg-white px-4 py-3 text-xs font-bold text-gray-700"
@@ -1014,21 +1656,19 @@ export default function EditProductPage() {
                 <button
                   type="submit"
                   disabled={
+                    editingDisabled ||
                     saving ||
-                    deleting ||
-                    editingDisabled
+                    deleting
                   }
-                  className="inline-flex items-center gap-2 rounded-xl bg-[#FF5A36] px-5 py-3 text-xs font-bold text-white disabled:cursor-not-allowed disabled:opacity-60"
+                  className="inline-flex items-center gap-2 rounded-xl bg-[#FF5A36] px-5 py-3 text-xs font-bold text-white disabled:opacity-60"
                 >
                   {saving && (
                     <Loader2 className="h-4 w-4 animate-spin" />
                   )}
 
-                  {editingDisabled
-                    ? "Editing disabled"
-                    : saving
-                      ? "Saving..."
-                      : "Save changes"}
+                  {saving
+                    ? "Saving..."
+                    : "Save changes"}
                 </button>
               </div>
             </div>

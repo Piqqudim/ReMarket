@@ -18,28 +18,70 @@ export async function POST(
   request: Request
 ) {
   try {
-    const body =
-      await request.json();
+    let body: unknown;
+
+    /*
+     * -----------------------------------------
+     * PARSE REQUEST BODY
+     * -----------------------------------------
+     */
+
+    try {
+      body = await request.json();
+    } catch {
+      return NextResponse.json(
+        {
+          error: "Invalid JSON body",
+        },
+        {
+          status: 400,
+        }
+      );
+    }
+
+    /*
+     * -----------------------------------------
+     * VALIDATE BODY
+     * -----------------------------------------
+     */
+
+    if (
+      typeof body !== "object" ||
+      body === null ||
+      Array.isArray(body)
+    ) {
+      return NextResponse.json(
+        {
+          error: "Invalid request body",
+        },
+        {
+          status: 400,
+        }
+      );
+    }
+
+    const data =
+      body as Record<string, unknown>;
+
+    /*
+     * -----------------------------------------
+     * READ FIELDS
+     * -----------------------------------------
+     */
 
     const businessId =
-      typeof body.businessId ===
-      "string"
-        ? body.businessId.trim()
+      typeof data.businessId === "string"
+        ? data.businessId.trim()
         : "";
 
     const requestId =
-      typeof body.requestId ===
-      "string"
-        ? body.requestId.trim() ||
-          null
+      typeof data.requestId === "string"
+        ? data.requestId.trim() || null
         : null;
 
     const platform =
-      typeof body.platform ===
-      "string"
-        ? body.platform
-            .trim()
-            .toUpperCase()
+      typeof data.platform === "string"
+        ? data.platform.trim().toUpperCase()
         : "";
 
     /*
@@ -51,8 +93,7 @@ export async function POST(
     if (!businessId) {
       return NextResponse.json(
         {
-          error:
-            "Business ID is required",
+          error: "Business ID is required",
         },
         {
           status: 400,
@@ -73,8 +114,7 @@ export async function POST(
     ) {
       return NextResponse.json(
         {
-          error:
-            "Invalid contact platform",
+          error: "Invalid contact platform",
         },
         {
           status: 400,
@@ -106,8 +146,7 @@ export async function POST(
     if (!business) {
       return NextResponse.json(
         {
-          error:
-            "Business not found",
+          error: "Business not found",
         },
         {
           status: 404,
@@ -119,27 +158,35 @@ export async function POST(
      * -----------------------------------------
      * VERIFY REQUEST WHEN PROVIDED
      * -----------------------------------------
+     *
+     * A request-linked contact event is valid
+     * only when the business is actually matched
+     * to that buyer request.
      */
 
     if (requestId) {
-      const buyerRequest =
-        await prisma.buyerRequest.findUnique({
+      const match =
+        await prisma.match.findUnique({
           where: {
-            id: requestId,
+            requestId_businessId: {
+              requestId,
+              businessId,
+            },
           },
           select: {
-            id: true,
+            requestId: true,
+            businessId: true,
           },
         });
 
-      if (!buyerRequest) {
+      if (!match) {
         return NextResponse.json(
           {
             error:
-              "Request not found",
+              "Business is not matched to this request",
           },
           {
-            status: 404,
+            status: 400,
           }
         );
       }

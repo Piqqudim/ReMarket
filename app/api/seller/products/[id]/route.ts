@@ -9,42 +9,132 @@ const ALLOWED_AVAILABILITY = [
   "UNAVAILABLE",
 ] as const;
 
-type RouteContext = {
-  params: Promise<{
-    id: string;
-  }>;
-};
+type Availability =
+  (typeof ALLOWED_AVAILABILITY)[number];
 
-function cleanString(value: unknown): string {
+function jsonHeaders() {
+  return {
+    "Cache-Control": "no-store",
+  };
+}
+
+function isRecord(
+  value: unknown
+): value is Record<string, unknown> {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    !Array.isArray(value)
+  );
+}
+
+function cleanString(
+  value: unknown
+): string {
   return typeof value === "string"
     ? value.trim()
     : "";
 }
 
-function parseOptionalInt(
-  value: unknown
-): number | null | "INVALID" {
-  if (
-    value === null ||
-    value === undefined ||
-    value === ""
-  ) {
-    return null;
-  }
-
-  if (
-    typeof value !== "number" ||
-    !Number.isInteger(value)
-  ) {
-    return "INVALID";
-  }
-
-  return value;
+function hasOwn(
+  payload: Record<string, unknown>,
+  key: string
+): boolean {
+  return Object.prototype.hasOwnProperty.call(
+    payload,
+    key
+  );
 }
 
-function jsonHeaders() {
+function isAvailability(
+  value: string
+): value is Availability {
+  return ALLOWED_AVAILABILITY.includes(
+    value as Availability
+  );
+}
+
+function parseOptionalInteger(
+  value: unknown
+): {
+  valid: boolean;
+  value: number | null;
+} {
+  if (
+    value === undefined ||
+    value === null ||
+    value === ""
+  ) {
+    return {
+      valid: true,
+      value: null,
+    };
+  }
+
+  const parsed =
+    typeof value === "number"
+      ? value
+      : Number(value);
+
+  if (
+    !Number.isFinite(parsed) ||
+    !Number.isInteger(parsed)
+  ) {
+    return {
+      valid: false,
+      value: null,
+    };
+  }
+
   return {
-    "Content-Type": "application/json",
+    valid: true,
+    value: parsed,
+  };
+}
+
+function parseKeywords(
+  value: unknown
+): {
+  valid: boolean;
+  value: string[];
+} {
+  const values = Array.isArray(value)
+    ? value
+    : typeof value === "string"
+      ? value.split(",")
+      : null;
+
+  if (!values) {
+    return {
+      valid: false,
+      value: [],
+    };
+  }
+
+  const keywords: string[] = [];
+
+  for (const item of values) {
+    if (typeof item !== "string") {
+      return {
+        valid: false,
+        value: [],
+      };
+    }
+
+    const cleaned = item.trim();
+
+    if (!cleaned) {
+      continue;
+    }
+
+    if (!keywords.includes(cleaned)) {
+      keywords.push(cleaned);
+    }
+  }
+
+  return {
+    valid: true,
+    value: keywords,
   };
 }
 
@@ -55,12 +145,15 @@ async function getSellerProduct(
   return prisma.product.findFirst({
     where: {
       id: productId,
+
       deletedAt: null,
+
       business: {
         ownerId: sellerId,
         deletedAt: null,
       },
     },
+
     include: {
       category: true,
 
@@ -74,24 +167,23 @@ async function getSellerProduct(
         select: {
           id: true,
           name: true,
-          ownerId: true,
         },
       },
     },
   });
 }
 
-/*
- * ----------------------------------------------------
+/* --------------------------------------------------
  * GET
- * ----------------------------------------------------
- *
- * Returns one active product belonging to the
- * authenticated seller.
- */
+ * -------------------------------------------------- */
+
 export async function GET(
   _request: Request,
-  context: RouteContext
+  context: {
+    params: Promise<{
+      id: string;
+    }>;
+  }
 ) {
   const auth = await requireSeller();
 
@@ -99,26 +191,26 @@ export async function GET(
     return auth.response;
   }
 
-  const { id } = await context.params;
-
-  const productId = cleanString(id);
-
-  if (!productId) {
-    return NextResponse.json(
-      {
-        error: "Product ID is required.",
-      },
-      {
-        status: 400,
-        headers: jsonHeaders(),
-      }
-    );
-  }
-
   try {
+    const { id } =
+      await context.params;
+
+    if (!id) {
+      return NextResponse.json(
+        {
+          error:
+            "Product ID is required.",
+        },
+        {
+          status: 400,
+          headers: jsonHeaders(),
+        }
+      );
+    }
+
     const product =
       await getSellerProduct(
-        productId,
+        id,
         auth.user.id
       );
 
@@ -135,12 +227,17 @@ export async function GET(
       );
     }
 
-    return NextResponse.json({
-      product,
-    });
+    return NextResponse.json(
+      {
+        product,
+      },
+      {
+        headers: jsonHeaders(),
+      }
+    );
   } catch (error) {
     console.error(
-      "Seller product fetch error:",
+      "Seller product GET error:",
       error
     );
 
@@ -157,23 +254,17 @@ export async function GET(
   }
 }
 
-/*
- * ----------------------------------------------------
+/* --------------------------------------------------
  * PATCH
- * ----------------------------------------------------
- *
- * Updates one active product belonging to the
- * authenticated seller.
- *
- * Seller cannot change:
- * - businessId
- * - status
- * - deletedAt
- * - deletedById
- */
+ * -------------------------------------------------- */
+
 export async function PATCH(
   request: Request,
-  context: RouteContext
+  context: {
+    params: Promise<{
+      id: string;
+    }>;
+  }
 ) {
   const auth = await requireSeller();
 
@@ -181,26 +272,535 @@ export async function PATCH(
     return auth.response;
   }
 
-  const { id } = await context.params;
+  try {
+    const { id } =
+      await context.params;
 
-  const productId = cleanString(id);
+    if (!id) {
+      return NextResponse.json(
+        {
+          error:
+            "Product ID is required.",
+        },
+        {
+          status: 400,
+          headers: jsonHeaders(),
+        }
+      );
+    }
 
-  if (!productId) {
+    const existing =
+      await getSellerProduct(
+        id,
+        auth.user.id
+      );
+
+    if (!existing) {
+      return NextResponse.json(
+        {
+          error:
+            "Product not found.",
+        },
+        {
+          status: 404,
+          headers: jsonHeaders(),
+        }
+      );
+    }
+
+    const body: unknown =
+      await request.json();
+
+    if (!isRecord(body)) {
+      return NextResponse.json(
+        {
+          error:
+            "Invalid request body.",
+        },
+        {
+          status: 400,
+          headers: jsonHeaders(),
+        }
+      );
+    }
+
+    if (
+      Object.keys(body).length === 0
+    ) {
+      return NextResponse.json(
+        {
+          error:
+            "No changes were supplied.",
+        },
+        {
+          status: 400,
+          headers: jsonHeaders(),
+        }
+      );
+    }
+
+    const data: {
+      name?: string;
+      description?: string | null;
+      categoryId?: string | null;
+      imageUrl?: string | null;
+      availability?: Availability;
+      price?: number | null;
+      priceMin?: number | null;
+      priceMax?: number | null;
+      keywords?: string[];
+    } = {};
+
+    if (hasOwn(body, "name")) {
+      const name = cleanString(
+        body.name
+      );
+
+      if (!name) {
+        return NextResponse.json(
+          {
+            error:
+              "Product name cannot be empty.",
+          },
+          {
+            status: 400,
+            headers: jsonHeaders(),
+          }
+        );
+      }
+
+      if (name.length > 200) {
+        return NextResponse.json(
+          {
+            error:
+              "Product name is too long.",
+          },
+          {
+            status: 400,
+            headers: jsonHeaders(),
+          }
+        );
+      }
+
+      data.name = name;
+    }
+
+    if (
+      hasOwn(body, "description")
+    ) {
+      const description =
+        cleanString(body.description);
+
+      if (description.length > 2000) {
+        return NextResponse.json(
+          {
+            error:
+              "Product description is too long.",
+          },
+          {
+            status: 400,
+            headers: jsonHeaders(),
+          }
+        );
+      }
+
+      data.description =
+        description || null;
+    }
+
+    if (
+      hasOwn(body, "imageUrl")
+    ) {
+      if (
+        body.imageUrl !== null &&
+        typeof body.imageUrl !==
+          "string"
+      ) {
+        return NextResponse.json(
+          {
+            error:
+              "Image URL must be a string or null.",
+          },
+          {
+            status: 400,
+            headers: jsonHeaders(),
+          }
+        );
+      }
+
+      const imageUrl =
+        body.imageUrl === null
+          ? ""
+          : cleanString(
+              body.imageUrl
+            );
+
+      if (imageUrl.length > 2000) {
+        return NextResponse.json(
+          {
+            error:
+              "Image URL is too long.",
+          },
+          {
+            status: 400,
+            headers: jsonHeaders(),
+          }
+        );
+      }
+
+      data.imageUrl =
+        imageUrl || null;
+    }
+
+    if (
+      hasOwn(body, "availability")
+    ) {
+      const availability =
+        cleanString(
+          body.availability
+        );
+
+      if (
+        !isAvailability(
+          availability
+        )
+      ) {
+        return NextResponse.json(
+          {
+            error:
+              "Invalid availability value.",
+          },
+          {
+            status: 400,
+            headers: jsonHeaders(),
+          }
+        );
+      }
+
+      data.availability =
+        availability;
+    }
+
+    if (
+      hasOwn(body, "keywords")
+    ) {
+      const keywordsResult =
+        parseKeywords(
+          body.keywords
+        );
+
+      if (
+        !keywordsResult.valid
+      ) {
+        return NextResponse.json(
+          {
+            error:
+              "Keywords must be an array of strings or a comma-separated string.",
+          },
+          {
+            status: 400,
+            headers: jsonHeaders(),
+          }
+        );
+      }
+
+      data.keywords =
+        keywordsResult.value;
+    }
+
+    if (hasOwn(body, "categoryId")) {
+      if (
+        body.categoryId !== null &&
+        typeof body.categoryId !==
+          "string"
+      ) {
+        return NextResponse.json(
+          {
+            error:
+              "Category ID must be a string or null.",
+          },
+          {
+            status: 400,
+            headers: jsonHeaders(),
+          }
+        );
+      }
+
+      const categoryId =
+        body.categoryId === null
+          ? ""
+          : cleanString(
+              body.categoryId
+            );
+
+      if (!categoryId) {
+        data.categoryId = null;
+      } else {
+        const category =
+          await prisma.category.findFirst({
+            where: {
+              id: categoryId,
+              isActive: true,
+            },
+            select: {
+              id: true,
+            },
+          });
+
+        if (!category) {
+          return NextResponse.json(
+            {
+              error:
+                "Selected category was not found or is inactive.",
+            },
+            {
+              status: 400,
+              headers: jsonHeaders(),
+            }
+          );
+        }
+
+        data.categoryId =
+          category.id;
+      }
+    }
+
+    if (hasOwn(body, "price")) {
+      const result =
+        parseOptionalInteger(
+          body.price
+        );
+
+      if (!result.valid) {
+        return NextResponse.json(
+          {
+            error:
+              "Price must be a valid whole number.",
+          },
+          {
+            status: 400,
+            headers: jsonHeaders(),
+          }
+        );
+      }
+
+      if (
+        result.value !== null &&
+        result.value < 0
+      ) {
+        return NextResponse.json(
+          {
+            error:
+              "Price cannot be negative.",
+          },
+          {
+            status: 400,
+            headers: jsonHeaders(),
+          }
+        );
+      }
+
+      data.price = result.value;
+    }
+
+    if (hasOwn(body, "priceMin")) {
+      const result =
+        parseOptionalInteger(
+          body.priceMin
+        );
+
+      if (!result.valid) {
+        return NextResponse.json(
+          {
+            error:
+              "Minimum price must be a valid whole number.",
+          },
+          {
+            status: 400,
+            headers: jsonHeaders(),
+          }
+        );
+      }
+
+      if (
+        result.value !== null &&
+        result.value < 0
+      ) {
+        return NextResponse.json(
+          {
+            error:
+              "Minimum price cannot be negative.",
+          },
+          {
+            status: 400,
+            headers: jsonHeaders(),
+          }
+        );
+      }
+
+      data.priceMin =
+        result.value;
+    }
+
+    if (hasOwn(body, "priceMax")) {
+      const result =
+        parseOptionalInteger(
+          body.priceMax
+        );
+
+      if (!result.valid) {
+        return NextResponse.json(
+          {
+            error:
+              "Maximum price must be a valid whole number.",
+          },
+          {
+            status: 400,
+            headers: jsonHeaders(),
+          }
+        );
+      }
+
+      if (
+        result.value !== null &&
+        result.value < 0
+      ) {
+        return NextResponse.json(
+          {
+            error:
+              "Maximum price cannot be negative.",
+          },
+          {
+            status: 400,
+            headers: jsonHeaders(),
+          }
+        );
+      }
+
+      data.priceMax =
+        result.value;
+    }
+
+    const finalPriceMin =
+      data.priceMin ??
+      existing.priceMin;
+
+    const finalPriceMax =
+      data.priceMax ??
+      existing.priceMax;
+
+    if (
+      finalPriceMin !== null &&
+      finalPriceMax !== null &&
+      finalPriceMin > finalPriceMax
+    ) {
+      return NextResponse.json(
+        {
+          error:
+            "Minimum price cannot be greater than maximum price.",
+        },
+        {
+          status: 400,
+          headers: jsonHeaders(),
+        }
+      );
+    }
+
+    const product =
+      await prisma.product.update({
+        where: {
+          id: existing.id,
+        },
+
+        data,
+
+        include: {
+          category: true,
+
+          images: {
+            orderBy: {
+              sortOrder: "asc",
+            },
+          },
+
+          business: {
+            select: {
+              id: true,
+              name: true,
+            },
+          },
+        },
+      });
+
     return NextResponse.json(
       {
-        error: "Product ID is required.",
+        message:
+          "Product updated successfully.",
+        product,
       },
       {
-        status: 400,
+        headers: jsonHeaders(),
+      }
+    );
+  } catch (error) {
+    console.error(
+      "Seller product PATCH error:",
+      error
+    );
+
+    return NextResponse.json(
+      {
+        error:
+          "Unable to update product.",
+      },
+      {
+        status: 500,
         headers: jsonHeaders(),
       }
     );
   }
+}
+
+/* --------------------------------------------------
+ * DELETE
+ *
+ * Soft delete only.
+ * -------------------------------------------------- */
+
+export async function DELETE(
+  _request: Request,
+  context: {
+    params: Promise<{
+      id: string;
+    }>;
+  }
+) {
+  const auth = await requireSeller();
+
+  if (!auth.authorized) {
+    return auth.response;
+  }
 
   try {
+    const { id } =
+      await context.params;
+
+    if (!id) {
+      return NextResponse.json(
+        {
+          error:
+            "Product ID is required.",
+        },
+        {
+          status: 400,
+          headers: jsonHeaders(),
+        }
+      );
+    }
+
     const product =
       await getSellerProduct(
-        productId,
+        id,
         auth.user.id
       );
 
@@ -217,563 +817,55 @@ export async function PATCH(
       );
     }
 
-    const body: unknown =
-      await request.json();
+    const deletedAt =
+      new Date();
 
-    if (
-      !body ||
-      typeof body !== "object" ||
-      Array.isArray(body)
-    ) {
-      return NextResponse.json(
-        {
-          error:
-            "Invalid request body.",
-        },
-        {
-          status: 400,
-          headers: jsonHeaders(),
-        }
-      );
-    }
-
-    const payload =
-      body as Record<string, unknown>;
-
-    const has = (key: string) =>
-      Object.prototype.hasOwnProperty.call(
-        payload,
-        key
-      );
-
-    const name = has("name")
-      ? cleanString(
-          payload.name
-        )
-      : undefined;
-
-    const description = has(
-      "description"
-    )
-      ? cleanString(
-          payload.description
-        )
-      : undefined;
-
-    const categoryId = has(
-      "categoryId"
-    )
-      ? cleanString(
-          payload.categoryId
-        )
-      : undefined;
-
-    const imageUrl = has(
-      "imageUrl"
-    )
-      ? cleanString(
-          payload.imageUrl
-        )
-      : undefined;
-
-    const availabilityValue =
-      has("availability")
-        ? cleanString(
-            payload.availability
-          )
-        : undefined;
-
-    if (
-      name !== undefined &&
-      !name
-    ) {
-      return NextResponse.json(
-        {
-          error:
-            "Product name cannot be empty.",
-        },
-        {
-          status: 400,
-          headers: jsonHeaders(),
-        }
-      );
-    }
-
-    if (
-      availabilityValue !==
-        undefined &&
-      !ALLOWED_AVAILABILITY.includes(
-        availabilityValue as (typeof ALLOWED_AVAILABILITY)[number]
-      )
-    ) {
-      return NextResponse.json(
-        {
-          error:
-            "Invalid availability value.",
-        },
-        {
-          status: 400,
-          headers: jsonHeaders(),
-        }
-      );
-    }
-
-    /*
-     * Price fields.
-     */
-    const priceProvided =
-      has("price");
-
-    const priceMinProvided =
-      has("priceMin");
-
-    const priceMaxProvided =
-      has("priceMax");
-
-    const price =
-      priceProvided
-        ? parseOptionalInt(
-            payload.price
-          )
-        : undefined;
-
-    const priceMin =
-      priceMinProvided
-        ? parseOptionalInt(
-            payload.priceMin
-          )
-        : undefined;
-
-    const priceMax =
-      priceMaxProvided
-        ? parseOptionalInt(
-            payload.priceMax
-          )
-        : undefined;
-
-    if (
-      price === "INVALID" ||
-      priceMin === "INVALID" ||
-      priceMax === "INVALID"
-    ) {
-      return NextResponse.json(
-        {
-          error:
-            "Price values must be whole numbers.",
-        },
-        {
-          status: 400,
-          headers: jsonHeaders(),
-        }
-      );
-    }
-
-    if (
-      price !== undefined &&
-      price !== null &&
-      price < 0
-    ) {
-      return NextResponse.json(
-        {
-          error:
-            "Price cannot be negative.",
-        },
-        {
-          status: 400,
-          headers: jsonHeaders(),
-        }
-      );
-    }
-
-    if (
-      priceMin !== undefined &&
-      priceMin !== null &&
-      priceMin < 0
-    ) {
-      return NextResponse.json(
-        {
-          error:
-            "Minimum price cannot be negative.",
-        },
-        {
-          status: 400,
-          headers: jsonHeaders(),
-        }
-      );
-    }
-
-    if (
-      priceMax !== undefined &&
-      priceMax !== null &&
-      priceMax < 0
-    ) {
-      return NextResponse.json(
-        {
-          error:
-            "Maximum price cannot be negative.",
-        },
-        {
-          status: 400,
-          headers: jsonHeaders(),
-        }
-      );
-    }
-
-    /*
-     * Get current values so a partial PATCH can
-     * validate the final pricing combination.
-     */
-    const currentPricing =
-      await prisma.product.findUnique({
-        where: {
-          id: productId,
-        },
-        select: {
-          price: true,
-          priceMin: true,
-          priceMax: true,
-        },
-      });
-
-    if (!currentPricing) {
-      return NextResponse.json(
-        {
-          error:
-            "Product not found.",
-        },
-        {
-          status: 404,
-          headers: jsonHeaders(),
-        }
-      );
-    }
-
-    const resultingPrice: number | null =
-      priceProvided
-        ? price ?? null
-        : currentPricing.price;
-
-    const resultingPriceMin:
-      | number
-      | null =
-      priceMinProvided
-        ? priceMin ?? null
-        : currentPricing.priceMin;
-
-    const resultingPriceMax:
-      | number
-      | null =
-      priceMaxProvided
-        ? priceMax ?? null
-        : currentPricing.priceMax;
-
-    if (
-      resultingPriceMin !== null &&
-      resultingPriceMax !== null &&
-      resultingPriceMin >
-        resultingPriceMax
-    ) {
-      return NextResponse.json(
-        {
-          error:
-            "Minimum price cannot be greater than maximum price.",
-        },
-        {
-          status: 400,
-          headers: jsonHeaders(),
-        }
-      );
-    }
-
-    /*
-     * Validate category when supplied.
-     */
-    if (categoryId !== undefined) {
-      if (categoryId) {
-        const category =
-          await prisma.category.findFirst(
-            {
-              where: {
-                id: categoryId,
-                isActive: true,
-              },
-              select: {
-                id: true,
-              },
-            }
-          );
-
-        if (!category) {
-          return NextResponse.json(
-            {
-              error:
-                "Selected category is invalid or inactive.",
-            },
-            {
-              status: 400,
-              headers: jsonHeaders(),
-            }
-          );
-        }
-      }
-    }
-
-    /*
-     * Build a seller-safe update object.
-     */
-    const updateData: {
-      name?: string;
-      description?: string | null;
-      categoryId?: string | null;
-      price?: number | null;
-      priceMin?: number | null;
-      priceMax?: number | null;
-      availability?:
-        | "AVAILABLE"
-        | "ASK_SELLER"
-        | "UNAVAILABLE";
-      imageUrl?: string | null;
-    } = {};
-
-    if (name !== undefined) {
-      updateData.name =
-        name;
-    }
-
-    if (
-      description !==
-      undefined
-    ) {
-      updateData.description =
-        description || null;
-    }
-
-    if (
-      categoryId !==
-      undefined
-    ) {
-      updateData.categoryId =
-        categoryId || null;
-    }
-
-    if (priceProvided) {
-      updateData.price =
-        resultingPrice;
-    }
-
-    if (priceMinProvided) {
-      updateData.priceMin =
-        resultingPriceMin;
-    }
-
-    if (priceMaxProvided) {
-      updateData.priceMax =
-        resultingPriceMax;
-    }
-
-    if (
-      availabilityValue !==
-      undefined
-    ) {
-      updateData.availability =
-        availabilityValue as
-          | "AVAILABLE"
-          | "ASK_SELLER"
-          | "UNAVAILABLE";
-    }
-
-    if (imageUrl !== undefined) {
-      updateData.imageUrl =
-        imageUrl || null;
-    }
-
-    const updatedProduct =
-      await prisma.product.update({
-        where: {
-          id: productId,
-        },
-
-        data: updateData,
-
-        include: {
-          category: true,
-
-          images: {
-            orderBy: {
-              sortOrder: "asc",
-            },
-          },
-        },
-      });
-
-    return NextResponse.json({
-      message:
-        "Product updated successfully.",
-
-      product: updatedProduct,
-    });
-  } catch (error) {
-    console.error(
-      "Seller product update error:",
-      error
-    );
-
-    if (
-      typeof error === "object" &&
-      error !== null &&
-      "code" in error &&
-      error.code === "P2025"
-    ) {
-      return NextResponse.json(
-        {
-          error:
-            "Product could not be found.",
-        },
-        {
-          status: 404,
-          headers: jsonHeaders(),
-        }
-      );
-    }
-
-    return NextResponse.json(
-      {
-        error:
-          "Unable to update product.",
-      },
-      {
-        status: 500,
-        headers: jsonHeaders(),
-      }
-    );
-  }
-}
-
-/*
- * ----------------------------------------------------
- * DELETE
- * ----------------------------------------------------
- *
- * SOFT DELETES the seller's product.
- *
- * The database record remains available to admins.
- */
-export async function DELETE(
-  _request: Request,
-  context: RouteContext
-) {
-  const auth = await requireSeller();
-
-  if (!auth.authorized) {
-    return auth.response;
-  }
-
-  const { id } = await context.params;
-
-  const productId = cleanString(id);
-
-  if (!productId) {
-    return NextResponse.json(
-      {
-        error:
-          "Product ID is required.",
-      },
-      {
-        status: 400,
-        headers: jsonHeaders(),
-      }
-    );
-  }
-
-  try {
-    const product =
-      await prisma.product.findFirst({
-        where: {
-          id: productId,
-          deletedAt: null,
-          business: {
-            ownerId: auth.user.id,
-            deletedAt: null,
-          },
-        },
-        select: {
-          id: true,
-          name: true,
-        },
-      });
-
-    if (!product) {
-      return NextResponse.json(
-        {
-          error:
-            "Product not found.",
-        },
-        {
-          status: 404,
-          headers: jsonHeaders(),
-        }
-      );
-    }
-
-    /*
-     * IMPORTANT:
-     * This is a soft delete.
-     *
-     * The product remains in the database and
-     * is marked with deletedAt + deletedById.
-     */
-    const deletedProduct =
-      await prisma.product.update({
+    const result =
+      await prisma.product.updateMany({
         where: {
           id: product.id,
+          deletedAt: null,
         },
 
         data: {
-          deletedAt:
-            new Date(),
-
+          deletedAt,
           deletedById:
             auth.user.id,
         },
-
-        select: {
-          id: true,
-          name: true,
-          deletedAt: true,
-          deletedById: true,
-        },
       });
 
-    return NextResponse.json({
-      message:
-        "Product deleted successfully.",
-
-      product:
-        deletedProduct,
-    });
-  } catch (error) {
-    console.error(
-      "Seller product deletion error:",
-      error
-    );
-
-    if (
-      typeof error === "object" &&
-      error !== null &&
-      "code" in error &&
-      error.code === "P2025"
-    ) {
+    if (result.count !== 1) {
       return NextResponse.json(
         {
           error:
-            "Product could not be found.",
+            "Product could not be deleted because it was already deleted.",
         },
         {
-          status: 404,
+          status: 409,
           headers: jsonHeaders(),
         }
       );
     }
+
+    return NextResponse.json(
+      {
+        message:
+          "Product deleted successfully.",
+
+        productId: product.id,
+
+        deletedAt:
+          deletedAt.toISOString(),
+      },
+      {
+        headers: jsonHeaders(),
+      }
+    );
+  } catch (error) {
+    console.error(
+      "Seller product DELETE error:",
+      error
+    );
 
     return NextResponse.json(
       {

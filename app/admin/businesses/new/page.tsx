@@ -567,7 +567,7 @@ export default function NewBusinessPage() {
         parsedPriceMin < 0)
     ) {
       setError(
-        "Minimum price must be a valid positive integer."
+        "Minimum price must be a valid non-negative integer."
       );
       return;
     }
@@ -580,7 +580,7 @@ export default function NewBusinessPage() {
         parsedPriceMax < 0)
     ) {
       setError(
-        "Maximum price must be a valid positive integer."
+        "Maximum price must be a valid non-negative integer."
       );
       return;
     }
@@ -636,11 +636,13 @@ export default function NewBusinessPage() {
               /*
                * These coordinates came from
                * browser geolocation.
+               *
+               * The database field is Location.long.
                */
               lat:
                 parsedLat,
 
-              lng:
+              long:
                 parsedLng,
 
               phone:

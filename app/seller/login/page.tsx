@@ -4,6 +4,7 @@ import React, { useState } from "react";
 import { signIn } from "next-auth/react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
+
 import {
   Store,
   Mail,
@@ -25,48 +26,74 @@ export default function SellerLogin() {
 
   const router = useRouter();
 
-  const submit = async (
+  async function submit(
     event: React.SubmitEvent<HTMLFormElement>
-  ) => {
+  ) {
     event.preventDefault();
 
     if (loading) {
       return;
     }
 
+    const trimmedEmail = email.trim();
+
     setError("");
+
+    if (!trimmedEmail) {
+      setError("Email address is required.");
+      return;
+    }
+
+    if (!password) {
+      setError("Password is required.");
+      return;
+    }
+
     setLoading(true);
 
     try {
       const result = await signIn("credentials", {
-        email: email.trim(),
+        email: trimmedEmail,
         password,
         redirect: false,
         callbackUrl: "/seller",
       });
 
-      if (!result || result.error) {
-        setError("Invalid email or password");
+      if (
+        !result ||
+        result.error ||
+        result.ok !== true
+      ) {
+        setError(
+          "Invalid email or password"
+        );
         return;
       }
 
       router.push("/seller");
       router.refresh();
-    } catch {
+    } catch (loginError) {
+      console.error(
+        "Seller login error:",
+        loginError
+      );
+
       setError(
-        "Something went wrong. Please try again"
+        "Something went wrong. Please try again."
       );
     } finally {
       setLoading(false);
     }
-  };
+  }
 
   return (
     <main className="relative flex min-h-screen items-center justify-center overflow-hidden bg-[#FFF0DC] px-4 py-10 sm:px-6">
       {/* Top-left decorative shape */}
+
       <div className="absolute left-[-80px] top-16 h-64 w-64 rounded-full bg-[#FF9A6B] opacity-80 sm:left-10 sm:top-24 sm:h-72 sm:w-72" />
 
       {/* Top-right dots */}
+
       <div className="absolute right-6 top-16 grid grid-cols-4 gap-2.5 opacity-50 sm:right-16 sm:top-24 sm:gap-3">
         {Array.from({ length: 16 }).map(
           (_, index) => (
@@ -79,6 +106,7 @@ export default function SellerLogin() {
       </div>
 
       {/* Bottom-left dots */}
+
       <div className="absolute bottom-16 left-6 grid grid-cols-4 gap-2.5 opacity-50 sm:bottom-24 sm:left-16 sm:gap-3">
         {Array.from({ length: 16 }).map(
           (_, index) => (
@@ -91,11 +119,14 @@ export default function SellerLogin() {
       </div>
 
       {/* Bottom-right decorative shape */}
+
       <div className="absolute bottom-[-80px] right-[-70px] h-64 w-80 rotate-[-20deg] rounded-[50%] bg-[#FF9A6B] opacity-80 sm:bottom-[-50px] sm:right-[-40px] sm:h-72 sm:w-[23rem]" />
 
       {/* Main content */}
+
       <section className="relative z-[15] flex w-full max-w-[655px] flex-col items-center">
         {/* Brand */}
+
         <div className="mb-8 flex flex-col items-center text-center sm:mb-10">
           <div className="mb-5 flex h-24 w-24 items-center justify-center rounded-[26px] bg-[#FF563F] shadow-[0_12px_30px_rgba(255,86,63,0.25)] sm:h-28 sm:w-28">
             <Store
@@ -117,8 +148,10 @@ export default function SellerLogin() {
         </div>
 
         {/* Login card */}
+
         <div className="w-full rounded-[28px] bg-white px-6 py-8 shadow-[0_20px_60px_rgba(80,50,20,0.10)] sm:px-14 sm:py-12">
           {/* Header */}
+
           <div className="mb-8 sm:mb-9">
             <h2 className="text-[28px] font-semibold leading-tight text-[#111C27] sm:text-[32px]">
               Welcome back
@@ -130,11 +163,13 @@ export default function SellerLogin() {
           </div>
 
           {/* Form */}
+
           <form
             onSubmit={submit}
             className="space-y-6 sm:space-y-7"
           >
             {/* Email */}
+
             <div>
               <label
                 htmlFor="email"
@@ -175,6 +210,7 @@ export default function SellerLogin() {
             </div>
 
             {/* Password */}
+
             <div>
               <label
                 htmlFor="password"
@@ -218,7 +254,8 @@ export default function SellerLogin() {
                   type="button"
                   onClick={() =>
                     setShowPassword(
-                      (current) => !current
+                      (current) =>
+                        !current
                     )
                   }
                   disabled={loading}
@@ -245,6 +282,7 @@ export default function SellerLogin() {
             </div>
 
             {/* Error */}
+
             {error && (
               <div
                 role="alert"
@@ -265,6 +303,7 @@ export default function SellerLogin() {
             )}
 
             {/* Login button */}
+
             <button
               type="submit"
               disabled={loading}
@@ -276,11 +315,13 @@ export default function SellerLogin() {
                     className="h-6 w-6 animate-spin"
                     strokeWidth={2}
                   />
+
                   Signing in...
                 </>
               ) : (
                 <>
                   Log in
+
                   <ArrowRight
                     className="h-6 w-6"
                     strokeWidth={2}
@@ -291,6 +332,7 @@ export default function SellerLogin() {
           </form>
 
           {/* Seller signup */}
+
           <div className="mt-7 text-center sm:mt-8">
             <p className="text-[14px] text-[#718096] sm:text-[15px]">
               Don&apos;t have a seller account?{" "}
@@ -304,6 +346,7 @@ export default function SellerLogin() {
           </div>
 
           {/* Footer */}
+
           <div className="mt-8 flex items-center gap-4 sm:mt-10 sm:gap-5">
             <div className="h-px flex-1 bg-[#D9DEE5]" />
 

@@ -545,6 +545,11 @@ export async function POST(
       );
     }
 
+    const address =
+      nullableString(
+        payload.address
+      );
+
     const lat =
       parseOptionalFloat(
         payload.lat
@@ -583,6 +588,31 @@ export async function POST(
         {
           error:
             "Longitude must be a valid value between -180 and 180.",
+        },
+        {
+          status: 400,
+        }
+      );
+    }
+
+    /*
+     * Latitude and longitude must be supplied
+     * together when coordinates are provided.
+     */
+    const hasLatitude =
+      lat !== null;
+
+    const hasLongitude =
+      long !== null;
+
+    if (
+      hasLatitude !==
+      hasLongitude
+    ) {
+      return NextResponse.json(
+        {
+          error:
+            "Latitude and longitude must be provided together.",
         },
         {
           status: 400,
@@ -641,7 +671,7 @@ export async function POST(
             "Minimum price cannot be greater than maximum price.",
         },
         {
-          status: 400,
+          status: 400
         }
       );
     }
@@ -739,8 +769,11 @@ export async function POST(
               {
                 data: {
                   area,
+                  address,
                   lat,
                   long,
+                  verification:
+                    "UNVERIFIED",
                 },
               }
             );

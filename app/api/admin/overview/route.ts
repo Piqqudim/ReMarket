@@ -28,6 +28,12 @@ export async function GET() {
       contactActivityRows,
       recentRequests,
       recentBusinesses,
+      sellerAccounts,
+      pendingDeletionRequests,
+      pendingClaimRequests,
+      categories,
+      activeCategories,
+      businessViews,
     ] = await Promise.all([
       prisma.business.count(),
 
@@ -79,6 +85,34 @@ export async function GET() {
           },
         },
       }),
+
+      prisma.user.count({
+        where: {
+          role: "SELLER",
+        },
+      }),
+
+      prisma.businessDeletionRequest.count({
+        where: {
+          status: "PENDING",
+        },
+      }),
+
+      prisma.businessClaimRequest.count({
+        where: {
+          status: "PENDING",
+        },
+      }),
+
+      prisma.category.count(),
+
+      prisma.category.count({
+        where: {
+          isActive: true,
+        },
+      }),
+
+      prisma.businessViewEvent.count(),
     ]);
 
     const contactActivity = {
@@ -86,10 +120,7 @@ export async function GET() {
     };
 
     for (const row of contactActivityRows) {
-      if (
-        row.platform in
-        contactActivity
-      ) {
+      if (row.platform in contactActivity) {
         contactActivity[
           row.platform as keyof typeof contactActivity
         ] = row._count._all;
@@ -103,6 +134,15 @@ export async function GET() {
         requests,
         matches,
         contacts,
+        businessViews,
+      },
+
+      operations: {
+        sellerAccounts,
+        pendingDeletionRequests,
+        pendingClaimRequests,
+        categories,
+        activeCategories,
       },
 
       contactActivity,
@@ -119,23 +159,17 @@ export async function GET() {
         }),
       ),
 
-      recentBusinesses:
-        recentBusinesses.map(
-          (item) => ({
-            id: item.id,
-            name: item.name,
-            status: item.status,
-            verification:
-              item.verification,
-            availability:
-              item.availability,
-            area:
-              item.location?.area ??
-              null,
-            onboardedAt:
-              item.onboardedAt,
-          }),
-        ),
+      recentBusinesses: recentBusinesses.map(
+        (item) => ({
+          id: item.id,
+          name: item.name,
+          status: item.status,
+          verification: item.verification,
+          availability: item.availability,
+          area: item.location?.area ?? null,
+          onboardedAt: item.onboardedAt,
+        }),
+      ),
     });
   } catch (error) {
     console.error(

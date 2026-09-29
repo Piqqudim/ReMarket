@@ -1,9 +1,10 @@
+import { Prisma } from "@prisma/client";
 import { NextResponse } from "next/server";
 
 import { prisma } from "@/lib/prisma";
 import { requireSeller } from "@/lib/seller-auth";
 
-const MAX_ACTIVE_PRODUCTS = 30;
+const MAX_ACTIVE_PRODUCTS = 10;
 
 const ALLOWED_AVAILABILITY = [
   "AVAILABLE",
@@ -11,47 +12,241 @@ const ALLOWED_AVAILABILITY = [
   "UNAVAILABLE",
 ] as const;
 
-function cleanString(value: unknown): string {
+type Availability =
+  (typeof ALLOWED_AVAILABILITY)[number];
+
+function jsonHeaders() {
+  return {
+    "Cache-Control": "no-store",
+  };
+}
+
+function isRecord(
+  value: unknown
+): value is Record<string, unknown> {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    !Array.isArray(value)
+  );
+}
+
+function cleanString(
+  value: unknown
+): string {
   return typeof value === "string"
     ? value.trim()
     : "";
 }
 
-function parseOptionalInt(
-  value: unknown
-): number | null | "INVALID" {
-  if (
-    value === null ||
-    value === undefined ||
-    value === ""
-  ) {
-    return null;
-  }
-
-  if (
-    typeof value !== "number" ||
-    !Number.isInteger(value)
-  ) {
-    return "INVALID";
-  }
-
-  return value;
+function hasOwn(
+  payload: Record<string, unknown>,
+  key: string
+): boolean {
+  return Object.prototype.hasOwnProperty.call(
+    payload,
+    key
+  );
 }
 
-function jsonHeaders() {
+type ParsedInteger = {
+  valid: boolean;
+  value: number | null;
+};
+
+function parseOptionalInteger(
+  value: unknown
+): ParsedInteger {
+  if (
+    value === undefined ||
+    value === null ||
+    value === ""
+  ) {
+    return {
+      valid: true,
+      value: null,
+    };
+  }
+
+  const parsed =
+    typeof value === "number"
+      ? value
+      : Number(value);
+
+  if (
+    !Number.isFinite(parsed) ||
+    !Number.isInteger(parsed)
+  ) {
+    return {
+      valid: false,
+      value: null,
+    };
+  }
+
   return {
-    "Content-Type": "application/json",
+    valid: true,
+    value: parsed,
   };
 }
 
-/*
- * ----------------------------------------------------
+function parseKeywords(
+  value: unknown
+): {
+  valid: boolean;
+  value: string[];
+} {
+  if (value === undefined) {
+    return {
+      valid: true,
+      value: [],
+    };
+  }
+
+  const values = Array.isArray(value)
+    ? value
+    : typeof value === "string"
+      ? value.split(",")
+      : null;
+
+  if (!values) {
+    return {
+      valid: false,
+      value: [],
+    };
+  }
+
+  const normalized: string[] = [];
+
+  for (const item of values) {
+    if (typeof item !== "string") {
+      return {
+        valid: false,
+        value: [],
+      };
+    }
+
+    const cleaned = item.trim();
+
+    if (!cleaned) {
+      continue;
+    }
+
+    if (!normalized.includes(cleaned)) {
+      normalized.push(cleaned);
+    }
+  }
+
+  return {
+    valid: true,
+    value: normalized,
+  };
+}
+
+function isAvailability(
+  value: string
+): value is Availability {
+  return ALLOWED_AVAILABILITY.includes(
+    value as Availability
+  );
+}
+
+class ActiveProductLimitError extends Error {
+  constructor() {
+    super(
+      `You have reached the maximum of ${MAX_ACTIVE_PRODUCTS} active products.`
+    );
+
+    this.name = "ActiveProductLimitError";
+  }
+}
+
+async function createProductWithLimit(
+  businessId: string,
+  data: Prisma.ProductCreateInput
+) {
+  const MAX_RETRIES = 3;
+
+  for (
+    let attempt = 0;
+    attempt < MAX_RETRIES;
+    attempt++
+  ) {
+    try {
+      return await prisma.$transaction(
+        async (tx) => {
+          const activeCount =
+            await tx.product.count({
+              where: {
+                businessId,
+                status: "ACTIVE",
+                deletedAt: null,
+              },
+            });
+
+          if (
+            activeCount >=
+            MAX_ACTIVE_PRODUCTS
+          ) {
+            throw new ActiveProductLimitError();
+          }
+
+          return tx.product.create({
+            data,
+            include: {
+              category: true,
+              images: {
+                orderBy: {
+                  sortOrder: "asc",
+                },
+              },
+            },
+          });
+        },
+        {
+          isolationLevel:
+            Prisma.TransactionIsolationLevel.Serializable,
+        }
+      );
+    } catch (error) {
+      if (
+        error instanceof
+        ActiveProductLimitError
+      ) {
+        throw error;
+      }
+
+      if (
+        error instanceof
+          Prisma.PrismaClientKnownRequestError &&
+        error.code === "P2034"
+      ) {
+        if (
+          attempt ===
+          MAX_RETRIES - 1
+        ) {
+          throw new Error(
+            "The product could not be created safely. Please try again."
+          );
+        }
+
+        continue;
+      }
+
+      throw error;
+    }
+  }
+
+  throw new Error(
+    "Unable to create product."
+  );
+}
+
+/* --------------------------------------------------
  * GET
- * ----------------------------------------------------
  *
- * Returns all active (not soft-deleted) products
- * belonging to the authenticated seller's business.
- */
+ * Returns products owned by the authenticated seller.
+ * -------------------------------------------------- */
+
 export async function GET() {
   const auth = await requireSeller();
 
@@ -67,6 +262,7 @@ export async function GET() {
         },
         select: {
           id: true,
+          name: true,
           deletedAt: true,
         },
       });
@@ -97,49 +293,71 @@ export async function GET() {
       );
     }
 
-    const products =
-      await prisma.product.findMany({
-        where: {
-          businessId: business.id,
-          deletedAt: null,
-        },
-        orderBy: {
-          updatedAt: "desc",
-        },
-        include: {
-          category: true,
-
-          images: {
-            orderBy: {
-              sortOrder: "asc",
+    const [products, activeCount] =
+      await Promise.all([
+        prisma.product.findMany({
+          where: {
+            businessId: business.id,
+            deletedAt: null,
+          },
+          orderBy: {
+            updatedAt: "desc",
+          },
+          include: {
+            category: true,
+            images: {
+              orderBy: {
+                sortOrder: "asc",
+              },
             },
           },
-        },
-      });
+        }),
 
-    return NextResponse.json({
-      products,
-      activeProductCount:
-        products.length,
-      maxActiveProducts:
-        MAX_ACTIVE_PRODUCTS,
-      remainingSlots:
-        Math.max(
+        prisma.product.count({
+          where: {
+            businessId: business.id,
+            status: "ACTIVE",
+            deletedAt: null,
+          },
+        }),
+      ]);
+
+    return NextResponse.json(
+      {
+        business: {
+          id: business.id,
+          name: business.name,
+        },
+
+        products,
+
+        total: products.length,
+
+        activeCount,
+
+        maxActiveProducts:
+          MAX_ACTIVE_PRODUCTS,
+
+        remainingSlots: Math.max(
           0,
           MAX_ACTIVE_PRODUCTS -
-            products.length
+            activeCount
         ),
-    });
+      },
+      {
+        headers: jsonHeaders(),
+      }
+    );
   } catch (error) {
     console.error(
-      "Seller products fetch error:",
+      "Seller products GET error:",
       error
     );
 
     return NextResponse.json(
       {
         error:
-          "Unable to load products.",
+          "Unable to load your products.",
       },
       {
         status: 500,
@@ -149,20 +367,13 @@ export async function GET() {
   }
 }
 
-/*
- * ----------------------------------------------------
+/* --------------------------------------------------
  * POST
- * ----------------------------------------------------
  *
- * Creates a product under the authenticated
- * seller's own business.
- *
- * Maximum active products per business:
- * 30
- *
- * Soft-deleted products do NOT count toward
- * this limit.
- */
+ * Creates an active product for the seller's business.
+ * Seller cannot choose status.
+ * -------------------------------------------------- */
+
 export async function POST(
   request: Request
 ) {
@@ -176,11 +387,7 @@ export async function POST(
     const body: unknown =
       await request.json();
 
-    if (
-      !body ||
-      typeof body !== "object" ||
-      Array.isArray(body)
-    ) {
+    if (!isRecord(body)) {
       return NextResponse.json(
         {
           error:
@@ -193,138 +400,39 @@ export async function POST(
       );
     }
 
-    const payload =
-      body as Record<string, unknown>;
-
-    /*
-     * Find the seller-owned business.
-     *
-     * Never trust a businessId sent by
-     * the client.
-     */
-    const business =
-      await prisma.business.findUnique({
-        where: {
-          ownerId: auth.user.id,
-        },
-        select: {
-          id: true,
-          deletedAt: true,
-        },
-      });
-
-    if (!business) {
-      return NextResponse.json(
-        {
-          error:
-            "You do not have a business linked to this seller account.",
-        },
-        {
-          status: 404,
-          headers: jsonHeaders(),
-        }
-      );
-    }
-
-    if (business.deletedAt) {
-      return NextResponse.json(
-        {
-          error:
-            "This business has been deleted.",
-        },
-        {
-          status: 410,
-          headers: jsonHeaders(),
-        }
-      );
-    }
-
-    /*
-     * -----------------------------------------------
-     * 30-PRODUCT LIMIT
-     * -----------------------------------------------
-     *
-     * Only products with deletedAt = null count.
-     * A soft-deleted product therefore frees a slot.
-     */
-    const activeProductCount =
-      await prisma.product.count({
-        where: {
-          businessId: business.id,
-          deletedAt: null,
-        },
-      });
-
-    if (
-      activeProductCount >=
-      MAX_ACTIVE_PRODUCTS
-    ) {
-      return NextResponse.json(
-        {
-          error:
-            `You have reached the maximum of ${MAX_ACTIVE_PRODUCTS} active products.`,
-
-          activeProductCount,
-
-          maxActiveProducts:
-            MAX_ACTIVE_PRODUCTS,
-
-          remainingSlots: 0,
-        },
-        {
-          status: 409,
-          headers: jsonHeaders(),
-        }
-      );
-    }
-
     const name = cleanString(
-      payload.name
+      body.name
     );
 
-    const description = cleanString(
-      payload.description
+    const description =
+      cleanString(body.description);
+
+    const categoryId = cleanString(
+      body.categoryId
     );
 
-    const categoryId =
-      cleanString(
-        payload.categoryId
-      );
-
-    const imageUrl = cleanString(
-      payload.imageUrl
-    );
+    const imageUrl =
+      cleanString(body.imageUrl);
 
     const availabilityValue =
-      cleanString(
-        payload.availability
+      cleanString(body.availability);
+
+    const keywordsResult =
+      parseKeywords(body.keywords);
+
+    const priceResult =
+      parseOptionalInteger(body.price);
+
+    const priceMinResult =
+      parseOptionalInteger(
+        body.priceMin
       );
 
-    const keywords = Array.isArray(
-      payload.keywords
-    )
-      ? [
-          ...new Set(
-            payload.keywords
-              .filter(
-                (
-                  value
-                ): value is string =>
-                  typeof value ===
-                    "string" &&
-                  value.trim().length >
-                    0
-              )
-              .map((value) =>
-                value.trim()
-              )
-          ),
-        ]
-      : [];
+    const priceMaxResult =
+      parseOptionalInteger(
+        body.priceMax
+      );
 
-    /*
-     * Basic validation.
-     */
     if (!name) {
       return NextResponse.json(
         {
@@ -338,16 +446,11 @@ export async function POST(
       );
     }
 
-    if (
-      availabilityValue &&
-      !ALLOWED_AVAILABILITY.includes(
-        availabilityValue as (typeof ALLOWED_AVAILABILITY)[number]
-      )
-    ) {
+    if (name.length > 200) {
       return NextResponse.json(
         {
           error:
-            "Invalid availability value.",
+            "Product name is too long.",
         },
         {
           status: 400,
@@ -356,40 +459,72 @@ export async function POST(
       );
     }
 
-    /*
-     * Product pricing.
-     */
-    const price =
-      parseOptionalInt(
-        payload.price
+    if (description.length > 2000) {
+      return NextResponse.json(
+        {
+          error:
+            "Product description is too long.",
+        },
+        {
+          status: 400,
+          headers: jsonHeaders(),
+        }
       );
+    }
+
+    if (imageUrl.length > 2000) {
+      return NextResponse.json(
+        {
+          error:
+            "Image URL is too long.",
+        },
+        {
+          status: 400,
+          headers: jsonHeaders(),
+        }
+      );
+    }
+
+    if (
+      !keywordsResult.valid
+    ) {
+      return NextResponse.json(
+        {
+          error:
+            "Keywords must be an array of strings or a comma-separated string.",
+        },
+        {
+          status: 400,
+          headers: jsonHeaders(),
+        }
+      );
+    }
+
+    if (
+      !priceResult.valid ||
+      !priceMinResult.valid ||
+      !priceMaxResult.valid
+    ) {
+      return NextResponse.json(
+        {
+          error:
+            "Prices must be valid whole numbers.",
+        },
+        {
+          status: 400,
+          headers: jsonHeaders(),
+        }
+      );
+    }
+
+    const price =
+      priceResult.value;
 
     const priceMin =
-      parseOptionalInt(
-        payload.priceMin
-      );
+      priceMinResult.value;
 
     const priceMax =
-      parseOptionalInt(
-        payload.priceMax
-      );
-
-    if (
-      price === "INVALID" ||
-      priceMin === "INVALID" ||
-      priceMax === "INVALID"
-    ) {
-      return NextResponse.json(
-        {
-          error:
-            "Price values must be whole numbers.",
-        },
-        {
-          status: 400,
-          headers: jsonHeaders(),
-        }
-      );
-    }
+      priceMaxResult.value;
 
     if (
       price !== null &&
@@ -456,11 +591,65 @@ export async function POST(
       );
     }
 
-    /*
-     * Validate category only when supplied.
-     *
-     * Sellers can only select active categories.
-     */
+    if (
+      availabilityValue &&
+      !isAvailability(
+        availabilityValue
+      )
+    ) {
+      return NextResponse.json(
+        {
+          error:
+            "Invalid availability value.",
+        },
+        {
+          status: 400,
+          headers: jsonHeaders(),
+        }
+      );
+    }
+
+    const business =
+      await prisma.business.findUnique({
+        where: {
+          ownerId: auth.user.id,
+        },
+        select: {
+          id: true,
+          deletedAt: true,
+        },
+      });
+
+    if (!business) {
+      return NextResponse.json(
+        {
+          error:
+            "You do not have a business linked to this seller account.",
+        },
+        {
+          status: 404,
+          headers: jsonHeaders(),
+        }
+      );
+    }
+
+    if (business.deletedAt) {
+      return NextResponse.json(
+        {
+          error:
+            "This business has been deleted.",
+        },
+        {
+          status: 410,
+          headers: jsonHeaders(),
+        }
+      );
+    }
+
+    let validatedCategoryId:
+      | string
+      | null = null;
+
     if (categoryId) {
       const category =
         await prisma.category.findFirst({
@@ -477,7 +666,7 @@ export async function POST(
         return NextResponse.json(
           {
             error:
-              "Selected category is invalid or inactive.",
+              "Selected category was not found or is inactive.",
           },
           {
             status: 400,
@@ -485,21 +674,34 @@ export async function POST(
           }
         );
       }
+
+      validatedCategoryId =
+        category.id;
     }
 
     const product =
-      await prisma.product.create({
-        data: {
-          businessId:
-            business.id,
+      await createProductWithLimit(
+        business.id,
+        {
+          business: {
+            connect: {
+              id: business.id,
+            },
+          },
 
           name,
 
           description:
             description || null,
 
-          categoryId:
-            categoryId || null,
+          category:
+            validatedCategoryId
+              ? {
+                  connect: {
+                    id: validatedCategoryId,
+                  },
+                }
+              : undefined,
 
           price,
 
@@ -509,33 +711,24 @@ export async function POST(
 
           availability:
             (availabilityValue ||
-              "ASK_SELLER") as
-              | "AVAILABLE"
-              | "ASK_SELLER"
-              | "UNAVAILABLE",
+              "ASK_SELLER") as Availability,
 
-          keywords,
+          keywords:
+            keywordsResult.value,
 
           imageUrl:
             imageUrl || null,
 
-          /*
-           * New seller products are active
-           * and are not soft-deleted.
-           */
           status: "ACTIVE",
+        }
+      );
 
+    const activeCount =
+      await prisma.product.count({
+        where: {
+          businessId: business.id,
+          status: "ACTIVE",
           deletedAt: null,
-        },
-
-        include: {
-          category: true,
-
-          images: {
-            orderBy: {
-              sortOrder: "asc",
-            },
-          },
         },
       });
 
@@ -546,15 +739,16 @@ export async function POST(
 
         product,
 
-        activeProductCount:
-          activeProductCount + 1,
+        activeCount,
 
         maxActiveProducts:
           MAX_ACTIVE_PRODUCTS,
 
-        remainingSlots:
+        remainingSlots: Math.max(
+          0,
           MAX_ACTIVE_PRODUCTS -
-          (activeProductCount + 1),
+            activeCount
+        ),
       },
       {
         status: 201,
@@ -562,8 +756,26 @@ export async function POST(
       }
     );
   } catch (error) {
+    if (
+      error instanceof
+      ActiveProductLimitError
+    ) {
+      return NextResponse.json(
+        {
+          error: error.message,
+          code: "ACTIVE_PRODUCT_LIMIT",
+          maxActiveProducts:
+            MAX_ACTIVE_PRODUCTS,
+        },
+        {
+          status: 409,
+          headers: jsonHeaders(),
+        }
+      );
+    }
+
     console.error(
-      "Seller product creation error:",
+      "Seller products POST error:",
       error
     );
 

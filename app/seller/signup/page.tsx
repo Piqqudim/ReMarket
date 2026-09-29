@@ -1,7 +1,13 @@
 "use client";
 
-import React, { useState } from "react";
+import React, {
+  useEffect,
+  useRef,
+  useState,
+} from "react";
+
 import { useRouter } from "next/navigation";
+
 import {
   Store,
   UserRound,
@@ -19,19 +25,56 @@ export default function SellerSignup() {
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [confirmPassword, setConfirmPassword] = useState("");
-  const [error, setError] = useState("");
-  const [success, setSuccess] = useState("");
-  const [loading, setLoading] = useState(false);
-  const [showPassword, setShowPassword] = useState(false);
-  const [showConfirmPassword, setShowConfirmPassword] =
+  const [confirmPassword, setConfirmPassword] =
+    useState("");
+
+  const [error, setError] =
+    useState("");
+
+  const [success, setSuccess] =
+    useState("");
+
+  const [loading, setLoading] =
     useState(false);
+
+  const [showPassword, setShowPassword] =
+    useState(false);
+
+  const [
+    showConfirmPassword,
+    setShowConfirmPassword,
+  ] = useState(false);
 
   const router = useRouter();
 
-  const submit = async (
+  const redirectTimer =
+    useRef<number | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (
+        redirectTimer.current !== null
+      ) {
+        window.clearTimeout(
+          redirectTimer.current
+        );
+      }
+    };
+  }, []);
+
+  function clearMessages() {
+    if (error) {
+      setError("");
+    }
+
+    if (success) {
+      setSuccess("");
+    }
+  }
+
+  async function submit(
     event: React.SubmitEvent<HTMLFormElement>
-  ) => {
+  ) {
     event.preventDefault();
 
     if (loading) {
@@ -41,55 +84,84 @@ export default function SellerSignup() {
     setError("");
     setSuccess("");
 
-    const cleanName = name.trim();
-    const cleanEmail = email.trim().toLowerCase();
+    const cleanName =
+      name.trim();
+
+    const cleanEmail =
+      email.trim().toLowerCase();
 
     if (!cleanName) {
-      setError("Name is required");
+      setError(
+        "Name is required"
+      );
       return;
     }
 
     if (!cleanEmail) {
-      setError("Email is required");
+      setError(
+        "Email is required"
+      );
       return;
     }
 
     if (password.length < 8) {
-      setError("Password must be at least 8 characters");
+      setError(
+        "Password must be at least 8 characters"
+      );
       return;
     }
 
-    if (password !== confirmPassword) {
-      setError("Passwords do not match");
+    if (
+      password !==
+      confirmPassword
+    ) {
+      setError(
+        "Passwords do not match"
+      );
       return;
     }
 
     setLoading(true);
 
     try {
-      const response = await fetch(
-        "/api/seller/signup",
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            name: cleanName,
-            email: cleanEmail,
-            password,
-          }),
-        }
-      );
+      const response =
+        await fetch(
+          "/api/seller/signup",
+          {
+            method: "POST",
+            headers: {
+              "Content-Type":
+                "application/json",
+            },
+            body: JSON.stringify({
+              name: cleanName,
+              email: cleanEmail,
+              password,
+            }),
+          }
+        );
 
-      const data = await response.json();
+      let data:
+        | {
+            error?: unknown;
+          }
+        | null = null;
+
+      try {
+        data =
+          await response.json();
+      } catch {
+        data = null;
+      }
 
       if (!response.ok) {
         setError(
-          typeof data?.error === "string"
+          typeof data?.error ===
+            "string"
             ? data.error
             : "Unable to create seller account"
         );
+
         return;
       }
 
@@ -97,49 +169,71 @@ export default function SellerSignup() {
         "Your seller account has been created. Redirecting to login..."
       );
 
-      window.setTimeout(() => {
-        router.push("/seller/login");
-      }, 800);
-    } catch {
+      redirectTimer.current =
+        window.setTimeout(() => {
+          router.push(
+            "/seller/login"
+          );
+        }, 800);
+    } catch (signupError) {
+      console.error(
+        "Seller signup error:",
+        signupError
+      );
+
       setError(
         "Something went wrong. Please try again"
       );
     } finally {
       setLoading(false);
     }
-  };
+  }
 
   return (
     <main className="relative flex min-h-screen items-center justify-center overflow-hidden bg-[#FFF0DC] px-4 py-10 sm:px-6">
       {/* Top-left decorative shape */}
+
       <div className="absolute left-[-80px] top-16 h-64 w-64 rounded-full bg-[#FF9A6B] opacity-80 sm:left-10 sm:top-24 sm:h-72 sm:w-72" />
 
       {/* Top-right dots */}
+
       <div className="absolute right-6 top-16 grid grid-cols-4 gap-2.5 opacity-50 sm:right-16 sm:top-24 sm:gap-3">
-        {Array.from({ length: 16 }).map((_, index) => (
-          <span
-            key={index}
-            className="h-2 w-2 rounded-full bg-[#F89B68]"
-          />
-        ))}
+        {Array.from({
+          length: 16,
+        }).map(
+          (_, index) => (
+            <span
+              key={index}
+              className="h-2 w-2 rounded-full bg-[#F89B68]"
+            />
+          )
+        )}
       </div>
 
       {/* Bottom-left dots */}
+
       <div className="absolute bottom-16 left-6 grid grid-cols-4 gap-2.5 opacity-50 sm:bottom-24 sm:left-16 sm:gap-3">
-        {Array.from({ length: 16 }).map((_, index) => (
-          <span
-            key={index}
-            className="h-2 w-2 rounded-full bg-[#F89B68]"
-          />
-        ))}
+        {Array.from({
+          length: 16,
+        }).map(
+          (_, index) => (
+            <span
+              key={index}
+              className="h-2 w-2 rounded-full bg-[#F89B68]"
+            />
+          )
+        )}
       </div>
 
       {/* Bottom-right decorative shape */}
+
       <div className="absolute bottom-[-80px] right-[-70px] h-64 w-80 rotate-[-20deg] rounded-[50%] bg-[#FF9A6B] opacity-80 sm:bottom-[-50px] sm:right-[-40px] sm:h-72 sm:w-[23rem]" />
 
       {/* Main content */}
+
       <section className="relative z-[15] flex w-full max-w-[655px] flex-col items-center">
         {/* Brand */}
+
         <div className="mb-8 flex flex-col items-center text-center sm:mb-10">
           <div className="mb-5 flex h-24 w-24 items-center justify-center rounded-[26px] bg-[#FF563F] shadow-[0_12px_30px_rgba(255,86,63,0.25)] sm:h-28 sm:w-28">
             <Store
@@ -149,7 +243,10 @@ export default function SellerSignup() {
           </div>
 
           <h1 className="text-[42px] font-semibold leading-none tracking-[-2px] text-[#111C27] sm:text-[52px]">
-            Re<span className="text-[#FF563F]">Market</span>
+            Re
+            <span className="text-[#FF563F]">
+              Market
+            </span>
           </h1>
 
           <p className="mt-3 text-[18px] font-normal text-[#718096] sm:mt-4 sm:text-[22px]">
@@ -158,8 +255,10 @@ export default function SellerSignup() {
         </div>
 
         {/* Signup card */}
+
         <div className="w-full rounded-[28px] bg-white px-6 py-8 shadow-[0_20px_60px_rgba(80,50,20,0.10)] sm:px-14 sm:py-12">
           {/* Header */}
+
           <div className="mb-8 sm:mb-9">
             <h2 className="text-[28px] font-semibold leading-tight text-[#111C27] sm:text-[32px]">
               Create your seller account
@@ -171,11 +270,13 @@ export default function SellerSignup() {
           </div>
 
           {/* Form */}
+
           <form
             onSubmit={submit}
             className="space-y-6 sm:space-y-7"
           >
             {/* Name */}
+
             <div>
               <label
                 htmlFor="name"
@@ -197,15 +298,12 @@ export default function SellerSignup() {
                   placeholder="Your full name"
                   value={name}
                   onChange={(event) => {
-                    setName(event.target.value);
+                    setName(
+                      event.target
+                        .value
+                    );
 
-                    if (error) {
-                      setError("");
-                    }
-
-                    if (success) {
-                      setSuccess("");
-                    }
+                    clearMessages();
                   }}
                   autoComplete="name"
                   required
@@ -216,6 +314,7 @@ export default function SellerSignup() {
             </div>
 
             {/* Email */}
+
             <div>
               <label
                 htmlFor="email"
@@ -237,15 +336,12 @@ export default function SellerSignup() {
                   placeholder="you@business.com"
                   value={email}
                   onChange={(event) => {
-                    setEmail(event.target.value);
+                    setEmail(
+                      event.target
+                        .value
+                    );
 
-                    if (error) {
-                      setError("");
-                    }
-
-                    if (success) {
-                      setSuccess("");
-                    }
+                    clearMessages();
                   }}
                   autoComplete="email"
                   autoCapitalize="none"
@@ -258,6 +354,7 @@ export default function SellerSignup() {
             </div>
 
             {/* Password */}
+
             <div>
               <label
                 htmlFor="password"
@@ -284,11 +381,14 @@ export default function SellerSignup() {
                   value={password}
                   onChange={(event) => {
                     setPassword(
-                      event.target.value
+                      event.target
+                        .value
                     );
 
                     if (error) {
-                      setError("");
+                      setError(
+                        ""
+                      );
                     }
                   }}
                   autoComplete="new-password"
@@ -302,7 +402,8 @@ export default function SellerSignup() {
                   type="button"
                   onClick={() =>
                     setShowPassword(
-                      (current) => !current
+                      (current) =>
+                        !current
                     )
                   }
                   disabled={loading}
@@ -329,6 +430,7 @@ export default function SellerSignup() {
             </div>
 
             {/* Confirm password */}
+
             <div>
               <label
                 htmlFor="confirmPassword"
@@ -352,14 +454,19 @@ export default function SellerSignup() {
                       : "password"
                   }
                   placeholder="Enter your password again"
-                  value={confirmPassword}
+                  value={
+                    confirmPassword
+                  }
                   onChange={(event) => {
                     setConfirmPassword(
-                      event.target.value
+                      event.target
+                        .value
                     );
 
                     if (error) {
-                      setError("");
+                      setError(
+                        ""
+                      );
                     }
                   }}
                   autoComplete="new-password"
@@ -373,7 +480,8 @@ export default function SellerSignup() {
                   type="button"
                   onClick={() =>
                     setShowConfirmPassword(
-                      (current) => !current
+                      (current) =>
+                        !current
                     )
                   }
                   disabled={loading}
@@ -400,6 +508,7 @@ export default function SellerSignup() {
             </div>
 
             {/* Error */}
+
             {error && (
               <div
                 role="alert"
@@ -420,6 +529,7 @@ export default function SellerSignup() {
             )}
 
             {/* Success */}
+
             {success && (
               <div
                 role="status"
@@ -440,6 +550,7 @@ export default function SellerSignup() {
             )}
 
             {/* Signup button */}
+
             <button
               type="submit"
               disabled={loading}
@@ -451,11 +562,13 @@ export default function SellerSignup() {
                     className="h-6 w-6 animate-spin"
                     strokeWidth={2}
                   />
+
                   Creating account...
                 </>
               ) : (
                 <>
                   Create account
+
                   <ArrowRight
                     className="h-6 w-6"
                     strokeWidth={2}
@@ -466,13 +579,16 @@ export default function SellerSignup() {
           </form>
 
           {/* Login link */}
+
           <div className="mt-8 text-center sm:mt-10">
             <p className="text-[14px] text-[#718096] sm:text-[15px]">
               Already have a seller account?{" "}
               <button
                 type="button"
                 onClick={() =>
-                  router.push("/seller/login")
+                  router.push(
+                    "/seller/login"
+                  )
                 }
                 className="font-semibold text-[#FF563F] hover:underline"
                 disabled={loading}
@@ -483,6 +599,7 @@ export default function SellerSignup() {
           </div>
 
           {/* Footer */}
+
           <div className="mt-8 flex items-center gap-4 sm:mt-10 sm:gap-5">
             <div className="h-px flex-1 bg-[#D9DEE5]" />
 

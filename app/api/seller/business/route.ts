@@ -9,7 +9,18 @@ const ALLOWED_AVAILABILITY = [
   "UNAVAILABLE",
 ] as const;
 
-function cleanString(value: unknown): string {
+type AvailabilityValue =
+  (typeof ALLOWED_AVAILABILITY)[number];
+
+/*
+ * -----------------------------------------
+ * HELPERS
+ * -----------------------------------------
+ */
+
+function cleanString(
+  value: unknown
+): string {
   return typeof value === "string"
     ? value.trim()
     : "";
@@ -36,21 +47,120 @@ function parseOptionalInt(
   return value;
 }
 
-function jsonHeaders() {
-  return {
-    "Content-Type": "application/json",
-  };
+function parseOptionalFloat(
+  value: unknown
+): number | null | "INVALID" {
+  if (
+    value === null ||
+    value === undefined ||
+    value === ""
+  ) {
+    return null;
+  }
+
+  if (
+    typeof value === "number"
+  ) {
+    return Number.isFinite(value)
+      ? value
+      : "INVALID";
+  }
+
+  if (
+    typeof value === "string"
+  ) {
+    const cleaned =
+      value.trim();
+
+    if (!cleaned) {
+      return null;
+    }
+
+    const parsed =
+      Number(cleaned);
+
+    return Number.isFinite(parsed)
+      ? parsed
+      : "INVALID";
+  }
+
+  return "INVALID";
 }
 
 /*
- * ----------------------------------------------------
- * GET
- * ----------------------------------------------------
+ * This function returns the exact
+ * AvailabilityValue union.
  *
- * Returns the authenticated seller's business.
+ * That prevents TypeScript from treating
+ * the result as a generic string.
  */
+function parseAvailability(
+  value: unknown
+): AvailabilityValue | null {
+  const cleaned =
+    cleanString(value);
+
+  if (
+    cleaned === "AVAILABLE" ||
+    cleaned === "ASK_SELLER" ||
+    cleaned === "UNAVAILABLE"
+  ) {
+    return cleaned;
+  }
+
+  return null;
+}
+
+function jsonHeaders() {
+  return {
+    "Content-Type":
+      "application/json",
+  };
+}
+
+function validateCoordinates(
+  lat: number | null,
+  long: number | null
+): string | null {
+  /*
+   * Exact GPS location requires both
+   * coordinates or neither.
+   */
+  if (
+    (lat === null) !==
+    (long === null)
+  ) {
+    return "Latitude and longitude must be provided together.";
+  }
+
+  if (
+    lat !== null &&
+    (lat < -90 ||
+      lat > 90)
+  ) {
+    return "Latitude must be between -90 and 90.";
+  }
+
+  if (
+    long !== null &&
+    (long < -180 ||
+      long > 180)
+  ) {
+    return "Longitude must be between -180 and 180.";
+  }
+
+  return null;
+}
+
+/*
+ * -----------------------------------------
+ * GET
+ * -----------------------------------------
+ */
+
 export async function GET() {
-  const auth = await requireSeller();
+  const auth =
+    await requireSeller();
 
   if (!auth.authorized) {
     return auth.response;
@@ -60,14 +170,17 @@ export async function GET() {
     const business =
       await prisma.business.findUnique({
         where: {
-          ownerId: auth.user.id,
+          ownerId:
+            auth.user.id,
         },
+
         include: {
           location: true,
 
           categories: {
             include: {
-              category: true,
+              category:
+                true,
             },
           },
 
@@ -75,30 +188,45 @@ export async function GET() {
             where: {
               deletedAt: null,
             },
+
             orderBy: {
-              updatedAt: "desc",
+              updatedAt:
+                "desc",
             },
+
             include: {
               images: {
                 orderBy: {
-                  sortOrder: "asc",
+                  sortOrder:
+                    "asc",
                 },
               },
-              category: true,
+
+              category:
+                true,
             },
           },
 
           socialLinks: {
             orderBy: {
-              platform: "asc",
+              platform:
+                "asc",
             },
           },
         },
       });
 
-    return NextResponse.json({
-      business,
-    });
+    return NextResponse.json(
+      {
+        business,
+      },
+      {
+        headers: {
+          "Cache-Control":
+            "no-store",
+        },
+      }
+    );
   } catch (error) {
     console.error(
       "Seller business fetch error:",
@@ -112,35 +240,29 @@ export async function GET() {
       },
       {
         status: 500,
-        headers: jsonHeaders(),
+        headers:
+          jsonHeaders(),
       }
     );
   }
 }
 
 /*
- * ----------------------------------------------------
+ * -----------------------------------------
  * POST
- * ----------------------------------------------------
- *
- * Creates the authenticated seller's business.
- *
- * Business.ownerId is automatically assigned to
- * the authenticated seller.
+ * -----------------------------------------
  */
+
 export async function POST(
   request: Request
 ) {
-  const auth = await requireSeller();
+  const auth =
+    await requireSeller();
 
   if (!auth.authorized) {
     return auth.response;
   }
 
-  /*
-   * Business.ownerId is unique, so one seller
-   * can own only one business.
-   */
   if (auth.business) {
     return NextResponse.json(
       {
@@ -149,7 +271,8 @@ export async function POST(
       },
       {
         status: 409,
-        headers: jsonHeaders(),
+        headers:
+          jsonHeaders(),
       }
     );
   }
@@ -170,60 +293,86 @@ export async function POST(
         },
         {
           status: 400,
-          headers: jsonHeaders(),
+          headers:
+            jsonHeaders(),
         }
       );
     }
 
     const payload =
-      body as Record<string, unknown>;
+      body as Record<
+        string,
+        unknown
+      >;
 
-    const name = cleanString(
-      payload.name
-    );
-
-    const ownerName = cleanString(
-      payload.ownerName
-    );
-
-    const description = cleanString(
-      payload.description
-    );
-
-    const area = cleanString(
-      payload.area
-    );
-
-    const phone = cleanString(
-      payload.phone
-    );
-
-    const imageUrl = cleanString(
-      payload.imageUrl
-    );
-
-    const categoryIds = Array.isArray(
-      payload.categoryIds
-    )
-      ? [
-          ...new Set(
-            payload.categoryIds.filter(
-              (
-                value
-              ): value is string =>
-                typeof value ===
-                  "string" &&
-                value.trim().length >
-                  0
-            )
-          ),
-        ]
-      : [];
-
-    const availabilityValue =
+    const name =
       cleanString(
+        payload.name
+      );
+
+    const ownerName =
+      cleanString(
+        payload.ownerName
+      );
+
+    const description =
+      cleanString(
+        payload.description
+      );
+
+    const area =
+      cleanString(
+        payload.area
+      );
+
+    const address =
+      cleanString(
+        payload.address
+      );
+
+    const phone =
+      cleanString(
+        payload.phone
+      );
+
+    const imageUrl =
+      cleanString(
+        payload.imageUrl
+      );
+
+    const categoryIds =
+      Array.isArray(
+        payload.categoryIds
+      )
+        ? [
+            ...new Set(
+              payload.categoryIds
+                .map(
+                  (value) =>
+                    typeof value ===
+                    "string"
+                      ? value.trim()
+                      : ""
+                )
+                .filter(Boolean)
+            ),
+          ]
+        : [];
+
+    /*
+     * Parse directly into the correct
+     * literal union.
+     */
+    const availability =
+      parseAvailability(
         payload.availability
       );
+
+    /*
+     * -----------------------------------------
+     * BASIC VALIDATION
+     * -----------------------------------------
+     */
 
     if (!name) {
       return NextResponse.json(
@@ -233,7 +382,25 @@ export async function POST(
         },
         {
           status: 400,
-          headers: jsonHeaders(),
+          headers:
+            jsonHeaders(),
+        }
+      );
+    }
+
+    if (
+      name.length >
+      200
+    ) {
+      return NextResponse.json(
+        {
+          error:
+            "Business name is too long.",
+        },
+        {
+          status: 400,
+          headers:
+            jsonHeaders(),
         }
       );
     }
@@ -246,16 +413,61 @@ export async function POST(
         },
         {
           status: 400,
-          headers: jsonHeaders(),
+          headers:
+            jsonHeaders(),
         }
       );
     }
 
     if (
-      availabilityValue &&
-      !ALLOWED_AVAILABILITY.includes(
-        availabilityValue as (typeof ALLOWED_AVAILABILITY)[number]
-      )
+      area.length >
+      200
+    ) {
+      return NextResponse.json(
+        {
+          error:
+            "Business area is too long.",
+        },
+        {
+          status: 400,
+          headers:
+            jsonHeaders(),
+        }
+      );
+    }
+
+    if (
+      address.length >
+      2000
+    ) {
+      return NextResponse.json(
+        {
+          error:
+            "Business address is too long.",
+        },
+        {
+          status: 400,
+          headers:
+            jsonHeaders(),
+        }
+      );
+    }
+
+    /*
+     * If availability was supplied, it must
+     * be one of the three allowed values.
+     */
+    const availabilityWasProvided =
+      payload.availability !==
+        undefined &&
+      payload.availability !==
+        null &&
+      payload.availability !==
+        "";
+
+    if (
+      availabilityWasProvided &&
+      availability === null
     ) {
       return NextResponse.json(
         {
@@ -264,10 +476,17 @@ export async function POST(
         },
         {
           status: 400,
-          headers: jsonHeaders(),
+          headers:
+            jsonHeaders(),
         }
       );
     }
+
+    /*
+     * -----------------------------------------
+     * PRICE VALIDATION
+     * -----------------------------------------
+     */
 
     const priceMin =
       parseOptionalInt(
@@ -280,8 +499,10 @@ export async function POST(
       );
 
     if (
-      priceMin === "INVALID" ||
-      priceMax === "INVALID"
+      priceMin ===
+        "INVALID" ||
+      priceMax ===
+        "INVALID"
     ) {
       return NextResponse.json(
         {
@@ -290,7 +511,8 @@ export async function POST(
         },
         {
           status: 400,
-          headers: jsonHeaders(),
+          headers:
+            jsonHeaders(),
         }
       );
     }
@@ -306,7 +528,8 @@ export async function POST(
         },
         {
           status: 400,
-          headers: jsonHeaders(),
+          headers:
+            jsonHeaders(),
         }
       );
     }
@@ -322,7 +545,8 @@ export async function POST(
         },
         {
           status: 400,
-          headers: jsonHeaders(),
+          headers:
+            jsonHeaders(),
         }
       );
     }
@@ -330,7 +554,8 @@ export async function POST(
     if (
       priceMin !== null &&
       priceMax !== null &&
-      priceMin > priceMax
+      priceMin >
+        priceMax
     ) {
       return NextResponse.json(
         {
@@ -339,32 +564,174 @@ export async function POST(
         },
         {
           status: 400,
-          headers: jsonHeaders(),
+          headers:
+            jsonHeaders(),
         }
       );
     }
 
     /*
-     * Validate categories before creating
-     * BusinessCategory records.
+     * -----------------------------------------
+     * LOCATION COORDINATES
+     * -----------------------------------------
      */
+
+    const parsedLat =
+      parseOptionalFloat(
+        payload.lat
+      );
+
+    const parsedLong =
+      parseOptionalFloat(
+        payload.long ??
+          payload.lng
+      );
+
+    if (
+      parsedLat ===
+        "INVALID" ||
+      parsedLong ===
+        "INVALID"
+    ) {
+      return NextResponse.json(
+        {
+          error:
+            "Latitude and longitude must be valid numbers.",
+        },
+        {
+          status: 400,
+          headers:
+            jsonHeaders(),
+        }
+      );
+    }
+
+    const coordinateError =
+      validateCoordinates(
+        parsedLat,
+        parsedLong
+      );
+
+    if (coordinateError) {
+      return NextResponse.json(
+        {
+          error:
+            coordinateError,
+        },
+        {
+          status: 400,
+          headers:
+            jsonHeaders(),
+        }
+      );
+    }
+
+    /*
+     * -----------------------------------------
+     * STRING LENGTH VALIDATION
+     * -----------------------------------------
+     */
+
+    if (
+      ownerName.length >
+      200
+    ) {
+      return NextResponse.json(
+        {
+          error:
+            "Owner name is too long.",
+        },
+        {
+          status: 400,
+          headers:
+            jsonHeaders(),
+        }
+      );
+    }
+
+    if (
+      description.length >
+      2000
+    ) {
+      return NextResponse.json(
+        {
+          error:
+            "Business description is too long.",
+        },
+        {
+          status: 400,
+          headers:
+            jsonHeaders(),
+        }
+      );
+    }
+
+    if (
+      phone.length >
+      50
+    ) {
+      return NextResponse.json(
+        {
+          error:
+            "Phone number is too long.",
+        },
+        {
+          status: 400,
+          headers:
+            jsonHeaders(),
+        }
+      );
+    }
+
+    if (
+      imageUrl.length >
+      2000
+    ) {
+      return NextResponse.json(
+        {
+          error:
+            "Image URL is too long.",
+        },
+        {
+          status: 400,
+          headers:
+            jsonHeaders(),
+        }
+      );
+    }
+
+    /*
+     * -----------------------------------------
+     * CATEGORY VALIDATION
+     * -----------------------------------------
+     */
+
     let categories: {
       id: string;
     }[] = [];
 
-    if (categoryIds.length > 0) {
+    if (
+      categoryIds.length >
+      0
+    ) {
       categories =
-        await prisma.category.findMany({
-          where: {
-            id: {
-              in: categoryIds,
+        await prisma.category.findMany(
+          {
+            where: {
+              id: {
+                in:
+                  categoryIds,
+              },
+
+              isActive:
+                true,
             },
-            isActive: true,
-          },
-          select: {
-            id: true,
-          },
-        });
+
+            select: {
+              id: true,
+            },
+          }
+        );
 
       if (
         categories.length !==
@@ -377,25 +744,32 @@ export async function POST(
           },
           {
             status: 400,
-            headers: jsonHeaders(),
+            headers:
+              jsonHeaders(),
           }
         );
       }
     }
 
     /*
-     * Re-check ownership immediately before
-     * creating the business.
+     * -----------------------------------------
+     * FINAL OWNERSHIP CHECK
+     * -----------------------------------------
      */
+
     const existingBusiness =
-      await prisma.business.findUnique({
-        where: {
-          ownerId: auth.user.id,
-        },
-        select: {
-          id: true,
-        },
-      });
+      await prisma.business.findUnique(
+        {
+          where: {
+            ownerId:
+              auth.user.id,
+          },
+
+          select: {
+            id: true,
+          },
+        }
+      );
 
     if (existingBusiness) {
       return NextResponse.json(
@@ -405,100 +779,140 @@ export async function POST(
         },
         {
           status: 409,
-          headers: jsonHeaders(),
+          headers:
+            jsonHeaders(),
         }
       );
     }
 
     /*
-     * Location.area is not unique in the schema,
-     * so use findFirst() instead of upsert().
+     * -----------------------------------------
+     * LOCATION
+     * -----------------------------------------
+     *
+     * IMPORTANT:
+     *
+     * A Location belongs to one specific
+     * business point.
+     *
+     * We do NOT find an existing Location
+     * by area anymore.
+     *
+     * This prevents multiple businesses in
+     * the same area from sharing coordinates.
+     *
+     * Seller-submitted locations always begin
+     * as UNVERIFIED.
      */
-    let location =
-      await prisma.location.findFirst({
-        where: {
-          area,
-        },
-        select: {
-          id: true,
-          area: true,
-        },
-      });
 
-    if (!location) {
-      location =
-        await prisma.location.create({
-          data: {
-            area,
-          },
-          select: {
-            id: true,
-            area: true,
-          },
-        });
-    }
+    const businessAvailability:
+      AvailabilityValue =
+      availability ??
+      "ASK_SELLER";
 
     const business =
-      await prisma.business.create({
-        data: {
-          name,
+      await prisma.$transaction(
+        async (tx) => {
+          const location =
+            await tx.location.create({
+              data: {
+                area,
 
-          ownerName:
-            ownerName ||
-            auth.user.name ||
-            null,
+                address:
+                  address ||
+                  null,
 
-          ownerId: auth.user.id,
+                lat:
+                  parsedLat,
 
-          description:
-            description || null,
+                long:
+                  parsedLong,
 
-          locationId:
-            location.id,
+                verification:
+                  "UNVERIFIED",
+              },
+            });
 
-          priceMin,
+          return tx.business.create({
+            data: {
+              name,
 
-          priceMax,
+              ownerName:
+                ownerName ||
+                auth.user.name ||
+                null,
 
-          availability:
-            (availabilityValue ||
-              "ASK_SELLER") as
-              | "AVAILABLE"
-              | "ASK_SELLER"
-              | "UNAVAILABLE",
+              ownerId:
+                auth.user.id,
 
-          phone:
-            phone || null,
+              description:
+                description ||
+                null,
 
-          imageUrl:
-            imageUrl || null,
+              locationId:
+                location.id,
 
-          categories:
-            categories.length > 0
-              ? {
-                  create:
-                    categories.map(
-                      (
-                        category
-                      ) => ({
-                        categoryId:
-                          category.id,
-                      })
-                    ),
-                }
-              : undefined,
-        },
+              priceMin,
 
-        include: {
-          location: true,
+              priceMax,
 
-          categories: {
-            include: {
-              category: true,
+              availability:
+                businessAvailability,
+
+              phone:
+                phone || null,
+
+              imageUrl:
+                imageUrl || null,
+
+              categories:
+                categories.length >
+                0
+                  ? {
+                      create:
+                        categories.map(
+                          (
+                            category
+                          ) => ({
+                            categoryId:
+                              category.id,
+                          })
+                        ),
+                    }
+                  : undefined,
             },
-          },
-        },
-      });
+
+            include: {
+              location: true,
+
+              categories: {
+                include: {
+                  category:
+                    true,
+                },
+              },
+
+              products: {
+                where: {
+                  status:
+                    "ACTIVE",
+
+                  deletedAt:
+                    null,
+                },
+
+                orderBy: {
+                  updatedAt:
+                    "desc",
+                },
+              },
+
+              socialLinks:
+                true,
+            },
+          });
+        }
+      );
 
     return NextResponse.json(
       {
@@ -509,7 +923,8 @@ export async function POST(
       },
       {
         status: 201,
-        headers: jsonHeaders(),
+        headers:
+          jsonHeaders(),
       }
     );
   } catch (error) {
@@ -519,10 +934,12 @@ export async function POST(
     );
 
     if (
-      typeof error === "object" &&
+      typeof error ===
+        "object" &&
       error !== null &&
       "code" in error &&
-      error.code === "P2002"
+      error.code ===
+        "P2002"
     ) {
       return NextResponse.json(
         {
@@ -531,7 +948,8 @@ export async function POST(
         },
         {
           status: 409,
-          headers: jsonHeaders(),
+          headers:
+            jsonHeaders(),
         }
       );
     }
@@ -543,30 +961,24 @@ export async function POST(
       },
       {
         status: 500,
-        headers: jsonHeaders(),
+        headers:
+          jsonHeaders(),
       }
     );
   }
 }
 
 /*
- * ----------------------------------------------------
+ * -----------------------------------------
  * PATCH
- * ----------------------------------------------------
- *
- * Updates ONLY the authenticated seller's own business.
- *
- * Seller cannot change:
- * - ownerId
- * - verification
- * - status
- * - deletedAt
- * - onboardedAt
+ * -----------------------------------------
  */
+
 export async function PATCH(
   request: Request
 ) {
-  const auth = await requireSeller();
+  const auth =
+    await requireSeller();
 
   if (!auth.authorized) {
     return auth.response;
@@ -588,24 +1000,53 @@ export async function PATCH(
         },
         {
           status: 400,
-          headers: jsonHeaders(),
+          headers:
+            jsonHeaders(),
         }
       );
     }
 
     const payload =
-      body as Record<string, unknown>;
+      body as Record<
+        string,
+        unknown
+      >;
+
+    /*
+     * -----------------------------------------
+     * FIND SELLER BUSINESS
+     * -----------------------------------------
+     */
 
     const existingBusiness =
-      await prisma.business.findUnique({
-        where: {
-          ownerId: auth.user.id,
-        },
-        select: {
-          id: true,
-          deletedAt: true,
-        },
-      });
+      await prisma.business.findUnique(
+        {
+          where: {
+            ownerId:
+              auth.user.id,
+          },
+
+          select: {
+            id: true,
+            ownerId: true,
+            deletedAt: true,
+            priceMin: true,
+            priceMax: true,
+
+            location: {
+              select: {
+                id: true,
+                area: true,
+                address: true,
+                lat: true,
+                long: true,
+                verification:
+                  true,
+              },
+            },
+          },
+        }
+      );
 
     if (!existingBusiness) {
       return NextResponse.json(
@@ -615,12 +1056,32 @@ export async function PATCH(
         },
         {
           status: 404,
-          headers: jsonHeaders(),
+          headers:
+            jsonHeaders(),
         }
       );
     }
 
-    if (existingBusiness.deletedAt) {
+    if (
+      existingBusiness.ownerId !==
+      auth.user.id
+    ) {
+      return NextResponse.json(
+        {
+          error:
+            "You are not allowed to edit this business.",
+        },
+        {
+          status: 403,
+          headers:
+            jsonHeaders(),
+        }
+      );
+    }
+
+    if (
+      existingBusiness.deletedAt
+    ) {
       return NextResponse.json(
         {
           error:
@@ -628,72 +1089,89 @@ export async function PATCH(
         },
         {
           status: 410,
-          headers: jsonHeaders(),
+          headers:
+            jsonHeaders(),
         }
       );
     }
 
-    /*
-     * Track which fields were actually supplied.
-     */
-    const has = (key: string) =>
+    const has = (
+      key: string
+    ): boolean =>
       Object.prototype.hasOwnProperty.call(
         payload,
         key
       );
 
-    const name = has("name")
-      ? cleanString(
-          payload.name
-        )
-      : undefined;
-
-    const ownerName = has(
-      "ownerName"
-    )
-      ? cleanString(
-          payload.ownerName
-        )
-      : undefined;
-
-    const description = has(
-      "description"
-    )
-      ? cleanString(
-          payload.description
-        )
-      : undefined;
-
-    const area = has("area")
-      ? cleanString(
-          payload.area
-        )
-      : undefined;
-
-    const phone = has("phone")
-      ? cleanString(
-          payload.phone
-        )
-      : undefined;
-
-    const imageUrl = has(
-      "imageUrl"
-    )
-      ? cleanString(
-          payload.imageUrl
-        )
-      : undefined;
-
-    const availabilityValue =
-      has("availability")
+    const name =
+      has("name")
         ? cleanString(
+            payload.name
+          )
+        : undefined;
+
+    const ownerName =
+      has("ownerName")
+        ? cleanString(
+            payload.ownerName
+          )
+        : undefined;
+
+    const description =
+      has("description")
+        ? cleanString(
+            payload.description
+          )
+        : undefined;
+
+    const area =
+      has("area")
+        ? cleanString(
+            payload.area
+          )
+        : undefined;
+
+    const address =
+      has("address")
+        ? cleanString(
+            payload.address
+          )
+        : undefined;
+
+    const phone =
+      has("phone")
+        ? cleanString(
+            payload.phone
+          )
+        : undefined;
+
+    const imageUrl =
+      has("imageUrl")
+        ? cleanString(
+            payload.imageUrl
+          )
+        : undefined;
+
+    /*
+     * Parse directly into the exact
+     * AvailabilityValue type.
+     */
+    const availabilityProvided =
+      has("availability");
+
+    const availability =
+      availabilityProvided
+        ? parseAvailability(
             payload.availability
           )
         : undefined;
 
     /*
-     * Validate business name.
+     * -----------------------------------------
+     * BASIC VALIDATION
+     * -----------------------------------------
      */
+
     if (
       name !== undefined &&
       !name
@@ -705,14 +1183,66 @@ export async function PATCH(
         },
         {
           status: 400,
-          headers: jsonHeaders(),
+          headers:
+            jsonHeaders(),
         }
       );
     }
 
-    /*
-     * Validate area.
-     */
+    if (
+      name !== undefined &&
+      name.length >
+        200
+    ) {
+      return NextResponse.json(
+        {
+          error:
+            "Business name is too long.",
+        },
+        {
+          status: 400,
+          headers:
+            jsonHeaders(),
+        }
+      );
+    }
+
+    if (
+      ownerName !== undefined &&
+      ownerName.length >
+        200
+    ) {
+      return NextResponse.json(
+        {
+          error:
+            "Owner name is too long.",
+        },
+        {
+          status: 400,
+          headers:
+            jsonHeaders(),
+        }
+      );
+    }
+
+    if (
+      description !== undefined &&
+      description.length >
+        2000
+    ) {
+      return NextResponse.json(
+        {
+          error:
+            "Business description is too long.",
+        },
+        {
+          status: 400,
+          headers:
+            jsonHeaders(),
+        }
+      );
+    }
+
     if (
       area !== undefined &&
       !area
@@ -724,20 +1254,91 @@ export async function PATCH(
         },
         {
           status: 400,
-          headers: jsonHeaders(),
+          headers:
+            jsonHeaders(),
+        }
+      );
+    }
+
+    if (
+      area !== undefined &&
+      area.length >
+        200
+    ) {
+      return NextResponse.json(
+        {
+          error:
+            "Business area is too long.",
+        },
+        {
+          status: 400,
+          headers:
+            jsonHeaders(),
+        }
+      );
+    }
+
+    if (
+      address !== undefined &&
+      address.length >
+        2000
+    ) {
+      return NextResponse.json(
+        {
+          error:
+            "Business address is too long.",
+        },
+        {
+          status: 400,
+          headers:
+            jsonHeaders(),
+        }
+      );
+    }
+
+    if (
+      phone !== undefined &&
+      phone.length >
+        50
+    ) {
+      return NextResponse.json(
+        {
+          error:
+            "Phone number is too long.",
+        },
+        {
+          status: 400,
+          headers:
+            jsonHeaders(),
+        }
+      );
+    }
+
+    if (
+      imageUrl !== undefined &&
+      imageUrl.length >
+        2000
+    ) {
+      return NextResponse.json(
+        {
+          error:
+            "Image URL is too long.",
+        },
+        {
+          status: 400,
+          headers:
+            jsonHeaders(),
         }
       );
     }
 
     /*
-     * Validate availability.
+     * If availability was included, the
+     * parser must have accepted it.
      */
     if (
-      availabilityValue !==
-        undefined &&
-      !ALLOWED_AVAILABILITY.includes(
-        availabilityValue as (typeof ALLOWED_AVAILABILITY)[number]
-      )
+      availabilityProvided &&
+      availability === null
     ) {
       return NextResponse.json(
         {
@@ -746,14 +1347,18 @@ export async function PATCH(
         },
         {
           status: 400,
-          headers: jsonHeaders(),
+          headers:
+            jsonHeaders(),
         }
       );
     }
 
     /*
-     * Prices.
+     * -----------------------------------------
+     * PRICE VALIDATION
+     * -----------------------------------------
      */
+
     const priceMinProvided =
       has("priceMin");
 
@@ -775,8 +1380,10 @@ export async function PATCH(
         : undefined;
 
     if (
-      priceMin === "INVALID" ||
-      priceMax === "INVALID"
+      priceMin ===
+        "INVALID" ||
+      priceMax ===
+        "INVALID"
     ) {
       return NextResponse.json(
         {
@@ -785,7 +1392,8 @@ export async function PATCH(
         },
         {
           status: 400,
-          headers: jsonHeaders(),
+          headers:
+            jsonHeaders(),
         }
       );
     }
@@ -802,7 +1410,8 @@ export async function PATCH(
         },
         {
           status: 400,
-          headers: jsonHeaders(),
+          headers:
+            jsonHeaders(),
         }
       );
     }
@@ -819,43 +1428,25 @@ export async function PATCH(
         },
         {
           status: 400,
-          headers: jsonHeaders(),
+          headers:
+            jsonHeaders(),
         }
       );
     }
 
-    /*
-     * Get the current prices so a partial PATCH
-     * can validate the final combination.
-     */
-    const currentPrices =
-      await prisma.business.findUnique({
-        where: {
-          id: existingBusiness.id,
-        },
-        select: {
-          priceMin: true,
-          priceMax: true,
-        },
-      });
-
-    /*
-     * IMPORTANT:
-     * Explicitly normalize undefined to null.
-     * This removes the TypeScript possibly-undefined
-     * error while preserving PATCH semantics.
-     */
-    const resultingPriceMin: number | null =
+    const resultingPriceMin:
+      | number
+      | null =
       priceMinProvided
         ? priceMin ?? null
-        : currentPrices?.priceMin ??
-          null;
+        : existingBusiness.priceMin;
 
-    const resultingPriceMax: number | null =
+    const resultingPriceMax:
+      | number
+      | null =
       priceMaxProvided
         ? priceMax ?? null
-        : currentPrices?.priceMax ??
-          null;
+        : existingBusiness.priceMax;
 
     if (
       resultingPriceMin !== null &&
@@ -870,21 +1461,27 @@ export async function PATCH(
         },
         {
           status: 400,
-          headers: jsonHeaders(),
+          headers:
+            jsonHeaders(),
         }
       );
     }
 
     /*
-     * Validate category IDs when supplied.
+     * -----------------------------------------
+     * CATEGORIES
+     * -----------------------------------------
      */
+
     const categoryIdsProvided =
       has("categoryIds");
 
     let categoryIds: string[] =
       [];
 
-    if (categoryIdsProvided) {
+    if (
+      categoryIdsProvided
+    ) {
       if (
         !Array.isArray(
           payload.categoryIds
@@ -897,28 +1494,50 @@ export async function PATCH(
           },
           {
             status: 400,
-            headers: jsonHeaders(),
+            headers:
+              jsonHeaders(),
+          }
+        );
+      }
+
+      const rawCategoryIds =
+        payload.categoryIds;
+
+      if (
+        rawCategoryIds.some(
+          (value) =>
+            typeof value !==
+            "string"
+        )
+      ) {
+        return NextResponse.json(
+          {
+            error:
+              "Category IDs must be strings.",
+          },
+          {
+            status: 400,
+            headers:
+              jsonHeaders(),
           }
         );
       }
 
       categoryIds = [
         ...new Set(
-          payload.categoryIds.filter(
-            (
-              value
-            ): value is string =>
-              typeof value ===
-                "string" &&
-              value.trim().length >
-                0
+          rawCategoryIds.map(
+            (value) =>
+              (
+                value as string
+              ).trim()
           )
         ),
       ];
 
       if (
-        categoryIds.length !==
-        payload.categoryIds.length
+        categoryIds.some(
+          (id) => !id
+        )
       ) {
         return NextResponse.json(
           {
@@ -927,23 +1546,29 @@ export async function PATCH(
           },
           {
             status: 400,
-            headers: jsonHeaders(),
+            headers:
+              jsonHeaders(),
           }
         );
       }
 
       if (
-        categoryIds.length > 0
+        categoryIds.length >
+        0
       ) {
         const validCategories =
           await prisma.category.findMany(
             {
               where: {
                 id: {
-                  in: categoryIds,
+                  in:
+                    categoryIds,
                 },
-                isActive: true,
+
+                isActive:
+                  true,
               },
+
               select: {
                 id: true,
               },
@@ -961,7 +1586,8 @@ export async function PATCH(
             },
             {
               status: 400,
-              headers: jsonHeaders(),
+              headers:
+                jsonHeaders(),
             }
           );
         }
@@ -969,55 +1595,186 @@ export async function PATCH(
     }
 
     /*
-     * If the area changes, find or create
-     * the correct Location.
+     * -----------------------------------------
+     * LOCATION
+     * -----------------------------------------
      *
-     * Location.area is not unique in the schema,
-     * so findFirst() is intentional.
+     * A seller may update:
+     * - area
+     * - address
+     * - latitude
+     * - longitude / lng
+     *
+     * Any actual location change creates a
+     * new Location record.
+     *
+     * The new location is UNVERIFIED.
      */
-    let locationId:
-      | string
-      | undefined;
 
-    if (area !== undefined) {
-      const location =
-        await prisma.location.findFirst(
+    const areaProvided =
+      has("area");
+
+    const addressProvided =
+      has("address");
+
+    const latProvided =
+      has("lat");
+
+    const longProvided =
+      has("long");
+
+    const lngProvided =
+      has("lng");
+
+    const locationWasProvided =
+      areaProvided ||
+      addressProvided ||
+      latProvided ||
+      longProvided ||
+      lngProvided;
+
+    let newLocationData:
+      | {
+          area: string;
+          address: string | null;
+          lat: number | null;
+          long: number | null;
+        }
+      | null = null;
+
+    if (locationWasProvided) {
+      const resultingArea =
+        areaProvided
+          ? area as string
+          : existingBusiness
+              .location
+              ?.area ?? "";
+
+      const resultingAddress =
+        addressProvided
+          ? address as string
+          : existingBusiness
+              .location
+              ?.address ?? null;
+
+      const parsedLat =
+        latProvided
+          ? parseOptionalFloat(
+              payload.lat
+            )
+          : existingBusiness
+              .location
+              ?.lat ?? null;
+
+      const parsedLong =
+        longProvided ||
+        lngProvided
+          ? parseOptionalFloat(
+              longProvided
+                ? payload.long
+                : payload.lng
+            )
+          : existingBusiness
+              .location
+              ?.long ?? null;
+
+      if (
+        parsedLat ===
+          "INVALID" ||
+        parsedLong ===
+          "INVALID"
+      ) {
+        return NextResponse.json(
           {
-            where: {
-              area,
-            },
-            select: {
-              id: true,
-            },
+            error:
+              "Latitude and longitude must be valid numbers.",
+          },
+          {
+            status: 400,
+            headers:
+              jsonHeaders(),
           }
         );
+      }
 
-      if (location) {
-        locationId =
-          location.id;
-      } else {
-        const newLocation =
-          await prisma.location.create({
-            data: {
-              area,
-            },
-            select: {
-              id: true,
-            },
-          });
+      if (!resultingArea) {
+        return NextResponse.json(
+          {
+            error:
+              "Business area is required.",
+          },
+          {
+            status: 400,
+            headers:
+              jsonHeaders(),
+          }
+        );
+      }
 
-        locationId =
-          newLocation.id;
+      const coordinateError =
+        validateCoordinates(
+          parsedLat,
+          parsedLong
+        );
+
+      if (coordinateError) {
+        return NextResponse.json(
+          {
+            error:
+              coordinateError,
+          },
+          {
+            status: 400,
+            headers:
+              jsonHeaders(),
+          }
+        );
+      }
+
+      const locationChanged =
+        !existingBusiness.location ||
+        existingBusiness.location
+            .area !==
+          resultingArea ||
+        (
+          existingBusiness.location
+            .address ?? null
+        ) !==
+          resultingAddress ||
+        (
+          existingBusiness.location
+            .lat ?? null
+        ) !==
+          parsedLat ||
+        (
+          existingBusiness.location
+            .long ?? null
+        ) !==
+          parsedLong;
+
+      if (locationChanged) {
+        newLocationData = {
+          area:
+            resultingArea,
+
+          address:
+            resultingAddress,
+
+          lat:
+            parsedLat,
+
+          long:
+            parsedLong,
+        };
       }
     }
 
     /*
-     * Build the update object.
-     *
-     * Protected fields such as ownerId,
-     * verification, status and deletedAt
-     * are intentionally excluded.
+     * -----------------------------------------
+     * BUILD UPDATE DATA
+     * -----------------------------------------
      */
+
     const updateData: {
       name?: string;
       ownerName?: string | null;
@@ -1026,14 +1783,14 @@ export async function PATCH(
       phone?: string | null;
       imageUrl?: string | null;
       availability?:
-        | "AVAILABLE"
-        | "ASK_SELLER"
-        | "UNAVAILABLE";
+        AvailabilityValue;
       priceMin?: number | null;
       priceMax?: number | null;
     } = {};
 
-    if (name !== undefined) {
+    if (
+      name !== undefined
+    ) {
       updateData.name =
         name;
     }
@@ -1052,49 +1809,84 @@ export async function PATCH(
         description || null;
     }
 
-    if (locationId !== undefined) {
-      updateData.locationId =
-        locationId;
-    }
-
-    if (phone !== undefined) {
+    if (
+      phone !== undefined
+    ) {
       updateData.phone =
         phone || null;
     }
 
-    if (imageUrl !== undefined) {
+    if (
+      imageUrl !== undefined
+    ) {
       updateData.imageUrl =
         imageUrl || null;
     }
 
     if (
-      availabilityValue !==
-      undefined
+      availabilityProvided &&
+      availability !== null &&
+      availability !== undefined
     ) {
       updateData.availability =
-        availabilityValue as
-          | "AVAILABLE"
-          | "ASK_SELLER"
-          | "UNAVAILABLE";
+        availability;
     }
 
-    if (priceMinProvided) {
+    if (
+      priceMinProvided
+    ) {
       updateData.priceMin =
         priceMin ?? null;
     }
 
-    if (priceMaxProvided) {
+    if (
+      priceMaxProvided
+    ) {
       updateData.priceMax =
         priceMax ?? null;
     }
 
     /*
-     * Update the business and, when requested,
-     * replace its category relationships.
+     * -----------------------------------------
+     * TRANSACTION
+     * -----------------------------------------
      */
+
     const business =
       await prisma.$transaction(
         async (tx) => {
+          if (newLocationData) {
+            const location =
+              await tx.location.create(
+                {
+                  data: {
+                    area:
+                      newLocationData.area,
+
+                    address:
+                      newLocationData
+                        .address,
+
+                    lat:
+                      newLocationData.lat,
+
+                    long:
+                      newLocationData.long,
+
+                    /*
+                     * Any changed location
+                     * must be verified again.
+                     */
+                    verification:
+                      "UNVERIFIED",
+                  },
+                }
+              );
+
+            updateData.locationId =
+              location.id;
+          }
+
           if (
             categoryIdsProvided
           ) {
@@ -1108,70 +1900,99 @@ export async function PATCH(
             );
 
             if (
-              categoryIds.length > 0
+              categoryIds.length >
+              0
             ) {
               await tx.businessCategory.createMany(
                 {
-                  data: categoryIds.map(
-                    (categoryId) => ({
-                      businessId:
-                        existingBusiness.id,
-                      categoryId,
-                    })
-                  ),
-                  skipDuplicates: true,
+                  data:
+                    categoryIds.map(
+                      (
+                        categoryId
+                      ) => ({
+                        businessId:
+                          existingBusiness.id,
+
+                        categoryId,
+                      })
+                    ),
+
+                  skipDuplicates:
+                    true,
                 }
               );
             }
           }
 
-          return tx.business.update({
-            where: {
-              id: existingBusiness.id,
-            },
-            data: updateData,
-            include: {
-              location: true,
-
-              categories: {
-                include: {
-                  category: true,
-                },
+          return tx.business.update(
+            {
+              where: {
+                id:
+                  existingBusiness.id,
               },
 
-              products: {
-                where: {
-                  deletedAt: null,
-                },
-                orderBy: {
-                  updatedAt: "desc",
-                },
-                include: {
-                  images: {
-                    orderBy: {
-                      sortOrder: "asc",
-                    },
+              data:
+                updateData,
+
+              include: {
+                location:
+                  true,
+
+                categories: {
+                  include: {
+                    category:
+                      true,
                   },
-                  category: true,
                 },
-              },
 
-              socialLinks: {
-                orderBy: {
-                  platform: "asc",
+                products: {
+                  where: {
+                    deletedAt:
+                      null,
+                  },
+
+                  orderBy: {
+                    updatedAt:
+                      "desc",
+                  },
+
+                  include: {
+                    images: {
+                      orderBy: {
+                        sortOrder:
+                          "asc",
+                      },
+                    },
+
+                    category:
+                      true,
+                  },
+                },
+
+                socialLinks: {
+                  orderBy: {
+                    platform:
+                      "asc",
+                  },
                 },
               },
-            },
-          });
+            }
+          );
         }
       );
 
-    return NextResponse.json({
-      message:
-        "Business updated successfully.",
+    return NextResponse.json(
+      {
+        message:
+          "Business updated successfully.",
 
-      business,
-    });
+        business,
+      },
+      {
+        headers:
+          jsonHeaders(),
+      }
+    );
   } catch (error) {
     console.error(
       "Seller business update error:",
@@ -1179,10 +2000,12 @@ export async function PATCH(
     );
 
     if (
-      typeof error === "object" &&
+      typeof error ===
+        "object" &&
       error !== null &&
       "code" in error &&
-      error.code === "P2025"
+      error.code ===
+        "P2025"
     ) {
       return NextResponse.json(
         {
@@ -1191,7 +2014,29 @@ export async function PATCH(
         },
         {
           status: 404,
-          headers: jsonHeaders(),
+          headers:
+            jsonHeaders(),
+        }
+      );
+    }
+
+    if (
+      typeof error ===
+        "object" &&
+      error !== null &&
+      "code" in error &&
+      error.code ===
+        "P2002"
+    ) {
+      return NextResponse.json(
+        {
+          error:
+            "This business update conflicts with an existing record.",
+        },
+        {
+          status: 409,
+          headers:
+            jsonHeaders(),
         }
       );
     }
@@ -1203,8 +2048,9 @@ export async function PATCH(
       },
       {
         status: 500,
-        headers: jsonHeaders(),
-      }
-    );
+        headers:
+          jsonHeaders(),
+        }
+      );
   }
 }

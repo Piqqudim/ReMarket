@@ -7,10 +7,12 @@ const FEATURED_COUNT = 4;
 export async function GET() {
   try {
     /*
-     * Select 4 random businesses directly from PostgreSQL.
+     * -----------------------------------------
+     * SELECT RANDOM FEATURED BUSINESSES
+     * -----------------------------------------
      *
-     * Only ACTIVE and non-soft-deleted businesses
-     * are allowed to appear in Featured Businesses.
+     * Only active and non-soft-deleted businesses
+     * can appear publicly.
      */
     const randomBusinessRows =
       await prisma.$queryRaw<{ id: string }[]>`
@@ -31,8 +33,7 @@ export async function GET() {
      * No eligible businesses.
      */
     if (
-      randomBusinessIds.length ===
-      0
+      randomBusinessIds.length === 0
     ) {
       return NextResponse.json(
         {
@@ -48,8 +49,9 @@ export async function GET() {
     }
 
     /*
-     * Load the randomly selected businesses
-     * and their public data.
+     * -----------------------------------------
+     * LOAD PUBLIC BUSINESS DATA
+     * -----------------------------------------
      */
     const businesses =
       await prisma.business.findMany({
@@ -59,8 +61,8 @@ export async function GET() {
           },
 
           /*
-           * Double-check that the businesses are
-           * still active and not soft-deleted.
+           * Re-check business visibility in case
+           * the record changed between queries.
            */
           status: "ACTIVE",
           deletedAt: null,
@@ -70,8 +72,7 @@ export async function GET() {
           location: true,
 
           /*
-           * Only active categories should be
-           * exposed on public Featured cards.
+           * Only active categories are public.
            */
           categories: {
             where: {
@@ -86,8 +87,8 @@ export async function GET() {
           },
 
           /*
-           * Only active and non-deleted products
-           * are exposed publicly.
+           * Only active, non-deleted products are
+           * visible to customers.
            */
           products: {
             where: {
@@ -104,6 +105,27 @@ export async function GET() {
               priceMax: true,
               availability: true,
               imageUrl: true,
+              keywords: true,
+              category: true,
+
+              images: {
+                select: {
+                  id: true,
+                  url: true,
+                  publicId: true,
+                  sortOrder: true,
+                  createdAt: true,
+                },
+
+                orderBy: [
+                  {
+                    sortOrder: "asc",
+                  },
+                  {
+                    createdAt: "asc",
+                  },
+                ],
+              },
             },
 
             orderBy: {
@@ -112,7 +134,7 @@ export async function GET() {
           },
 
           /*
-           * Count only customer-visible products.
+           * Count only publicly visible products.
            */
           _count: {
             select: {
@@ -130,10 +152,12 @@ export async function GET() {
       });
 
     /*
-     * Prisma's `in` query does not guarantee the
-     * same order produced by PostgreSQL RANDOM().
+     * -----------------------------------------
+     * RESTORE RANDOM ORDER
+     * -----------------------------------------
      *
-     * Restore the random order here.
+     * Prisma's `in` query does not guarantee
+     * PostgreSQL's RANDOM() order.
      */
     const businessMap =
       new Map(
@@ -156,13 +180,13 @@ export async function GET() {
           ): business is NonNullable<
             typeof business
           > =>
-            business !==
-            undefined
+            business !== undefined
         );
 
     /*
-     * Format the response expected by the
-     * ReMarket homepage.
+     * -----------------------------------------
+     * FORMAT PUBLIC RESPONSE
+     * -----------------------------------------
      */
     const featured =
       orderedBusinesses.map(
@@ -180,6 +204,23 @@ export async function GET() {
           imageUrl:
             business.imageUrl,
 
+          location:
+            business.location
+              ? {
+                  id:
+                    business.location.id,
+
+                  area:
+                    business.location.area,
+
+                  lat:
+                    business.location.lat,
+
+                  long:
+                    business.location.long,
+                }
+              : null,
+
           area:
             business.location
               ?.area ??
@@ -191,6 +232,10 @@ export async function GET() {
           verification:
             business.verification,
 
+          verified:
+            business.verification ===
+            "VERIFIED",
+
           category:
             business.categories[0]
               ?.category.name ??
@@ -199,16 +244,59 @@ export async function GET() {
           categories:
             business.categories.map(
               (item) =>
-                item.category
-                  .name
+                item.category.name
             ),
 
           productCount:
-            business._count
-              .products,
+            business._count.products,
 
           products:
-            business.products,
+            business.products.map(
+              (product) => ({
+                id: product.id,
+
+                name: product.name,
+
+                description:
+                  product.description,
+
+                price:
+                  product.price,
+
+                priceMin:
+                  product.priceMin,
+
+                priceMax:
+                  product.priceMax,
+
+                availability:
+                  product.availability,
+
+                imageUrl:
+                  product.imageUrl,
+
+                keywords:
+                  product.keywords,
+
+                category:
+                  product.category,
+
+                images:
+                  product.images.map(
+                    (image) => ({
+                      id: image.id,
+
+                      url: image.url,
+
+                      publicId:
+                        image.publicId,
+
+                      sortOrder:
+                        image.sortOrder,
+                    })
+                  ),
+              })
+            ),
 
           socialLinks:
             business.socialLinks,
@@ -216,13 +304,17 @@ export async function GET() {
       );
 
     /*
-     * Prevent caching so the homepage gets a
-     * fresh random selection when it requests
-     * Featured Businesses.
+     * -----------------------------------------
+     * RESPONSE
+     * -----------------------------------------
+     *
+     * Disable caching because Featured is
+     * intentionally randomized.
      */
     return NextResponse.json(
       {
         businesses: featured,
+
         total:
           featured.length,
       },

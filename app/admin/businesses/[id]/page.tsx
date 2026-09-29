@@ -2,6 +2,7 @@
 
 import {
   useEffect,
+  useMemo,
   useState,
 } from "react";
 
@@ -14,6 +15,7 @@ import {
 import {
   AlertTriangle,
   ArrowLeft,
+  BarChart3,
   ExternalLink,
   Loader2,
   MapPin,
@@ -123,6 +125,11 @@ type Business = {
   products: Product[];
 };
 
+type AnalyticsMetric = {
+  label: string;
+  value: number;
+};
+
 const SOCIAL_PLATFORMS: {
   value: SocialPlatform;
   label: string;
@@ -175,6 +182,224 @@ function getSocialValue(
   );
 }
 
+function prettifyMetricLabel(
+  path: string[]
+): string {
+  const label = path[path.length - 1] ?? "";
+
+  const knownLabels: Record<
+    string,
+    string
+  > = {
+    views: "Views",
+    viewCount: "Views",
+    totalViews: "Total views",
+    uniqueViews: "Unique views",
+    uniqueVisitors:
+      "Unique visitors",
+    contacts: "Contacts",
+    contactCount: "Contacts",
+    totalContacts:
+      "Total contacts",
+    products: "Products",
+    productCount:
+      "Products",
+    totalProducts:
+      "Total products",
+    activeProducts:
+      "Active products",
+    deletedProducts:
+      "Deleted products",
+    matches: "Matches",
+    matchCount: "Matches",
+    totalMatches:
+      "Total matches",
+    requests: "Requests",
+    requestCount:
+      "Requests",
+    matchedRequests:
+      "Matched requests",
+    WHATSAPP: "WhatsApp",
+    PHONE: "Phone",
+    INSTAGRAM: "Instagram",
+    TIKTOK: "TikTok",
+    FACEBOOK: "Facebook",
+    DIRECTIONS: "Directions",
+  };
+
+  if (
+    knownLabels[label]
+  ) {
+    return knownLabels[label];
+  }
+
+  return label
+    .replace(
+      /([a-z])([A-Z])/g,
+      "$1 $2"
+    )
+    .replace(/[_-]+/g, " ")
+    .replace(/\b\w/g, (character) =>
+      character.toUpperCase()
+    );
+}
+
+function isAnalyticsMetricKey(
+  key: string
+): boolean {
+  return /count|total|views?|contacts?|products?|matches?|requests?|visitors?|active|deleted|whatsapp|phone|instagram|tiktok|facebook|directions/i.test(
+    key
+  );
+}
+
+function shouldSkipAnalyticsKey(
+  key: string
+): boolean {
+  return (
+    key === "id" ||
+    key.endsWith("Id") ||
+    key === "businessId" ||
+    key === "requestId" ||
+    key === "productId" ||
+    key === "createdAt" ||
+    key === "updatedAt" ||
+    key === "deletedAt" ||
+    key === "lat" ||
+    key === "long" ||
+    key === "latitude" ||
+    key === "longitude" ||
+    key === "price" ||
+    key === "priceMin" ||
+    key === "priceMax" ||
+    key === "score"
+  );
+}
+
+function collectAnalyticsMetrics(
+  value: unknown,
+  path: string[] = [],
+  output: AnalyticsMetric[] = []
+): AnalyticsMetric[] {
+  if (
+    typeof value !== "object" ||
+    value === null
+  ) {
+    return output;
+  }
+
+  if (Array.isArray(value)) {
+    return output;
+  }
+
+  const record =
+    value as Record<
+      string,
+      unknown
+    >;
+
+  for (const [
+    key,
+    nestedValue,
+  ] of Object.entries(record)) {
+    if (
+      shouldSkipAnalyticsKey(
+        key
+      )
+    ) {
+      continue;
+    }
+
+    const nextPath = [
+      ...path,
+      key,
+    ];
+
+    if (
+      typeof nestedValue ===
+        "number" &&
+      Number.isFinite(
+        nestedValue
+      ) &&
+      isAnalyticsMetricKey(
+        key
+      )
+    ) {
+      output.push({
+        label:
+          prettifyMetricLabel(
+            nextPath
+          ),
+        value:
+          nestedValue,
+      });
+
+      continue;
+    }
+
+    if (
+      typeof nestedValue ===
+        "object" &&
+      nestedValue !== null
+    ) {
+      collectAnalyticsMetrics(
+        nestedValue,
+        nextPath,
+        output
+      );
+    }
+  }
+
+  return output;
+}
+
+function dedupeAnalyticsMetrics(
+  metrics: AnalyticsMetric[]
+): AnalyticsMetric[] {
+  const seen =
+    new Set<string>();
+
+  return metrics.filter(
+    (metric) => {
+      const key =
+        `${metric.label}:${metric.value}`;
+
+      if (seen.has(key)) {
+        return false;
+      }
+
+      seen.add(key);
+
+      return true;
+    }
+  );
+}
+
+function AnalyticsMetricCard({
+  metric,
+}: {
+  metric: AnalyticsMetric;
+}) {
+  return (
+    <div className="rounded-2xl border border-[#E8DED3] bg-white p-5">
+      <div className="flex items-center justify-between gap-3">
+        <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-[#FFF0E8] text-[#9F2D18]">
+          <BarChart3 className="h-5 w-5" />
+        </div>
+
+        <p className="text-2xl font-semibold tracking-tight text-[#2E241F]">
+          {metric.value.toLocaleString(
+            "en-NG"
+          )}
+        </p>
+      </div>
+
+      <p className="mt-4 text-sm font-medium text-[#6F675F]">
+        {metric.label}
+      </p>
+    </div>
+  );
+}
+
 export default function BusinessDetailsPage() {
   const params =
     useParams<{
@@ -222,6 +447,32 @@ export default function BusinessDetailsPage() {
     showDeleteConfirmation,
     setShowDeleteConfirmation,
   ] = useState(false);
+
+  const [
+    analytics,
+    setAnalytics,
+  ] = useState<unknown>(null);
+
+  const [
+    analyticsLoading,
+    setAnalyticsLoading,
+  ] = useState(true);
+
+  const [
+    analyticsError,
+    setAnalyticsError,
+  ] = useState("");
+
+  const analyticsMetrics =
+    useMemo(
+      () =>
+        dedupeAnalyticsMetrics(
+          collectAnalyticsMetrics(
+            analytics
+          )
+        ),
+      [analytics]
+    );
 
   async function loadBusiness() {
     if (!businessId) {
@@ -323,8 +574,65 @@ export default function BusinessDetailsPage() {
     }
   }
 
+  async function loadAnalytics() {
+    if (!businessId) {
+      return;
+    }
+
+    try {
+      setAnalyticsLoading(
+        true
+      );
+      setAnalyticsError("");
+
+      const response =
+        await fetch(
+          `/api/admin/businesses/${businessId}/analytics`,
+          {
+            cache: "no-store",
+          }
+        );
+
+      const data =
+        await response.json();
+
+      if (!response.ok) {
+        throw new Error(
+          typeof data?.error ===
+            "string"
+            ? data.error
+            : "Unable to load business analytics."
+        );
+      }
+
+      setAnalytics(data);
+    } catch (analyticsLoadError) {
+      console.error(
+        "Business analytics load error:",
+        analyticsLoadError
+      );
+
+      setAnalytics(null);
+
+      setAnalyticsError(
+        analyticsLoadError instanceof
+          Error
+          ? analyticsLoadError.message
+          : "Unable to load business analytics."
+      );
+    } finally {
+      setAnalyticsLoading(
+        false
+      );
+    }
+  }
+
   useEffect(() => {
     void loadBusiness();
+  }, [businessId]);
+
+  useEffect(() => {
+    void loadAnalytics();
   }, [businessId]);
 
   async function deleteBusiness() {
@@ -443,6 +751,8 @@ export default function BusinessDetailsPage() {
       setSuccess(
         `${business.name} was restored successfully.`
       );
+
+      void loadAnalytics();
     } catch (restoreError) {
       console.error(
         "Business restore error:",
@@ -531,6 +841,28 @@ export default function BusinessDetailsPage() {
         }}
       />
 
+      <section className="min-h-screen bg-[#FFF7ED] px-4 pb-10 sm:px-6">
+        <div className="mx-auto max-w-[1100px]">
+          <BusinessAnalyticsSection
+            businessName={
+              business.name
+            }
+            loading={
+              analyticsLoading
+            }
+            error={
+              analyticsError
+            }
+            metrics={
+              analyticsMetrics
+            }
+            onRetry={() => {
+              void loadAnalytics();
+            }}
+          />
+        </div>
+      </section>
+
       {showDeleteConfirmation && (
         <DeleteConfirmationModal
           business={business}
@@ -546,6 +878,125 @@ export default function BusinessDetailsPage() {
         />
       )}
     </>
+  );
+}
+
+function BusinessAnalyticsSection({
+  businessName,
+  loading,
+  error,
+  metrics,
+  onRetry,
+}: {
+  businessName: string;
+  loading: boolean;
+  error: string;
+  metrics: AnalyticsMetric[];
+  onRetry: () => void;
+}) {
+  return (
+    <section className="rounded-[22px] border border-[#EAE6DF] bg-[#FFFDFC] p-5 shadow-sm sm:p-6">
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
+        <div>
+          <div className="flex items-center gap-2">
+            <BarChart3 className="h-4 w-4 text-[#9F2D18]" />
+
+            <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-[#A39A91]">
+              Business analytics
+            </p>
+          </div>
+
+          <h2 className="mt-1 text-lg font-bold text-[#17202A]">
+            {businessName}
+          </h2>
+
+          <p className="mt-1 text-xs leading-5 text-[#7E766F]">
+            Basic business visibility,
+            contact, product, and matching
+            activity.
+          </p>
+        </div>
+
+        {!loading && (
+          <button
+            type="button"
+            onClick={onRetry}
+            className="inline-flex items-center justify-center gap-2 rounded-xl border border-[#EAE6DF] bg-white px-3.5 py-2.5 text-[11px] font-bold text-[#6F675F] transition hover:border-[#FFB49F] hover:bg-[#FCFAF6]"
+          >
+            <RotateCcw className="h-3.5 w-3.5" />
+            Refresh analytics
+          </button>
+        )}
+      </div>
+
+      {loading && (
+        <div className="mt-5 grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4">
+          {[1, 2, 3, 4].map(
+            (item) => (
+              <div
+                key={item}
+                className="h-32 animate-pulse rounded-2xl border border-[#E8DED3] bg-white"
+              />
+            )
+          )}
+        </div>
+      )}
+
+      {!loading && error && (
+        <div className="mt-5 rounded-2xl border border-[#F1C5BF] bg-[#FFF4F2] px-5 py-4">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <p className="text-xs font-medium text-[#B42318]">
+              {error}
+            </p>
+
+            <button
+              type="button"
+              onClick={onRetry}
+              className="rounded-xl bg-[#FF5A36] px-3.5 py-2 text-[10px] font-bold text-white"
+            >
+              Try again
+            </button>
+          </div>
+        </div>
+      )}
+
+      {!loading &&
+        !error &&
+        metrics.length === 0 && (
+          <div className="mt-5 rounded-2xl border border-[#EAE6DF] bg-white px-5 py-10 text-center">
+            <BarChart3 className="mx-auto h-8 w-8 text-[#CFC8C0]" />
+
+            <p className="mt-3 text-sm font-semibold text-[#6F675F]">
+              No analytics recorded yet
+            </p>
+
+            <p className="mt-1 text-xs leading-5 text-[#A39A91]">
+              Business activity will appear
+              here as ReMarket records views,
+              contacts, products, and matching
+              activity.
+            </p>
+          </div>
+        )}
+
+      {!loading &&
+        !error &&
+        metrics.length > 0 && (
+          <div className="mt-5 grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4">
+            {metrics.map(
+              (
+                metric,
+                index
+              ) => (
+                <AnalyticsMetricCard
+                  key={`${metric.label}-${metric.value}-${index}`}
+                  metric={metric}
+                />
+              )
+            )}
+          </div>
+        )}
+    </section>
   );
 }
 

@@ -107,6 +107,7 @@ export async function GET(
                 status: true,
                 verification: true,
                 deletedAt: true,
+
                 location: {
                   select: {
                     id: true,
@@ -219,14 +220,11 @@ export async function PATCH(
     const payload =
       body as Record<string, unknown>;
 
-    const id = cleanString(
-      payload.id
-    );
+    const id =
+      cleanString(payload.id);
 
     const statusValue =
-      cleanString(
-        payload.status
-      );
+      cleanString(payload.status);
 
     if (!id) {
       return NextResponse.json(
@@ -262,10 +260,6 @@ export async function PATCH(
     const newStatus =
       statusValue as DeletionRequestStatus;
 
-    /*
-     * Admin review should only move a pending
-     * request into APPROVED or REJECTED.
-     */
     if (
       newStatus !== "APPROVED" &&
       newStatus !== "REJECTED"
@@ -282,6 +276,12 @@ export async function PATCH(
       );
     }
 
+    /*
+     * Initial lookup is used for clear error responses.
+     *
+     * It is NOT the final concurrency guard.
+     * The transaction below checks PENDING again.
+     */
     const deletionRequest =
       await prisma.businessDeletionRequest.findUnique(
         {
@@ -315,9 +315,6 @@ export async function PATCH(
       );
     }
 
-    /*
-     * Only PENDING requests can be reviewed.
-     */
     if (
       deletionRequest.status !==
       "PENDING"
@@ -334,10 +331,6 @@ export async function PATCH(
       );
     }
 
-    /*
-     * The request is tied to a business through
-     * the schema relation.
-     */
     if (!deletionRequest.business) {
       return NextResponse.json(
         {
@@ -351,15 +344,9 @@ export async function PATCH(
       );
     }
 
-    /*
-     * Prevent an approval operation from
-     * pretending to delete an already deleted
-     * business.
-     */
     if (
       newStatus === "APPROVED" &&
-      deletionRequest.business
-        .deletedAt
+      deletionRequest.business.deletedAt
     ) {
       return NextResponse.json(
         {
@@ -373,45 +360,110 @@ export async function PATCH(
       );
     }
 
-    /*
-     * Review and business soft deletion happen
-     * inside one transaction.
-     */
     const result =
       await prisma.$transaction(
         async (tx) => {
           const reviewedAt =
             new Date();
 
-          if (
-            newStatus ===
-            "APPROVED"
-          ) {
-            /*
-             * Soft delete the business.
-             *
-             * Do not hard-delete the row.
-             */
-            await tx.business.update({
-              where: {
-                id:
-                  deletionRequest
-                    .business
-                    .id,
-              },
-
-              data: {
-                deletedAt:
-                  reviewedAt,
-              },
-            });
-          }
-
-          const updatedRequest =
-            await tx.businessDeletionRequest.update(
+          /*
+           * Re-read inside the transaction.
+           *
+           * This is the authoritative state used
+           * for the review operation.
+           */
+          const currentRequest =
+            await tx.businessDeletionRequest.findUnique(
               {
                 where: {
                   id,
+                },
+
+                include: {
+                  business: {
+                    select: {
+                      id: true,
+                      name: true,
+                      ownerId: true,
+                      deletedAt: true,
+                    },
+                  },
+                },
+              }
+            );
+
+          if (!currentRequest) {
+            throw new Error(
+              "DELETION_REQUEST_NOT_FOUND"
+            );
+          }
+
+          if (
+            currentRequest.status !==
+            "PENDING"
+          ) {
+            throw new Error(
+              "DELETION_REQUEST_ALREADY_REVIEWED"
+            );
+          }
+
+          if (!currentRequest.business) {
+            throw new Error(
+              "BUSINESS_NOT_FOUND"
+            );
+          }
+
+          /*
+           * Approval must only soft-delete a
+           * business that is still active in
+           * terms of deletedAt.
+           */
+          if (
+            newStatus === "APPROVED"
+          ) {
+            const businessUpdate =
+              await tx.business.updateMany(
+                {
+                  where: {
+                    id:
+                      currentRequest
+                        .business
+                        .id,
+
+                    deletedAt: null,
+                  },
+
+                  data: {
+                    deletedAt:
+                      reviewedAt,
+                  },
+                }
+              );
+
+            if (
+              businessUpdate.count !==
+              1
+            ) {
+              throw new Error(
+                "BUSINESS_ALREADY_DELETED"
+              );
+            }
+          }
+
+          /*
+           * Critical concurrency guard:
+           *
+           * The request can only move from
+           * PENDING to APPROVED/REJECTED here.
+           */
+          const requestUpdate =
+            await tx.businessDeletionRequest.updateMany(
+              {
+                where: {
+                  id,
+
+                  status:
+                    "PENDING",
                 },
 
                 data: {
@@ -422,6 +474,24 @@ export async function PATCH(
                     auth.user.id,
 
                   reviewedAt,
+                },
+              }
+            );
+
+          if (
+            requestUpdate.count !==
+            1
+          ) {
+            throw new Error(
+              "DELETION_REQUEST_ALREADY_REVIEWED"
+            );
+          }
+
+          const updatedRequest =
+            await tx.businessDeletionRequest.findUnique(
+              {
+                where: {
+                  id,
                 },
 
                 include: {
@@ -436,6 +506,7 @@ export async function PATCH(
                         true,
                       deletedAt:
                         true,
+
                       location: {
                         select: {
                           id: true,
@@ -466,18 +537,29 @@ export async function PATCH(
               }
             );
 
+          if (!updatedRequest) {
+            throw new Error(
+              "DELETION_REQUEST_NOT_FOUND"
+            );
+          }
+
           return updatedRequest;
         }
       );
 
-    return NextResponse.json({
-      message:
-        newStatus === "APPROVED"
-          ? "Business deletion request approved and business soft-deleted successfully."
-          : "Business deletion request rejected successfully.",
+    return NextResponse.json(
+      {
+        message:
+          newStatus === "APPROVED"
+            ? "Business deletion request approved and business soft-deleted successfully."
+            : "Business deletion request rejected successfully.",
 
-      request: result,
-    });
+        request: result,
+      },
+      {
+        headers: jsonHeaders(),
+      }
+    );
   } catch (error) {
     console.error(
       "Admin deletion request review error:",
@@ -485,21 +567,71 @@ export async function PATCH(
     );
 
     if (
-      typeof error === "object" &&
-      error !== null &&
-      "code" in error &&
-      error.code === "P2025"
+      error instanceof Error
     ) {
-      return NextResponse.json(
-        {
-          error:
-            "The deletion request or business could not be found.",
-        },
-        {
-          status: 404,
-          headers: jsonHeaders(),
-        }
-      );
+      if (
+        error.message ===
+        "DELETION_REQUEST_NOT_FOUND"
+      ) {
+        return NextResponse.json(
+          {
+            error:
+              "The deletion request could not be found.",
+          },
+          {
+            status: 404,
+            headers: jsonHeaders(),
+          }
+        );
+      }
+
+      if (
+        error.message ===
+        "DELETION_REQUEST_ALREADY_REVIEWED"
+      ) {
+        return NextResponse.json(
+          {
+            error:
+              "This deletion request has already been reviewed.",
+          },
+          {
+            status: 409,
+            headers: jsonHeaders(),
+          }
+        );
+      }
+
+      if (
+        error.message ===
+        "BUSINESS_NOT_FOUND"
+      ) {
+        return NextResponse.json(
+          {
+            error:
+              "The business associated with this request no longer exists.",
+          },
+          {
+            status: 409,
+            headers: jsonHeaders(),
+          }
+        );
+      }
+
+      if (
+        error.message ===
+        "BUSINESS_ALREADY_DELETED"
+      ) {
+        return NextResponse.json(
+          {
+            error:
+              "This business has already been deleted.",
+          },
+          {
+            status: 409,
+            headers: jsonHeaders(),
+          }
+        );
+      }
     }
 
     return NextResponse.json(

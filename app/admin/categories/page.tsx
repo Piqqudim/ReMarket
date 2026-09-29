@@ -4,7 +4,6 @@ import {
   useEffect,
   useMemo,
   useState,
-  type FormEvent,
 } from "react";
 
 import Link from "next/link";
@@ -35,7 +34,6 @@ import {
   Smartphone,
   Sparkles,
   Store,
-  Trash2,
   Utensils,
   Wrench,
   X,
@@ -45,7 +43,6 @@ import {
 import {
   DEFAULT_CATEGORIES,
   getCategoryIcon,
-  mergeCategories,
   type ReMarketCategory,
 } from "@/lib/categories";
 
@@ -176,7 +173,9 @@ const ICONS: IconDefinition[] = [
   },
 ];
 
-function getIcon(iconKey?: string | null): LucideIcon {
+function getIcon(
+  iconKey?: string | null
+): LucideIcon {
   return getCategoryIcon(iconKey);
 }
 
@@ -366,7 +365,7 @@ export default function AdminCategoriesPage() {
   }
 
   async function submitForm(
-    event: FormEvent<HTMLFormElement>
+    event: React.SubmitEvent<HTMLFormElement>
   ) {
     event.preventDefault();
 
@@ -1008,12 +1007,6 @@ export default function AdminCategoriesPage() {
                           <Pencil className="h-4 w-4" />
                           Edit
                         </button>
-
-                        {category.id.startsWith(
-                          "fallback-"
-                        ) && (
-                          <Trash2 className="hidden h-4 w-4 text-gray-300" />
-                        )}
                       </div>
                     </div>
                   );

@@ -1,46 +1,23 @@
-import {
-  NextRequest,
-  NextResponse,
-} from "next/server";
+import { NextResponse } from "next/server";
 
 import { prisma } from "@/lib/prisma";
 
-const ALLOWED_PLATFORMS = [
-  "WHATSAPP",
-  "INSTAGRAM",
-  "TIKTOK",
-  "FACEBOOK",
-  "PHONE",
-  "DIRECTIONS",
-] as const;
-
-type ContactPlatform =
-  (typeof ALLOWED_PLATFORMS)[number];
-
-function isRecord(
-  value: unknown
-): value is Record<string, unknown> {
-  return (
-    typeof value === "object" &&
-    value !== null &&
-    !Array.isArray(value)
-  );
-}
+const MAX_VISITOR_ID_LENGTH = 100;
 
 export async function POST(
-  req: NextRequest
+  request: Request
 ) {
   try {
+    let body: unknown;
+
     /*
      * -----------------------------------------
      * PARSE REQUEST BODY
      * -----------------------------------------
      */
 
-    let body: unknown;
-
     try {
-      body = await req.json();
+      body = await request.json();
     } catch {
       return NextResponse.json(
         {
@@ -52,7 +29,17 @@ export async function POST(
       );
     }
 
-    if (!isRecord(body)) {
+    /*
+     * -----------------------------------------
+     * VALIDATE REQUEST BODY
+     * -----------------------------------------
+     */
+
+    if (
+      typeof body !== "object" ||
+      body === null ||
+      Array.isArray(body)
+    ) {
       return NextResponse.json(
         {
           error: "Invalid request body",
@@ -63,6 +50,9 @@ export async function POST(
       );
     }
 
+    const data =
+      body as Record<string, unknown>;
+
     /*
      * -----------------------------------------
      * READ FIELDS
@@ -70,31 +60,25 @@ export async function POST(
      */
 
     const businessId =
-      typeof body.businessId === "string"
-        ? body.businessId.trim()
+      typeof data.businessId === "string"
+        ? data.businessId.trim()
         : "";
 
-    const requestId =
-      typeof body.requestId === "string"
-        ? body.requestId.trim() || null
-        : null;
-
-    const platform =
-      typeof body.platform === "string"
-        ? body.platform.trim().toUpperCase()
+    const visitorId =
+      typeof data.visitorId === "string"
+        ? data.visitorId.trim()
         : "";
 
     /*
      * -----------------------------------------
-     * VALIDATE REQUIRED FIELDS
+     * VALIDATE BUSINESS ID
      * -----------------------------------------
      */
 
-    if (!businessId || !platform) {
+    if (!businessId) {
       return NextResponse.json(
         {
-          error:
-            "businessId and platform are required",
+          error: "Business ID is required",
         },
         {
           status: 400,
@@ -104,18 +88,28 @@ export async function POST(
 
     /*
      * -----------------------------------------
-     * VALIDATE PLATFORM
+     * VALIDATE VISITOR ID
      * -----------------------------------------
      */
 
+    if (!visitorId) {
+      return NextResponse.json(
+        {
+          error: "Visitor ID is required",
+        },
+        {
+          status: 400,
+        }
+      );
+    }
+
     if (
-      !ALLOWED_PLATFORMS.includes(
-        platform as ContactPlatform
-      )
+      visitorId.length >
+      MAX_VISITOR_ID_LENGTH
     ) {
       return NextResponse.json(
         {
-          error: "Invalid platform",
+          error: "Invalid visitor ID",
         },
         {
           status: 400,
@@ -129,7 +123,7 @@ export async function POST(
      * -----------------------------------------
      *
      * Only active, non-soft-deleted businesses
-     * may receive contact events.
+     * may receive view events.
      */
 
     const business =
@@ -157,52 +151,19 @@ export async function POST(
 
     /*
      * -----------------------------------------
-     * VERIFY REQUEST WHEN PROVIDED
-     * -----------------------------------------
-     */
-
-    if (requestId) {
-      const buyerRequest =
-        await prisma.buyerRequest.findUnique({
-          where: {
-            id: requestId,
-          },
-          select: {
-            id: true,
-          },
-        });
-
-      if (!buyerRequest) {
-        return NextResponse.json(
-          {
-            error: "Request not found",
-          },
-          {
-            status: 404,
-          }
-        );
-      }
-    }
-
-    /*
-     * -----------------------------------------
-     * CREATE CONTACT EVENT
+     * CREATE BUSINESS VIEW EVENT
      * -----------------------------------------
      */
 
     const event =
-      await prisma.contactEvent.create({
+      await prisma.businessViewEvent.create({
         data: {
           businessId,
-          requestId,
-          platform:
-            platform as ContactPlatform,
+          visitorId,
         },
         select: {
           id: true,
           businessId: true,
-          requestId: true,
-          platform: true,
           createdAt: true,
         },
       });
@@ -211,6 +172,8 @@ export async function POST(
      * -----------------------------------------
      * SUCCESS
      * -----------------------------------------
+     *
+     * visitorId is intentionally not returned.
      */
 
     return NextResponse.json(
@@ -224,14 +187,14 @@ export async function POST(
     );
   } catch (error) {
     console.error(
-      "Contact event error:",
+      "Business view event error:",
       error
     );
 
     return NextResponse.json(
       {
         error:
-          "Unable to record contact event",
+          "Unable to record business view",
       },
       {
         status: 500,

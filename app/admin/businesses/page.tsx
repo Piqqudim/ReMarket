@@ -7,6 +7,7 @@ import {
   ArrowLeft,
   Check,
   ChevronDown,
+  ClipboardList,
   Eye,
   LayoutDashboard,
   Package,
@@ -72,6 +73,16 @@ const NAV_ITEMS = [
     label: "Products",
     href: "/admin/products",
     icon: Package,
+  },
+  {
+    label: "Requests",
+    href: "/admin/requests",
+    icon: ClipboardList,
+  },
+  {
+    label: "Deletion requests",
+    href: "/admin/business-deletion-requests",
+    icon: Trash2,
   },
 ];
 
@@ -591,6 +602,10 @@ export default function AdminBusinessesPage() {
                 const Icon =
                   item.icon;
 
+                const active =
+                  item.href ===
+                  "/admin/businesses";
+
                 return (
                   <Link
                     key={
@@ -600,13 +615,13 @@ export default function AdminBusinessesPage() {
                       item.href
                     }
                     className={`flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-semibold transition ${
-                      item.href ===
-                      "/admin/businesses"
+                      active
                         ? "bg-[#FFE0D6] text-[#9F2D18]"
                         : "text-[#6F675F] hover:bg-[#FFF0D9]"
                     }`}
                   >
                     <Icon size={18} />
+
                     {
                       item.label
                     }
@@ -669,7 +684,7 @@ export default function AdminBusinessesPage() {
               </Link>
             </div>
 
-            <div className="mb-5 flex flex-wrap gap-2">
+            <div className="mb-6 flex flex-wrap gap-2">
               <SummaryPill
                 label="All"
                 count={
@@ -734,6 +749,10 @@ export default function AdminBusinessesPage() {
                   const Icon =
                     item.icon;
 
+                  const active =
+                    item.href ===
+                    "/admin/businesses";
+
                   return (
                     <Link
                       key={
@@ -743,13 +762,13 @@ export default function AdminBusinessesPage() {
                         item.href
                       }
                       className={`flex shrink-0 items-center gap-2 rounded-xl px-3 py-2 text-xs font-bold ${
-                        item.href ===
-                        "/admin/businesses"
+                        active
                           ? "bg-[#FF5A36] text-white"
                           : "bg-[#FCFAF6] text-[#6F675F]"
                       }`}
                     >
                       <Icon size={15} />
+
                       {
                         item.label
                       }
@@ -1551,16 +1570,23 @@ function StatusButton({
     "ACTIVE";
 
   /*
-   * PENDING is displayed accurately.
+   * Status behavior:
    *
-   * Existing toggle behavior remains:
-   * ACTIVE -> INACTIVE
+   * ACTIVE   -> INACTIVE
    * INACTIVE -> ACTIVE
+   * PENDING  -> ACTIVE
    *
-   * Pending can be moved to ACTIVE
-   * deliberately rather than being falsely
-   * shown as Inactive.
+   * PENDING is therefore treated as a
+   * deliberate state that the admin can
+   * activate directly.
    */
+  const nextStatus =
+    pending
+      ? "ACTIVE"
+      : active
+        ? "INACTIVE"
+        : "ACTIVE";
+
   return (
     <button
       type="button"
@@ -1570,10 +1596,7 @@ function StatusButton({
           business.id,
           {
             status:
-              active ||
-              pending
-                ? "INACTIVE"
-                : "ACTIVE",
+              nextStatus,
           }
         )
       }
@@ -1640,7 +1663,10 @@ function AvailabilityButton({
       className="inline-flex items-center gap-1 rounded-xl border border-[#EAE6DF] bg-[#FCFAF6] px-3 py-2 text-[11px] font-bold text-[#6F675F] transition hover:bg-[#FFF0D9] disabled:cursor-not-allowed disabled:opacity-50"
     >
       {label}
-      <ChevronDown size={13} />
+
+      <ChevronDown
+        size={13}
+      />
     </button>
   );
 }

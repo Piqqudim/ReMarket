@@ -1,11 +1,29 @@
 import { Prisma } from "@prisma/client";
 import { NextRequest, NextResponse } from "next/server";
+import { randomInt } from "crypto";
 
 import { prisma } from "@/lib/prisma";
+
 import {
   findMatches,
   parseQuery,
 } from "@/lib/matching";
+
+/*
+ * -----------------------------------------
+ * HELPERS
+ * -----------------------------------------
+ */
+
+function isRecord(
+  value: unknown
+): value is Record<string, unknown> {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    !Array.isArray(value)
+  );
+}
 
 function clean(value: unknown): string {
   if (typeof value !== "string") {
@@ -17,7 +35,7 @@ function clean(value: unknown): string {
 
 function optionalInt(
   value: unknown
-): number | null {
+): number | null | undefined {
   if (
     value === undefined ||
     value === null ||
@@ -26,13 +44,16 @@ function optionalInt(
     return null;
   }
 
-  const number = Number(value);
+  const numberValue = Number(value);
 
-  if (!Number.isFinite(number)) {
-    return null;
+  if (
+    !Number.isFinite(numberValue) ||
+    !Number.isInteger(numberValue)
+  ) {
+    return undefined;
   }
 
-  return Math.floor(number);
+  return numberValue;
 }
 
 /*
@@ -40,19 +61,9 @@ function optionalInt(
  * NIGERIAN PHONE NORMALIZATION
  * -----------------------------------------
  *
- * ReMarket stores Nigerian phone numbers in
- * one canonical format:
+ * Canonical form:
  *
  * +2348012345678
- *
- * This lets users submit:
- *
- * 08012345678
- * +2348012345678
- * 2348012345678
- * 080 1234 5678
- *
- * and still find the same request later.
  */
 
 function normalizeNigerianPhone(
@@ -74,39 +85,27 @@ function normalizeNigerianPhone(
   }
 
   /*
-   * Convert 00 international prefix.
-   *
    * 002348012345678
-   *      ↓
+   * ↓
    * 2348012345678
    */
-  if (
-    cleanValue.startsWith("00")
-  ) {
-    cleanValue =
-      cleanValue.slice(2);
+  if (cleanValue.startsWith("00")) {
+    cleanValue = cleanValue.slice(2);
   }
 
   /*
-   * Remove leading + before processing.
-   *
    * +2348012345678
-   *       ↓
+   * ↓
    * 2348012345678
    */
-  if (
-    cleanValue.startsWith("+")
-  ) {
-    cleanValue =
-      cleanValue.slice(1);
+  if (cleanValue.startsWith("+")) {
+    cleanValue = cleanValue.slice(1);
   }
 
   /*
    * Already using Nigerian country code.
    */
-  if (
-    cleanValue.startsWith("234")
-  ) {
+  if (cleanValue.startsWith("234")) {
     return `+${cleanValue}`;
   }
 
@@ -114,35 +113,39 @@ function normalizeNigerianPhone(
    * Local Nigerian format.
    *
    * 08012345678
-   *       ↓
+   * ↓
    * +2348012345678
    */
-  if (
-    cleanValue.startsWith("0")
-  ) {
+  if (cleanValue.startsWith("0")) {
     return `+234${cleanValue.slice(1)}`;
   }
 
   /*
-   * Handle the common case where the user
-   * enters the Nigerian number without the
-   * leading zero.
+   * Number without leading zero.
    *
    * 8012345678
-   *       ↓
+   * ↓
    * +2348012345678
    */
-  if (
-    /^\d+$/.test(cleanValue)
-  ) {
+  if (/^\d+$/.test(cleanValue)) {
     return `+234${cleanValue}`;
   }
 
   /*
-   * Preserve non-phone contact text rather
-   * than changing the existing behavior.
+   * Preserve non-phone text.
    */
   return original;
+}
+
+function isValidNigerianPhone(
+  value: string
+): boolean {
+  const normalized =
+    normalizeNigerianPhone(value);
+
+  return /^\+234\d{10}$/.test(
+    normalized
+  );
 }
 
 /*
@@ -150,15 +153,8 @@ function normalizeNigerianPhone(
  * CONTACT LOOKUP VARIANTS
  * -----------------------------------------
  *
- * Existing requests may already have been
- * stored before normalization was introduced.
- *
- * We therefore search both:
- *
- * - the canonical normalized value
- * - common legacy forms
- *
- * New requests are always stored canonically.
+ * Supports requests saved before phone
+ * normalization was introduced.
  */
 
 function getContactLookupVariants(
@@ -171,15 +167,10 @@ function getContactLookupVariants(
   }
 
   const normalized =
-    normalizeNigerianPhone(
-      original
-    );
+    normalizeNigerianPhone(value);
 
   const digitsOnly =
-    original.replace(
-      /\D/g,
-      ""
-    );
+    original.replace(/\D/g, "");
 
   const variants = new Set<string>();
 
@@ -192,23 +183,21 @@ function getContactLookupVariants(
   if (digitsOnly) {
     variants.add(digitsOnly);
 
-    if (
-      digitsOnly.startsWith(
-        "234"
-      )
-    ) {
-      variants.add(
-        `+${digitsOnly}`
-      );
+    /*
+     * 2348012345678
+     */
+    if (digitsOnly.startsWith("234")) {
+      variants.add(`+${digitsOnly}`);
 
       variants.add(
         `0${digitsOnly.slice(3)}`
       );
     }
 
-    if (
-      digitsOnly.startsWith("0")
-    ) {
+    /*
+     * 08012345678
+     */
+    if (digitsOnly.startsWith("0")) {
       variants.add(
         `234${digitsOnly.slice(1)}`
       );
@@ -218,6 +207,9 @@ function getContactLookupVariants(
       );
     }
 
+    /*
+     * 8012345678
+     */
     if (
       !digitsOnly.startsWith("0") &&
       !digitsOnly.startsWith("234")
@@ -236,36 +228,54 @@ function getContactLookupVariants(
     }
   }
 
-  return Array.from(
-    variants
-  ).filter(Boolean);
+  return Array.from(variants).filter(
+    Boolean
+  );
 }
 
-function generateRequestCode(): string {
-  const characters =
-    "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+/*
+ * -----------------------------------------
+ * REQUEST CODE
+ * -----------------------------------------
+ *
+ * Example:
+ *
+ * RM-7K4P
+ */
 
+const REQUEST_CODE_CHARACTERS =
+  "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+
+function generateRequestCode(): string {
   let code = "RM-";
 
-  for (
-    let i = 0;
-    i < 4;
-    i++
-  ) {
-    const index =
-      Math.floor(
-        Math.random() *
-          characters.length
-      );
+  for (let i = 0; i < 4; i++) {
+    const index = randomInt(
+      REQUEST_CODE_CHARACTERS.length
+    );
 
     code +=
-      characters[index];
+      REQUEST_CODE_CHARACTERS[index];
   }
 
   return code;
 }
 
-async function createUniqueRequestCode(): Promise<string> {
+/*
+ * requestCode is deliberately excluded from
+ * the input type because this function
+ * generates it itself.
+ */
+async function createUniqueRequest(
+  data: Omit<
+    Prisma.BuyerRequestCreateInput,
+    "requestCode"
+  >
+) {
+  /*
+   * The database unique constraint is the
+   * final protection against collisions.
+   */
   for (
     let attempt = 0;
     attempt < 10;
@@ -275,27 +285,53 @@ async function createUniqueRequestCode(): Promise<string> {
       generateRequestCode();
 
     const existing =
-      await prisma.buyerRequest.findUnique(
-        {
-          where: {
-            requestCode,
-          },
+      await prisma.buyerRequest.findUnique({
+        where: {
+          requestCode,
+        },
+        select: {
+          id: true,
+        },
+      });
 
-          select: {
-            id: true,
-          },
-        }
-      );
+    if (existing) {
+      continue;
+    }
 
-    if (!existing) {
-      return requestCode;
+    try {
+      return await prisma.buyerRequest.create({
+        data: {
+          ...data,
+          requestCode,
+        },
+      });
+    } catch (error) {
+      /*
+       * Handle a race condition where another
+       * request receives the same requestCode.
+       */
+      if (
+        error instanceof
+          Prisma.PrismaClientKnownRequestError &&
+        error.code === "P2002"
+      ) {
+        continue;
+      }
+
+      throw error;
     }
   }
 
   throw new Error(
-    "Unable to generate request code"
+    "Unable to generate a unique request code"
   );
 }
+
+/*
+ * -----------------------------------------
+ * REQUEST INCLUDE
+ * -----------------------------------------
+ */
 
 const requestInclude = {
   category: true,
@@ -335,6 +371,12 @@ type RequestWithDetails =
     include: typeof requestInclude;
   }>;
 
+/*
+ * -----------------------------------------
+ * FORMAT REQUEST
+ * -----------------------------------------
+ */
+
 function formatRequest(
   request: RequestWithDetails
 ) {
@@ -344,11 +386,11 @@ function formatRequest(
     requestCode:
       request.requestCode,
 
-    query: request.query,
+    query:
+      request.query,
 
     category:
-      request.category?.name ??
-      null,
+      request.category?.name ?? null,
 
     budget:
       request.budget,
@@ -372,37 +414,30 @@ function formatRequest(
       request.status,
 
     createdAt:
-      request.createdAt instanceof
-      Date
+      request.createdAt instanceof Date
         ? request.createdAt.toISOString()
         : request.createdAt,
 
     matches:
-      request.matches.map(
-        (match) => ({
-          id: match.id,
+      request.matches.map((match) => ({
+        id: match.id,
 
-          score: match.score,
+        score: match.score,
 
-          business: {
-            id:
-              match.business.id,
+        business: {
+          id: match.business.id,
 
-            name:
-              match.business.name,
+          name: match.business.name,
 
-            area:
-              match.business
-                .location?.area ??
-              "Location not specified",
+          area:
+            match.business.location?.area ??
+            "Location not specified",
 
-            verified:
-              match.business
-                .verification ===
-              "VERIFIED",
-          },
-        })
-      ),
+          verified:
+            match.business.verification ===
+            "VERIFIED",
+        },
+      })),
   };
 }
 
@@ -433,10 +468,7 @@ export async function GET(
       searchParams.get("contact")
     );
 
-    if (
-      !code &&
-      !contact
-    ) {
+    if (!code && !contact) {
       return NextResponse.json(
         {
           requests: [],
@@ -446,54 +478,54 @@ export async function GET(
         },
         {
           status: 400,
+          headers: {
+            "Cache-Control": "no-store",
+          },
         }
       );
     }
 
-    const contactVariants =
-      contact
-        ? getContactLookupVariants(
-            contact
-          )
-        : [];
+    const contactVariants = contact
+      ? getContactLookupVariants(contact)
+      : [];
 
     const requests =
-      await prisma.buyerRequest.findMany(
-        {
-          where: code
-            ? {
-                requestCode:
-                  code,
-              }
-            : {
-                buyerContact: {
-                  in:
-                    contactVariants,
-                },
+      await prisma.buyerRequest.findMany({
+        where: code
+          ? {
+              requestCode: code,
+            }
+          : {
+              buyerContact: {
+                in: contactVariants,
               },
+            },
 
-          include:
-            requestInclude,
+        include: requestInclude,
 
-          orderBy: {
-            createdAt:
-              "desc",
-          },
-        }
-      );
+        orderBy: {
+          createdAt: "desc",
+        },
+      });
 
     const formattedRequests =
-      requests.map(
-        formatRequest
-      );
+      requests.map(formatRequest);
 
-    return NextResponse.json({
-      requests:
-        formattedRequests,
+    return NextResponse.json(
+      {
+        requests:
+          formattedRequests,
 
-      total:
-        formattedRequests.length,
-    });
+        total:
+          formattedRequests.length,
+      },
+      {
+        headers: {
+          "Cache-Control": "no-store",
+          Pragma: "no-cache",
+        },
+      }
+    );
   } catch (error) {
     console.error(
       "Get requests API error:",
@@ -509,6 +541,9 @@ export async function GET(
       },
       {
         status: 500,
+        headers: {
+          "Cache-Control": "no-store",
+        },
       }
     );
   }
@@ -527,49 +562,76 @@ export async function POST(
   request: NextRequest
 ) {
   try {
-    const body =
-      await request.json();
+    let rawBody: unknown;
 
-    const query =
-      clean(body.query);
-
-    const category =
-      clean(body.category);
-
-    const locationArea =
-      clean(
-        body.locationArea
+    /*
+     * Invalid JSON is a client error,
+     * not a server error.
+     */
+    try {
+      rawBody =
+        await request.json();
+    } catch {
+      return NextResponse.json(
+        {
+          error:
+            "Invalid request body",
+        },
+        {
+          status: 400,
+        }
       );
+    }
 
-    const rawBuyerContact =
-      clean(
-        body.buyerContact
+    if (!isRecord(rawBody)) {
+      return NextResponse.json(
+        {
+          error:
+            "Invalid request body",
+        },
+        {
+          status: 400,
+        }
       );
+    }
 
-    const description =
-      clean(
-        body.description
-      );
+    const query = clean(
+      rawBody.query
+    );
 
-    const imageUrl =
-      clean(
-        body.imageUrl
-      );
+    const category = clean(
+      rawBody.category
+    );
 
-    const buyerContact =
-      normalizeNigerianPhone(
-        rawBuyerContact
-      );
+    const locationArea = clean(
+      rawBody.locationArea
+    );
 
-    const budget =
-      optionalInt(
-        body.budget
-      );
+    const rawBuyerContact = clean(
+      rawBody.buyerContact
+    );
 
-    const quantity =
-      optionalInt(
-        body.quantity
-      );
+    const description = clean(
+      rawBody.description
+    );
+
+    const imageUrl = clean(
+      rawBody.imageUrl
+    );
+
+    const budget = optionalInt(
+      rawBody.budget
+    );
+
+    const quantity = optionalInt(
+      rawBody.quantity
+    );
+
+    /*
+     * -----------------------------------------
+     * VALIDATION
+     * -----------------------------------------
+     */
 
     if (!query) {
       return NextResponse.json(
@@ -583,11 +645,63 @@ export async function POST(
       );
     }
 
-    if (!buyerContact) {
+    if (query.length > 200) {
+      return NextResponse.json(
+        {
+          error:
+            "What you're looking for is too long",
+        },
+        {
+          status: 400,
+        }
+      );
+    }
+
+    if (budget === undefined) {
+      return NextResponse.json(
+        {
+          error:
+            "Budget must be a valid integer",
+        },
+        {
+          status: 400,
+        }
+      );
+    }
+
+    if (quantity === undefined) {
+      return NextResponse.json(
+        {
+          error:
+            "Quantity must be a valid integer",
+        },
+        {
+          status: 400,
+        }
+      );
+    }
+
+    if (!rawBuyerContact) {
       return NextResponse.json(
         {
           error:
             "A WhatsApp number or phone number is required",
+        },
+        {
+          status: 400,
+        }
+      );
+    }
+
+    if (
+      !isValidNigerianPhone(
+        rawBuyerContact
+      )
+    ) {
+      return NextResponse.json(
+        {
+          error:
+            "Enter a valid Nigerian phone or WhatsApp number",
         },
         {
           status: 400,
@@ -625,92 +739,137 @@ export async function POST(
       );
     }
 
+    if (description.length > 2000) {
+      return NextResponse.json(
+        {
+          error:
+            "Description is too long",
+        },
+        {
+          status: 400,
+        }
+      );
+    }
+
+    if (imageUrl.length > 2000) {
+      return NextResponse.json(
+        {
+          error:
+            "Image URL is too long",
+        },
+        {
+          status: 400,
+        }
+      );
+    }
+
+    /*
+     * -----------------------------------------
+     * CATEGORY
+     * -----------------------------------------
+     *
+     * Only active categories can be attached
+     * to a new buyer request.
+     */
+
     let categoryId:
       | string
       | null = null;
 
     if (category) {
       const categoryRecord =
-        await prisma.category.findFirst(
-          {
-            where: {
-              name: {
-                equals:
-                  category,
-                mode:
-                  "insensitive",
-              },
+        await prisma.category.findFirst({
+          where: {
+            name: {
+              equals: category,
+              mode: "insensitive",
             },
 
-            select: {
-              id: true,
-            },
+            isActive: true,
+          },
+
+          select: {
+            id: true,
+          },
+        });
+
+      if (!categoryRecord) {
+        return NextResponse.json(
+          {
+            error:
+              "Selected category was not found",
+          },
+          {
+            status: 400,
           }
         );
+      }
 
       categoryId =
-        categoryRecord?.id ??
-        null;
+        categoryRecord.id;
     }
 
-    const requestCode =
-      await createUniqueRequestCode();
+    /*
+     * -----------------------------------------
+     * CREATE REQUEST
+     * -----------------------------------------
+     */
+
+    const buyerContact =
+      normalizeNigerianPhone(
+        rawBuyerContact
+      );
 
     const buyerRequest =
-      await prisma.buyerRequest.create(
-        {
-          data: {
-            requestCode,
+      await createUniqueRequest({
+        query,
 
-            query,
+        category: categoryId
+          ? {
+              connect: {
+                id: categoryId,
+              },
+            }
+          : undefined,
 
-            categoryId,
+        budget,
 
-            budget,
+        locationArea:
+          locationArea || null,
 
-            locationArea:
-              locationArea ||
-              null,
+        quantity,
 
-            quantity,
+        description:
+          description || null,
 
-            description:
-              description ||
-              null,
+        imageUrl:
+          imageUrl || null,
 
-            imageUrl:
-              imageUrl ||
-              null,
+        buyerContact,
 
-            /*
-             * Store the canonical
-             * normalized contact.
-             */
-            buyerContact,
-
-            status: "NEW",
-          },
-        }
-      );
+        status: "NEW",
+      });
 
     /*
      * -----------------------------------------
      * MATCHING
      * -----------------------------------------
      *
-     * Existing matching architecture is preserved.
-     * We only validate the returned businesses before
-     * creating Match records.
+     * Matching failure does not prevent the
+     * buyer request from being created.
      */
 
     try {
       const parsedQuery =
         parseQuery(
           query,
+
           locationArea ||
             undefined,
+
           budget ??
             undefined,
+
           category ||
             undefined
         );
@@ -720,51 +879,51 @@ export async function POST(
           parsedQuery
         );
 
-      const candidateBusinessIds =
-        [
-          ...new Set(
-            matches
-              .map(
-                (match) =>
-                  match.business
-                    ?.id
-              )
-              .filter(
-                (
-                  id
-                ): id is string =>
-                  typeof id ===
-                    "string" &&
-                  id.length > 0
-              )
-          ),
-        ];
+      /*
+       * Collect only actual business IDs.
+       */
+      const candidateBusinessIds = [
+        ...new Set(
+          matches
+            .map(
+              (match) =>
+                match.business?.id
+            )
+            .filter(
+              (
+                id
+              ): id is string =>
+                typeof id ===
+                  "string" &&
+                id.length > 0
+            )
+        ),
+      ];
 
       if (
         candidateBusinessIds.length >
         0
       ) {
+        /*
+         * Re-check business visibility before
+         * creating Match records.
+         */
         const activeBusinesses =
-          await prisma.business.findMany(
-            {
-              where: {
-                id: {
-                  in:
-                    candidateBusinessIds,
-                },
-
-                status:
-                  "ACTIVE",
-
-                deletedAt:
-                  null,
+          await prisma.business.findMany({
+            where: {
+              id: {
+                in: candidateBusinessIds,
               },
 
-              select: {
-                id: true,
-              },
-            }
-          );
+              status: "ACTIVE",
+
+              deletedAt: null,
+            },
+
+            select: {
+              id: true,
+            },
+          });
 
         const activeBusinessIds =
           new Set(
@@ -774,12 +933,16 @@ export async function POST(
             )
           );
 
+        /*
+         * Only create valid Match records.
+         */
         const validMatches =
           matches
             .filter(
               (match) =>
-                match?.business
-                  ?.id &&
+                typeof match
+                  ?.business?.id ===
+                  "string" &&
                 activeBusinessIds.has(
                   match.business.id
                 ) &&
@@ -787,74 +950,62 @@ export async function POST(
                   match.score
                 )
             )
-            .map(
-              (match) => ({
-                requestId:
-                  buyerRequest.id,
+            .map((match) => ({
+              requestId:
+                buyerRequest.id,
 
-                businessId:
-                  match.business.id,
+              businessId:
+                match.business.id,
 
-                score:
-                  Math.round(
-                    match.score
-                  ),
+              score:
+                Math.round(
+                  match.score
+                ),
 
-                addedManually:
-                  false,
-              })
-            );
+              addedManually: false,
+            }));
 
         if (
           validMatches.length >
           0
         ) {
-          await prisma.match.createMany(
-            {
-              data:
-                validMatches,
+          await prisma.match.createMany({
+            data: validMatches,
+            skipDuplicates: true,
+          });
 
-              skipDuplicates:
-                true,
-            }
-          );
+          await prisma.buyerRequest.update({
+            where: {
+              id: buyerRequest.id,
+            },
 
-          await prisma.buyerRequest.update(
-            {
-              where: {
-                id:
-                  buyerRequest.id,
-              },
-
-              data: {
-                status:
-                  "MATCHED",
-              },
-            }
-          );
+            data: {
+              status: "MATCHED",
+            },
+          });
         }
       }
-    } catch (
-      matchingError
-    ) {
+    } catch (matchingError) {
       console.error(
         "Request matching error:",
         matchingError
       );
     }
 
-    const result =
-      await prisma.buyerRequest.findUnique(
-        {
-          where: {
-            id:
-              buyerRequest.id,
-          },
+    /*
+     * -----------------------------------------
+     * LOAD FINAL REQUEST
+     * -----------------------------------------
+     */
 
-          include:
-            requestInclude,
-        }
-      );
+    const result =
+      await prisma.buyerRequest.findUnique({
+        where: {
+          id: buyerRequest.id,
+        },
+
+        include: requestInclude,
+      });
 
     if (!result) {
       return NextResponse.json(
@@ -871,12 +1022,14 @@ export async function POST(
     return NextResponse.json(
       {
         request:
-          formatRequest(
-            result
-          ),
+          formatRequest(result),
       },
       {
         status: 201,
+        headers: {
+          "Cache-Control":
+            "no-store",
+        },
       }
     );
   } catch (error) {

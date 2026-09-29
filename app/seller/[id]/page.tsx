@@ -4,8 +4,8 @@ import {
   type MouseEvent,
   useCallback,
   useEffect,
-  useSyncExternalStore,
   useState,
+  useSyncExternalStore,
 } from "react";
 
 import Link from "next/link";
@@ -69,6 +69,15 @@ const CATEGORY_COLORS: Record<string, string> = {
   Services: "#E4E9EF",
 };
 
+type Availability =
+  | "AVAILABLE"
+  | "ASK_SELLER"
+  | "UNAVAILABLE";
+
+type Verification =
+  | "VERIFIED"
+  | "UNVERIFIED";
+
 type Product = {
   id: string;
   name: string;
@@ -76,10 +85,7 @@ type Product = {
   price?: number | null;
   priceMin?: number | null;
   priceMax?: number | null;
-  availability?:
-    | "AVAILABLE"
-    | "ASK_SELLER"
-    | "UNAVAILABLE";
+  availability?: Availability;
   imageUrl?: string | null;
 };
 
@@ -104,17 +110,19 @@ type Seller = {
 
   location: SellerLocation;
 
-  availability: string;
-  verification: string;
-  verified: boolean;
+  availability: Availability;
+  verification: Verification;
+  verified?: boolean;
 
-  category: string;
+  category: string | null;
   categories: string[];
 
   productCount: number;
   products: Product[];
 
   socialLinks: SocialLink[];
+
+  imageUrl?: string | null;
 };
 
 function getInitials(name: string) {
@@ -128,7 +136,9 @@ function getInitials(name: string) {
   }
 
   if (words.length === 1) {
-    return words[0].slice(0, 2).toUpperCase();
+    return words[0]
+      .slice(0, 2)
+      .toUpperCase();
   }
 
   return (
@@ -137,7 +147,9 @@ function getInitials(name: string) {
   ).toUpperCase();
 }
 
-function getCategoryColor(category?: string | null) {
+function getCategoryColor(
+  category?: string | null
+) {
   if (!category) {
     return "#E4E9EF";
   }
@@ -208,22 +220,9 @@ function getAvailabilityStyle(
   }
 }
 
-/**
- * Normalize Nigerian WhatsApp numbers internally.
- *
- * Supported examples:
- *
- * 08012345678
- * 8012345678
- * 2348012345678
- * +2348012345678
- * 00 234 8012345678
- *
- * Result:
- *
- * +2348012345678
- */
-function normalizeNigerianPhone(value: string): string {
+function normalizeNigerianPhone(
+  value: string
+): string {
   let clean = value
     .trim()
     .replace(/[^\d+]/g, "");
@@ -281,19 +280,12 @@ function buildContactUrl(
         return "#";
       }
 
-      /*
-       * WhatsApp wa.me uses digits without
-       * the leading + sign.
-       *
-       * Internally we still normalize the
-       * number to +234.
-       */
       return `https://wa.me/${normalizedPhone.slice(
         1
       )}`;
     }
 
-    case "INSTAGRAM":
+    case "INSTAGRAM": {
       if (!clean) {
         return "#";
       }
@@ -302,8 +294,9 @@ function buildContactUrl(
         clean.startsWith("https://")
         ? clean
         : `https://instagram.com/${clean}`;
+    }
 
-    case "TIKTOK":
+    case "TIKTOK": {
       if (!clean) {
         return "#";
       }
@@ -312,8 +305,9 @@ function buildContactUrl(
         clean.startsWith("https://")
         ? clean
         : `https://tiktok.com/@${clean}`;
+    }
 
-    case "FACEBOOK":
+    case "FACEBOOK": {
       if (!clean) {
         return "#";
       }
@@ -322,6 +316,7 @@ function buildContactUrl(
         clean.startsWith("https://")
         ? clean
         : `https://facebook.com/${clean}`;
+    }
 
     case "PHONE": {
       if (!clean) {
@@ -341,7 +336,9 @@ function buildContactUrl(
     case "DIRECTIONS": {
       if (
         typeof latitude !== "number" ||
-        typeof longitude !== "number"
+        !Number.isFinite(latitude) ||
+        typeof longitude !== "number" ||
+        !Number.isFinite(longitude)
       ) {
         return "#";
       }
@@ -375,6 +372,9 @@ function ContactIcon({
     case "PHONE":
       return <Phone size={16} />;
 
+    case "DIRECTIONS":
+      return <MapPin size={16} />;
+
     default:
       return <ExternalLink size={16} />;
   }
@@ -399,20 +399,6 @@ function isTrackableContactPlatform(
   );
 }
 
-/*
- * -----------------------------------------
- * SAVED BUSINESS STORE
- * -----------------------------------------
- *
- * Keep seller-page saved state synchronized
- * with other ReMarket pages.
- *
- * The custom event handles changes made by
- * ReMarket's save helpers in the same tab.
- *
- * The storage event handles changes coming
- * from another browser tab.
- */
 function subscribeSavedBusinesses(
   onStoreChange: () => void
 ) {
@@ -465,12 +451,6 @@ function SellerPageContent({
     setError,
   ] = useState("");
 
-  /*
-   * -----------------------------------------
-   * SAVED BUSINESS SYNC
-   * -----------------------------------------
-   */
-
   const getSavedSnapshot =
     useCallback(
       () => getSavedBusinessesSnapshot(id),
@@ -483,12 +463,6 @@ function SellerPageContent({
       getSavedSnapshot,
       () => false
     );
-
-  /*
-   * -----------------------------------------
-   * LOAD SELLER
-   * -----------------------------------------
-   */
 
   useEffect(() => {
     const controller =
@@ -511,53 +485,348 @@ function SellerPageContent({
             }
           );
 
-        const data =
-          await response.json();
+        let data:
+          | {
+              business?: unknown;
+              error?: unknown;
+            }
+          | unknown = null;
+
+        try {
+          data =
+            await response.json();
+        } catch {
+          throw new Error(
+            "Unable to read seller information."
+          );
+        }
 
         if (!response.ok) {
-          throw new Error(
-            typeof data?.error ===
+          const responseError =
+            typeof data ===
+            "object" &&
+            data !== null &&
+            "error" in data &&
+            typeof data.error ===
               "string"
               ? data.error
-              : "Unable to load seller."
+              : "Unable to load seller.";
+
+          throw new Error(
+            responseError
           );
         }
 
         const business =
-          data?.business ?? data;
+          typeof data ===
+            "object" &&
+          data !== null &&
+          "business" in data
+            ? data.business
+            : data;
 
-        if (!business?.id) {
+        if (
+          typeof business !==
+            "object" ||
+          business === null ||
+          !("id" in business) ||
+          typeof business.id !==
+            "string"
+        ) {
           throw new Error(
             "Seller information was not found."
           );
         }
 
+        const rawBusiness =
+          business as Record<
+            string,
+            unknown
+          >;
+
+        const rawLocation =
+          rawBusiness.location;
+
+        const rawCategories =
+          rawBusiness.categories;
+
+        const rawProducts =
+          rawBusiness.products;
+
+        const rawSocialLinks =
+          rawBusiness.socialLinks;
+
+        const categories =
+          Array.isArray(
+            rawCategories
+          )
+            ? rawCategories
+                .map((item) => {
+                  if (
+                    typeof item ===
+                      "string"
+                  ) {
+                    return item;
+                  }
+
+                  if (
+                    typeof item ===
+                      "object" &&
+                    item !== null
+                  ) {
+                    if (
+                      "category" in
+                        item &&
+                      typeof item.category ===
+                        "object" &&
+                      item.category !==
+                        null &&
+                      "name" in
+                        item.category &&
+                      typeof item.category
+                        .name ===
+                        "string"
+                    ) {
+                      return item.category
+                        .name;
+                    }
+
+                    if (
+                      "name" in item &&
+                      typeof item.name ===
+                        "string"
+                    ) {
+                      return item.name;
+                    }
+                  }
+
+                  return null;
+                })
+                .filter(
+                  (
+                    item
+                  ): item is string =>
+                    typeof item ===
+                    "string"
+                )
+            : [];
+
+       const products: Product[] =
+  Array.isArray(rawProducts)
+    ? rawProducts
+        .filter(
+          (
+            product
+          ): product is Record<
+            string,
+            unknown
+          > =>
+            typeof product ===
+              "object" &&
+            product !== null &&
+            "id" in product &&
+            typeof product.id ===
+              "string" &&
+            "name" in product &&
+            typeof product.name ===
+              "string"
+        )
+        .map(
+          (product): Product => ({
+            id:
+              product.id as string,
+
+            name:
+              product.name as string,
+
+            description:
+              typeof product.description ===
+                "string"
+                ? product.description
+                : null,
+
+            price:
+              typeof product.price ===
+                "number"
+                ? product.price
+                : null,
+
+            priceMin:
+              typeof product.priceMin ===
+                "number"
+                ? product.priceMin
+                : null,
+
+            priceMax:
+              typeof product.priceMax ===
+                "number"
+                ? product.priceMax
+                : null,
+
+            availability:
+              product.availability ===
+                "AVAILABLE"
+                ? "AVAILABLE"
+                : product.availability ===
+                    "UNAVAILABLE"
+                  ? "UNAVAILABLE"
+                  : "ASK_SELLER",
+
+            imageUrl:
+              typeof product.imageUrl ===
+                "string"
+                ? product.imageUrl
+                : null,
+          })
+        )
+    : [];
+
+        const location =
+          typeof rawLocation ===
+              "object" &&
+          rawLocation !== null
+            ? {
+                id:
+                  "id" in rawLocation &&
+                  typeof rawLocation.id ===
+                    "string"
+                    ? rawLocation.id
+                    : undefined,
+                area:
+                  "area" in rawLocation &&
+                  typeof rawLocation.area ===
+                    "string"
+                    ? rawLocation.area
+                    : "",
+                lat:
+                  "lat" in rawLocation &&
+                  typeof rawLocation.lat ===
+                    "number"
+                    ? rawLocation.lat
+                    : null,
+                long:
+                  "long" in rawLocation &&
+                  typeof rawLocation.long ===
+                    "number"
+                    ? rawLocation.long
+                    : null,
+              }
+            : null;
+
+        const availability =
+          rawBusiness.availability ===
+            "AVAILABLE" ||
+          rawBusiness.availability ===
+            "UNAVAILABLE"
+            ? rawBusiness.availability
+            : "ASK_SELLER";
+
+        const verification =
+          rawBusiness.verification ===
+            "VERIFIED"
+            ? "VERIFIED"
+            : "UNVERIFIED";
+
+        const verified =
+          rawBusiness.verified ===
+            true ||
+          verification ===
+            "VERIFIED";
+
+        const category =
+          typeof rawBusiness.category ===
+            "string"
+            ? rawBusiness.category
+            : categories[0] ??
+              null;
+
+        const rawProductCount =
+          rawBusiness.productCount;
+
+        const productCount =
+          typeof rawProductCount ===
+          "number"
+            ? rawProductCount
+            : products.length;
+
         setSeller({
-          ...business,
+          id: rawBusiness.id as string,
 
-          location:
-            business.location ?? null,
+          name:
+            typeof rawBusiness.name ===
+            "string"
+              ? rawBusiness.name
+              : "ReMarket Seller",
 
-          products:
-            Array.isArray(
-              business.products
-            )
-              ? business.products
-              : [],
+          ownerName:
+            typeof rawBusiness.ownerName ===
+            "string"
+              ? rawBusiness.ownerName
+              : null,
 
-          categories:
-            Array.isArray(
-              business.categories
-            )
-              ? business.categories
-              : [],
+          description:
+            typeof rawBusiness.description ===
+            "string"
+              ? rawBusiness.description
+              : null,
+
+          location,
+
+          availability,
+
+          verification,
+
+          verified,
+
+          category,
+
+          categories,
+
+          productCount,
+
+          products,
 
           socialLinks:
             Array.isArray(
-              business.socialLinks
+              rawSocialLinks
             )
-              ? business.socialLinks
+              ? rawSocialLinks
+                  .filter(
+                    (
+                      link
+                    ): link is Record<
+                      string,
+                      unknown
+                    > =>
+                      typeof link ===
+                        "object" &&
+                      link !== null &&
+                      "id" in link &&
+                      typeof link.id ===
+                        "string" &&
+                      "platform" in link &&
+                      typeof link.platform ===
+                        "string" &&
+                      "handle" in link &&
+                      typeof link.handle ===
+                        "string"
+                  )
+                  .map(
+                    (link) => ({
+                      id: link.id as string,
+                      platform:
+                        link.platform as string,
+                      handle:
+                        link.handle as string,
+                    })
+                  )
               : [],
+
+          imageUrl:
+            typeof rawBusiness.imageUrl ===
+            "string"
+              ? rawBusiness.imageUrl
+              : null,
         });
       } catch (
         fetchError
@@ -597,12 +866,6 @@ function SellerPageContent({
       controller.abort();
     };
   }, [id]);
-
-  /*
-   * -----------------------------------------
-   * SAVE / UNSAVE BUSINESS
-   * -----------------------------------------
-   */
 
   function toggleSavedBusiness() {
     if (!seller) {
@@ -647,19 +910,9 @@ function SellerPageContent({
         seller.availability,
 
       imageUrl:
-        (
-          seller as Seller & {
-            imageUrl?: string | null;
-          }
-        ).imageUrl ?? null,
+        seller.imageUrl ?? null,
     });
   }
-
-  /*
-   * -----------------------------------------
-   * CONTACT TRACKING
-   * -----------------------------------------
-   */
 
   function handleContactClick(
     platform: string
@@ -683,12 +936,6 @@ function SellerPageContent({
     });
   }
 
-  /*
-   * -----------------------------------------
-   * STOP LINK CLICK FROM BUBBLING
-   * -----------------------------------------
-   */
-
   function handleSaveClick(
     event: MouseEvent<HTMLButtonElement>
   ) {
@@ -697,12 +944,6 @@ function SellerPageContent({
 
     toggleSavedBusiness();
   }
-
-  /*
-   * -----------------------------------------
-   * NO ID
-   * -----------------------------------------
-   */
 
   if (!id) {
     return (
@@ -750,7 +991,6 @@ function SellerPageContent({
           md:border
         "
       >
-        {/* HEADER */}
         <header
           className="
             flex
@@ -825,9 +1065,8 @@ function SellerPageContent({
                     <Icon
                       size={17}
                     />
-                    {
-                      item.label
-                    }
+
+                    {item.label}
                   </Link>
                 );
               }
@@ -855,7 +1094,6 @@ function SellerPageContent({
         </header>
 
         <div className="flex">
-          {/* SIDEBAR */}
           <aside
             className="
               hidden
@@ -907,9 +1145,8 @@ function SellerPageContent({
                       <Icon
                         size={17}
                       />
-                      {
-                        item.label
-                      }
+
+                      {item.label}
                     </Link>
                   );
                 }
@@ -936,11 +1173,11 @@ function SellerPageContent({
               <ShoppingBag
                 size={17}
               />
+
               Browse sellers
             </Link>
           </aside>
 
-          {/* MAIN */}
           <section
             className="
               min-w-0
@@ -954,7 +1191,6 @@ function SellerPageContent({
               md:pb-8
             "
           >
-            {/* BACK */}
             <Link
               href="/shop"
               className="
@@ -972,10 +1208,10 @@ function SellerPageContent({
               <ArrowLeft
                 size={15}
               />
+
               Back to Shop
             </Link>
 
-            {/* LOADING */}
             {loading && (
               <div className="space-y-5">
                 <div className="h-[210px] animate-pulse rounded-[18px] bg-[#F3EEE8]" />
@@ -988,7 +1224,6 @@ function SellerPageContent({
               </div>
             )}
 
-            {/* ERROR */}
             {!loading &&
               error && (
                 <div
@@ -1049,17 +1284,16 @@ function SellerPageContent({
                     <ShoppingBag
                       size={15}
                     />
+
                     Browse sellers
                   </Link>
                 </div>
               )}
 
-            {/* SELLER */}
             {!loading &&
               !error &&
               seller && (
                 <>
-                  {/* SELLER HERO */}
                   <div
                     className="
                       overflow-hidden
@@ -1083,7 +1317,6 @@ function SellerPageContent({
                     <div className="p-5 sm:p-7">
                       <div className="flex flex-col gap-5 sm:flex-row sm:items-start sm:justify-between">
                         <div className="flex min-w-0 gap-4">
-                          {/* Avatar */}
                           <div
                             className="
                               flex
@@ -1115,9 +1348,11 @@ function SellerPageContent({
                                 }
                               </h1>
 
-                              {(seller.verified ||
+                              {(
+                                seller.verified ||
                                 seller.verification ===
-                                  "VERIFIED") && (
+                                  "VERIFIED"
+                              ) && (
                                 <CheckCircle2
                                   size={18}
                                   className="text-[#FF5A36]"
@@ -1184,7 +1419,6 @@ function SellerPageContent({
                           </div>
                         </div>
 
-                        {/* SAVE */}
                         <button
                           type="button"
                           aria-label={
@@ -1226,13 +1460,13 @@ function SellerPageContent({
                         </button>
                       </div>
 
-                      {/* LOCATION */}
                       {seller.location?.area && (
                         <div className="mt-4 inline-flex items-center gap-2 rounded-xl bg-[#FCFAF6] px-3 py-2 text-[11px] font-semibold text-[#68615C]">
                           <MapPin
                             size={15}
                             className="text-[#FF5A36]"
                           />
+
                           <span>
                             {
                               seller.location
@@ -1242,16 +1476,23 @@ function SellerPageContent({
                         </div>
                       )}
 
-                      {/* DIRECTIONS */}
                       {seller.location &&
                         typeof seller
                           .location
                           .lat ===
                           "number" &&
+                        Number.isFinite(
+                          seller.location
+                            .lat
+                        ) &&
                         typeof seller
                           .location
                           .long ===
-                          "number" && (
+                          "number" &&
+                        Number.isFinite(
+                          seller.location
+                            .long
+                        ) && (
                           <a
                             href={buildContactUrl(
                               "DIRECTIONS",
@@ -1273,13 +1514,13 @@ function SellerPageContent({
                             className="mt-3 inline-flex items-center gap-2 rounded-xl bg-[#FFF0E9] px-3 py-2 text-[11px] font-bold text-[#9F2D18] transition hover:bg-[#FFE4DA]"
                           >
                             <MapPin className="h-4 w-4" />
+
                             <span>
                               Directions
                             </span>
                           </a>
                         )}
 
-                      {/* Description */}
                       {seller.description && (
                         <p className="mt-4 max-w-[800px] text-[13px] leading-6 text-[#68615C]">
                           {
@@ -1290,9 +1531,7 @@ function SellerPageContent({
                     </div>
                   </div>
 
-                  {/* CONTENT */}
                   <div className="mt-5 grid gap-5 lg:grid-cols-[minmax(0,1fr)_300px]">
-                    {/* PRODUCTS */}
                     <div
                       className="
                         rounded-[18px]
@@ -1310,10 +1549,9 @@ function SellerPageContent({
                           </h2>
 
                           <p className="mt-1 text-[11px] text-[#8B847E]">
-                            {seller.productCount ??
-                              seller.products
-                                ?.length ??
-                              0}{" "}
+                            {
+                              seller.productCount
+                            }{" "}
                             items listed
                           </p>
                         </div>
@@ -1324,10 +1562,8 @@ function SellerPageContent({
                         />
                       </div>
 
-                      {seller.products &&
-                      seller.products
-                        .length >
-                        0 ? (
+                      {seller.products.length >
+                      0 ? (
                         <div className="grid gap-3 sm:grid-cols-2">
                           {seller.products.map(
                             (
@@ -1459,7 +1695,6 @@ function SellerPageContent({
                       )}
                     </div>
 
-                    {/* CONTACT */}
                     <aside className="space-y-4">
                       <div
                         className="
@@ -1479,10 +1714,8 @@ function SellerPageContent({
                         </p>
 
                         <div className="mt-4 space-y-2">
-                          {seller.socialLinks &&
-                          seller.socialLinks
-                            .length >
-                            0 ? (
+                          {seller.socialLinks.length >
+                          0 ? (
                             seller.socialLinks.map(
                               (
                                 link
@@ -1509,8 +1742,10 @@ function SellerPageContent({
 
                                 if (
                                   url ===
-                                    "#" &&
-                                  isDirections
+                                    "#" ||
+                                  isDirections &&
+                                    url ===
+                                      "#"
                                 ) {
                                   return null;
                                 }
@@ -1599,52 +1834,48 @@ function SellerPageContent({
                         </div>
                       </div>
 
-                      {/* Categories */}
-                      {seller.categories &&
-                        seller.categories
-                          .length >
-                          0 && (
-                          <div
-                            className="
-                              rounded-[18px]
-                              border
-                              border-[#E8E4DE]
-                              bg-[#FCFAF6]
-                              p-5
-                            "
-                          >
-                            <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-[#A29B94]">
-                              Categories
-                            </p>
+                      {seller.categories.length >
+                        0 && (
+                        <div
+                          className="
+                            rounded-[18px]
+                            border
+                            border-[#E8E4DE]
+                            bg-[#FCFAF6]
+                            p-5
+                          "
+                        >
+                          <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-[#A29B94]">
+                            Categories
+                          </p>
 
-                            <div className="mt-3 flex flex-wrap gap-2">
-                              {seller.categories.map(
-                                (
-                                  item
-                                ) => (
-                                  <span
-                                    key={
-                                      item
-                                    }
-                                    className="rounded-full px-2.5 py-1 text-[10px] font-bold text-[#514B46]"
-                                    style={{
-                                      backgroundColor:
-                                        getCategoryColor(
-                                          item
-                                        ),
-                                    }}
-                                  >
-                                    {
-                                      item
-                                    }
-                                  </span>
-                                )
-                              )}
-                            </div>
+                          <div className="mt-3 flex flex-wrap gap-2">
+                            {seller.categories.map(
+                              (
+                                item
+                              ) => (
+                                <span
+                                  key={
+                                    item
+                                  }
+                                  className="rounded-full px-2.5 py-1 text-[10px] font-bold text-[#514B46]"
+                                  style={{
+                                    backgroundColor:
+                                      getCategoryColor(
+                                        item
+                                      ),
+                                  }}
+                                >
+                                  {
+                                    item
+                                  }
+                                </span>
+                              )
+                            )}
                           </div>
-                        )}
+                        </div>
+                      )}
 
-                      {/* REQUEST */}
                       <div
                         className="
                           rounded-[18px]
@@ -1693,7 +1924,6 @@ function SellerPageContent({
           </section>
         </div>
 
-        {/* MOBILE NAV */}
         <nav
           className="
             fixed
@@ -1743,9 +1973,8 @@ function SellerPageContent({
                     <Icon
                       size={18}
                     />
-                    {
-                      item.label
-                    }
+
+                    {item.label}
                   </Link>
                 );
               }

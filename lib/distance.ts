@@ -1,7 +1,84 @@
-export function haversineDistance(lat1: number, lng1:number, lat2: number, lng2: number): number{
-    const R = 6371;
-    const dLat = ((lat2 - lat1) * Math.PI) / 180;
-    const dLng = ((lng2 - lng1) * Math.PI) / 180;
-    const a = Math.sin(dLat / 2) ** 2 + Math.cos((lat1 * Math.PI) / 180) * Math.cos((lat2 * Math.PI)/ 180) * Math.sin(dLng / 2) ** 2;
-    return R * ( 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a)));
+// lib/distance.ts
+
+export type Coordinate = {
+  lat: number;
+  lng: number;
+};
+
+export function isValidLatitude(
+  value: number
+): boolean {
+  return Number.isFinite(value) &&
+    value >= -90 &&
+    value <= 90;
+}
+
+export function isValidLongitude(
+  value: number
+): boolean {
+  return Number.isFinite(value) &&
+    value >= -180 &&
+    value <= 180;
+}
+
+export function isValidCoordinate(
+  lat: number,
+  lng: number
+): boolean {
+  return (
+    isValidLatitude(lat) &&
+    isValidLongitude(lng)
+  );
+}
+
+/**
+ * Calculates the great-circle distance between two coordinates.
+ *
+ * Returns distance in kilometres.
+ */
+export function haversineDistance(
+  lat1: number,
+  lng1: number,
+  lat2: number,
+  lng2: number
+): number {
+  const R = 6371;
+
+  const dLat =
+    ((lat2 - lat1) * Math.PI) / 180;
+
+  const dLng =
+    ((lng2 - lng1) * Math.PI) / 180;
+
+  const a =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos(
+      (lat1 * Math.PI) / 180
+    ) *
+      Math.cos(
+        (lat2 * Math.PI) / 180
+      ) *
+      Math.sin(dLng / 2) ** 2;
+
+  return (
+    R *
+    (2 *
+      Math.atan2(
+        Math.sqrt(a),
+        Math.sqrt(1 - a)
+      ))
+  );
+}
+
+export function roundDistance(
+  distanceKm: number,
+  decimalPlaces = 1
+): number {
+  const factor =
+    10 ** decimalPlaces;
+
+  return (
+    Math.round(distanceKm * factor) /
+    factor
+  );
 }

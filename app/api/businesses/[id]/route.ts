@@ -75,8 +75,7 @@ export async function GET(
   }
 ) {
   try {
-    const { id } =
-      await params;
+    const { id } = await params;
 
     if (!id) {
       return NextResponse.json(
@@ -95,119 +94,129 @@ export async function GET(
      * LOAD PUBLIC BUSINESS
      * -----------------------------------------
      *
-     * Public ReMarket pages may only expose
-     * ACTIVE and non-soft-deleted businesses.
+     * Only ACTIVE and non-soft-deleted
+     * businesses are publicly visible.
      */
 
     const business =
-      await prisma.business.findFirst(
-        {
-          where: {
-            id,
-            status: "ACTIVE",
-            deletedAt: null,
+      await prisma.business.findFirst({
+        where: {
+          id,
+          status: "ACTIVE",
+          deletedAt: null,
+        },
+
+        select: {
+          id: true,
+          name: true,
+          ownerName: true,
+          description: true,
+          imageUrl: true,
+          availability: true,
+          verification: true,
+
+          location: {
+            select: {
+              id: true,
+              area: true,
+              address: true,
+              lat: true,
+              long: true,
+              verification: true,
+            },
           },
 
-          select: {
-            id: true,
-            name: true,
-            ownerName: true,
-            description: true,
-            imageUrl: true,
-            availability: true,
-            verification: true,
-
-            location: {
-              select: {
-                id: true,
-                area: true,
-                lat: true,
-                long: true,
+          /*
+           * Only active categories are exposed
+           * publicly.
+           */
+          categories: {
+            where: {
+              category: {
+                isActive: true,
               },
             },
 
-            categories: {
-              select: {
-                category: {
-                  select: {
-                    id: true,
-                    name: true,
-                  },
+            select: {
+              category: {
+                select: {
+                  id: true,
+                  name: true,
                 },
-              },
-            },
-
-            /*
-             * Only active + non-deleted products
-             * are public.
-             */
-            products: {
-              where: {
-                status: "ACTIVE",
-                deletedAt: null,
-              },
-
-              select: {
-                id: true,
-                name: true,
-                description: true,
-                price: true,
-                priceMin: true,
-                priceMax: true,
-                availability: true,
-                imageUrl: true,
-                keywords: true,
-
-                images: {
-                  select: {
-                    id: true,
-                    url: true,
-                    publicId: true,
-                    sortOrder: true,
-                    createdAt: true,
-                  },
-
-                  orderBy: [
-                    {
-                      sortOrder: "asc",
-                    },
-                    {
-                      createdAt: "asc",
-                    },
-                  ],
-                },
-              },
-
-              orderBy: {
-                updatedAt: "desc",
-              },
-            },
-
-            /*
-             * Count only products which are
-             * currently visible to customers.
-             */
-            _count: {
-              select: {
-                products: {
-                  where: {
-                    status: "ACTIVE",
-                    deletedAt: null,
-                  },
-                },
-              },
-            },
-
-            socialLinks: {
-              select: {
-                id: true,
-                platform: true,
-                handle: true,
               },
             },
           },
-        }
-      );
+
+          /*
+           * Only ACTIVE + non-deleted products
+           * are exposed publicly.
+           */
+          products: {
+            where: {
+              status: "ACTIVE",
+              deletedAt: null,
+            },
+
+            select: {
+              id: true,
+              name: true,
+              description: true,
+              price: true,
+              priceMin: true,
+              priceMax: true,
+              availability: true,
+              imageUrl: true,
+              keywords: true,
+
+              images: {
+                select: {
+                  id: true,
+                  url: true,
+                  publicId: true,
+                  sortOrder: true,
+                  createdAt: true,
+                },
+
+                orderBy: [
+                  {
+                    sortOrder: "asc",
+                  },
+                  {
+                    createdAt: "asc",
+                  },
+                ],
+              },
+            },
+
+            orderBy: {
+              updatedAt: "desc",
+            },
+          },
+
+          /*
+           * Count only products currently
+           * visible to customers.
+           */
+          _count: {
+            select: {
+              products: {
+                where: {
+                  status: "ACTIVE",
+                  deletedAt: null,
+                },
+              },
+            },
+          },
+
+          socialLinks: {
+            select: {
+              id: true,
+              platform: true,
+              handle: true,
+            },
+          },
+        },
+      });
 
     /*
      * -----------------------------------------
@@ -248,12 +257,8 @@ export async function GET(
         business.imageUrl,
 
       /*
-       * Coordinates remain available here
-       * because the public business page uses
-       * the business location for Directions.
-       *
-       * These are BUSINESS coordinates, not the
-       * customer's current coordinates.
+       * Business verification and location
+       * verification remain separate.
        */
       location: {
         id:
@@ -264,6 +269,10 @@ export async function GET(
           business.location?.area ??
           "Location not added",
 
+        address:
+          business.location?.address ??
+          null,
+
         lat:
           business.location?.lat ??
           null,
@@ -271,6 +280,10 @@ export async function GET(
         long:
           business.location?.long ??
           null,
+
+        verification:
+          business.location?.verification ??
+          "UNVERIFIED",
       },
 
       availability:
@@ -346,7 +359,7 @@ export async function GET(
         ),
 
       /*
-       * Normalize WhatsApp/Phone handles
+       * Normalize WhatsApp / Phone handles
        * before exposing them to the client.
        */
       socialLinks:

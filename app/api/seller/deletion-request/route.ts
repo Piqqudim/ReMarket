@@ -1,5 +1,7 @@
 import { NextResponse } from "next/server";
 
+import { Prisma } from "@prisma/client";
+
 import { prisma } from "@/lib/prisma";
 import { requireSeller } from "@/lib/seller-auth";
 
@@ -12,7 +14,66 @@ function cleanString(value: unknown): string {
 function jsonHeaders() {
   return {
     "Content-Type": "application/json",
+    "Cache-Control": "no-store",
   };
+}
+
+/*
+ * ----------------------------------------------------
+ * SAFE REQUEST BODY PARSER
+ * ----------------------------------------------------
+ *
+ * The deletion reason is optional, so an empty request
+ * body is valid and is treated as an empty object.
+ */
+async function readRequestBody(
+  request: Request
+): Promise<
+  | {
+      success: true;
+      payload: Record<string, unknown>;
+    }
+  | {
+      success: false;
+    }
+> {
+  try {
+    const text =
+      await request.text();
+
+    if (!text.trim()) {
+      return {
+        success: true,
+        payload: {},
+      };
+    }
+
+    const parsed: unknown =
+      JSON.parse(text);
+
+    if (
+      !parsed ||
+      typeof parsed !== "object" ||
+      Array.isArray(parsed)
+    ) {
+      return {
+        success: false,
+      };
+    }
+
+    return {
+      success: true,
+      payload:
+        parsed as Record<
+          string,
+          unknown
+        >,
+    };
+  } catch {
+    return {
+      success: false,
+    };
+  }
 }
 
 /*
@@ -24,7 +85,8 @@ function jsonHeaders() {
  * to the authenticated seller's business.
  */
 export async function GET() {
-  const auth = await requireSeller();
+  const auth =
+    await requireSeller();
 
   if (!auth.authorized) {
     return auth.response;
@@ -34,8 +96,10 @@ export async function GET() {
     const business =
       await prisma.business.findUnique({
         where: {
-          ownerId: auth.user.id,
+          ownerId:
+            auth.user.id,
         },
+
         select: {
           id: true,
           deletedAt: true,
@@ -48,7 +112,9 @@ export async function GET() {
           request: null,
         },
         {
-          headers: jsonHeaders(),
+          status: 200,
+          headers:
+            jsonHeaders(),
         }
       );
     }
@@ -57,11 +123,15 @@ export async function GET() {
       await prisma.businessDeletionRequest.findFirst(
         {
           where: {
-            businessId: business.id,
+            businessId:
+              business.id,
           },
+
           orderBy: {
-            createdAt: "desc",
+            createdAt:
+              "desc",
           },
+
           select: {
             id: true,
             businessId: true,
@@ -79,7 +149,9 @@ export async function GET() {
         request,
       },
       {
-        headers: jsonHeaders(),
+        status: 200,
+        headers:
+          jsonHeaders(),
       }
     );
   } catch (error) {
@@ -95,7 +167,8 @@ export async function GET() {
       },
       {
         status: 500,
-        headers: jsonHeaders(),
+        headers:
+          jsonHeaders(),
       }
     );
   }
@@ -106,30 +179,30 @@ export async function GET() {
  * POST
  * ----------------------------------------------------
  *
- * Creates a deletion request for the seller's
- * own business.
+ * Creates a deletion request for the authenticated
+ * seller's own business.
  *
+ * IMPORTANT:
  * The business is NOT deleted here.
+ * Admin review is required.
  */
 export async function POST(
   request: Request
 ) {
-  const auth = await requireSeller();
+  const auth =
+    await requireSeller();
 
   if (!auth.authorized) {
     return auth.response;
   }
 
   try {
-    const body: unknown =
-      await request.json();
+    const body =
+      await readRequestBody(
+        request
+      );
 
-    if (
-      body !== undefined &&
-      body !== null &&
-      (typeof body !== "object" ||
-        Array.isArray(body))
-    ) {
+    if (!body.success) {
       return NextResponse.json(
         {
           error:
@@ -137,34 +210,50 @@ export async function POST(
         },
         {
           status: 400,
-          headers: jsonHeaders(),
+          headers:
+            jsonHeaders(),
         }
       );
     }
 
-    const payload =
-      body && typeof body === "object"
-        ? (body as Record<
-            string,
-            unknown
-          >)
-        : {};
+    const reason =
+      cleanString(
+        body.payload.reason
+      );
 
-    const reason = cleanString(
-      payload.reason
-    );
+    if (
+      reason.length > 2000
+    ) {
+      return NextResponse.json(
+        {
+          error:
+            "Deletion reason is too long.",
+        },
+        {
+          status: 400,
+          headers:
+            jsonHeaders(),
+        }
+      );
+    }
 
     /*
      * Find the seller's own business.
+     *
+     * ownerId comes from the authenticated session,
+     * never from the request body.
      */
     const business =
       await prisma.business.findUnique({
         where: {
-          ownerId: auth.user.id,
+          ownerId:
+            auth.user.id,
         },
+
         select: {
           id: true,
           name: true,
+          ownerId: true,
           deletedAt: true,
         },
       });
@@ -177,11 +266,39 @@ export async function POST(
         },
         {
           status: 404,
-          headers: jsonHeaders(),
+          headers:
+            jsonHeaders(),
         }
       );
     }
 
+    /*
+     * Defensive ownership check.
+     *
+     * requireSeller() already establishes the
+     * authenticated seller identity.
+     */
+    if (
+      business.ownerId !==
+      auth.user.id
+    ) {
+      return NextResponse.json(
+        {
+          error:
+            "You are not allowed to request deletion of this business.",
+        },
+        {
+          status: 403,
+          headers:
+            jsonHeaders(),
+        }
+      );
+    }
+
+    /*
+     * A soft-deleted business cannot receive
+     * another deletion request.
+     */
     if (business.deletedAt) {
       return NextResponse.json(
         {
@@ -190,56 +307,85 @@ export async function POST(
         },
         {
           status: 410,
-          headers: jsonHeaders(),
+          headers:
+            jsonHeaders(),
         }
       );
     }
 
     /*
-     * Do not allow multiple pending requests
-     * for the same business.
+     * Only one PENDING deletion request is allowed
+     * at a time for a business.
+     *
+     * This lookup provides a friendly response for the
+     * normal case. The database unique constraint is the
+     * final concurrency protection.
      */
     const pendingRequest =
-      await prisma.businessDeletionRequest.findFirst(
-        {
-          where: {
-            businessId: business.id,
-            status: "PENDING",
-          },
-          select: {
-            id: true,
-            createdAt: true,
-          },
-        }
-      );
+      await prisma.businessDeletionRequest.findFirst({
+        where: {
+          businessId:
+            business.id,
+
+          status:
+            "PENDING",
+        },
+
+        orderBy: {
+          createdAt:
+            "desc",
+        },
+
+        select: {
+          id: true,
+          businessId: true,
+          reason: true,
+          status: true,
+          reviewedAt: true,
+          createdAt: true,
+          updatedAt: true,
+        },
+      });
 
     if (pendingRequest) {
       return NextResponse.json(
         {
           error:
             "A business deletion request is already pending.",
+
           request:
             pendingRequest,
         },
         {
           status: 409,
-          headers: jsonHeaders(),
+          headers:
+            jsonHeaders(),
         }
       );
     }
 
     /*
-     * A previously rejected request can be
-     * followed by a new request.
+     * Create a new deletion request.
      *
-     * An already approved request should only
-     * occur while the business is awaiting the
-     * admin operation, so the business's
-     * deletedAt state remains the source of truth.
+     * requestedById is always the authenticated
+     * seller's user ID.
+     *
+     * The schema has:
+     *
+     * @@unique([
+     *   businessId,
+     *   requestedById,
+     *   status
+     * ])
+     *
+     * Therefore a concurrent request that attempts
+     * to create the same PENDING record will produce
+     * Prisma error P2002. That case is converted into
+     * the same client-friendly 409 response.
      */
-    const deletionRequest =
-      await prisma.businessDeletionRequest.create(
-        {
+    try {
+      const deletionRequest =
+        await prisma.businessDeletionRequest.create({
           data: {
             businessId:
               business.id,
@@ -250,7 +396,8 @@ export async function POST(
             reason:
               reason || null,
 
-            status: "PENDING",
+            status:
+              "PENDING",
           },
 
           select: {
@@ -262,45 +409,93 @@ export async function POST(
             createdAt: true,
             updatedAt: true,
           },
+        });
+
+      return NextResponse.json(
+        {
+          message:
+            "Business deletion request submitted successfully.",
+
+          request:
+            deletionRequest,
+        },
+        {
+          status: 201,
+          headers:
+            jsonHeaders(),
         }
       );
+    } catch (error) {
+      /*
+       * Database-level concurrency protection.
+       *
+       * If another request created the same PENDING
+       * deletion request after our application-level
+       * lookup, Prisma will raise P2002.
+       */
+      if (
+        error instanceof
+          Prisma.PrismaClientKnownRequestError &&
+        error.code === "P2002"
+      ) {
+        const latestPendingRequest =
+          await prisma.businessDeletionRequest.findFirst(
+            {
+              where: {
+                businessId:
+                  business.id,
 
-    return NextResponse.json(
-      {
-        message:
-          "Business deletion request submitted successfully.",
+                requestedById:
+                  auth.user.id,
 
-        request:
-          deletionRequest,
-      },
-      {
-        status: 201,
-        headers: jsonHeaders(),
+                status:
+                  "PENDING",
+              },
+
+              orderBy: {
+                createdAt:
+                  "desc",
+              },
+
+              select: {
+                id: true,
+                businessId:
+                  true,
+                reason: true,
+                status: true,
+                reviewedAt:
+                  true,
+                createdAt:
+                  true,
+                updatedAt:
+                  true,
+              },
+            }
+          );
+
+        return NextResponse.json(
+          {
+            error:
+              "A business deletion request is already pending.",
+
+            request:
+              latestPendingRequest,
+          },
+          {
+            status: 409,
+            headers:
+              jsonHeaders(),
+          }
+        );
       }
-    );
+
+      throw error;
+    }
   } catch (error) {
     console.error(
       "Seller deletion request creation error:",
       error
     );
-
-    if (
-      typeof error === "object" &&
-      error !== null &&
-      "code" in error &&
-      error.code === "P2002"
-    ) {
-      return NextResponse.json(
-        {
-          error:
-            "A deletion request already exists for this business.",
-        },
-        {
-          status: 409,
-          headers: jsonHeaders(),
-        }
-      );
-    }
 
     return NextResponse.json(
       {
@@ -309,7 +504,8 @@ export async function POST(
       },
       {
         status: 500,
-        headers: jsonHeaders(),
+        headers:
+          jsonHeaders(),
       }
     );
   }

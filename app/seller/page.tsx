@@ -24,9 +24,11 @@ import {
   X,
   Trash2,
   AlertTriangle,
+  UserRound,
+  ShieldCheck,
 } from "lucide-react";
 
-const MAX_ACTIVE_PRODUCTS = 30;
+const MAX_ACTIVE_PRODUCTS = 10;
 
 type SellerCategory = {
   id: string;
@@ -173,11 +175,15 @@ export default function SellerDashboard() {
   const [updatingProduct, setUpdatingProduct] =
     useState(false);
 
-  const [deletingProductId, setDeletingProductId] =
-    useState<string | null>(null);
+  const [
+    deletingProductId,
+    setDeletingProductId,
+  ] = useState<string | null>(null);
 
-  const [submittingDeletionRequest, setSubmittingDeletionRequest] =
-    useState(false);
+  const [
+    submittingDeletionRequest,
+    setSubmittingDeletionRequest,
+  ] = useState(false);
 
   const [editingBusiness, setEditingBusiness] =
     useState(false);
@@ -214,7 +220,10 @@ export default function SellerDashboard() {
     );
 
   const activeProductCount =
-    business?.products.length ?? 0;
+    business?.products.filter(
+      (product) =>
+        product.status === "ACTIVE"
+    ).length ?? 0;
 
   const reachedProductLimit =
     activeProductCount >=
@@ -662,7 +671,9 @@ export default function SellerDashboard() {
 
       if (
         response.status ===
-        401
+          401 ||
+        response.status ===
+          403
       ) {
         router.replace(
           "/seller/login"
@@ -773,7 +784,9 @@ export default function SellerDashboard() {
 
       if (
         response.status ===
-        401
+          401 ||
+        response.status ===
+          403
       ) {
         router.replace(
           "/seller/login"
@@ -1082,7 +1095,9 @@ export default function SellerDashboard() {
 
       if (
         response.status ===
-        401
+          401 ||
+        response.status ===
+          403
       ) {
         router.replace(
           "/seller/login"
@@ -1192,7 +1207,9 @@ export default function SellerDashboard() {
 
       if (
         response.status ===
-        401
+          401 ||
+        response.status ===
+          403
       ) {
         router.replace(
           "/seller/login"
@@ -1274,7 +1291,9 @@ export default function SellerDashboard() {
 
       if (
         response.status ===
-        401
+          401 ||
+        response.status ===
+          403
       ) {
         router.replace(
           "/seller/login"
@@ -1465,41 +1484,6 @@ export default function SellerDashboard() {
     );
   }
 
-  async function reloadDeletionRequest() {
-    const response =
-      await fetch(
-        "/api/seller/business/deletion-request",
-        {
-          cache: "no-store",
-        }
-      );
-
-    if (
-      response.status ===
-        401 ||
-      response.status ===
-        403
-    ) {
-      router.replace(
-        "/seller/login"
-      );
-      return;
-    }
-
-    if (!response.ok) {
-      throw new Error(
-        "Unable to reload deletion request."
-      );
-    }
-
-    const data =
-      await response.json();
-
-    setDeletionRequest(
-      data.request ?? null
-    );
-  }
-
   async function logout() {
     await signOut({
       callbackUrl:
@@ -1562,17 +1546,68 @@ export default function SellerDashboard() {
               </div>
             </Link>
 
-            <button
-              type="button"
-              onClick={logout}
-              className="flex items-center gap-2 rounded-xl border border-[#E8E4DE] bg-white px-3.5 py-2.5 text-xs font-semibold text-gray-700 transition hover:bg-[#FFF7ED] hover:text-[#9F2D18]"
-            >
-              <LogOut className="h-4 w-4" />
+            {/* Seller navigation */}
 
-              <span className="hidden sm:inline">
-                Log out
-              </span>
-            </button>
+            <nav className="hidden items-center gap-2 lg:flex">
+              <Link
+                href="/seller"
+                className="inline-flex items-center gap-2 rounded-xl bg-[#FFF0E9] px-3 py-2.5 text-xs font-bold text-[#FF5A36] transition hover:bg-[#FFE7DD]"
+              >
+                <Store className="h-4 w-4" />
+
+                Dashboard
+              </Link>
+
+              <Link
+                href="/seller/profile"
+                className="inline-flex items-center gap-2 rounded-xl px-3 py-2.5 text-xs font-semibold text-gray-600 transition hover:bg-[#FFF7ED] hover:text-[#9F2D18]"
+              >
+                <UserRound className="h-4 w-4" />
+
+                Profile
+              </Link>
+
+              <Link
+                href="/seller/claims"
+                className="inline-flex items-center gap-2 rounded-xl px-3 py-2.5 text-xs font-semibold text-gray-600 transition hover:bg-[#FFF7ED] hover:text-[#9F2D18]"
+              >
+                <ShieldCheck className="h-4 w-4" />
+
+                Claims
+              </Link>
+            </nav>
+
+            <div className="flex items-center gap-2">
+              <div className="hidden items-center gap-1.5 md:flex lg:hidden">
+                <Link
+                  href="/seller/profile"
+                  aria-label="Seller profile"
+                  className="flex h-9 w-9 items-center justify-center rounded-xl border border-[#E8E4DE] bg-white text-gray-600 transition hover:bg-[#FFF7ED] hover:text-[#9F2D18]"
+                >
+                  <UserRound className="h-4 w-4" />
+                </Link>
+
+                <Link
+                  href="/seller/claims"
+                  aria-label="Business claims"
+                  className="flex h-9 w-9 items-center justify-center rounded-xl border border-[#E8E4DE] bg-white text-gray-600 transition hover:bg-[#FFF7ED] hover:text-[#9F2D18]"
+                >
+                  <ShieldCheck className="h-4 w-4" />
+                </Link>
+              </div>
+
+              <button
+                type="button"
+                onClick={logout}
+                className="flex items-center gap-2 rounded-xl border border-[#E8E4DE] bg-white px-3.5 py-2.5 text-xs font-semibold text-gray-700 transition hover:bg-[#FFF7ED] hover:text-[#9F2D18]"
+              >
+                <LogOut className="h-4 w-4" />
+
+                <span className="hidden sm:inline">
+                  Log out
+                </span>
+              </button>
+            </div>
           </header>
 
           {/* Content */}
@@ -1672,6 +1707,7 @@ export default function SellerDashboard() {
                             className="inline-flex shrink-0 items-center justify-center gap-2 rounded-xl border border-[#E8E4DE] bg-white px-4 py-2.5 text-xs font-bold text-gray-700 transition hover:bg-[#FFF7ED] hover:text-[#9F2D18]"
                           >
                             <Pencil className="h-4 w-4" />
+
                             Edit business
                           </button>
 
@@ -1680,6 +1716,7 @@ export default function SellerDashboard() {
                             className="inline-flex shrink-0 items-center justify-center gap-2 rounded-xl bg-[#FF5A36] px-4 py-2.5 text-xs font-bold text-white transition hover:opacity-90"
                           >
                             View public page
+
                             <ExternalLink className="h-4 w-4" />
                           </Link>
                         </div>
@@ -1843,6 +1880,7 @@ export default function SellerDashboard() {
                               className="mt-4 inline-flex items-center justify-center gap-2 rounded-xl border border-[#E5B9B1] bg-white px-4 py-2.5 text-xs font-bold text-[#C5402D] transition hover:bg-[#FFF0EE]"
                             >
                               <Trash2 className="h-4 w-4" />
+
                               Request business deletion
                             </button>
                           )}
@@ -1902,6 +1940,7 @@ export default function SellerDashboard() {
                                   className="inline-flex items-center justify-center gap-2 rounded-xl border border-[#E8E4DE] bg-white px-4 py-2.5 text-xs font-semibold text-gray-700 transition hover:bg-[#FFF7ED] disabled:cursor-not-allowed disabled:opacity-50"
                                 >
                                   <X className="h-4 w-4" />
+
                                   Cancel
                                 </button>
 
@@ -1915,11 +1954,13 @@ export default function SellerDashboard() {
                                   {submittingDeletionRequest ? (
                                     <>
                                       <LoaderCircle className="h-4 w-4 animate-spin" />
+
                                       Submitting...
                                     </>
                                   ) : (
                                     <>
                                       <Trash2 className="h-4 w-4" />
+
                                       Submit request
                                     </>
                                   )}
@@ -1964,6 +2005,7 @@ export default function SellerDashboard() {
                         className="inline-flex items-center justify-center gap-2 rounded-xl border border-[#E8E4DE] bg-white px-4 py-2.5 text-xs font-semibold text-gray-700 transition hover:bg-[#FFF7ED] disabled:cursor-not-allowed disabled:opacity-60"
                       >
                         <X className="h-4 w-4" />
+
                         Cancel
                       </button>
                     </div>
@@ -2306,11 +2348,13 @@ export default function SellerDashboard() {
                           {savingBusiness ? (
                             <>
                               <LoaderCircle className="h-4 w-4 animate-spin" />
+
                               Saving...
                             </>
                           ) : (
                             <>
                               <CheckCircle2 className="h-4 w-4" />
+
                               Save changes
                             </>
                           )}
@@ -2366,11 +2410,13 @@ export default function SellerDashboard() {
                             {showProductForm ? (
                               <>
                                 <X className="h-4 w-4" />
+
                                 Close
                               </>
                             ) : (
                               <>
                                 <Plus className="h-4 w-4" />
+
                                 Add product
                               </>
                             )}
@@ -2865,6 +2911,7 @@ export default function SellerDashboard() {
                               className="mt-4 inline-flex items-center gap-2 rounded-xl bg-[#FF5A36] px-4 py-2.5 text-xs font-bold text-white disabled:cursor-not-allowed disabled:opacity-50"
                             >
                               <Plus className="h-4 w-4" />
+
                               Add your first product
                             </button>
                           </div>
@@ -2961,6 +3008,7 @@ export default function SellerDashboard() {
                                         className="flex flex-1 items-center justify-center gap-2 rounded-xl border border-[#E8E4DE] px-3 py-2.5 text-xs font-semibold text-gray-700 transition hover:bg-[#FFF7ED] hover:text-[#9F2D18] disabled:cursor-not-allowed disabled:opacity-50"
                                       >
                                         <Pencil className="h-3.5 w-3.5" />
+
                                         Edit
                                       </button>
 
@@ -3364,11 +3412,13 @@ export default function SellerDashboard() {
                         {savingBusiness ? (
                           <>
                             <LoaderCircle className="h-4 w-4 animate-spin" />
+
                             Creating...
                           </>
                         ) : (
                           <>
                             <Plus className="h-4 w-4" />
+
                             Create business
                           </>
                         )}
