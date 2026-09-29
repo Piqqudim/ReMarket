@@ -60,7 +60,10 @@ const NAV_ITEMS = [
   },
 ];
 
-const CATEGORY_COLORS: Record<string, string> = {
+const CATEGORY_COLORS: Record<
+  string,
+  string
+> = {
   Fashion: "#FFE0D6",
   Electronics: "#DDF5EA",
   Food: "#FFF0C7",
@@ -98,6 +101,7 @@ type SocialLink = {
 type SellerLocation = {
   id?: string;
   area: string;
+  address?: string | null;
   lat?: number | null;
   long?: number | null;
 } | null;
@@ -125,7 +129,9 @@ type Seller = {
   imageUrl?: string | null;
 };
 
-function getInitials(name: string) {
+function getInitials(
+  name: string
+) {
   const words = name
     .trim()
     .split(/\s+/)
@@ -160,7 +166,9 @@ function getCategoryColor(
   );
 }
 
-function formatPrice(product: Product) {
+function formatPrice(
+  product: Product
+) {
   if (
     product.priceMin != null &&
     product.priceMax != null
@@ -250,11 +258,130 @@ function normalizeNigerianPhone(
   return `+234${clean}`;
 }
 
+function hasValidCoordinates(
+  latitude?: number | null,
+  longitude?: number | null
+): latitude is number {
+  return (
+    typeof latitude ===
+      "number" &&
+    Number.isFinite(latitude) &&
+    latitude >= -90 &&
+    latitude <= 90 &&
+    typeof longitude ===
+      "number" &&
+    Number.isFinite(longitude) &&
+    longitude >= -180 &&
+    longitude <= 180
+  );
+}
+
+/*
+ * -----------------------------------------
+ * GOOGLE MAPS DIRECTIONS
+ * -----------------------------------------
+ *
+ * Resolution order:
+ *
+ * 1. Valid ReMarket business coordinates
+ * 2. Business name + address + area
+ *
+ * The origin is intentionally omitted.
+ *
+ * Google Maps documents that an omitted origin
+ * defaults to the most relevant starting
+ * location, such as the user's device location
+ * when available.
+ */
+function buildDirectionsUrl(
+  businessName: string,
+  address: string | null | undefined,
+  area: string,
+  latitude?: number | null,
+  longitude?: number | null
+): string {
+  let destination = "";
+
+  if (
+    hasValidCoordinates(
+      latitude,
+      longitude
+    )
+  ) {
+    /*
+     * ReMarket coordinates are the most
+     * precise destination available to this
+     * page.
+     *
+     * The coordinates are kept together as
+     * one latitude/longitude destination.
+     */
+    destination = `${latitude},${longitude}`;
+  } else {
+    /*
+     * Do not invent coordinates.
+     *
+     * Fall back to the best available
+     * business/location text.
+     */
+    destination = [
+      businessName.trim(),
+      typeof address ===
+      "string"
+        ? address.trim()
+        : "",
+      area.trim(),
+      "Nigeria",
+    ]
+      .filter(Boolean)
+      .join(", ");
+  }
+
+  if (!destination) {
+    return "#";
+  }
+
+  const params =
+    new URLSearchParams();
+
+  params.set(
+    "api",
+    "1"
+  );
+
+  params.set(
+    "destination",
+    destination
+  );
+
+  /*
+   * Keep origin omitted.
+   *
+   * Google Maps uses the current device
+   * location as the starting point when
+   * available.
+   */
+  params.set(
+    "travelmode",
+    "driving"
+  );
+
+  params.set(
+    "dir_action",
+    "navigate"
+  );
+
+  return `https://www.google.com/maps/dir/?${params.toString()}`;
+}
+
 function buildContactUrl(
   platform: string,
   handle: string,
   latitude?: number | null,
-  longitude?: number | null
+  longitude?: number | null,
+  businessName?: string,
+  address?: string | null,
+  area?: string
 ): string {
   const clean = handle
     .trim()
@@ -334,16 +461,13 @@ function buildContactUrl(
     }
 
     case "DIRECTIONS": {
-      if (
-        typeof latitude !== "number" ||
-        !Number.isFinite(latitude) ||
-        typeof longitude !== "number" ||
-        !Number.isFinite(longitude)
-      ) {
-        return "#";
-      }
-
-      return `https://www.google.com/maps/dir/?api=1&destination=${latitude},${longitude}`;
+      return buildDirectionsUrl(
+        businessName ?? "",
+        address ?? null,
+        area ?? "",
+        latitude,
+        longitude
+      );
     }
 
     default:
@@ -453,7 +577,10 @@ function SellerPageContent({
 
   const getSavedSnapshot =
     useCallback(
-      () => getSavedBusinessesSnapshot(id),
+      () =>
+        getSavedBusinessesSnapshot(
+          id
+        ),
       [id]
     );
 
@@ -504,7 +631,7 @@ function SellerPageContent({
         if (!response.ok) {
           const responseError =
             typeof data ===
-            "object" &&
+              "object" &&
             data !== null &&
             "error" in data &&
             typeof data.error ===
@@ -519,7 +646,7 @@ function SellerPageContent({
 
         const business =
           typeof data ===
-            "object" &&
+              "object" &&
           data !== null &&
           "business" in data
             ? data.business
@@ -583,7 +710,8 @@ function SellerPageContent({
                         null &&
                       "name" in
                         item.category &&
-                      typeof item.category
+                      typeof item
+                        .category
                         .name ===
                         "string"
                     ) {
@@ -611,75 +739,79 @@ function SellerPageContent({
                 )
             : [];
 
-       const products: Product[] =
-  Array.isArray(rawProducts)
-    ? rawProducts
-        .filter(
-          (
-            product
-          ): product is Record<
-            string,
-            unknown
-          > =>
-            typeof product ===
-              "object" &&
-            product !== null &&
-            "id" in product &&
-            typeof product.id ===
-              "string" &&
-            "name" in product &&
-            typeof product.name ===
-              "string"
-        )
-        .map(
-          (product): Product => ({
-            id:
-              product.id as string,
+        const products: Product[] =
+          Array.isArray(
+            rawProducts
+          )
+            ? rawProducts
+                .filter(
+                  (
+                    product
+                  ): product is Record<
+                    string,
+                    unknown
+                  > =>
+                    typeof product ===
+                      "object" &&
+                    product !== null &&
+                    "id" in product &&
+                    typeof product.id ===
+                      "string" &&
+                    "name" in product &&
+                    typeof product.name ===
+                      "string"
+                )
+                .map(
+                  (
+                    product
+                  ): Product => ({
+                    id:
+                      product.id as string,
 
-            name:
-              product.name as string,
+                    name:
+                      product.name as string,
 
-            description:
-              typeof product.description ===
-                "string"
-                ? product.description
-                : null,
+                    description:
+                      typeof product.description ===
+                        "string"
+                        ? product.description
+                        : null,
 
-            price:
-              typeof product.price ===
-                "number"
-                ? product.price
-                : null,
+                    price:
+                      typeof product.price ===
+                        "number"
+                        ? product.price
+                        : null,
 
-            priceMin:
-              typeof product.priceMin ===
-                "number"
-                ? product.priceMin
-                : null,
+                    priceMin:
+                      typeof product.priceMin ===
+                        "number"
+                        ? product.priceMin
+                        : null,
 
-            priceMax:
-              typeof product.priceMax ===
-                "number"
-                ? product.priceMax
-                : null,
+                    priceMax:
+                      typeof product.priceMax ===
+                        "number"
+                        ? product.priceMax
+                        : null,
 
-            availability:
-              product.availability ===
-                "AVAILABLE"
-                ? "AVAILABLE"
-                : product.availability ===
-                    "UNAVAILABLE"
-                  ? "UNAVAILABLE"
-                  : "ASK_SELLER",
+                    availability:
+                      product.availability ===
+                        "AVAILABLE"
+                        ? "AVAILABLE"
+                        : product.availability ===
+                            "UNAVAILABLE"
+                          ? "UNAVAILABLE"
+                          : "ASK_SELLER",
 
-            imageUrl:
-              typeof product.imageUrl ===
-                "string"
-                ? product.imageUrl
-                : null,
-          })
-        )
-    : [];
+                    imageUrl:
+                      typeof product.imageUrl ===
+                        "string"
+                        ? product.imageUrl
+                        : null,
+                  })
+                )
+            : [];
 
         const location =
           typeof rawLocation ===
@@ -692,18 +824,29 @@ function SellerPageContent({
                     "string"
                     ? rawLocation.id
                     : undefined,
+
                 area:
                   "area" in rawLocation &&
                   typeof rawLocation.area ===
                     "string"
                     ? rawLocation.area
                     : "",
+
+                address:
+                  "address" in
+                    rawLocation &&
+                  typeof rawLocation.address ===
+                    "string"
+                    ? rawLocation.address
+                    : null,
+
                 lat:
                   "lat" in rawLocation &&
                   typeof rawLocation.lat ===
                     "number"
                     ? rawLocation.lat
                     : null,
+
                 long:
                   "long" in rawLocation &&
                   typeof rawLocation.long ===
@@ -715,9 +858,9 @@ function SellerPageContent({
 
         const availability =
           rawBusiness.availability ===
-            "AVAILABLE" ||
+              "AVAILABLE" ||
           rawBusiness.availability ===
-            "UNAVAILABLE"
+              "UNAVAILABLE"
             ? rawBusiness.availability
             : "ASK_SELLER";
 
@@ -750,7 +893,8 @@ function SellerPageContent({
             : products.length;
 
         setSeller({
-          id: rawBusiness.id as string,
+          id:
+            rawBusiness.id as string,
 
           name:
             typeof rawBusiness.name ===
@@ -813,9 +957,12 @@ function SellerPageContent({
                   )
                   .map(
                     (link) => ({
-                      id: link.id as string,
+                      id:
+                        link.id as string,
+
                       platform:
                         link.platform as string,
+
                       handle:
                         link.handle as string,
                     })
@@ -943,6 +1090,21 @@ function SellerPageContent({
     event.stopPropagation();
 
     toggleSavedBusiness();
+  }
+
+  function getDirectionsUrl() {
+    if (!seller) {
+      return "#";
+    }
+
+    return buildDirectionsUrl(
+      seller.name,
+      seller.location?.address,
+      seller.location?.area ??
+        "",
+      seller.location?.lat,
+      seller.location?.long
+    );
   }
 
   if (!id) {
@@ -1424,7 +1586,7 @@ function SellerPageContent({
                           aria-label={
                             saved
                               ? `Remove ${seller.name} from saved businesses`
-                              : `Save ${seller.name}`
+                              : `Save ${seller.name} from saved businesses`
                           }
                           aria-pressed={
                             saved
@@ -1476,50 +1638,43 @@ function SellerPageContent({
                         </div>
                       )}
 
-                      {seller.location &&
-                        typeof seller
-                          .location
-                          .lat ===
-                          "number" &&
-                        Number.isFinite(
-                          seller.location
-                            .lat
-                        ) &&
-                        typeof seller
-                          .location
-                          .long ===
-                          "number" &&
-                        Number.isFinite(
-                          seller.location
-                            .long
-                        ) && (
-                          <a
-                            href={buildContactUrl(
-                              "DIRECTIONS",
-                              "",
-                              seller
-                                .location
-                                .lat,
-                              seller
-                                .location
-                                .long
-                            )}
-                            target="_blank"
-                            rel="noreferrer"
-                            onClick={() =>
-                              handleContactClick(
-                                "DIRECTIONS"
-                              )
-                            }
-                            className="mt-3 inline-flex items-center gap-2 rounded-xl bg-[#FFF0E9] px-3 py-2 text-[11px] font-bold text-[#9F2D18] transition hover:bg-[#FFE4DA]"
-                          >
-                            <MapPin className="h-4 w-4" />
+                      {seller.location
+                        ?.address && (
+                        <div className="mt-2 flex items-start gap-2 rounded-xl bg-[#FCFAF6] px-3 py-2 text-[11px] leading-5 text-[#68615C]">
+                          <MapPin
+                            size={14}
+                            className="mt-0.5 shrink-0 text-[#FF5A36]"
+                          />
 
-                            <span>
-                              Directions
-                            </span>
-                          </a>
-                        )}
+                          <span>
+                            {
+                              seller.location
+                                .address
+                            }
+                          </span>
+                        </div>
+                      )}
+
+                      {getDirectionsUrl() !==
+                        "#" && (
+                        <a
+                          href={getDirectionsUrl()}
+                          target="_blank"
+                          rel="noreferrer"
+                          onClick={() =>
+                            handleContactClick(
+                              "DIRECTIONS"
+                            )
+                          }
+                          className="mt-3 inline-flex items-center gap-2 rounded-xl bg-[#FFF0E9] px-3 py-2 text-[11px] font-bold text-[#9F2D18] transition hover:bg-[#FFE4DA]"
+                        >
+                          <MapPin className="h-4 w-4" />
+
+                          <span>
+                            Directions
+                          </span>
+                        </a>
+                      )}
 
                       {seller.description && (
                         <p className="mt-4 max-w-[800px] text-[13px] leading-6 text-[#68615C]">
@@ -1729,23 +1884,24 @@ function SellerPageContent({
                                       ?.lat,
                                     seller
                                       .location
-                                      ?.long
+                                      ?.long,
+                                    seller.name,
+                                    seller
+                                      .location
+                                      ?.address,
+                                    seller
+                                      .location
+                                      ?.area ??
+                                      ""
                                   );
 
                                 const isPhone =
                                   link.platform ===
                                   "PHONE";
 
-                                const isDirections =
-                                  link.platform ===
-                                  "DIRECTIONS";
-
                                 if (
                                   url ===
-                                    "#" ||
-                                  isDirections &&
-                                    url ===
-                                      "#"
+                                  "#"
                                 ) {
                                   return null;
                                 }
@@ -1831,6 +1987,56 @@ function SellerPageContent({
                               been added yet.
                             </div>
                           )}
+
+                          {getDirectionsUrl() !==
+                            "#" &&
+                            !seller.socialLinks.some(
+                              (
+                                link
+                              ) =>
+                                link.platform ===
+                                "DIRECTIONS"
+                            ) && (
+                              <a
+                                href={getDirectionsUrl()}
+                                target="_blank"
+                                rel="noreferrer"
+                                onClick={() =>
+                                  handleContactClick(
+                                    "DIRECTIONS"
+                                  )
+                                }
+                                className="
+                                  flex
+                                  items-center
+                                  justify-between
+                                  rounded-xl
+                                  border
+                                  border-[#F0D7B3]
+                                  bg-white
+                                  px-3
+                                  py-3
+                                  text-[11px]
+                                  font-bold
+                                  text-[#514B46]
+                                  transition
+                                  hover:border-[#FFB39F]
+                                  hover:text-[#FF5A36]
+                                "
+                              >
+                                <span className="flex items-center gap-2">
+                                  <MapPin
+                                    size={16}
+                                  />
+
+                                  Directions
+                                </span>
+
+                                <ExternalLink
+                                  size={13}
+                                />
+                              </a>
+                            )}
                         </div>
                       </div>
 
@@ -1987,7 +2193,8 @@ function SellerPageContent({
 }
 
 export default function SellerPage() {
-  const params = useParams();
+  const params =
+    useParams();
 
   const id =
     typeof params.id ===

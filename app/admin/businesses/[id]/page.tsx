@@ -114,8 +114,10 @@ type Business = {
   location: {
     id: string;
     area: string;
+    address: string | null;
     lat: number | null;
     long: number | null;
+    verification: "VERIFIED" | "UNVERIFIED";
   } | null;
 
   categories: Category[];
@@ -129,6 +131,387 @@ type AnalyticsMetric = {
   label: string;
   value: number;
 };
+
+/*
+ * Controlled Lagos area vocabulary.
+ *
+ * The list is grouped by LGA for easier selection.
+ * The selected neighborhood/area value is stored
+ * in the existing Location.area field.
+ *
+ * This is intentionally kept in this page for now
+ * so we do not introduce another location system.
+ */
+const LAGOS_AREA_GROUPS = [
+  {
+    lga: "Agege",
+    areas: [
+      "Agege",
+      "Orile Agege",
+      "Dopemu",
+      "Oko-Oba",
+      "Isale Odo",
+      "Keke",
+    ],
+  },
+  {
+    lga: "Ajeromi-Ifelodun",
+    areas: [
+      "Ajegunle",
+      "Tolu",
+      "Olodi",
+      "Alaba Oro",
+      "Awodi-Ora",
+      "Layeni",
+      "Mosafejo",
+    ],
+  },
+  {
+    lga: "Alimosho",
+    areas: [
+      "Alimosho",
+      "Egbeda",
+      "Akowonjo",
+      "Shasha",
+      "Idimu",
+      "Egbe",
+      "Ikotun",
+      "Ijegun",
+      "Igando",
+      "Iyana-Ipaja",
+      "Ayobo",
+      "Abule Egba",
+      "Aboru",
+      "Meiran",
+      "Oke-Odo",
+      "Pleasure",
+    ],
+  },
+  {
+    lga: "Amuwo-Odofin",
+    areas: [
+      "Amuwo",
+      "Festac",
+      "Mile 2",
+      "Satellite Town",
+      "Kirikiri",
+      "Irede",
+      "Ibeshe",
+    ],
+  },
+  {
+    lga: "Apapa",
+    areas: [
+      "Apapa",
+      "Apapa Wharf",
+      "Iganmu",
+      "Ijora",
+      "Liverpool",
+      "Tin Can",
+    ],
+  },
+  {
+    lga: "Badagry",
+    areas: [
+      "Badagry",
+      "Badagry West",
+      "Olorunda",
+      "Oko-Afo",
+    ],
+  },
+  {
+    lga: "Epe",
+    areas: [
+      "Epe",
+      "Eredo",
+      "Ikosi-Ejinrin",
+    ],
+  },
+  {
+    lga: "Eti-Osa",
+    areas: [
+      "Ikoyi",
+      "Obalende",
+      "Victoria Island",
+      "Oniru",
+      "Lekki Phase 1",
+      "Ikate",
+      "Jakande",
+      "Osapa London",
+      "Agungi",
+      "Igbo-Efon",
+      "Idado",
+      "Chevron",
+      "Ikota",
+      "VGC",
+      "Ajah",
+      "Badore",
+      "Sangotedo",
+    ],
+  },
+  {
+    lga: "Ibeju-Lekki",
+    areas: [
+      "Ibeju-Lekki",
+      "Abijo",
+      "Awoyaya",
+      "Lakowe",
+      "Bogije",
+      "Eleko",
+      "Akodo",
+    ],
+  },
+  {
+    lga: "Ifako-Ijaiye",
+    areas: [
+      "Ifako",
+      "Ijaiye",
+      "Ojokoro",
+      "Oke-Ira",
+      "Agbado",
+    ],
+  },
+  {
+    lga: "Ikeja",
+    areas: [
+      "Ikeja",
+      "Ikeja GRA",
+      "Alausa",
+      "Allen Avenue",
+      "Oregun",
+      "Opebi",
+      "Ogba",
+      "Ojodu",
+      "Onigbongbo",
+      "Computer Village",
+      "Airport Road",
+    ],
+  },
+  {
+    lga: "Ikorodu",
+    areas: [
+      "Ikorodu",
+      "Ikorodu North",
+      "Ikorodu West",
+      "Igbogbo",
+      "Baiyeku",
+      "Ijede",
+      "Imota",
+      "Odogunyan",
+      "Itamaga",
+      "Agric",
+    ],
+  },
+  {
+    lga: "Kosofe",
+    areas: [
+      "Kosofe",
+      "Ketu",
+      "Agboyi",
+      "Ojota",
+      "Gbagada",
+      "Anthony",
+      "Maryland",
+      "Magodo",
+      "Isheri",
+      "Mile 12",
+    ],
+  },
+  {
+    lga: "Lagos Island",
+    areas: [
+      "Lagos Island",
+      "Idumota",
+      "Balogun",
+      "Marina",
+      "Broad Street",
+      "Isale Eko",
+      "Lafiaji",
+      "Onikan",
+      "Epetedo",
+      "Okepopo",
+    ],
+  },
+  {
+    lga: "Lagos Mainland",
+    areas: [
+      "Yaba",
+      "Ebute Metta",
+      "Akoka",
+      "Sabo",
+      "Alagomeji",
+      "Adekunle",
+      "Abule Oja",
+      "Onike",
+      "Iwaya",
+      "Makoko",
+      "Jibowu",
+      "Oyingbo",
+      "Tejuosho",
+    ],
+  },
+  {
+    lga: "Mushin",
+    areas: [
+      "Mushin",
+      "Papa Ajao",
+      "Idi-Araba",
+      "Ilupeju",
+      "Odi-Olowo",
+      "Ojuwoye",
+    ],
+  },
+  {
+    lga: "Ojo",
+    areas: [
+      "Ojo",
+      "Iba",
+      "Iyana-Iba",
+      "Ajangbadi",
+      "Oto-Awori",
+      "Alaba",
+    ],
+  },
+  {
+    lga: "Oshodi-Isolo",
+    areas: [
+      "Oshodi",
+      "Isolo",
+      "Ejigbo",
+      "Okota",
+      "Ajao Estate",
+      "Mafoluku",
+      "Ago Palace",
+    ],
+  },
+  {
+    lga: "Shomolu",
+    areas: [
+      "Shomolu",
+      "Bariga",
+      "Pedro",
+      "Onipanu",
+      "Palmgrove",
+      "Fadeyi",
+    ],
+  },
+  {
+    lga: "Surulere",
+    areas: [
+      "Surulere",
+      "Ojuelegba",
+      "Lawanson",
+      "Itire",
+      "Aguda",
+      "Coker",
+      "Ijeshatedo",
+    ],
+  },
+] as const;
+
+const DEFAULT_COUNTRY = "Nigeria";
+
+
+function isKnownLagosArea(area: string): boolean {
+  const normalized = area.trim().toLowerCase();
+
+  if (!normalized) {
+    return false;
+  }
+
+  return LAGOS_AREA_GROUPS.some((group) =>
+    group.areas.some(
+      (item) => item.toLowerCase() === normalized
+    )
+  );
+}
+
+function parseLocationAddress(
+  address: string | null | undefined,
+  area: string
+): {
+  houseNumber: string;
+  street: string;
+  city: string;
+} {
+  const fallback = {
+    houseNumber: "",
+    street: "",
+    city: "Lagos",
+  };
+
+  const trimmedAddress =
+    typeof address === "string"
+      ? address.trim()
+      : "";
+
+  if (!trimmedAddress) {
+    return fallback;
+  }
+
+  const parts = trimmedAddress
+    .split(",")
+    .map((part) => part.trim())
+    .filter(Boolean);
+
+  if (parts.length === 0) {
+    return fallback;
+  }
+
+  const withoutCountry =
+    parts[parts.length - 1].toLowerCase() ===
+    DEFAULT_COUNTRY.toLowerCase()
+      ? parts.slice(0, -1)
+      : parts;
+
+  const normalizedArea = area.trim().toLowerCase();
+
+  const areaIndex =
+    normalizedArea
+      ? withoutCountry.findLastIndex(
+          (part) =>
+            part.toLowerCase() ===
+            normalizedArea
+        )
+      : -1;
+
+  if (areaIndex >= 0) {
+    const beforeArea = withoutCountry.slice(
+      0,
+      areaIndex
+    );
+
+    const afterArea = withoutCountry.slice(
+      areaIndex + 1
+    );
+
+    if (afterArea.length > 0) {
+      return {
+        houseNumber: "",
+        street: beforeArea.join(", "),
+        city: afterArea[0] || "Lagos",
+      };
+    }
+
+    const working = [...beforeArea];
+    const city = working.pop() || "Lagos";
+    const street = working.pop() || "";
+
+    return {
+      houseNumber: working.join(", "),
+      street,
+      city,
+    };
+  }
+
+  // Legacy/unknown address format: preserve the complete
+  // saved address in the street field rather than dropping it.
+  return {
+    houseNumber: "",
+    street: withoutCountry.join(", "),
+    city: "Lagos",
+  };
+}
 
 const SOCIAL_PLATFORMS: {
   value: SocialPlatform;
@@ -159,6 +542,35 @@ const SOCIAL_PLATFORMS: {
     label: "Directions",
   },
 ];
+
+function getLocationStatus(
+  location: Business["location"]
+): string {
+  if (!location) {
+    return "No business location has been saved yet.";
+  }
+
+  const hasExactCoordinates =
+    location.lat !== null &&
+    location.long !== null;
+
+  if (
+    location.verification === "VERIFIED" &&
+    hasExactCoordinates
+  ) {
+    return "Exact business coordinates are saved and the location is verified.";
+  }
+
+  if (location.verification === "VERIFIED") {
+    return "Business location is verified, but exact coordinates have not been captured yet.";
+  }
+
+  if (hasExactCoordinates) {
+    return "Exact business coordinates are saved, but the location is not yet verified.";
+  }
+
+  return "No exact business coordinates have been captured yet.";
+}
 
 function formatPrice(
   value: number | null
@@ -1069,6 +1481,21 @@ function BusinessEditor({
       business.imageUrl ?? ""
     );
 
+  const initialAddress =
+    parseLocationAddress(
+      business.location?.address,
+      business.location?.area ?? ""
+    );
+
+  const [houseNumber, setHouseNumber] =
+    useState(initialAddress.houseNumber);
+
+  const [street, setStreet] =
+    useState(initialAddress.street);
+
+  const [city, setCity] =
+    useState(initialAddress.city);
+
   const [area, setArea] =
     useState(
       business.location?.area ??
@@ -1107,16 +1534,19 @@ function BusinessEditor({
     locationStatus,
     setLocationStatus,
   ] = useState(
-    business.location?.lat !==
-        null &&
-      business.location?.lat !==
-        undefined &&
-      business.location?.long !==
-        null &&
-      business.location?.long !==
-        undefined
-      ? "Business coordinates are already saved."
-      : "No exact business coordinates have been captured yet."
+    getLocationStatus(
+      business.location
+    )
+  );
+
+  const [
+    locationVerification,
+    setLocationVerification,
+  ] = useState<
+    "VERIFIED" | "UNVERIFIED"
+  >(
+    business.location?.verification ??
+      "UNVERIFIED"
   );
 
   const [
@@ -1271,8 +1701,12 @@ function BusinessEditor({
           String(longitude)
         );
 
+        setLocationVerification(
+          "UNVERIFIED"
+        );
+
         setLocationStatus(
-          "Business location captured successfully."
+          "Business location captured successfully. Save the changes to store this new location as unverified."
         );
 
         setCapturingLocation(
@@ -1363,6 +1797,26 @@ function BusinessEditor({
     const trimmedArea =
       area.trim();
 
+    const trimmedHouseNumber =
+      houseNumber.trim();
+
+    const trimmedStreet =
+      street.trim();
+
+    const trimmedCity =
+      city.trim();
+
+    const composedAddress =
+      [
+        trimmedHouseNumber,
+        trimmedStreet,
+        trimmedCity,
+        trimmedArea,
+        DEFAULT_COUNTRY,
+      ]
+        .filter(Boolean)
+        .join(", ");
+
     if (!trimmedName) {
       setError(
         "Business name is required."
@@ -1376,6 +1830,36 @@ function BusinessEditor({
     if (!trimmedArea) {
       setError(
         "Business area is required."
+      );
+
+      setSaving(false);
+
+      return;
+    }
+
+    if (!trimmedStreet) {
+      setError(
+        "Street, road, or close is required."
+      );
+
+      setSaving(false);
+
+      return;
+    }
+
+    if (!trimmedCity) {
+      setError(
+        "City is required."
+      );
+
+      setSaving(false);
+
+      return;
+    }
+
+    if (!composedAddress) {
+      setError(
+        "A business address is required."
       );
 
       setSaving(false);
@@ -1542,6 +2026,9 @@ function BusinessEditor({
               area:
                 trimmedArea,
 
+              address:
+                composedAddress,
+
               /*
                * Coordinates are supplied from the
                * internally stored/captured values.
@@ -1564,6 +2051,8 @@ function BusinessEditor({
               status,
 
               verification,
+
+              locationVerification,
 
               /*
                * Only send category IDs from the real
@@ -1629,6 +2118,24 @@ function BusinessEditor({
             ""
         );
 
+        const updatedAddress =
+          parseLocationAddress(
+            updatedBusiness.location?.address,
+            updatedBusiness.location?.area ?? ""
+          );
+
+        setHouseNumber(
+          updatedAddress.houseNumber
+        );
+
+        setStreet(
+          updatedAddress.street
+        );
+
+        setCity(
+          updatedAddress.city
+        );
+
         setArea(
           updatedBusiness.location
             ?.area ?? ""
@@ -1668,6 +2175,11 @@ function BusinessEditor({
 
         setVerification(
           updatedBusiness.verification
+        );
+
+        setLocationVerification(
+          updatedBusiness.location?.verification ??
+            "UNVERIFIED"
         );
 
         setSelectedCategoryIds(
@@ -1713,14 +2225,9 @@ function BusinessEditor({
         );
 
         setLocationStatus(
-          updatedBusiness
-            .location
-            ?.lat != null &&
-            updatedBusiness
-              .location
-              ?.long != null
-            ? "Business coordinates are saved."
-            : "No exact business coordinates have been captured yet."
+          getLocationStatus(
+            updatedBusiness.location
+          )
         );
       }
 
@@ -2026,14 +2533,151 @@ function BusinessEditor({
                 </h2>
               </div>
 
-              <div className="mt-4">
+              <p className="mt-1 max-w-[760px] text-[11px] leading-5 text-[#7E766F]">
+                Choose the business area from the standardized Lagos
+                list, enter the physical address, then capture the
+                exact business location from the device. You do not
+                need to type latitude or longitude.
+              </p>
+
+              <div className="mt-4 grid gap-4 sm:grid-cols-2">
                 <Field
-                  label="Area"
-                  value={area}
-                  onChange={setArea}
+                  label="House / Shop / Building number"
+                  value={houseNumber}
+                  onChange={setHouseNumber}
+                  placeholder="e.g. Shop 12"
+                />
+
+                <Field
+                  label="Street / Road / Close"
+                  value={street}
+                  onChange={setStreet}
+                  placeholder="e.g. Adewale Close"
                   required
                 />
+
+                <Field
+                  label="City"
+                  value={city}
+                  onChange={setCity}
+                  placeholder="e.g. Lagos or Epe"
+                  required
+                />
+
+                <div>
+                  <label className="text-[10px] font-semibold text-[#6F675F]">
+                    Area / Region
+                  </label>
+
+                  <select
+                    value={area}
+                    onChange={(event) =>
+                      setArea(event.target.value)
+                    }
+                    required
+                    className="mt-2 h-11 w-full rounded-xl border border-[#EAE6DF] bg-white px-3.5 text-xs font-medium text-[#17202A] outline-none focus:border-[#FF9B82]"
+                  >
+                    <option value="">
+                      Select an area
+                    </option>
+
+                    {!isKnownLagosArea(area) && area && (
+                      <option value={area}>
+                        {area} (current)
+                      </option>
+                    )}
+
+                    {LAGOS_AREA_GROUPS.map((group) => (
+                      <optgroup
+                        key={group.lga}
+                        label={group.lga}
+                      >
+                        {group.areas.map((item) => (
+                          <option
+                            key={`${group.lga}-${item}`}
+                            value={item}
+                          >
+                            {item}
+                          </option>
+                        ))}
+                      </optgroup>
+                    ))}
+                  </select>
+                </div>
+
+                <div className="sm:col-span-2">
+                  <label className="text-[10px] font-semibold text-[#6F675F]">
+                    Country
+                  </label>
+
+                  <input
+                    value={DEFAULT_COUNTRY}
+                    readOnly
+                    className="mt-2 h-11 w-full rounded-xl border border-[#EAE6DF] bg-[#F3F0EB] px-3.5 text-xs text-[#6F675F] outline-none"
+                  />
+
+                  <p className="mt-1.5 text-[10px] text-[#A39A91]">
+                    Country is fixed to Nigeria for this Lagos location workflow.
+                  </p>
+                </div>
               </div>
+
+              {(houseNumber || street || city || area) && (
+                <div className="mt-4 rounded-xl border border-[#EAE6DF] bg-[#FCFAF6] px-4 py-3">
+                  <p className="text-[10px] font-semibold uppercase tracking-wide text-[#A39A91]">
+                    Address that will be saved
+                  </p>
+
+                  <p className="mt-1 text-xs font-medium text-[#17202A]">
+                    {[
+                      houseNumber.trim(),
+                      street.trim(),
+                      city.trim(),
+                      area.trim(),
+                      DEFAULT_COUNTRY,
+                    ]
+                      .filter(Boolean)
+                      .join(", ") ||
+                      "Complete the address fields above."}
+                  </p>
+                </div>
+              )}
+
+              <div className="mt-4 grid gap-4 sm:grid-cols-2">
+                <SelectField
+                  label="Location verification"
+                  value={
+                    locationVerification
+                  }
+                  onChange={(value) =>
+                    setLocationVerification(
+                      value as
+                        | "VERIFIED"
+                        | "UNVERIFIED"
+                    )
+                  }
+                  disabled={
+                    deleted ||
+                    !business.location
+                  }
+                  options={[
+                    {
+                      value: "VERIFIED",
+                      label: "Location verified",
+                    },
+                    {
+                      value: "UNVERIFIED",
+                      label: "Location unverified",
+                    },
+                  ]}
+                />
+              </div>
+
+              <p className="mt-2 text-[10px] leading-5 text-[#9A9087]">
+                Location verification is separate from business verification.
+                Changing the physical address or coordinates automatically
+                resets a changed location to unverified.
+              </p>
 
               <div className="mt-4 rounded-2xl border border-[#EAE6DF] bg-[#FCFAF6] p-4">
                 <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">

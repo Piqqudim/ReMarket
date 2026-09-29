@@ -91,6 +91,53 @@ type NearbyBusiness = {
   imageUrl?: string | null;
 };
 
+/*
+ * -----------------------------------------
+ * DISTANCE PRESENTATION
+ * -----------------------------------------
+ *
+ * The Near Me API uses Haversine distance
+ * for first-stage nearby filtering.
+ *
+ * This formatter keeps that distinction clear
+ * and presents the value in a user-friendly way.
+ *
+ * It does NOT describe the value as driving
+ * distance.
+ */
+function getDistanceLabel(
+  distanceKm: number | null
+): string | null {
+  if (
+    typeof distanceKm !== "number" ||
+    !Number.isFinite(distanceKm) ||
+    distanceKm < 0
+  ) {
+    return null;
+  }
+
+  if (distanceKm < 1) {
+    const distanceMetres =
+      Math.round(
+        distanceKm * 1000
+      );
+
+    if (distanceMetres < 1) {
+      return "Less than 1 m away";
+    }
+
+    return `${distanceMetres.toLocaleString()} m away`;
+  }
+
+  if (distanceKm < 10) {
+    return `${distanceKm.toFixed(1)} km away`;
+  }
+
+  return `${Math.round(
+    distanceKm
+  ).toLocaleString()} km away`;
+}
+
 const NAV_ITEMS = [
   {
     label: "Home",
@@ -1153,96 +1200,104 @@ export default function HomePage() {
                         {nearbyBusinesses.map(
                           (
                             business
-                          ) => (
-                            <Link
-                              key={
-                                business.id
-                              }
-                              href={`/seller/${business.id}`}
-                              className="group rounded-2xl border border-orange-100 bg-white p-4 shadow-card transition hover:-translate-y-0.5 hover:shadow-soft"
-                            >
-                              <div className="flex items-start justify-between gap-3">
-                                <div className="flex min-w-0 items-center gap-3">
-                                  <div className="h-10 w-10 shrink-0 overflow-hidden rounded-full bg-orange-100">
-                                    {business.imageUrl ? (
-                                      <img
-                                        src={
-                                          business.imageUrl
-                                        }
-                                        alt={
+                          ) => {
+                            const distanceLabel =
+                              getDistanceLabel(
+                                business.distanceKm
+                              );
+
+                            return (
+                              <Link
+                                key={
+                                  business.id
+                                }
+                                href={`/seller/${business.id}`}
+                                className="group rounded-2xl border border-orange-100 bg-white p-4 shadow-card transition hover:-translate-y-0.5 hover:shadow-soft"
+                              >
+                                <div className="flex items-start justify-between gap-3">
+                                  <div className="flex min-w-0 items-center gap-3">
+                                    <div className="h-10 w-10 shrink-0 overflow-hidden rounded-full bg-orange-100">
+                                      {business.imageUrl ? (
+                                        <img
+                                          src={
+                                            business.imageUrl
+                                          }
+                                          alt={
+                                            business.name
+                                          }
+                                          className="h-full w-full object-cover"
+                                        />
+                                      ) : (
+                                        <div className="flex h-full w-full items-center justify-center text-xs font-bold text-[#9F2D18]">
+                                          {business.name
+                                            .slice(
+                                              0,
+                                              2
+                                            )
+                                            .toUpperCase()}
+                                        </div>
+                                      )}
+                                    </div>
+
+                                    <div className="min-w-0">
+                                      <p className="truncate text-sm font-bold">
+                                        {
                                           business.name
                                         }
-                                        className="h-full w-full object-cover"
-                                      />
-                                    ) : (
-                                      <div className="flex h-full w-full items-center justify-center text-xs font-bold text-[#9F2D18]">
-                                        {business.name
-                                          .slice(
-                                            0,
-                                            2
-                                          )
-                                          .toUpperCase()}
-                                      </div>
-                                    )}
+                                      </p>
+
+                                      <p className="mt-0.5 truncate text-[11px] text-muted">
+                                        {business.category ??
+                                          "Local business"}
+                                      </p>
+                                    </div>
                                   </div>
 
-                                  <div className="min-w-0">
-                                    <p className="truncate text-sm font-bold">
-                                      {
-                                        business.name
-                                      }
-                                    </p>
-
-                                    <p className="mt-0.5 truncate text-[11px] text-muted">
-                                      {business.category ??
-                                        "Local business"}
-                                    </p>
-                                  </div>
+                                  <Store
+                                    size={16}
+                                    className="shrink-0 text-gray-400 transition group-hover:text-[#FF5A36]"
+                                  />
                                 </div>
 
-                                <Store
-                                  size={16}
-                                  className="shrink-0 text-gray-400 transition group-hover:text-[#FF5A36]"
-                                />
-                              </div>
-
-                              <div className="mt-4 flex items-center gap-2 text-xs text-gray-600">
-                                {business.area && (
-                                  <span className="truncate">
-                                    {
-                                      business.area
-                                    }
-                                  </span>
-                                )}
-
-                                {business.distanceKm !==
-                                  null && (
-                                  <>
-                                    <span className="text-gray-300">
-                                      ·
-                                    </span>
-
-                                    <span className="shrink-0">
+                                <div className="mt-4 flex items-center gap-2 text-xs text-gray-600">
+                                  {business.area && (
+                                    <span className="truncate">
                                       {
-                                        business.distanceKm
-                                      }{" "}
-                                      km
+                                        business.area
+                                      }
                                     </span>
-                                  </>
-                                )}
-                              </div>
+                                  )}
 
-                              <div className="mt-2 text-[11px] text-muted">
-                                {
-                                  business.productCount
-                                }{" "}
-                                {business.productCount ===
-                                1
-                                  ? "product"
-                                  : "products"}
-                              </div>
-                            </Link>
-                          )
+                                  {distanceLabel !==
+                                    null && (
+                                    <>
+                                      {business.area && (
+                                        <span className="text-gray-300">
+                                          ·
+                                        </span>
+                                      )}
+
+                                      <span className="shrink-0">
+                                        {
+                                          distanceLabel
+                                        }
+                                      </span>
+                                    </>
+                                  )}
+                                </div>
+
+                                <div className="mt-2 text-[11px] text-muted">
+                                  {
+                                    business.productCount
+                                  }{" "}
+                                  {business.productCount ===
+                                  1
+                                    ? "product"
+                                    : "products"}
+                                </div>
+                              </Link>
+                            );
+                          }
                         )}
                       </div>
                     )}

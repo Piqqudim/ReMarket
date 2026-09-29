@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 
 import { prisma } from "@/lib/prisma";
 import { requireSeller } from "@/lib/seller-auth";
+import { geocodeBusinessLocation } from "@/lib/geocoding";
 
 const ALLOWED_AVAILABILITY = [
   "AVAILABLE",
@@ -90,9 +91,6 @@ function parseOptionalFloat(
 /*
  * This function returns the exact
  * AvailabilityValue union.
- *
- * That prevents TypeScript from treating
- * the result as a generic string.
  */
 function parseAvailability(
   value: unknown
@@ -263,6 +261,9 @@ export async function POST(
     return auth.response;
   }
 
+  /*
+   * One seller can own only one business.
+   */
   if (auth.business) {
     return NextResponse.json(
       {
@@ -359,10 +360,6 @@ export async function POST(
           ]
         : [];
 
-    /*
-     * Parse directly into the correct
-     * literal union.
-     */
     const availability =
       parseAvailability(
         payload.availability
@@ -453,10 +450,6 @@ export async function POST(
       );
     }
 
-    /*
-     * If availability was supplied, it must
-     * be one of the three allowed values.
-     */
     const availabilityWasProvided =
       payload.availability !==
         undefined &&
@@ -581,10 +574,40 @@ export async function POST(
         payload.lat
       );
 
+    const longProvided =
+      Object.prototype.hasOwnProperty.call(
+        payload,
+        "long"
+      );
+
+    const lngProvided =
+      Object.prototype.hasOwnProperty.call(
+        payload,
+        "lng"
+      );
+
+    if (
+      longProvided &&
+      lngProvided
+    ) {
+      return NextResponse.json(
+        {
+          error:
+            "Provide longitude using either 'long' or 'lng', not both.",
+        },
+        {
+          status: 400,
+          headers:
+            jsonHeaders(),
+        }
+      );
+    }
+
     const parsedLong =
       parseOptionalFloat(
-        payload.long ??
-          payload.lng
+        longProvided
+          ? payload.long
+          : payload.lng
       );
 
     if (
@@ -624,6 +647,58 @@ export async function POST(
             jsonHeaders(),
         }
       );
+    }
+
+    /*
+     * -----------------------------------------
+     * LOCATION RESOLUTION
+     * -----------------------------------------
+     *
+     * GPS coordinates, when supplied by the
+     * seller UI, are treated as the strongest
+     * available source.
+     *
+     * When coordinates are not supplied, use
+     * the existing business address + area
+     * through the shared Nominatim geocoder.
+     *
+     * If geocoding cannot produce a sufficiently
+     * precise result, do not invent coordinates.
+     * The business may still be created with
+     * its address and null coordinates.
+     */
+
+    let resolvedLat =
+      parsedLat;
+
+    let resolvedLong =
+      parsedLong;
+
+    if (
+      resolvedLat === null &&
+      resolvedLong === null &&
+      address
+    ) {
+      try {
+        const geocoded =
+          await geocodeBusinessLocation(
+            {
+              address,
+              area,
+            }
+          );
+
+        resolvedLat =
+          geocoded.latitude;
+
+        resolvedLong =
+          geocoded.longitude;
+      } catch (error) {
+        console.warn(
+          "Seller business address could not be geocoded. Saving without precise coordinates:",
+          error
+        );
+      }
     }
 
     /*
@@ -787,22 +862,17 @@ export async function POST(
 
     /*
      * -----------------------------------------
-     * LOCATION
+     * LOCATION + BUSINESS
      * -----------------------------------------
      *
-     * IMPORTANT:
+     * A new seller business always receives
+     * its own Location record.
      *
-     * A Location belongs to one specific
-     * business point.
+     * We NEVER search for or reuse a Location
+     * by area.
      *
-     * We do NOT find an existing Location
-     * by area anymore.
-     *
-     * This prevents multiple businesses in
-     * the same area from sharing coordinates.
-     *
-     * Seller-submitted locations always begin
-     * as UNVERIFIED.
+     * Location verification is separate from
+     * Business verification.
      */
 
     const businessAvailability:
@@ -823,10 +893,10 @@ export async function POST(
                   null,
 
                 lat:
-                  parsedLat,
+                  resolvedLat,
 
                 long:
-                  parsedLong,
+                  resolvedLong,
 
                 verification:
                   "UNVERIFIED",
@@ -860,10 +930,12 @@ export async function POST(
                 businessAvailability,
 
               phone:
-                phone || null,
+                phone ||
+                null,
 
               imageUrl:
-                imageUrl || null,
+                imageUrl ||
+                null,
 
               categories:
                 categories.length >
@@ -1103,6 +1175,12 @@ export async function PATCH(
         key
       );
 
+    /*
+     * -----------------------------------------
+     * BASIC BUSINESS FIELDS
+     * -----------------------------------------
+     */
+
     const name =
       has("name")
         ? cleanString(
@@ -1152,10 +1230,6 @@ export async function PATCH(
           )
         : undefined;
 
-    /*
-     * Parse directly into the exact
-     * AvailabilityValue type.
-     */
     const availabilityProvided =
       has("availability");
 
@@ -1332,10 +1406,6 @@ export async function PATCH(
       );
     }
 
-    /*
-     * If availability was included, the
-     * parser must have accepted it.
-     */
     if (
       availabilityProvided &&
       availability === null
@@ -1536,7 +1606,8 @@ export async function PATCH(
 
       if (
         categoryIds.some(
-          (id) => !id
+          (categoryId) =>
+            !categoryId
         )
       ) {
         return NextResponse.json(
@@ -1600,15 +1671,31 @@ export async function PATCH(
      * -----------------------------------------
      *
      * A seller may update:
+     *
      * - area
      * - address
      * - latitude
      * - longitude / lng
      *
-     * Any actual location change creates a
-     * new Location record.
+     * A changed location gets a NEW Location
+     * record.
      *
-     * The new location is UNVERIFIED.
+     * The new Location is UNVERIFIED.
+     *
+     * Coordinate resolution:
+     *
+     * 1. Freshly supplied GPS coordinates win.
+     *
+     * 2. If area/address changes without new GPS,
+     *    resolve the new address with Nominatim.
+     *
+     * 3. If the new address cannot be resolved,
+     *    do not keep stale coordinates.
+     *
+     * 4. If location data has not changed,
+     *    preserve the existing Location.
+     *
+     * We NEVER reuse a Location by area.
      */
 
     const areaProvided =
@@ -1625,6 +1712,23 @@ export async function PATCH(
 
     const lngProvided =
       has("lng");
+
+    if (
+      longProvided &&
+      lngProvided
+    ) {
+      return NextResponse.json(
+        {
+          error:
+            "Provide longitude using either 'long' or 'lng', not both.",
+        },
+        {
+          status: 400,
+          headers:
+            jsonHeaders(),
+        }
+      );
+    }
 
     const locationWasProvided =
       areaProvided ||
@@ -1731,26 +1835,129 @@ export async function PATCH(
         );
       }
 
+      const currentArea =
+        existingBusiness
+          .location
+          ?.area ?? "";
+
+      const currentAddress =
+        existingBusiness
+          .location
+          ?.address ?? null;
+
+      const currentLat =
+        existingBusiness
+          .location
+          ?.lat ?? null;
+
+      const currentLong =
+        existingBusiness
+          .location
+          ?.long ?? null;
+
+      const areaChanged =
+        currentArea !==
+        resultingArea;
+
+      const addressChanged =
+        currentAddress !==
+        resultingAddress;
+
+      const coordinatesChanged =
+        currentLat !==
+          parsedLat ||
+        currentLong !==
+          parsedLong;
+
+      let resolvedLat =
+        parsedLat;
+
+      let resolvedLong =
+        parsedLong;
+
+      /*
+       * If the seller changes the physical
+       * address/area but does not provide newly
+       * captured GPS coordinates, the old
+       * coordinates must not continue to
+       * represent the new address.
+       *
+       * Resolve the new address instead.
+       */
+      if (
+        areaChanged ||
+        addressChanged
+      ) {
+        const hasFreshCoordinates =
+          parsedLat !== null &&
+          parsedLong !== null &&
+          coordinatesChanged;
+
+        if (
+          !hasFreshCoordinates
+        ) {
+          if (
+            resultingAddress
+          ) {
+            try {
+              const geocoded =
+                await geocodeBusinessLocation(
+                  {
+                    address:
+                      resultingAddress,
+
+                    area:
+                      resultingArea,
+                  }
+                );
+
+              resolvedLat =
+                geocoded.latitude;
+
+              resolvedLong =
+                geocoded.longitude;
+            } catch (error) {
+              /*
+               * Never keep stale coordinates
+               * after a physical address change
+               * when the new address cannot be
+               * resolved.
+               */
+              console.warn(
+                "Seller business address could not be geocoded. Saving the changed address without precise coordinates:",
+                error
+              );
+
+              resolvedLat =
+                null;
+
+              resolvedLong =
+                null;
+            }
+          } else {
+            /*
+             * There is no address from which
+             * coordinates can be resolved.
+             */
+            resolvedLat =
+              null;
+
+            resolvedLong =
+              null;
+          }
+        }
+      }
+
       const locationChanged =
         !existingBusiness.location ||
-        existingBusiness.location
-            .area !==
+        currentArea !==
           resultingArea ||
-        (
-          existingBusiness.location
-            .address ?? null
-        ) !==
+        currentAddress !==
           resultingAddress ||
-        (
-          existingBusiness.location
-            .lat ?? null
-        ) !==
-          parsedLat ||
-        (
-          existingBusiness.location
-            .long ?? null
-        ) !==
-          parsedLong;
+        currentLat !==
+          resolvedLat ||
+        currentLong !==
+          resolvedLong;
 
       if (locationChanged) {
         newLocationData = {
@@ -1761,10 +1968,10 @@ export async function PATCH(
             resultingAddress,
 
           lat:
-            parsedLat,
+            resolvedLat,
 
           long:
-            parsedLong,
+            resolvedLong,
         };
       }
     }
@@ -1874,7 +2081,8 @@ export async function PATCH(
                       newLocationData.long,
 
                     /*
-                     * Any changed location
+                     * Any newly submitted or
+                     * newly resolved location
                      * must be verified again.
                      */
                     verification:
@@ -2050,7 +2258,7 @@ export async function PATCH(
         status: 500,
         headers:
           jsonHeaders(),
-        }
-      );
+      }
+    );
   }
 }

@@ -79,6 +79,9 @@ type SellerBusiness = {
   location: {
     id: string;
     area: string;
+    address: string | null;
+    lat: number | null;
+    long: number | null;
   } | null;
   categories: {
     category: SellerCategory;
@@ -104,6 +107,7 @@ type BusinessForm = {
   ownerName: string;
   description: string;
   area: string;
+  address: string;
   phone: string;
   categoryId: string;
   availability:
@@ -133,6 +137,7 @@ const INITIAL_BUSINESS_FORM: BusinessForm = {
   ownerName: "",
   description: "",
   area: "",
+  address: "",
   phone: "",
   categoryId: "",
   availability: "ASK_SELLER",
@@ -202,6 +207,21 @@ export default function SellerDashboard() {
 
   const [categoryChanged, setCategoryChanged] =
     useState(false);
+
+  const [businessLatitude, setBusinessLatitude] =
+    useState<string>("");
+
+  const [businessLongitude, setBusinessLongitude] =
+    useState<string>("");
+
+  const [capturingLocation, setCapturingLocation] =
+    useState(false);
+
+  const [locationStatus, setLocationStatus] =
+    useState("");
+
+  const [locationError, setLocationError] =
+    useState("");
 
   const [error, setError] =
     useState("");
@@ -356,6 +376,9 @@ export default function SellerDashboard() {
             area:
               loadedBusiness.location
                 ?.area ?? "",
+            address:
+              loadedBusiness.location
+                ?.address ?? "",
             phone:
               loadedBusiness.phone ??
               "",
@@ -381,6 +404,26 @@ export default function SellerDashboard() {
                   )
                 : "",
           });
+
+          setBusinessLatitude(
+            loadedBusiness.location
+              ?.lat != null
+              ? String(
+                  loadedBusiness.location
+                    .lat
+                )
+              : ""
+          );
+
+          setBusinessLongitude(
+            loadedBusiness.location
+              ?.long != null
+              ? String(
+                  loadedBusiness.location
+                    .long
+                )
+              : ""
+          );
         }
       } catch (loadError) {
         console.error(
@@ -424,6 +467,14 @@ export default function SellerDashboard() {
 
     if (success) {
       setSuccess("");
+    }
+
+    if (
+      field === "area" ||
+      field === "address"
+    ) {
+      setLocationError("");
+      setLocationStatus("");
     }
   }
 
@@ -514,6 +565,89 @@ export default function SellerDashboard() {
     return true;
   }
 
+  function validateBusinessLocation() {
+    const area =
+      businessForm.area.trim();
+
+    const address =
+      businessForm.address.trim();
+
+    if (!area) {
+      setError(
+        "Business area is required."
+      );
+
+      return false;
+    }
+
+    if (!address) {
+      setError(
+        "Business address is required."
+      );
+
+      return false;
+    }
+
+    const hasLatitude =
+      businessLatitude.trim() !== "";
+
+    const hasLongitude =
+      businessLongitude.trim() !== "";
+
+    if (
+      hasLatitude !==
+      hasLongitude
+    ) {
+      setError(
+        "Business coordinates must be captured as a complete location pair."
+      );
+
+      return false;
+    }
+
+    if (hasLatitude) {
+      const parsedLatitude =
+        Number(
+          businessLatitude
+        );
+
+      const parsedLongitude =
+        Number(
+          businessLongitude
+        );
+
+      if (
+        !Number.isFinite(
+          parsedLatitude
+        ) ||
+        parsedLatitude < -90 ||
+        parsedLatitude > 90
+      ) {
+        setError(
+          "The captured business latitude is invalid."
+        );
+
+        return false;
+      }
+
+      if (
+        !Number.isFinite(
+          parsedLongitude
+        ) ||
+        parsedLongitude < -180 ||
+        parsedLongitude > 180
+      ) {
+        setError(
+          "The captured business longitude is invalid."
+        );
+
+        return false;
+      }
+    }
+
+    return true;
+  }
+
   function startEditingBusiness() {
     if (!business) {
       return;
@@ -521,6 +655,8 @@ export default function SellerDashboard() {
 
     setError("");
     setSuccess("");
+    setLocationError("");
+    setLocationStatus("");
 
     setBusinessForm({
       name:
@@ -533,6 +669,9 @@ export default function SellerDashboard() {
         "",
       area:
         business.location?.area ??
+        "",
+      address:
+        business.location?.address ??
         "",
       phone:
         business.phone ?? "",
@@ -557,6 +696,22 @@ export default function SellerDashboard() {
             )
           : "",
     });
+
+    setBusinessLatitude(
+      business.location?.lat != null
+        ? String(
+            business.location.lat
+          )
+        : ""
+    );
+
+    setBusinessLongitude(
+      business.location?.long != null
+        ? String(
+            business.location.long
+          )
+        : ""
+    );
 
     setCategoryChanged(false);
     setEditingBusiness(true);
@@ -569,6 +724,8 @@ export default function SellerDashboard() {
 
     setError("");
     setSuccess("");
+    setLocationError("");
+    setLocationStatus("");
 
     setBusinessForm({
       name:
@@ -581,6 +738,9 @@ export default function SellerDashboard() {
         "",
       area:
         business.location?.area ??
+        "",
+      address:
+        business.location?.address ??
         "",
       phone:
         business.phone ?? "",
@@ -606,8 +766,169 @@ export default function SellerDashboard() {
           : "",
     });
 
+    setBusinessLatitude(
+      business.location?.lat != null
+        ? String(
+            business.location.lat
+          )
+        : ""
+    );
+
+    setBusinessLongitude(
+      business.location?.long != null
+        ? String(
+            business.location.long
+          )
+        : ""
+    );
+
     setCategoryChanged(false);
     setEditingBusiness(false);
+  }
+
+  function captureCurrentLocation() {
+    if (capturingLocation) {
+      return;
+    }
+
+    setError("");
+    setSuccess("");
+    setLocationError("");
+    setLocationStatus("");
+
+    if (
+      typeof window ===
+        "undefined" ||
+      !navigator.geolocation
+    ) {
+      setLocationError(
+        "This device does not support location capture."
+      );
+      return;
+    }
+
+    setCapturingLocation(true);
+
+    navigator.geolocation.getCurrentPosition(
+      (position) => {
+        const latitude =
+          position.coords.latitude;
+
+        const longitude =
+          position.coords.longitude;
+
+        if (
+          !Number.isFinite(
+            latitude
+          ) ||
+          latitude < -90 ||
+          latitude > 90
+        ) {
+          setLocationError(
+            "The device returned an invalid latitude."
+          );
+          setCapturingLocation(false);
+          return;
+        }
+
+        if (
+          !Number.isFinite(
+            longitude
+          ) ||
+          longitude < -180 ||
+          longitude > 180
+        ) {
+          setLocationError(
+            "The device returned an invalid longitude."
+          );
+          setCapturingLocation(false);
+          return;
+        }
+
+        setBusinessLatitude(
+          String(latitude)
+        );
+
+        setBusinessLongitude(
+          String(longitude)
+        );
+
+        setLocationStatus(
+          "Business location captured from this device."
+        );
+
+        setCapturingLocation(false);
+      },
+      (geolocationError) => {
+        console.error(
+          "Seller business location capture error:",
+          geolocationError
+        );
+
+        let message =
+          "Unable to capture the business location.";
+
+        switch (
+          geolocationError.code
+        ) {
+          case 1:
+            message =
+              "Location permission was denied. Allow location access and try again.";
+            break;
+
+          case 2:
+            message =
+              "The device could not determine its location. Try again from the business location.";
+            break;
+
+          case 3:
+            message =
+              "Location capture timed out. Please try again.";
+            break;
+        }
+
+        setLocationError(
+          message
+        );
+
+        setCapturingLocation(false);
+      },
+      {
+        enableHighAccuracy:
+          true,
+        timeout:
+          15000,
+        maximumAge:
+          0,
+      }
+    );
+  }
+
+  function buildBusinessLocationPayload() {
+    const latitude =
+      businessLatitude.trim()
+        ? Number(
+            businessLatitude
+          )
+        : null;
+
+    const longitude =
+      businessLongitude.trim()
+        ? Number(
+            businessLongitude
+          )
+        : null;
+
+    return {
+      area:
+        businessForm.area.trim(),
+      address:
+        businessForm.address.trim(),
+      lat:
+        latitude,
+      long:
+        longitude,
+    };
   }
 
   async function createBusiness(
@@ -622,6 +943,12 @@ export default function SellerDashboard() {
     setError("");
     setSuccess("");
 
+    if (
+      !validateBusinessLocation()
+    ) {
+      return;
+    }
+
     if (!validateBusinessPrices()) {
       return;
     }
@@ -631,6 +958,9 @@ export default function SellerDashboard() {
       priceMax,
     } =
       getBusinessFormValues();
+
+    const locationPayload =
+      buildBusinessLocationPayload();
 
     setSavingBusiness(true);
 
@@ -645,21 +975,28 @@ export default function SellerDashboard() {
                 "application/json",
             },
             body: JSON.stringify({
-              name: businessForm.name,
+              name:
+                businessForm.name,
               ownerName:
                 businessForm.ownerName,
               description:
                 businessForm.description,
-              area: businessForm.area,
-              phone: businessForm.phone,
+
+              ...locationPayload,
+
+              phone:
+                businessForm.phone,
+
               categoryIds:
                 businessForm.categoryId
                   ? [
                       businessForm.categoryId,
                     ]
                   : [],
+
               availability:
                 businessForm.availability,
+
               priceMin,
               priceMax,
             }),
@@ -689,9 +1026,79 @@ export default function SellerDashboard() {
         return;
       }
 
+      const createdBusiness =
+        data.business ?? null;
+
       setBusiness(
-        data.business ?? null
+        createdBusiness
       );
+
+      if (createdBusiness) {
+        setBusinessLatitude(
+          createdBusiness.location
+            ?.lat != null
+            ? String(
+                createdBusiness
+                  .location.lat
+              )
+            : ""
+        );
+
+        setBusinessLongitude(
+          createdBusiness.location
+            ?.long != null
+            ? String(
+                createdBusiness
+                  .location.long
+              )
+            : ""
+        );
+
+        setBusinessForm({
+          name:
+            createdBusiness.name ??
+            "",
+          ownerName:
+            createdBusiness.ownerName ??
+            "",
+          description:
+            createdBusiness.description ??
+            "",
+          area:
+            createdBusiness.location
+              ?.area ?? "",
+          address:
+            createdBusiness.location
+              ?.address ?? "",
+          phone:
+            createdBusiness.phone ??
+            "",
+          categoryId:
+            createdBusiness
+              .categories?.[0]
+              ?.category?.id ?? "",
+          availability:
+            createdBusiness.availability ??
+            "ASK_SELLER",
+          priceMin:
+            createdBusiness.priceMin !==
+            null
+              ? String(
+                  createdBusiness.priceMin
+                )
+              : "",
+          priceMax:
+            createdBusiness.priceMax !==
+            null
+              ? String(
+                  createdBusiness.priceMax
+                )
+              : "",
+        });
+      }
+
+      setLocationError("");
+      setLocationStatus("");
 
       setSuccess(
         "Your business has been created successfully."
@@ -725,6 +1132,12 @@ export default function SellerDashboard() {
     setError("");
     setSuccess("");
 
+    if (
+      !validateBusinessLocation()
+    ) {
+      return;
+    }
+
     if (!validateBusinessPrices()) {
       return;
     }
@@ -735,6 +1148,9 @@ export default function SellerDashboard() {
     } =
       getBusinessFormValues();
 
+    const locationPayload =
+      buildBusinessLocationPayload();
+
     setSavingBusiness(true);
 
     try {
@@ -742,15 +1158,21 @@ export default function SellerDashboard() {
         string,
         unknown
       > = {
-        name: businessForm.name,
+        name:
+          businessForm.name,
         ownerName:
           businessForm.ownerName,
         description:
           businessForm.description,
-        area: businessForm.area,
-        phone: businessForm.phone,
+
+        ...locationPayload,
+
+        phone:
+          businessForm.phone,
+
         availability:
           businessForm.availability,
+
         priceMin,
         priceMax,
       };
@@ -802,12 +1224,40 @@ export default function SellerDashboard() {
         return;
       }
 
+      const updatedBusiness =
+        data.business ??
+        null;
+
       setBusiness(
-        data.business ?? null
+        updatedBusiness
       );
+
+      if (updatedBusiness) {
+        setBusinessLatitude(
+          updatedBusiness.location
+            ?.lat != null
+            ? String(
+                updatedBusiness
+                  .location.lat
+              )
+            : ""
+        );
+
+        setBusinessLongitude(
+          updatedBusiness.location
+            ?.long != null
+            ? String(
+                updatedBusiness
+                  .location.long
+              )
+            : ""
+        );
+      }
 
       setCategoryChanged(false);
       setEditingBusiness(false);
+      setLocationError("");
+      setLocationStatus("");
 
       setSuccess(
         "Your business has been updated successfully."
@@ -1736,6 +2186,18 @@ export default function SellerDashboard() {
                             {business.location?.area ||
                               "Not set"}
                           </p>
+
+                          <p className="mt-1 truncate text-[10px] text-gray-400">
+                            {business.location?.address ||
+                              "Address not set"}
+                          </p>
+
+                          <p className="mt-2 text-[10px] font-medium text-gray-400">
+                            {business.location?.lat != null &&
+                            business.location?.long != null
+                              ? "Exact location available"
+                              : "Precise location not yet set"}
+                          </p>
                         </div>
 
                         <div className="rounded-2xl bg-[#FCFAF6] p-4">
@@ -2170,6 +2632,112 @@ export default function SellerDashboard() {
                             className="h-12 w-full rounded-xl border border-[#D9DEE5] bg-white px-4 text-sm text-[#17202A] outline-none transition focus:border-[#FF694F] focus:ring-4 focus:ring-[#FF694F]/10 disabled:bg-gray-50"
                           />
                         </div>
+                      </div>
+
+                      <div>
+                        <label
+                          htmlFor="edit-address"
+                          className="mb-2 block text-xs font-bold text-gray-700"
+                        >
+                          Business address
+                        </label>
+
+                        <textarea
+                          id="edit-address"
+                          value={
+                            businessForm.address
+                          }
+                          onChange={(
+                            event
+                          ) =>
+                            updateBusinessField(
+                              "address",
+                              event.target
+                                .value
+                            )
+                          }
+                          rows={3}
+                          required
+                          disabled={
+                            savingBusiness
+                          }
+                          placeholder="Shop/building, street/road/close, city"
+                          className="w-full resize-none rounded-xl border border-[#D9DEE5] bg-white px-4 py-3 text-sm text-[#17202A] outline-none transition focus:border-[#FF694F] focus:ring-4 focus:ring-[#FF694F]/10 disabled:bg-gray-50"
+                        />
+
+                        <p className="mt-1.5 text-[10px] leading-5 text-gray-400">
+                          Enter the physical business address. ReMarket can use this address to determine the map location when GPS is not captured.
+                        </p>
+                      </div>
+
+                      <div className="rounded-2xl border border-[#E8E4DE] bg-[#FCFAF6] p-4">
+                        <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+                          <div className="flex items-start gap-3">
+                            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-[#FFF0EB] text-[#FF5A36]">
+                              <MapPin className="h-5 w-5" />
+                            </div>
+
+                            <div>
+                              <p className="text-xs font-bold text-[#17202A]">
+                                Exact business location
+                              </p>
+
+                              <p className="mt-1 text-[10px] leading-5 text-gray-500">
+                                Use this only when the device is physically at the business. You do not need to type latitude or longitude.
+                              </p>
+
+                              {locationStatus && (
+                                <p className="mt-2 text-[10px] font-semibold text-[#137A59]">
+                                  {
+                                    locationStatus
+                                  }
+                                </p>
+                              )}
+
+                              {locationError && (
+                                <p className="mt-2 text-[10px] font-medium text-red-600">
+                                  {
+                                    locationError
+                                  }
+                                </p>
+                              )}
+                            </div>
+                          </div>
+
+                          <button
+                            type="button"
+                            onClick={
+                              captureCurrentLocation
+                            }
+                            disabled={
+                              capturingLocation ||
+                              savingBusiness
+                            }
+                            className="inline-flex shrink-0 items-center justify-center gap-2 rounded-xl bg-[#FF5A36] px-4 py-2.5 text-[11px] font-bold text-white transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60"
+                          >
+                            {capturingLocation ? (
+                              <LoaderCircle className="h-4 w-4 animate-spin" />
+                            ) : (
+                              <MapPin className="h-4 w-4" />
+                            )}
+
+                            {capturingLocation
+                              ? "Capturing..."
+                              : businessLatitude &&
+                                  businessLongitude
+                                ? "Recapture location"
+                                : "Use current location"}
+                          </button>
+                        </div>
+
+                        {businessLatitude &&
+                          businessLongitude && (
+                            <div className="mt-3 rounded-xl border border-[#BDE8D8] bg-[#EFFBF6] px-3 py-2.5">
+                              <p className="text-[10px] font-semibold text-[#137A59]">
+                                Exact business coordinates are ready. ReMarket stores them internally for location and map use.
+                              </p>
+                            </div>
+                          )}
                       </div>
 
                       <div className="grid gap-5 sm:grid-cols-3">
@@ -3133,7 +3701,7 @@ export default function SellerDashboard() {
                           disabled={
                             savingBusiness
                           }
-                          className="h-12 w-full rounded-xl border border-[#D9DEE5] bg-white px-4 text-sm text-[#17202A] outline-none transition focus:border-[#FF694F] focus:ring-4 focus:ring-[#FF694F]/10 disabled:bg-gray-50"
+                          className="h-12 w-full rounded-xl border border-[#D9DEE5] bg-white px-4 text-sm text-[#17202A] outline-none transition focus:border-[#FF694F] focus:ring-4 focus:ring-[#FF5A36]/10 disabled:bg-gray-50"
                         />
                       </div>
                     </div>
@@ -3234,6 +3802,112 @@ export default function SellerDashboard() {
                       </div>
                     </div>
 
+                    <div>
+                      <label
+                        htmlFor="create-address"
+                        className="mb-2 block text-xs font-bold text-gray-700"
+                      >
+                        Business address
+                      </label>
+
+                      <textarea
+                        id="create-address"
+                        value={
+                          businessForm.address
+                        }
+                        onChange={(
+                          event
+                        ) =>
+                          updateBusinessField(
+                            "address",
+                            event.target
+                              .value
+                          )
+                        }
+                        rows={3}
+                        required
+                        disabled={
+                          savingBusiness
+                        }
+                        placeholder="Shop/building, street/road/close, city"
+                        className="w-full resize-none rounded-xl border border-[#D9DEE5] bg-white px-4 py-3 text-sm text-[#17202A] outline-none transition focus:border-[#FF694F] focus:ring-4 focus:ring-[#FF694F]/10 disabled:bg-gray-50"
+                      />
+
+                      <p className="mt-1.5 text-[10px] leading-5 text-gray-400">
+                        Enter the physical business address. ReMarket can determine the map location from this address when GPS is not captured.
+                      </p>
+                    </div>
+
+                    <div className="rounded-2xl border border-[#E8E4DE] bg-[#FCFAF6] p-4">
+                      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+                        <div className="flex items-start gap-3">
+                          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-[#FFF0EB] text-[#FF5A36]">
+                            <MapPin className="h-5 w-5" />
+                          </div>
+
+                          <div>
+                            <p className="text-xs font-bold text-[#17202A]">
+                              Exact business location
+                            </p>
+
+                            <p className="mt-1 text-[10px] leading-5 text-gray-500">
+                              Optional. Use this when the device is physically at the business. ReMarket stores the coordinates automatically; you do not type latitude or longitude.
+                            </p>
+
+                            {locationStatus && (
+                              <p className="mt-2 text-[10px] font-semibold text-[#137A59]">
+                                {
+                                  locationStatus
+                                }
+                              </p>
+                            )}
+
+                            {locationError && (
+                              <p className="mt-2 text-[10px] font-medium text-red-600">
+                                {
+                                  locationError
+                                }
+                              </p>
+                            )}
+                          </div>
+                        </div>
+
+                        <button
+                          type="button"
+                          onClick={
+                            captureCurrentLocation
+                          }
+                          disabled={
+                            capturingLocation ||
+                            savingBusiness
+                          }
+                          className="inline-flex shrink-0 items-center justify-center gap-2 rounded-xl bg-[#FF5A36] px-4 py-2.5 text-[11px] font-bold text-white transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60"
+                        >
+                          {capturingLocation ? (
+                            <LoaderCircle className="h-4 w-4 animate-spin" />
+                          ) : (
+                            <MapPin className="h-4 w-4" />
+                          )}
+
+                          {capturingLocation
+                            ? "Capturing..."
+                            : businessLatitude &&
+                                businessLongitude
+                              ? "Recapture location"
+                              : "Use current location"}
+                        </button>
+                      </div>
+
+                      {businessLatitude &&
+                        businessLongitude && (
+                          <div className="mt-3 rounded-xl border border-[#BDE8D8] bg-[#EFFBF6] px-3 py-2.5">
+                            <p className="text-[10px] font-semibold text-[#137A59]">
+                              Exact business location is ready to save.
+                            </p>
+                          </div>
+                        )}
+                    </div>
+
                     <div className="grid gap-5 sm:grid-cols-3">
                       <div>
                         <label
@@ -3312,7 +3986,7 @@ export default function SellerDashboard() {
                           disabled={
                             savingBusiness
                           }
-                          className="h-12 w-full rounded-xl border border-[#D9DEE5] bg-white px-4 text-sm text-[#17202A] outline-none transition focus:border-[#FF694F] focus:ring-4 focus:ring-[#FF694F]/10 disabled:bg-gray-50"
+                          className="h-12 w-full rounded-xl border border-[#D9DEE5] bg-white px-4 text-sm text-[#17202A] outline-none transition focus:border-[#FF694F] focus:ring-4 focus:ring-[#FF5A36]/10 disabled:bg-gray-50"
                         >
                           <option value="ASK_SELLER">
                             Ask seller
@@ -3391,7 +4065,7 @@ export default function SellerDashboard() {
                             disabled={
                               savingBusiness
                             }
-                            className="h-12 w-full rounded-xl border border-[#D9DEE5] bg-white px-3 text-sm text-[#17202A] outline-none transition focus:border-[#FF694F] focus:ring-4 focus:ring-[#FF694F]/10 disabled:bg-gray-50"
+                            className="h-12 w-full rounded-xl border border-[#D9DEE5] bg-white px-3 text-sm text-[#17202A] outline-none transition focus:border-[#FF694F] focus:ring-4 focus:ring-[#FF5A36]/10 disabled:bg-gray-50"
                           />
                         </div>
                       </div>

@@ -147,6 +147,46 @@ function getProductImage(
   );
 }
 
+function getDistanceLabel(
+  distanceKm: number | null
+): string | null {
+  if (
+    typeof distanceKm !== "number" ||
+    !Number.isFinite(distanceKm) ||
+    distanceKm < 0
+  ) {
+    return null;
+  }
+
+  /*
+   * Haversine gives straight-line distance.
+   *
+   * Keep the presentation neutral and do not
+   * describe this value as driving distance.
+   */
+
+  if (distanceKm < 1) {
+    const distanceMetres =
+      Math.round(
+        distanceKm * 1000
+      );
+
+    if (distanceMetres < 1) {
+      return "Less than 1 m away";
+    }
+
+    return `${distanceMetres.toLocaleString()} m away`;
+  }
+
+  if (distanceKm < 10) {
+    return `${distanceKm.toFixed(1)} km away`;
+  }
+
+  return `${Math.round(
+    distanceKm
+  ).toLocaleString()} km away`;
+}
+
 /*
  * -----------------------------------------
  * SAVED BUSINESSES EXTERNAL STORE
@@ -362,6 +402,10 @@ export default function NearMePage() {
    */
 
   function useCurrentLocation() {
+    if (loading) {
+      return;
+    }
+
     if (!navigator.geolocation) {
       setError(
         "Location services are not available in this browser."
@@ -729,6 +773,7 @@ export default function NearMePage() {
                       useCurrentLocation
                     }
                     disabled={
+                      loading ||
                       locating
                     }
                     className="mt-3 inline-flex items-center gap-2 rounded-xl bg-white/15 px-3.5 py-2.5 text-[11px] font-bold text-white backdrop-blur transition hover:bg-white/20 disabled:opacity-60"
@@ -932,6 +977,11 @@ export default function NearMePage() {
                                   )
                                 : null;
 
+                            const distanceLabel =
+                              getDistanceLabel(
+                                business.distanceKm
+                              );
+
                             return (
                               <article
                                 key={
@@ -959,13 +1009,12 @@ export default function NearMePage() {
                                     </div>
                                   )}
 
-                                  {business.distanceKm !==
+                                  {distanceLabel !==
                                     null && (
                                     <span className="absolute left-3 top-3 rounded-full bg-white/90 px-2.5 py-1 text-[9px] font-bold text-[#9F2D18] shadow-sm">
                                       {
-                                        business.distanceKm
-                                      }{" "}
-                                      km
+                                        distanceLabel
+                                      }
                                     </span>
                                   )}
 

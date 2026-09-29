@@ -12,8 +12,11 @@ import {
 
 import { prisma } from "@/lib/prisma";
 import { requireAdmin } from "@/lib/admin-auth";
+import { geocodeBusinessLocation } from "@/lib/geocoding";
 
-function cleanString(value: unknown): string {
+function cleanString(
+  value: unknown
+): string {
   return typeof value === "string"
     ? value.trim()
     : "";
@@ -22,7 +25,8 @@ function cleanString(value: unknown): string {
 function nullableString(
   value: unknown
 ): string | null {
-  const valueString = cleanString(value);
+  const valueString =
+    cleanString(value);
 
   return valueString || null;
 }
@@ -38,9 +42,14 @@ function parseOptionalInt(
     return null;
   }
 
-  const parsed = Number(value);
+  const parsed =
+    Number(value);
 
-  if (!Number.isInteger(parsed)) {
+  if (
+    !Number.isInteger(
+      parsed
+    )
+  ) {
     return undefined;
   }
 
@@ -58,9 +67,14 @@ function parseOptionalFloat(
     return null;
   }
 
-  const parsed = Number(value);
+  const parsed =
+    Number(value);
 
-  if (!Number.isFinite(parsed)) {
+  if (
+    !Number.isFinite(
+      parsed
+    )
+  ) {
     return undefined;
   }
 
@@ -112,26 +126,32 @@ function isSocialPlatform(
 function normalizeWhatsApp(
   value: string
 ): string {
-  const trimmed = value.trim();
+  const trimmed =
+    value.trim();
 
   if (!trimmed) {
     return "";
   }
 
-  const digits = trimmed.replace(
-    /\D/g,
-    ""
-  );
+  const digits =
+    trimmed.replace(
+      /\D/g,
+      ""
+    );
 
   if (!digits) {
     return "";
   }
 
-  if (digits.startsWith("234")) {
+  if (
+    digits.startsWith("234")
+  ) {
     return `+${digits}`;
   }
 
-  if (digits.startsWith("0")) {
+  if (
+    digits.startsWith("0")
+  ) {
     return `+234${digits.slice(1)}`;
   }
 
@@ -150,7 +170,8 @@ function parseSocialLinks(
     return [];
   }
 
-  const result: ParsedSocialLink[] = [];
+  const result:
+    ParsedSocialLink[] = [];
 
   const seen =
     new Set<SocialPlatform>();
@@ -158,14 +179,18 @@ function parseSocialLinks(
   for (const item of value) {
     if (
       !item ||
-      typeof item !== "object" ||
+      typeof item !==
+        "object" ||
       Array.isArray(item)
     ) {
       continue;
     }
 
     const record =
-      item as Record<string, unknown>;
+      item as Record<
+        string,
+        unknown
+      >;
 
     if (
       !isSocialPlatform(
@@ -481,7 +506,8 @@ export async function POST(
 
     if (
       !body ||
-      typeof body !== "object" ||
+      typeof body !==
+        "object" ||
       Array.isArray(body)
     ) {
       return NextResponse.json(
@@ -545,10 +571,41 @@ export async function POST(
       );
     }
 
+    if (
+      area.length >
+      200
+    ) {
+      return NextResponse.json(
+        {
+          error:
+            "Business area is too long.",
+        },
+        {
+          status: 400,
+        }
+      );
+    }
+
     const address =
       nullableString(
         payload.address
       );
+
+    if (
+      address !== null &&
+      address.length >
+        2000
+    ) {
+      return NextResponse.json(
+        {
+          error:
+            "Business address is too long.",
+        },
+        {
+          status: 400,
+        }
+      );
+    }
 
     const lat =
       parseOptionalFloat(
@@ -557,9 +614,13 @@ export async function POST(
 
     if (
       lat === undefined ||
-      (lat !== null &&
-        (lat < -90 ||
-          lat > 90))
+      (
+        lat !== null &&
+        (
+          lat < -90 ||
+          lat > 90
+        )
+      )
     ) {
       return NextResponse.json(
         {
@@ -580,9 +641,13 @@ export async function POST(
 
     if (
       long === undefined ||
-      (long !== null &&
-        (long < -180 ||
-          long > 180))
+      (
+        long !== null &&
+        (
+          long < -180 ||
+          long > 180
+        )
+      )
     ) {
       return NextResponse.json(
         {
@@ -619,6 +684,61 @@ export async function POST(
         }
       );
     }
+
+    /*
+     * ------------------------------------------------
+     * LOCATION RESOLUTION
+     * ------------------------------------------------
+     *
+     * GPS coordinates, when captured by the admin,
+     * are the strongest source and are used directly.
+     *
+     * When GPS was not captured, use the existing
+     * business address + area to resolve coordinates
+     * through the shared Nominatim geocoder.
+     *
+     * If geocoding cannot produce a sufficiently
+     * precise result, do not invent coordinates.
+     * The business can still be saved with its
+     * address and null coordinates.
+     */
+
+    let resolvedLat =
+      lat;
+
+    let resolvedLong =
+      long;
+
+    if (
+      resolvedLat === null &&
+      resolvedLong === null &&
+      address
+    ) {
+      try {
+        const geocoded =
+          await geocodeBusinessLocation(
+            {
+              address,
+              area,
+            }
+          );
+
+        resolvedLat =
+          geocoded.latitude;
+
+        resolvedLong =
+          geocoded.longitude;
+      } catch (error) {
+        console.warn(
+          "Business address could not be geocoded. Saving without precise coordinates:",
+          error
+        );
+      }
+    }
+
+    /*
+     * Price range.
+     */
 
     const priceMin =
       parseOptionalInt(
@@ -663,7 +783,8 @@ export async function POST(
     if (
       priceMin !== null &&
       priceMax !== null &&
-      priceMin > priceMax
+      priceMin >
+        priceMax
     ) {
       return NextResponse.json(
         {
@@ -671,7 +792,7 @@ export async function POST(
             "Minimum price cannot be greater than maximum price.",
         },
         {
-          status: 400
+          status: 400,
         }
       );
     }
@@ -713,7 +834,8 @@ export async function POST(
       );
 
     if (
-      categoryIds.length > 0
+      categoryIds.length >
+      0
     ) {
       const categories =
         await prisma.category.findMany(
@@ -723,6 +845,7 @@ export async function POST(
                 in: categoryIds,
               },
             },
+
             select: {
               id: true,
             },
@@ -754,24 +877,38 @@ export async function POST(
       await prisma.$transaction(
         async (tx) => {
           /*
-           * IMPORTANT:
+           * -----------------------------------------
+           * BUSINESS-SPECIFIC LOCATION
+           * -----------------------------------------
            *
-           * A Location belongs to one business's
-           * exact coordinates.
+           * Every newly created business receives
+           * its own Location record.
            *
-           * Do NOT reuse a Location by area.
-           *
-           * Multiple businesses can be in the same
-           * area and still have different coordinates.
+           * We NEVER search for or reuse a Location
+           * by area.
            */
+
           const location =
             await tx.location.create(
               {
                 data: {
                   area,
+
                   address,
-                  lat,
-                  long,
+
+                  lat:
+                    resolvedLat,
+
+                  long:
+                    resolvedLong,
+
+                  /*
+                   * Location verification is separate
+                   * from Business verification.
+                   *
+                   * A new location is unverified until
+                   * its physical position is confirmed.
+                   */
                   verification:
                     "UNVERIFIED",
                 },
@@ -783,13 +920,16 @@ export async function POST(
               {
                 data: {
                   name,
+
                   ownerName,
+
                   description,
 
                   locationId:
                     location.id,
 
                   priceMin,
+
                   priceMax,
 
                   availability,
@@ -825,6 +965,7 @@ export async function POST(
                       categoryId,
                     })
                   ),
+
                 skipDuplicates:
                   true,
               }
@@ -852,6 +993,7 @@ export async function POST(
                         link.handle,
                     })
                   ),
+
                 skipDuplicates:
                   true,
               }
@@ -864,7 +1006,9 @@ export async function POST(
 
     return NextResponse.json(
       {
-        success: true,
+        success:
+          true,
+
         business,
       },
       {
