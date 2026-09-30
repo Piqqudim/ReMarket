@@ -40,19 +40,22 @@ type SocialLinkInput = {
 };
 
 /*
- * Controlled Lagos area vocabulary.
+ * Controlled Lagos Region vocabulary.
  *
- * The list is grouped by LGA for easier selection.
- * The selected neighborhood/area value is stored
- * in the existing Location.area field.
+ * These are ReMarket-facing Region/locality values.
+ * They are grouped by LGA for easier administration
+ * and selection.
  *
- * This is intentionally kept in this page for now
- * so we do not introduce another location system.
+ * The selected Region continues to be stored in the
+ * existing Location.area field.
+ *
+ * We are intentionally not introducing a separate
+ * Region database model.
  */
-const LAGOS_AREA_GROUPS = [
+const LAGOS_REGION_GROUPS = [
   {
     lga: "Agege",
-    areas: [
+    regions: [
       "Agege",
       "Orile Agege",
       "Dopemu",
@@ -63,19 +66,18 @@ const LAGOS_AREA_GROUPS = [
   },
   {
     lga: "Ajeromi-Ifelodun",
-    areas: [
+    regions: [
       "Ajegunle",
       "Tolu",
       "Olodi",
       "Alaba Oro",
       "Awodi-Ora",
       "Layeni",
-      "Mosafejo",
     ],
   },
   {
     lga: "Alimosho",
-    areas: [
+    regions: [
       "Alimosho",
       "Egbeda",
       "Akowonjo",
@@ -96,7 +98,7 @@ const LAGOS_AREA_GROUPS = [
   },
   {
     lga: "Amuwo-Odofin",
-    areas: [
+    regions: [
       "Amuwo",
       "Festac",
       "Mile 2",
@@ -108,7 +110,7 @@ const LAGOS_AREA_GROUPS = [
   },
   {
     lga: "Apapa",
-    areas: [
+    regions: [
       "Apapa",
       "Apapa Wharf",
       "Iganmu",
@@ -119,7 +121,7 @@ const LAGOS_AREA_GROUPS = [
   },
   {
     lga: "Badagry",
-    areas: [
+    regions: [
       "Badagry",
       "Badagry West",
       "Olorunda",
@@ -128,7 +130,7 @@ const LAGOS_AREA_GROUPS = [
   },
   {
     lga: "Epe",
-    areas: [
+    regions: [
       "Epe",
       "Eredo",
       "Ikosi-Ejinrin",
@@ -136,7 +138,7 @@ const LAGOS_AREA_GROUPS = [
   },
   {
     lga: "Eti-Osa",
-    areas: [
+    regions: [
       "Ikoyi",
       "Obalende",
       "Victoria Island",
@@ -158,7 +160,7 @@ const LAGOS_AREA_GROUPS = [
   },
   {
     lga: "Ibeju-Lekki",
-    areas: [
+    regions: [
       "Ibeju-Lekki",
       "Abijo",
       "Awoyaya",
@@ -170,7 +172,7 @@ const LAGOS_AREA_GROUPS = [
   },
   {
     lga: "Ifako-Ijaiye",
-    areas: [
+    regions: [
       "Ifako",
       "Ijaiye",
       "Ojokoro",
@@ -180,23 +182,21 @@ const LAGOS_AREA_GROUPS = [
   },
   {
     lga: "Ikeja",
-    areas: [
+    regions: [
       "Ikeja",
       "Ikeja GRA",
       "Alausa",
-      "Allen Avenue",
       "Oregun",
       "Opebi",
       "Ogba",
       "Ojodu",
       "Onigbongbo",
       "Computer Village",
-      "Airport Road",
     ],
   },
   {
     lga: "Ikorodu",
-    areas: [
+    regions: [
       "Ikorodu",
       "Ikorodu North",
       "Ikorodu West",
@@ -211,7 +211,7 @@ const LAGOS_AREA_GROUPS = [
   },
   {
     lga: "Kosofe",
-    areas: [
+    regions: [
       "Kosofe",
       "Ketu",
       "Agboyi",
@@ -226,12 +226,11 @@ const LAGOS_AREA_GROUPS = [
   },
   {
     lga: "Lagos Island",
-    areas: [
+    regions: [
       "Lagos Island",
       "Idumota",
       "Balogun",
       "Marina",
-      "Broad Street",
       "Isale Eko",
       "Lafiaji",
       "Onikan",
@@ -241,7 +240,7 @@ const LAGOS_AREA_GROUPS = [
   },
   {
     lga: "Lagos Mainland",
-    areas: [
+    regions: [
       "Yaba",
       "Ebute Metta",
       "Akoka",
@@ -259,7 +258,7 @@ const LAGOS_AREA_GROUPS = [
   },
   {
     lga: "Mushin",
-    areas: [
+    regions: [
       "Mushin",
       "Papa Ajao",
       "Idi-Araba",
@@ -270,18 +269,19 @@ const LAGOS_AREA_GROUPS = [
   },
   {
     lga: "Ojo",
-    areas: [
+    regions: [
       "Ojo",
       "Iba",
       "Iyana-Iba",
       "Ajangbadi",
       "Oto-Awori",
       "Alaba",
+      "Mosafejo",
     ],
   },
   {
     lga: "Oshodi-Isolo",
-    areas: [
+    regions: [
       "Oshodi",
       "Isolo",
       "Ejigbo",
@@ -293,7 +293,7 @@ const LAGOS_AREA_GROUPS = [
   },
   {
     lga: "Shomolu",
-    areas: [
+    regions: [
       "Shomolu",
       "Bariga",
       "Pedro",
@@ -304,7 +304,7 @@ const LAGOS_AREA_GROUPS = [
   },
   {
     lga: "Surulere",
-    areas: [
+    regions: [
       "Surulere",
       "Ojuelegba",
       "Lawanson",
@@ -330,7 +330,12 @@ export default function NewBusinessPage() {
   const [description, setDescription] =
     useState("");
 
-  const [area, setArea] =
+  /*
+   * UI terminology is Region.
+   *
+   * The existing API/database field remains `area`.
+   */
+  const [region, setRegion] =
     useState("");
 
   const [houseNumber, setHouseNumber] =
@@ -466,7 +471,8 @@ export default function NewBusinessPage() {
 
         if (
           !data ||
-          typeof data !== "object" ||
+          typeof data !==
+            "object" ||
           Array.isArray(data)
         ) {
           throw new Error(
@@ -523,7 +529,8 @@ export default function NewBusinessPage() {
           );
 
         if (
-          mergedCategories.length > 0
+          mergedCategories.length >
+          0
         ) {
           setCategories(
             mergedCategories
@@ -753,7 +760,8 @@ export default function NewBusinessPage() {
             link,
             linkIndex
           ) =>
-            linkIndex === index
+            linkIndex ===
+            index
               ? {
                   ...link,
                   [field]:
@@ -774,7 +782,8 @@ export default function NewBusinessPage() {
             _,
             linkIndex
           ) =>
-            linkIndex !== index
+            linkIndex !==
+            index
         )
     );
   }
@@ -789,8 +798,8 @@ export default function NewBusinessPage() {
     const trimmedName =
       name.trim();
 
-    const trimmedArea =
-      area.trim();
+    const trimmedRegion =
+      region.trim();
 
     const trimmedHouseNumber =
       houseNumber.trim();
@@ -801,12 +810,24 @@ export default function NewBusinessPage() {
     const trimmedCity =
       city.trim();
 
+    /*
+     * Canonical ReMarket address format:
+     *
+     * house/shop/building number,
+     * street/road/close,
+     * region,
+     * city,
+     * country
+     *
+     * Example:
+     * Shop 12, Adewale Street, Ogba, Lagos, Nigeria
+     */
     const composedAddress =
       [
         trimmedHouseNumber,
         trimmedStreet,
+        trimmedRegion,
         trimmedCity,
-        trimmedArea,
         DEFAULT_COUNTRY,
       ]
         .filter(Boolean)
@@ -820,9 +841,9 @@ export default function NewBusinessPage() {
       return;
     }
 
-    if (!trimmedArea) {
+    if (!trimmedRegion) {
       setError(
-        "Business area is required."
+        "Business Region is required."
       );
 
       return;
@@ -852,7 +873,8 @@ export default function NewBusinessPage() {
      *
      * Otherwise send null coordinates and let
      * the Admin API resolve the business location
-     * from the address through Nominatim.
+     * from the address through the existing
+     * geocoding flow.
      */
     const parsedLat =
       lat.trim()
@@ -924,7 +946,8 @@ export default function NewBusinessPage() {
         : null;
 
     if (
-      parsedPriceMin !== null &&
+      parsedPriceMin !==
+        null &&
       (
         !Number.isInteger(
           parsedPriceMin
@@ -940,7 +963,8 @@ export default function NewBusinessPage() {
     }
 
     if (
-      parsedPriceMax !== null &&
+      parsedPriceMax !==
+        null &&
       (
         !Number.isInteger(
           parsedPriceMax
@@ -956,8 +980,10 @@ export default function NewBusinessPage() {
     }
 
     if (
-      parsedPriceMin !== null &&
-      parsedPriceMax !== null &&
+      parsedPriceMin !==
+        null &&
+      parsedPriceMax !==
+        null &&
       parsedPriceMin >
         parsedPriceMax
     ) {
@@ -969,8 +995,8 @@ export default function NewBusinessPage() {
     }
 
     /*
-     * Never submit synthetic category IDs from
-     * the fallback UI.
+     * Never submit synthetic category IDs
+     * from the fallback UI.
      */
     const categoryIds =
       usingCategoryFallback
@@ -1003,8 +1029,14 @@ export default function NewBusinessPage() {
                 description.trim() ||
                 null,
 
+              /*
+               * IMPORTANT:
+               *
+               * UI uses `region`.
+               * Existing API/database still use `area`.
+               */
               area:
-                trimmedArea,
+                trimmedRegion,
 
               /*
                * Store the structured address in
@@ -1185,9 +1217,7 @@ export default function NewBusinessPage() {
           </div>
 
           <form
-            onSubmit={
-              submit
-            }
+            onSubmit={submit}
             className="space-y-7 p-5 sm:p-7"
           >
             {error && (
@@ -1210,16 +1240,10 @@ export default function NewBusinessPage() {
                   </label>
 
                   <input
-                    value={
-                      name
-                    }
-                    onChange={(
-                      event
-                    ) =>
+                    value={name}
+                    onChange={(event) =>
                       setName(
-                        event
-                          .target
-                          .value
+                        event.target.value
                       )
                     }
                     placeholder="e.g. Mandy Treasures"
@@ -1233,16 +1257,10 @@ export default function NewBusinessPage() {
                   </label>
 
                   <input
-                    value={
-                      ownerName
-                    }
-                    onChange={(
-                      event
-                    ) =>
+                    value={ownerName}
+                    onChange={(event) =>
                       setOwnerName(
-                        event
-                          .target
-                          .value
+                        event.target.value
                       )
                     }
                     placeholder="Optional"
@@ -1256,22 +1274,14 @@ export default function NewBusinessPage() {
                   </label>
 
                   <textarea
-                    value={
-                      description
-                    }
-                    onChange={(
-                      event
-                    ) =>
+                    value={description}
+                    onChange={(event) =>
                       setDescription(
-                        event
-                          .target
-                          .value
+                        event.target.value
                       )
                     }
                     placeholder="What does this business sell or offer?"
-                    rows={
-                      4
-                    }
+                    rows={4}
                     className="mt-2 w-full resize-none rounded-xl border border-[#E8E4DE] bg-white px-3 py-3 text-xs outline-none focus:border-[#FF9B82] focus:ring-4 focus:ring-[#FF5A36]/10"
                   />
                 </div>
@@ -1313,7 +1323,7 @@ export default function NewBusinessPage() {
               </h2>
 
               <p className="mt-1 max-w-[760px] text-[11px] leading-5 text-gray-500">
-                Choose the business area from the standardized Lagos
+                Choose the business Region from the standardized Lagos
                 list and enter the physical address. ReMarket can use
                 the device location when available, or determine the
                 business coordinates from the address automatically.
@@ -1330,13 +1340,9 @@ export default function NewBusinessPage() {
                     value={
                       houseNumber
                     }
-                    onChange={(
-                      event
-                    ) =>
+                    onChange={(event) =>
                       setHouseNumber(
-                        event
-                          .target
-                          .value
+                        event.target.value
                       )
                     }
                     placeholder="e.g. Shop 12"
@@ -1354,16 +1360,10 @@ export default function NewBusinessPage() {
                   </label>
 
                   <input
-                    value={
-                      street
-                    }
-                    onChange={(
-                      event
-                    ) =>
+                    value={street}
+                    onChange={(event) =>
                       setStreet(
-                        event
-                          .target
-                          .value
+                        event.target.value
                       )
                     }
                     placeholder="e.g. Adewale Close"
@@ -1377,16 +1377,10 @@ export default function NewBusinessPage() {
                   </label>
 
                   <input
-                    value={
-                      city
-                    }
-                    onChange={(
-                      event
-                    ) =>
+                    value={city}
+                    onChange={(event) =>
                       setCity(
-                        event
-                          .target
-                          .value
+                        event.target.value
                       )
                     }
                     placeholder="e.g. Lagos or Epe"
@@ -1396,32 +1390,24 @@ export default function NewBusinessPage() {
 
                 <div>
                   <label className="text-xs font-semibold text-gray-700">
-                    Area / Region
+                    Region
                   </label>
 
                   <select
-                    value={
-                      area
-                    }
-                    onChange={(
-                      event
-                    ) =>
-                      setArea(
-                        event
-                          .target
-                          .value
+                    value={region}
+                    onChange={(event) =>
+                      setRegion(
+                        event.target.value
                       )
                     }
                     className="mt-2 h-11 w-full rounded-xl border border-[#E8E4DE] bg-white px-3 text-xs outline-none focus:border-[#FF9B82] focus:ring-4 focus:ring-[#FF5A36]/10"
                   >
                     <option value="">
-                      Select an area
+                      Select a region
                     </option>
 
-                    {LAGOS_AREA_GROUPS.map(
-                      (
-                        group
-                      ) => (
+                    {LAGOS_REGION_GROUPS.map(
+                      (group) => (
                         <optgroup
                           key={
                             group.lga
@@ -1430,14 +1416,12 @@ export default function NewBusinessPage() {
                             group.lga
                           }
                         >
-                          {group.areas.map(
+                          {group.regions.map(
                             (
                               item
                             ) => (
                               <option
-                                key={
-                                  `${group.lga}-${item}`
-                                }
+                                key={`${group.lga}-${item}`}
                                 value={
                                   item
                                 }
@@ -1477,7 +1461,7 @@ export default function NewBusinessPage() {
                 houseNumber ||
                 street ||
                 city ||
-                area
+                region
               ) && (
                 <div className="mt-4 rounded-xl border border-[#E8E4DE] bg-[#FCFAF6] px-4 py-3">
                   <p className="text-[10px] font-semibold uppercase tracking-wide text-gray-400">
@@ -1488,8 +1472,8 @@ export default function NewBusinessPage() {
                     {[
                       houseNumber.trim(),
                       street.trim(),
+                      region.trim(),
                       city.trim(),
-                      area.trim(),
                       DEFAULT_COUNTRY,
                     ]
                       .filter(Boolean)
@@ -1680,9 +1664,7 @@ export default function NewBusinessPage() {
                       event
                     ) =>
                       setPhone(
-                        event
-                          .target
-                          .value
+                        event.target.value
                       )
                     }
                     placeholder="Optional"
@@ -1703,9 +1685,7 @@ export default function NewBusinessPage() {
                       event
                     ) =>
                       setPriceMin(
-                        event
-                          .target
-                          .value
+                        event.target.value
                       )
                     }
                     inputMode="numeric"
@@ -1727,9 +1707,7 @@ export default function NewBusinessPage() {
                       event
                     ) =>
                       setPriceMax(
-                        event
-                          .target
-                          .value
+                        event.target.value
                       )
                     }
                     inputMode="numeric"

@@ -281,22 +281,28 @@ function hasValidCoordinates(
  * GOOGLE MAPS DIRECTIONS
  * -----------------------------------------
  *
- * Resolution order:
+ * Destination resolution order:
  *
  * 1. Valid ReMarket business coordinates
- * 2. Business name + address + area
+ * 2. Existing ReMarket business address
  *
- * The origin is intentionally omitted.
+ * The business name is NEVER added to the
+ * Google Maps destination.
  *
- * Google Maps documents that an omitted origin
- * defaults to the most relevant starting
- * location, such as the user's device location
+ * The address is also NOT rebuilt here.
+ * It is passed exactly as the canonical
+ * ReMarket Location.address value.
+ *
+ * Expected address format:
+ *
+ * Shop/House Number, Street, Area, City, Nigeria
+ *
+ * Origin is intentionally omitted so Google
+ * Maps can use the user's current location
  * when available.
  */
 function buildDirectionsUrl(
-  businessName: string,
   address: string | null | undefined,
-  area: string,
   latitude?: number | null,
   longitude?: number | null
 ): string {
@@ -309,32 +315,29 @@ function buildDirectionsUrl(
     )
   ) {
     /*
-     * ReMarket coordinates are the most
-     * precise destination available to this
-     * page.
-     *
-     * The coordinates are kept together as
-     * one latitude/longitude destination.
+     * Coordinates are the preferred destination
+     * because they represent the exact ReMarket
+     * business location.
      */
     destination = `${latitude},${longitude}`;
-  } else {
+  } else if (
+    typeof address ===
+      "string" &&
+    address.trim()
+  ) {
     /*
-     * Do not invent coordinates.
+     * Text fallback.
      *
-     * Fall back to the best available
-     * business/location text.
+     * Do NOT add:
+     * - business name
+     * - area again
+     * - country again
+     *
+     * The Location.address value is already
+     * expected to contain the complete address.
      */
-    destination = [
-      businessName.trim(),
-      typeof address ===
-      "string"
-        ? address.trim()
-        : "",
-      area.trim(),
-      "Nigeria",
-    ]
-      .filter(Boolean)
-      .join(", ");
+    destination =
+      address.trim();
   }
 
   if (!destination) {
@@ -354,13 +357,6 @@ function buildDirectionsUrl(
     destination
   );
 
-  /*
-   * Keep origin omitted.
-   *
-   * Google Maps uses the current device
-   * location as the starting point when
-   * available.
-   */
   params.set(
     "travelmode",
     "driving"
@@ -379,9 +375,7 @@ function buildContactUrl(
   handle: string,
   latitude?: number | null,
   longitude?: number | null,
-  businessName?: string,
-  address?: string | null,
-  area?: string
+  address?: string | null
 ): string {
   const clean = handle
     .trim()
@@ -462,9 +456,7 @@ function buildContactUrl(
 
     case "DIRECTIONS": {
       return buildDirectionsUrl(
-        businessName ?? "",
-        address ?? null,
-        area ?? "",
+        address,
         latitude,
         longitude
       );
@@ -1098,10 +1090,7 @@ function SellerPageContent({
     }
 
     return buildDirectionsUrl(
-      seller.name,
       seller.location?.address,
-      seller.location?.area ??
-        "",
       seller.location?.lat,
       seller.location?.long
     );
@@ -1885,14 +1874,9 @@ function SellerPageContent({
                                     seller
                                       .location
                                       ?.long,
-                                    seller.name,
                                     seller
                                       .location
-                                      ?.address,
-                                    seller
-                                      .location
-                                      ?.area ??
-                                      ""
+                                      ?.address
                                   );
 
                                 const isPhone =
