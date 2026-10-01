@@ -818,7 +818,19 @@ export async function POST(
         ? payload.verification
         : VerificationStatus.UNVERIFIED;
 
-    const phone =
+    /*
+     * ------------------------------------------------
+     * PHONE / SOCIAL LINKS
+     * ------------------------------------------------
+     *
+     * The PHONE social link is the canonical contact
+     * value when it is supplied.
+     *
+     * The legacy Business.phone field is kept in sync
+     * for compatibility with existing consumers.
+     */
+
+    const legacyPhone =
       nullableString(
         payload.phone
       );
@@ -872,6 +884,34 @@ export async function POST(
       parseSocialLinks(
         payload.socialLinks
       );
+
+    const phoneFromSocial =
+      socialLinks.find(
+        (link) =>
+          link.platform ===
+          SocialPlatform.PHONE
+      )?.handle ??
+      null;
+
+    const phone =
+      phoneFromSocial ??
+      legacyPhone;
+
+    if (
+      phone &&
+      !socialLinks.some(
+        (link) =>
+          link.platform ===
+          SocialPlatform.PHONE
+      )
+    ) {
+      socialLinks.push({
+        platform:
+          SocialPlatform.PHONE,
+        handle:
+          phone,
+      });
+    }
 
     const business =
       await prisma.$transaction(
@@ -1000,14 +1040,63 @@ export async function POST(
             );
           }
 
-          return created;
+          return tx.business.findUniqueOrThrow(
+            {
+              where: {
+                id:
+                  created.id,
+              },
+
+              include: {
+                location: true,
+
+                categories: {
+                  include: {
+                    category:
+                      true,
+                  },
+                },
+
+                products: {
+                  where: {
+                    deletedAt:
+                      null,
+                  },
+
+                  orderBy: {
+                    updatedAt:
+                      "desc",
+                  },
+
+                  include: {
+                    images: {
+                      orderBy: {
+                        sortOrder:
+                          "asc",
+                      },
+                    },
+
+                    category:
+                      true,
+                  },
+                },
+
+                socialLinks: {
+                  orderBy: {
+                    platform:
+                      "asc",
+                  },
+                },
+              },
+            }
+          );
         }
       );
 
     return NextResponse.json(
       {
-        success:
-          true,
+        message:
+          "Business created successfully.",
 
         business,
       },

@@ -1,7 +1,12 @@
 "use client";
 
 import Link from "next/link";
-import { useState, type ChangeEvent } from "react";
+import {
+  useEffect,
+  useState,
+  type ChangeEvent,
+  type FormEvent,
+} from "react";
 import {
   Home,
   ShoppingBag,
@@ -24,14 +29,10 @@ const NAV_ITEMS = [
   { label: "Saved", href: "/saved", icon: Heart },
 ];
 
-const CATEGORIES = [
-  "Fashion",
-  "Electronics",
-  "Food",
-  "Beauty",
-  "Textiles",
-  "Services",
-];
+type Category = {
+  id: string;
+  name: string;
+};
 
 type RequestMatch = {
   id: string;
@@ -61,11 +62,96 @@ export default function RequestPage() {
   const [buyerContact, setBuyerContact] = useState("");
   const [imageUrl, setImageUrl] = useState("");
 
+  const [categories, setCategories] = useState<Category[]>([]);
+  const [loadingCategories, setLoadingCategories] = useState(true);
+  const [categoryError, setCategoryError] = useState("");
+
   const [uploading, setUploading] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [createdRequest, setCreatedRequest] =
     useState<CreatedRequest | null>(null);
+
+  /*
+   * ----------------------------------------------------
+   * LOAD ACTIVE BACKEND CATEGORIES
+   * ----------------------------------------------------
+   *
+   * The Request page must use the real Category table.
+   *
+   * This allows categories created through Admin to
+   * automatically appear here without hardcoding them.
+   */
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadCategories() {
+      setLoadingCategories(true);
+      setCategoryError("");
+
+      try {
+        const response = await fetch("/api/categories", {
+          cache: "no-store",
+        });
+
+        const data = await response.json();
+
+        if (!response.ok) {
+          throw new Error(
+            data.error || "Unable to load categories"
+          );
+        }
+
+        if (!Array.isArray(data.categories)) {
+          throw new Error(
+            "Categories response is invalid"
+          );
+        }
+
+        const activeCategories = data.categories
+          .filter(
+            (item: unknown): item is Category =>
+              typeof item === "object" &&
+              item !== null &&
+              "id" in item &&
+              "name" in item &&
+              typeof item.id === "string" &&
+              typeof item.name === "string"
+          )
+          .map((item: Category) => ({
+            id: item.id,
+            name: item.name.trim(),
+          }))
+          .filter((item: Category) => item.name.length > 0);
+
+        if (!cancelled) {
+          setCategories(activeCategories);
+        }
+      } catch (err) {
+        console.error(
+          "Load request categories error:",
+          err
+        );
+
+        if (!cancelled) {
+          setCategories([]);
+          setCategoryError(
+            "We couldn't load the categories right now."
+          );
+        }
+      } finally {
+        if (!cancelled) {
+          setLoadingCategories(false);
+        }
+      }
+    }
+
+    void loadCategories();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   async function handleImageUpload(
     event: ChangeEvent<HTMLInputElement>
@@ -91,7 +177,9 @@ export default function RequestPage() {
       const data = await response.json();
 
       if (!response.ok) {
-        throw new Error(data.error || "Unable to upload image");
+        throw new Error(
+          data.error || "Unable to upload image"
+        );
       }
 
       setImageUrl(data.url);
@@ -107,7 +195,7 @@ export default function RequestPage() {
   }
 
   async function handleSubmit(
-    event: React.SubmitEvent<HTMLFormElement>
+    event: FormEvent<HTMLFormElement>
   ) {
     event.preventDefault();
 
@@ -119,7 +207,9 @@ export default function RequestPage() {
     }
 
     if (!buyerContact.trim()) {
-      setError("Add your WhatsApp number or phone number.");
+      setError(
+        "Add your WhatsApp number or phone number."
+      );
       return;
     }
 
@@ -139,7 +229,8 @@ export default function RequestPage() {
 
     if (
       budgetNumber !== undefined &&
-      (!Number.isFinite(budgetNumber) || budgetNumber < 0)
+      (!Number.isFinite(budgetNumber) ||
+        budgetNumber < 0)
     ) {
       setError("Enter a valid budget.");
       return;
@@ -157,9 +248,11 @@ export default function RequestPage() {
           query: query.trim(),
           category: category || undefined,
           budget: budgetNumber,
-          locationArea: locationArea.trim() || undefined,
+          locationArea:
+            locationArea.trim() || undefined,
           quantity: quantityNumber,
-          description: description.trim() || undefined,
+          description:
+            description.trim() || undefined,
           imageUrl: imageUrl || undefined,
           buyerContact: buyerContact.trim(),
         }),
@@ -181,9 +274,14 @@ export default function RequestPage() {
 
       setCreatedRequest({
         requestCode: data.request.requestCode,
-        query: data.request.query ?? query.trim(),
-        category: data.request.category ?? null,
-        matches: Array.isArray(data.request.matches)
+        query:
+          data.request.query ??
+          query.trim(),
+        category:
+          data.request.category ?? null,
+        matches: Array.isArray(
+          data.request.matches
+        )
           ? data.request.matches
           : [],
       });
@@ -271,7 +369,8 @@ export default function RequestPage() {
             <div className="space-y-1">
               {NAV_ITEMS.map((item) => {
                 const Icon = item.icon;
-                const active = item.label === "Requests";
+                const active =
+                  item.label === "Requests";
 
                 return (
                   <Link
@@ -325,9 +424,9 @@ export default function RequestPage() {
                     </h1>
 
                     <p className="mt-2 max-w-xl text-sm leading-6 text-[#7C746C]">
-                      Cannot find what you need? Tell us what you
-                      are looking for and we&apos;ll help connect
-                      you with nearby sellers.
+                      Cannot find what you need? Tell us what
+                      you are looking for and we&apos;ll help
+                      connect you with nearby sellers.
                     </p>
                   </div>
                 </div>
@@ -376,18 +475,30 @@ export default function RequestPage() {
                         onChange={(e) =>
                           setCategory(e.target.value)
                         }
-                        className="w-full rounded-xl border border-[#E8E4DE] bg-[#FCFAF6] px-4 py-3 text-sm outline-none focus:border-[#FF5A36] focus:bg-white"
+                        disabled={loadingCategories}
+                        className="w-full rounded-xl border border-[#E8E4DE] bg-[#FCFAF6] px-4 py-3 text-sm outline-none disabled:cursor-not-allowed disabled:opacity-70 focus:border-[#FF5A36] focus:bg-white"
                       >
                         <option value="">
-                          Choose a category
+                          {loadingCategories
+                            ? "Loading categories..."
+                            : "Choose a category"}
                         </option>
 
-                        {CATEGORIES.map((item) => (
-                          <option key={item} value={item}>
-                            {item}
+                        {categories.map((item) => (
+                          <option
+                            key={item.id}
+                            value={item.name}
+                          >
+                            {item.name}
                           </option>
                         ))}
                       </select>
+
+                      {categoryError && (
+                        <p className="mt-2 text-xs text-[#9F2D18]">
+                          {categoryError}
+                        </p>
+                      )}
                     </div>
 
                     <div className="grid gap-4 sm:grid-cols-2">
@@ -580,7 +691,8 @@ export default function RequestPage() {
           <div className="mx-auto flex max-w-md items-center justify-around">
             {NAV_ITEMS.map((item) => {
               const Icon = item.icon;
-              const active = item.label === "Requests";
+              const active =
+                item.label === "Requests";
 
               return (
                 <Link

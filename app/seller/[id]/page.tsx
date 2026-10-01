@@ -104,6 +104,7 @@ type SellerLocation = {
   address?: string | null;
   lat?: number | null;
   long?: number | null;
+  verification?: Verification;
 } | null;
 
 type Seller = {
@@ -297,14 +298,17 @@ function hasValidCoordinates(
  *
  * Shop/House Number, Street, Area, City, Nigeria
  *
- * Origin is intentionally omitted so Google
- * Maps can use the user's current location
- * when available.
+ * Origin is supplied when the buyer's current
+ * browser location is available. A destination-only
+ * fallback remains available when location access
+ * is denied or unavailable.
  */
 function buildDirectionsUrl(
   address: string | null | undefined,
   latitude?: number | null,
-  longitude?: number | null
+  longitude?: number | null,
+  originLatitude?: number | null,
+  originLongitude?: number | null
 ): string {
   let destination = "";
 
@@ -356,6 +360,18 @@ function buildDirectionsUrl(
     "destination",
     destination
   );
+
+  if (
+    hasValidCoordinates(
+      originLatitude,
+      originLongitude
+    )
+  ) {
+    params.set(
+      "origin",
+      `${originLatitude},${originLongitude}`
+    );
+  }
 
   params.set(
     "travelmode",
@@ -566,6 +582,11 @@ function SellerPageContent({
     error,
     setError,
   ] = useState("");
+
+  const [
+    directionsLoading,
+    setDirectionsLoading,
+  ] = useState(false);
 
   const getSavedSnapshot =
     useCallback(
@@ -805,7 +826,7 @@ function SellerPageContent({
                 )
             : [];
 
-        const location =
+        const location: SellerLocation =
           typeof rawLocation ===
               "object" &&
           rawLocation !== null
@@ -845,6 +866,14 @@ function SellerPageContent({
                     "number"
                     ? rawLocation.long
                     : null,
+
+                verification:
+                  "verification" in
+                    rawLocation &&
+                  rawLocation.verification ===
+                    "VERIFIED"
+                    ? "VERIFIED"
+                    : "UNVERIFIED",
               }
             : null;
 
@@ -1093,6 +1122,86 @@ function SellerPageContent({
       seller.location?.address,
       seller.location?.lat,
       seller.location?.long
+    );
+  }
+
+  function handleDirectionsClick(
+    event: MouseEvent<HTMLButtonElement>
+  ) {
+    event.preventDefault();
+
+    if (!seller) {
+      return;
+    }
+
+    const fallbackUrl =
+      getDirectionsUrl();
+
+    if (fallbackUrl === "#") {
+      return;
+    }
+
+    handleContactClick("DIRECTIONS");
+    setDirectionsLoading(true);
+
+    const navigationWindow =
+      window.open(
+        fallbackUrl,
+        "_blank"
+      );
+
+    if (!navigator.geolocation) {
+      setDirectionsLoading(false);
+
+      if (!navigationWindow) {
+        window.location.assign(
+          fallbackUrl
+        );
+      }
+
+      return;
+    }
+
+    navigator.geolocation.getCurrentPosition(
+      (position) => {
+        const exactUrl =
+          buildDirectionsUrl(
+            seller.location?.address,
+            seller.location?.lat,
+            seller.location?.long,
+            position.coords.latitude,
+            position.coords.longitude
+          );
+
+        if (
+          navigationWindow &&
+          !navigationWindow.closed
+        ) {
+          navigationWindow.location.href =
+            exactUrl;
+        }
+
+        setDirectionsLoading(false);
+      },
+      () => {
+        /*
+         * Location access can be denied or
+         * unavailable. The already-opened map keeps
+         * the existing destination-only fallback.
+         */
+        setDirectionsLoading(false);
+
+        if (!navigationWindow) {
+          window.location.assign(
+            fallbackUrl
+          );
+        }
+      },
+      {
+        enableHighAccuracy: true,
+        timeout: 10000,
+        maximumAge: 60000,
+      }
     );
   }
 
@@ -1644,25 +1753,54 @@ function SellerPageContent({
                         </div>
                       )}
 
+                      {seller.location && (
+                        <div className="mt-2 inline-flex items-center gap-2 rounded-xl bg-[#FCFAF6] px-3 py-2 text-[11px] font-semibold">
+                          <CheckCircle2
+                            size={14}
+                            className={
+                              seller.location.verification ===
+                              "VERIFIED"
+                                ? "text-[#237A48]"
+                                : "text-[#9F2D18]"
+                            }
+                          />
+
+                          <span
+                            className={
+                              seller.location.verification ===
+                              "VERIFIED"
+                                ? "text-[#237A48]"
+                                : "text-[#9F2D18]"
+                            }
+                          >
+                            {seller.location.verification ===
+                            "VERIFIED"
+                              ? "Location verified"
+                              : "Location not yet verified"}
+                          </span>
+                        </div>
+                      )}
+
                       {getDirectionsUrl() !==
                         "#" && (
-                        <a
-                          href={getDirectionsUrl()}
-                          target="_blank"
-                          rel="noreferrer"
-                          onClick={() =>
-                            handleContactClick(
-                              "DIRECTIONS"
-                            )
+                        <button
+                          type="button"
+                          onClick={
+                            handleDirectionsClick
                           }
-                          className="mt-3 inline-flex items-center gap-2 rounded-xl bg-[#FFF0E9] px-3 py-2 text-[11px] font-bold text-[#9F2D18] transition hover:bg-[#FFE4DA]"
+                          disabled={
+                            directionsLoading
+                          }
+                          className="mt-3 inline-flex items-center gap-2 rounded-xl bg-[#FFF0E9] px-3 py-2 text-[11px] font-bold text-[#9F2D18] transition hover:bg-[#FFE4DA] disabled:cursor-wait disabled:opacity-70"
                         >
                           <MapPin className="h-4 w-4" />
 
                           <span>
-                            Directions
+                            {directionsLoading
+                              ? "Opening..."
+                              : "Directions"}
                           </span>
-                        </a>
+                        </button>
                       )}
 
                       {seller.description && (
@@ -1864,6 +2002,41 @@ function SellerPageContent({
                               (
                                 link
                               ) => {
+                                if (
+                                  link.platform ===
+                                  "DIRECTIONS"
+                                ) {
+                                  return (
+                                    <button
+                                      key={
+                                        link.id
+                                      }
+                                      type="button"
+                                      onClick={
+                                        handleDirectionsClick
+                                      }
+                                      disabled={
+                                        directionsLoading
+                                      }
+                                      className="flex w-full items-center justify-between rounded-xl border border-[#F0D7B3] bg-white px-3 py-3 text-[11px] font-bold text-[#514B46] transition hover:border-[#FFB39F] hover:text-[#FF5A36] disabled:cursor-wait disabled:opacity-70"
+                                    >
+                                      <span className="flex items-center gap-2">
+                                        <MapPin
+                                          size={16}
+                                        />
+
+                                        {directionsLoading
+                                          ? "Opening Directions..."
+                                          : "Directions"}
+                                      </span>
+
+                                      <ExternalLink
+                                        size={13}
+                                      />
+                                    </button>
+                                  );
+                                }
+
                                 const url =
                                   buildContactUrl(
                                     link.platform,
@@ -1981,17 +2154,17 @@ function SellerPageContent({
                                 link.platform ===
                                 "DIRECTIONS"
                             ) && (
-                              <a
-                                href={getDirectionsUrl()}
-                                target="_blank"
-                                rel="noreferrer"
-                                onClick={() =>
-                                  handleContactClick(
-                                    "DIRECTIONS"
-                                  )
+                              <button
+                                type="button"
+                                onClick={
+                                  handleDirectionsClick
+                                }
+                                disabled={
+                                  directionsLoading
                                 }
                                 className="
                                   flex
+                                  w-full
                                   items-center
                                   justify-between
                                   rounded-xl
@@ -2019,7 +2192,7 @@ function SellerPageContent({
                                 <ExternalLink
                                   size={13}
                                 />
-                              </a>
+                              </button>
                             )}
                         </div>
                       </div>

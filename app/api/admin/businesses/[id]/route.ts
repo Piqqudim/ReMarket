@@ -21,25 +21,44 @@ type RouteContext = {
   }>;
 };
 
-function cleanString(value: unknown): string {
-  return typeof value === "string" ? value.trim() : "";
+function cleanString(
+  value: unknown
+): string {
+  return typeof value ===
+    "string"
+    ? value.trim()
+    : "";
 }
 
-function nullableString(value: unknown): string | null {
-  const cleaned = cleanString(value);
+function nullableString(
+  value: unknown
+): string | null {
+  const cleaned =
+    cleanString(value);
+
   return cleaned || null;
 }
 
 function parseOptionalInt(
   value: unknown
 ): number | null | undefined {
-  if (value === undefined || value === null || value === "") {
+  if (
+    value === undefined ||
+    value === null ||
+    value === ""
+  ) {
     return null;
   }
 
-  const parsed = Number(value);
+  const parsed = Number(
+    value
+  );
 
-  if (!Number.isInteger(parsed)) {
+  if (
+    !Number.isInteger(
+      parsed
+    )
+  ) {
     return undefined;
   }
 
@@ -49,77 +68,132 @@ function parseOptionalInt(
 function parseOptionalFloat(
   value: unknown
 ): number | null | undefined {
-  if (value === undefined || value === null || value === "") {
+  if (
+    value === undefined ||
+    value === null ||
+    value === ""
+  ) {
     return null;
   }
 
-  const parsed = Number(value);
+  const parsed = Number(
+    value
+  );
 
-  if (!Number.isFinite(parsed)) {
+  if (
+    !Number.isFinite(
+      parsed
+    )
+  ) {
     return undefined;
   }
 
   return parsed;
 }
 
-function isAvailability(value: unknown): value is Availability {
+function isAvailability(
+  value: unknown
+): value is Availability {
   return (
-    value === "AVAILABLE" ||
-    value === "ASK_SELLER" ||
-    value === "UNAVAILABLE"
+    value ===
+      "AVAILABLE" ||
+    value ===
+      "ASK_SELLER" ||
+    value ===
+      "UNAVAILABLE"
   );
 }
 
-function isBusinessStatus(value: unknown): value is BusinessStatus {
+function isBusinessStatus(
+  value: unknown
+): value is BusinessStatus {
   return (
-    value === "ACTIVE" ||
-    value === "INACTIVE" ||
-    value === "PENDING"
+    value ===
+      "ACTIVE" ||
+    value ===
+      "INACTIVE" ||
+    value ===
+      "PENDING"
   );
 }
 
 function isVerificationStatus(
   value: unknown
 ): value is VerificationStatus {
-  return value === "VERIFIED" || value === "UNVERIFIED";
+  return (
+    value ===
+      "VERIFIED" ||
+    value ===
+      "UNVERIFIED"
+  );
 }
 
 function isLocationVerificationStatus(
   value: unknown
 ): value is LocationVerificationStatus {
-  return value === "VERIFIED" || value === "UNVERIFIED";
-}
-
-function isSocialPlatform(value: unknown): value is SocialPlatform {
   return (
-    value === "WHATSAPP" ||
-    value === "INSTAGRAM" ||
-    value === "TIKTOK" ||
-    value === "FACEBOOK" ||
-    value === "PHONE" ||
-    value === "DIRECTIONS"
+    value ===
+      "VERIFIED" ||
+    value ===
+      "UNVERIFIED"
   );
 }
 
-function normalizeWhatsApp(value: string): string {
-  const trimmed = value.trim();
+function isSocialPlatform(
+  value: unknown
+): value is SocialPlatform {
+  return (
+    value ===
+      "WHATSAPP" ||
+    value ===
+      "INSTAGRAM" ||
+    value ===
+      "TIKTOK" ||
+    value ===
+      "FACEBOOK" ||
+    value ===
+      "PHONE" ||
+    value ===
+      "DIRECTIONS"
+  );
+}
+
+function normalizeWhatsApp(
+  value: string
+): string {
+  const trimmed =
+    value.trim();
 
   if (!trimmed) {
     return "";
   }
 
-  const digits = trimmed.replace(/\D/g, "");
+  const digits =
+    trimmed.replace(
+      /\D/g,
+      ""
+    );
 
   if (!digits) {
     return "";
   }
 
-  if (digits.startsWith("234")) {
+  if (
+    digits.startsWith(
+      "234"
+    )
+  ) {
     return `+${digits}`;
   }
 
-  if (digits.startsWith("0")) {
-    return `+234${digits.slice(1)}`;
+  if (
+    digits.startsWith(
+      "0"
+    )
+  ) {
+    return `+234${digits.slice(
+      1
+    )}`;
   }
 
   return trimmed;
@@ -133,41 +207,75 @@ type ParsedSocialLink = {
 function parseSocialLinks(
   value: unknown
 ): ParsedSocialLink[] | null {
-  if (!Array.isArray(value)) {
+  if (
+    !Array.isArray(value)
+  ) {
     return null;
   }
 
-  const result: ParsedSocialLink[] = [];
-  const seen = new Set<SocialPlatform>();
+  const result: ParsedSocialLink[] =
+    [];
 
-  for (const item of value) {
+  const seen =
+    new Set<SocialPlatform>();
+
+  for (
+    const item of value
+  ) {
     if (
       !item ||
-      typeof item !== "object" ||
+      typeof item !==
+        "object" ||
       Array.isArray(item)
     ) {
       continue;
     }
 
-    const record = item as Record<string, unknown>;
+    const record =
+      item as Record<
+        string,
+        unknown
+      >;
 
-    if (!isSocialPlatform(record.platform)) {
+    if (
+      !isSocialPlatform(
+        record.platform
+      )
+    ) {
       continue;
     }
 
-    let handle = cleanString(record.handle);
+    let handle =
+      cleanString(
+        record.handle
+      );
 
-    if (record.platform === SocialPlatform.WHATSAPP) {
-      handle = normalizeWhatsApp(handle);
+    if (
+      record.platform ===
+      SocialPlatform.WHATSAPP
+    ) {
+      handle =
+        normalizeWhatsApp(
+          handle
+        );
     }
 
-    if (!handle || seen.has(record.platform)) {
+    if (
+      !handle ||
+      seen.has(
+        record.platform
+      )
+    ) {
       continue;
     }
 
-    seen.add(record.platform);
+    seen.add(
+      record.platform
+    );
+
     result.push({
-      platform: record.platform,
+      platform:
+        record.platform,
       handle,
     });
   }
@@ -175,8 +283,25 @@ function parseSocialLinks(
   return result;
 }
 
-function parseCategoryIds(value: unknown): string[] | null {
-  if (!Array.isArray(value)) {
+function getPhoneFromSocialLinks(
+  socialLinks: ParsedSocialLink[]
+): string | null {
+  return (
+    socialLinks.find(
+      (link) =>
+        link.platform ===
+        SocialPlatform.PHONE
+    )?.handle ??
+    null
+  );
+}
+
+function parseCategoryIds(
+  value: unknown
+): string[] | null {
+  if (
+    !Array.isArray(value)
+  ) {
     return null;
   }
 
@@ -184,40 +309,64 @@ function parseCategoryIds(value: unknown): string[] | null {
     new Set(
       value
         .filter(
-          (item): item is string => typeof item === "string"
+          (
+            item
+          ): item is string =>
+            typeof item ===
+            "string"
         )
-        .map((item) => item.trim())
+        .map((item) =>
+          item.trim()
+        )
         .filter(Boolean)
     )
   );
 }
 
-async function loadBusiness(id: string) {
-  const business = await prisma.business.findUnique({
-    where: { id },
-    include: {
-      location: true,
-      categories: {
-        include: {
-          category: true,
+async function loadBusiness(
+  id: string
+) {
+  const business =
+    await prisma.business.findUnique(
+      {
+        where: {
+          id,
         },
-      },
-      products: {
+
         include: {
-          category: true,
-          images: {
-            orderBy: {
-              sortOrder: "asc",
+          location: true,
+
+          categories: {
+            include: {
+              category:
+                true,
             },
           },
+
+          products: {
+            include: {
+              category:
+                true,
+
+              images: {
+                orderBy: {
+                  sortOrder:
+                    "asc",
+                },
+              },
+            },
+
+            orderBy: {
+              updatedAt:
+                "desc",
+            },
+          },
+
+          socialLinks:
+            true,
         },
-        orderBy: {
-          updatedAt: "desc",
-        },
-      },
-      socialLinks: true,
-    },
-  });
+      }
+    );
 
   if (!business) {
     return null;
@@ -225,9 +374,12 @@ async function loadBusiness(id: string) {
 
   return {
     ...business,
-    categories: business.categories.map(
-      (item) => item.category
-    ),
+
+    categories:
+      business.categories.map(
+        (item) =>
+          item.category
+      ),
   };
 }
 
@@ -235,38 +387,65 @@ export async function GET(
   _request: NextRequest,
   context: RouteContext
 ) {
-  const auth = await requireAdmin();
+  const auth =
+    await requireAdmin();
 
   if (!auth.authorized) {
     return auth.response;
   }
 
-  const { id } = await context.params;
+  const { id } =
+    await context.params;
 
   if (!id) {
     return NextResponse.json(
-      { error: "Business ID is required." },
-      { status: 400 }
+      {
+        error:
+          "Business ID is required.",
+      },
+      {
+        status: 400,
+      }
     );
   }
 
   try {
-    const business = await loadBusiness(id);
+    const business =
+      await loadBusiness(
+        id
+      );
 
     if (!business) {
       return NextResponse.json(
-        { error: "Business not found." },
-        { status: 404 }
+        {
+          error:
+            "Business not found.",
+        },
+        {
+          status: 404,
+        }
       );
     }
 
-    return NextResponse.json({ business });
+    return NextResponse.json(
+      {
+        business,
+      }
+    );
   } catch (error) {
-    console.error("Admin business GET error:", error);
+    console.error(
+      "Admin business GET error:",
+      error
+    );
 
     return NextResponse.json(
-      { error: "Unable to load business." },
-      { status: 500 }
+      {
+        error:
+          "Unable to load business.",
+      },
+      {
+        status: 500,
+      }
     );
   }
 }
@@ -275,79 +454,138 @@ export async function PATCH(
   request: NextRequest,
   context: RouteContext
 ) {
-  const auth = await requireAdmin();
+  const auth =
+    await requireAdmin();
 
   if (!auth.authorized) {
     return auth.response;
   }
 
-  const { id } = await context.params;
+  const { id } =
+    await context.params;
 
   if (!id) {
     return NextResponse.json(
-      { error: "Business ID is required." },
-      { status: 400 }
+      {
+        error:
+          "Business ID is required.",
+      },
+      {
+        status: 400,
+      }
     );
   }
 
   try {
-    const existing = await prisma.business.findUnique({
-      where: { id },
-      include: {
-        location: true,
-      },
-    });
+    const existing =
+      await prisma.business.findUnique(
+        {
+          where: {
+            id,
+          },
+
+          include: {
+            location:
+              true,
+          },
+        }
+      );
 
     if (!existing) {
       return NextResponse.json(
-        { error: "Business not found." },
-        { status: 404 }
+        {
+          error:
+            "Business not found.",
+        },
+        {
+          status: 404,
+        }
       );
     }
 
-    const body: unknown = await request.json();
+    const body: unknown =
+      await request.json();
 
     if (
       !body ||
-      typeof body !== "object" ||
+      typeof body !==
+        "object" ||
       Array.isArray(body)
     ) {
       return NextResponse.json(
-        { error: "Invalid request body." },
-        { status: 400 }
+        {
+          error:
+            "Invalid request body.",
+        },
+        {
+          status: 400,
+        }
       );
     }
 
-    const payload = body as Record<string, unknown>;
+    const payload =
+      body as Record<
+        string,
+        unknown
+      >;
 
     /*
      * -----------------------------------------
      * RESTORE
      * -----------------------------------------
      */
-    if ("restore" in payload) {
-      if (payload.restore !== true) {
+
+    if (
+      "restore" in
+      payload
+    ) {
+      if (
+        payload.restore !==
+        true
+      ) {
         return NextResponse.json(
-          { error: "Restore value must be true." },
-          { status: 400 }
+          {
+            error:
+              "Restore value must be true.",
+          },
+          {
+            status: 400,
+          }
         );
       }
 
-      if (!existing.deletedAt) {
+      if (
+        !existing.deletedAt
+      ) {
         return NextResponse.json(
-          { error: "Business is not deleted." },
-          { status: 409 }
+          {
+            error:
+              "Business is not deleted.",
+          },
+          {
+            status: 409,
+          }
         );
       }
 
-      const restoredBusiness = await prisma.business.update({
-        where: { id },
-        data: { deletedAt: null },
-      });
+      const restoredBusiness =
+        await prisma.business.update(
+          {
+            where: {
+              id,
+            },
 
-      const business = await loadBusiness(
-        restoredBusiness.id
-      );
+            data: {
+              deletedAt:
+                null,
+            },
+          }
+        );
+
+      const business =
+        await loadBusiness(
+          restoredBusiness.id
+        );
 
       if (!business) {
         return NextResponse.json(
@@ -355,15 +593,21 @@ export async function PATCH(
             error:
               "Business was restored but could not be reloaded.",
           },
-          { status: 500 }
+          {
+            status: 500,
+          }
         );
       }
 
-      return NextResponse.json({
-        success: true,
-        restored: true,
-        business,
-      });
+      return NextResponse.json(
+        {
+          success:
+            true,
+          restored:
+            true,
+          business,
+        }
+      );
     }
 
     /*
@@ -371,6 +615,7 @@ export async function PATCH(
      * BUSINESS UPDATE DATA
      * -----------------------------------------
      */
+
     const data: {
       name?: string;
       ownerName?: string | null;
@@ -385,87 +630,192 @@ export async function PATCH(
       locationId?: string;
     } = {};
 
-    if ("name" in payload) {
-      const name = cleanString(payload.name);
+    if (
+      "name" in
+      payload
+    ) {
+      const name =
+        cleanString(
+          payload.name
+        );
 
       if (!name) {
         return NextResponse.json(
-          { error: "Business name is required." },
-          { status: 400 }
+          {
+            error:
+              "Business name is required.",
+          },
+          {
+            status: 400,
+          }
         );
       }
 
-      data.name = name;
+      data.name =
+        name;
     }
 
-    if ("ownerName" in payload) {
-      data.ownerName = nullableString(payload.ownerName);
+    if (
+      "ownerName" in
+      payload
+    ) {
+      data.ownerName =
+        nullableString(
+          payload.ownerName
+        );
     }
 
-    if ("description" in payload) {
-      data.description = nullableString(payload.description);
+    if (
+      "description" in
+      payload
+    ) {
+      data.description =
+        nullableString(
+          payload.description
+        );
     }
 
-    if ("phone" in payload) {
-      data.phone = nullableString(payload.phone);
+    /*
+     * Legacy phone input is still
+     * accepted for compatibility.
+     *
+     * When socialLinks are supplied,
+     * the PHONE social link becomes
+     * the source of truth.
+     */
+    const legacyPhoneProvided =
+      "phone" in
+      payload;
+
+    const legacyPhone =
+      legacyPhoneProvided
+        ? nullableString(
+            payload.phone
+          )
+        : null;
+
+    if (
+      legacyPhone &&
+      legacyPhone.length >
+        50
+    ) {
+      return NextResponse.json(
+        {
+          error:
+            "Phone number is too long.",
+        },
+        {
+          status: 400,
+        }
+      );
     }
 
-    if ("imageUrl" in payload) {
-      data.imageUrl = nullableString(payload.imageUrl);
+    if (
+      legacyPhoneProvided
+    ) {
+      data.phone =
+        legacyPhone;
     }
 
-    if ("availability" in payload) {
-      if (!isAvailability(payload.availability)) {
+    if (
+      "imageUrl" in
+      payload
+    ) {
+      data.imageUrl =
+        nullableString(
+          payload.imageUrl
+        );
+    }
+
+    if (
+      "availability" in
+      payload
+    ) {
+      if (
+        !isAvailability(
+          payload.availability
+        )
+      ) {
         return NextResponse.json(
-          { error: "Invalid availability value." },
-          { status: 400 }
+          {
+            error:
+              "Invalid availability value.",
+          },
+          {
+            status: 400,
+          }
         );
       }
 
-      data.availability = payload.availability;
+      data.availability =
+        payload.availability;
     }
 
-    if ("status" in payload) {
-      if (!isBusinessStatus(payload.status)) {
+    if (
+      "status" in
+      payload
+    ) {
+      if (
+        !isBusinessStatus(
+          payload.status
+        )
+      ) {
         return NextResponse.json(
-          { error: "Invalid business status." },
-          { status: 400 }
+          {
+            error:
+              "Invalid business status.",
+          },
+          {
+            status: 400,
+          }
         );
       }
 
-      data.status = payload.status;
+      data.status =
+        payload.status;
     }
 
-    if ("verification" in payload) {
-      if (!isVerificationStatus(payload.verification)) {
+    if (
+      "verification" in
+      payload
+    ) {
+      if (
+        !isVerificationStatus(
+          payload.verification
+        )
+      ) {
         return NextResponse.json(
-          { error: "Invalid verification status." },
-          { status: 400 }
+          {
+            error:
+              "Invalid verification status.",
+          },
+          {
+            status: 400,
+          }
         );
       }
 
-      data.verification = payload.verification;
+      data.verification =
+        payload.verification;
     }
 
     /*
      * -----------------------------------------
      * LOCATION VERIFICATION
      * -----------------------------------------
-     *
-     * This is deliberately separate from
-     * Business.verification.
-     *
-     * A physical location can be verified or
-     * unverified independently of the business.
      */
+
     const locationVerificationWasProvided =
-      "locationVerification" in payload;
+      "locationVerification" in
+      payload;
 
     let requestedLocationVerification:
       | LocationVerificationStatus
       | undefined;
 
-    if (locationVerificationWasProvided) {
+    if (
+      locationVerificationWasProvided
+    ) {
       if (
         !isLocationVerificationStatus(
           payload.locationVerification
@@ -476,7 +826,9 @@ export async function PATCH(
             error:
               "Invalid location verification status.",
           },
-          { status: 400 }
+          {
+            status: 400,
+          }
         );
       }
 
@@ -489,55 +841,91 @@ export async function PATCH(
      * PRICES
      * -----------------------------------------
      */
-    const priceMin = parseOptionalInt(payload.priceMin);
 
-    if (priceMin === undefined) {
+    const priceMin =
+      parseOptionalInt(
+        payload.priceMin
+      );
+
+    if (
+      priceMin ===
+      undefined
+    ) {
       return NextResponse.json(
         {
           error:
             "Minimum price must be a valid integer.",
         },
-        { status: 400 }
+        {
+          status: 400,
+        }
       );
     }
 
-    const priceMax = parseOptionalInt(payload.priceMax);
+    const priceMax =
+      parseOptionalInt(
+        payload.priceMax
+      );
 
-    if (priceMax === undefined) {
+    if (
+      priceMax ===
+      undefined
+    ) {
       return NextResponse.json(
         {
           error:
             "Maximum price must be a valid integer.",
         },
-        { status: 400 }
+        {
+          status: 400,
+        }
       );
     }
 
-    if ("priceMin" in payload) {
-      data.priceMin = priceMin;
+    if (
+      "priceMin" in
+      payload
+    ) {
+      data.priceMin =
+        priceMin;
     }
 
-    if ("priceMax" in payload) {
-      data.priceMax = priceMax;
+    if (
+      "priceMax" in
+      payload
+    ) {
+      data.priceMax =
+        priceMax;
     }
 
     const finalPriceMin =
-      "priceMin" in payload ? priceMin : existing.priceMin;
+      "priceMin" in
+      payload
+        ? priceMin
+        : existing.priceMin;
 
     const finalPriceMax =
-      "priceMax" in payload ? priceMax : existing.priceMax;
+      "priceMax" in
+      payload
+        ? priceMax
+        : existing.priceMax;
 
     if (
-      finalPriceMin !== null &&
-      finalPriceMax !== null &&
-      finalPriceMin > finalPriceMax
+      finalPriceMin !==
+        null &&
+      finalPriceMax !==
+        null &&
+      finalPriceMin >
+        finalPriceMax
     ) {
       return NextResponse.json(
         {
           error:
             "Minimum price cannot be greater than maximum price.",
         },
-        { status: 400 }
+        {
+          status: 400,
+        }
       );
     }
 
@@ -546,52 +934,90 @@ export async function PATCH(
      * RELATIONSHIP FLAGS
      * -----------------------------------------
      */
-    const locationWasProvided =
-      "area" in payload ||
-      "address" in payload ||
-      "lat" in payload ||
-      "lng" in payload ||
-      "long" in payload;
 
-    const categoryIdsProvided = "categoryIds" in payload;
-    const socialLinksProvided = "socialLinks" in payload;
+    const locationWasProvided =
+      "area" in
+      payload ||
+      "address" in
+      payload ||
+      "lat" in
+      payload ||
+      "lng" in
+      payload ||
+      "long" in
+      payload;
+
+    const categoryIdsProvided =
+      "categoryIds" in
+      payload;
+
+    const socialLinksProvided =
+      "socialLinks" in
+      payload;
 
     /*
      * -----------------------------------------
      * CATEGORIES
      * -----------------------------------------
      */
-    let categoryIds: string[] | null = null;
 
-    if (categoryIdsProvided) {
-      categoryIds = parseCategoryIds(payload.categoryIds);
+    let categoryIds:
+      | string[]
+      | null =
+      null;
+
+    if (
+      categoryIdsProvided
+    ) {
+      categoryIds =
+        parseCategoryIds(
+          payload.categoryIds
+        );
 
       if (!categoryIds) {
         return NextResponse.json(
-          { error: "categoryIds must be an array." },
-          { status: 400 }
+          {
+            error:
+              "categoryIds must be an array.",
+          },
+          {
+            status: 400,
+          }
         );
       }
 
-      if (categoryIds.length > 0) {
-        const categories = await prisma.category.findMany({
-          where: {
-            id: {
-              in: categoryIds,
-            },
-          },
-          select: {
-            id: true,
-          },
-        });
+      if (
+        categoryIds.length >
+        0
+      ) {
+        const categories =
+          await prisma.category.findMany(
+            {
+              where: {
+                id: {
+                  in:
+                    categoryIds,
+                },
+              },
 
-        if (categories.length !== categoryIds.length) {
+              select: {
+                id: true,
+              },
+            }
+          );
+
+        if (
+          categories.length !==
+          categoryIds.length
+        ) {
           return NextResponse.json(
             {
               error:
                 "One or more selected categories do not exist.",
             },
-            { status: 400 }
+            {
+              status: 400,
+            }
           );
         }
       }
@@ -599,19 +1025,96 @@ export async function PATCH(
 
     /*
      * -----------------------------------------
-     * SOCIAL LINKS
+     * SOCIAL LINKS + PHONE
      * -----------------------------------------
      */
-    let socialLinks: ParsedSocialLink[] | null = null;
 
-    if (socialLinksProvided) {
-      socialLinks = parseSocialLinks(payload.socialLinks);
+    let socialLinks:
+      | ParsedSocialLink[]
+      | null =
+      null;
+
+    if (
+      socialLinksProvided
+    ) {
+      socialLinks =
+        parseSocialLinks(
+          payload.socialLinks
+        );
 
       if (!socialLinks) {
         return NextResponse.json(
-          { error: "socialLinks must be an array." },
-          { status: 400 }
+          {
+            error:
+              "socialLinks must be an array.",
+          },
+          {
+            status: 400,
+          }
         );
+      }
+
+      const phoneFromSocial =
+        getPhoneFromSocialLinks(
+          socialLinks
+        );
+
+      if (
+        phoneFromSocial &&
+        phoneFromSocial.length >
+          50
+      ) {
+        return NextResponse.json(
+          {
+            error:
+              "Phone number is too long.",
+          },
+          {
+            status: 400,
+          }
+        );
+      }
+
+      /*
+       * PHONE social link is the
+       * authoritative phone value.
+       *
+       * Business.phone is maintained
+       * as a compatibility mirror.
+       */
+      if (
+        phoneFromSocial
+      ) {
+        data.phone =
+          phoneFromSocial;
+      } else if (
+        legacyPhone
+      ) {
+        /*
+         * Legacy phone was supplied but
+         * no PHONE social link exists.
+         *
+         * Add it so both representations
+         * remain synchronized.
+         */
+        socialLinks.push({
+          platform:
+            SocialPlatform.PHONE,
+          handle:
+            legacyPhone,
+        });
+
+        data.phone =
+          legacyPhone;
+      } else {
+        /*
+         * socialLinks were explicitly
+         * supplied without a phone,
+         * so clear the compatibility
+         * phone field.
+         */
+        data.phone =
+          null;
       }
     }
 
@@ -619,174 +1122,325 @@ export async function PATCH(
      * -----------------------------------------
      * LOCATION
      * -----------------------------------------
-     *
-     * Location is business-specific.
-     * We NEVER look up a Location by area.
-     *
-     * A new Location is created only when the
-     * submitted final location is different from
-     * the current location.
      */
-    let requestedArea: string | undefined;
-    let requestedAddress: string | null | undefined;
-    let requestedLat: number | null | undefined;
-    let requestedLong: number | null | undefined;
-    let resolvedLat: number | null | undefined;
-    let resolvedLong: number | null | undefined;
-    let locationChanged = false;
 
-    if (locationWasProvided) {
-      const currentArea = existing.location?.area ?? "";
-      const currentAddress = existing.location?.address ?? null;
-      const currentLat = existing.location?.lat ?? null;
-      const currentLong = existing.location?.long ?? null;
+    let requestedArea:
+      | string
+      | undefined;
+
+    let requestedAddress:
+      | string
+      | null
+      | undefined;
+
+    let requestedLat:
+      | number
+      | null
+      | undefined;
+
+    let requestedLong:
+      | number
+      | null
+      | undefined;
+
+    let resolvedLat:
+      | number
+      | null
+      | undefined;
+
+    let resolvedLong:
+      | number
+      | null
+      | undefined;
+
+    let locationChanged =
+      false;
+
+    if (
+      locationWasProvided
+    ) {
+      const currentArea =
+        existing.location
+          ?.area ??
+        "";
+
+      const currentAddress =
+        existing.location
+          ?.address ??
+        null;
+
+      const currentLat =
+        existing.location
+          ?.lat ??
+        null;
+
+      const currentLong =
+        existing.location
+          ?.long ??
+        null;
 
       requestedArea =
-        "area" in payload
-          ? cleanString(payload.area)
+        "area" in
+        payload
+          ? cleanString(
+              payload.area
+            )
           : currentArea;
 
       if (!requestedArea) {
         return NextResponse.json(
-          { error: "Business area is required." },
-          { status: 400 }
+          {
+            error:
+              "Business area is required.",
+          },
+          {
+            status: 400,
+          }
         );
       }
 
-      if (requestedArea.length > 200) {
+      if (
+        requestedArea.length >
+        200
+      ) {
         return NextResponse.json(
-          { error: "Business area is too long." },
-          { status: 400 }
+          {
+            error:
+              "Business area is too long.",
+          },
+          {
+            status: 400,
+          }
         );
       }
 
       requestedAddress =
-        "address" in payload
-          ? nullableString(payload.address)
+        "address" in
+        payload
+          ? nullableString(
+              payload.address
+            )
           : currentAddress;
 
       if (
-        requestedAddress !== null &&
-        requestedAddress.length > 2000
+        requestedAddress !==
+          null &&
+        requestedAddress.length >
+          2000
       ) {
         return NextResponse.json(
-          { error: "Business address is too long." },
-          { status: 400 }
+          {
+            error:
+              "Business address is too long.",
+          },
+          {
+            status: 400,
+          }
         );
       }
 
       requestedLat =
-        "lat" in payload
-          ? parseOptionalFloat(payload.lat)
+        "lat" in
+        payload
+          ? parseOptionalFloat(
+              payload.lat
+            )
           : currentLat;
 
-      if (requestedLat === undefined) {
+      if (
+        requestedLat ===
+        undefined
+      ) {
         return NextResponse.json(
-          { error: "Latitude must be a valid number." },
-          { status: 400 }
+          {
+            error:
+              "Latitude must be a valid number.",
+          },
+          {
+            status: 400,
+          }
         );
       }
 
       requestedLong =
-        "long" in payload
-          ? parseOptionalFloat(payload.long)
-          : "lng" in payload
-          ? parseOptionalFloat(payload.lng)
+        "long" in
+        payload
+          ? parseOptionalFloat(
+              payload.long
+            )
+          : "lng" in
+            payload
+          ? parseOptionalFloat(
+              payload.lng
+            )
           : currentLong;
 
-      if (requestedLong === undefined) {
+      if (
+        requestedLong ===
+        undefined
+      ) {
         return NextResponse.json(
-          { error: "Longitude must be a valid number." },
-          { status: 400 }
+          {
+            error:
+              "Longitude must be a valid number.",
+          },
+          {
+            status: 400,
+          }
         );
       }
 
       if (
-        (requestedLat === null) !==
-        (requestedLong === null)
+        (requestedLat ===
+          null) !==
+        (requestedLong ===
+          null)
       ) {
         return NextResponse.json(
           {
             error:
               "Latitude and longitude must be provided together.",
           },
-          { status: 400 }
+          {
+            status: 400,
+          }
         );
       }
 
       if (
-        requestedLat !== null &&
-        (requestedLat < -90 || requestedLat > 90)
+        requestedLat !==
+          null &&
+        (
+          requestedLat <
+            -90 ||
+          requestedLat >
+            90
+        )
       ) {
         return NextResponse.json(
           {
             error:
               "Latitude must be between -90 and 90.",
           },
-          { status: 400 }
+          {
+            status: 400,
+          }
         );
       }
 
       if (
-        requestedLong !== null &&
-        (requestedLong < -180 || requestedLong > 180)
+        requestedLong !==
+          null &&
+        (
+          requestedLong <
+            -180 ||
+          requestedLong >
+            180
+        )
       ) {
         return NextResponse.json(
           {
             error:
               "Longitude must be between -180 and 180.",
           },
-          { status: 400 }
+          {
+            status: 400,
+          }
         );
       }
 
-      const areaChanged = requestedArea !== currentArea;
-      const addressChanged = requestedAddress !== currentAddress;
+      const areaChanged =
+        requestedArea !==
+        currentArea;
+
+      const addressChanged =
+        requestedAddress !==
+        currentAddress;
+
       const coordinatesChanged =
-        requestedLat !== currentLat ||
-        requestedLong !== currentLong;
+        requestedLat !==
+          currentLat ||
+        requestedLong !==
+          currentLong;
 
-      resolvedLat = requestedLat;
-      resolvedLong = requestedLong;
+      resolvedLat =
+        requestedLat;
 
-      if (areaChanged || addressChanged) {
+      resolvedLong =
+        requestedLong;
+
+      if (
+        areaChanged ||
+        addressChanged
+      ) {
         const hasFreshCoordinates =
-          requestedLat !== null &&
-          requestedLong !== null &&
+          requestedLat !==
+            null &&
+          requestedLong !==
+            null &&
           coordinatesChanged;
 
-        if (!hasFreshCoordinates) {
-          if (requestedAddress) {
+        if (
+          !hasFreshCoordinates
+        ) {
+          if (
+            requestedAddress
+          ) {
             try {
-              const geocoded = await geocodeBusinessLocation({
-                address: requestedAddress,
-                area: requestedArea,
-              });
+              const geocoded =
+                await geocodeBusinessLocation(
+                  {
+                    address:
+                      requestedAddress,
+                    area:
+                      requestedArea,
+                  }
+                );
 
-              resolvedLat = geocoded.latitude;
-              resolvedLong = geocoded.longitude;
-            } catch (error) {
+              resolvedLat =
+                geocoded.latitude;
+
+              resolvedLong =
+                geocoded.longitude;
+            } catch (
+              error
+            ) {
               console.warn(
                 "Business address could not be geocoded. Saving the changed address without precise coordinates:",
                 error
               );
 
-              resolvedLat = null;
-              resolvedLong = null;
+              /*
+               * Do not retain stale
+               * coordinates after the
+               * address/location changes.
+               */
+              resolvedLat =
+                null;
+
+              resolvedLong =
+                null;
             }
           } else {
-            resolvedLat = null;
-            resolvedLong = null;
+            resolvedLat =
+              null;
+
+            resolvedLong =
+              null;
           }
         }
       }
 
       locationChanged =
         !existing.location ||
-        requestedArea !== currentArea ||
-        requestedAddress !== currentAddress ||
-        resolvedLat !== currentLat ||
-        resolvedLong !== currentLong;
+        requestedArea !==
+          currentArea ||
+        requestedAddress !==
+          currentAddress ||
+        resolvedLat !==
+          currentLat ||
+        resolvedLong !==
+          currentLong;
     }
 
     if (
@@ -799,7 +1453,9 @@ export async function PATCH(
           error:
             "Business has no saved location to verify.",
         },
-        { status: 400 }
+        {
+          status: 400,
+        }
       );
     }
 
@@ -808,109 +1464,243 @@ export async function PATCH(
      * UPDATE EVERYTHING ATOMICALLY
      * -----------------------------------------
      */
-    await prisma.$transaction(async (tx) => {
-      if (locationWasProvided && locationChanged) {
-        const location = await tx.location.create({
-          data: {
-            area: requestedArea!,
-            address: requestedAddress ?? null,
-            lat: resolvedLat ?? null,
-            long: resolvedLong ?? null,
 
-            /*
-             * A changed physical location must be
-             * verified again. This intentionally
-             * overrides a submitted VERIFIED value.
-             */
-            verification: "UNVERIFIED",
-          },
-        });
+    await prisma.$transaction(
+      async (tx) => {
+        if (
+          locationWasProvided &&
+          locationChanged
+        ) {
+          /*
+           * A changed location always
+           * becomes UNVERIFIED.
+           *
+           * Verification must happen
+           * separately after the new
+           * coordinates/address are saved.
+           */
+          const location =
+            await tx.location.create(
+              {
+                data: {
+                  area:
+                    requestedArea!,
 
-        data.locationId = location.id;
-      } else if (
-        locationVerificationWasProvided &&
-        existing.location
-      ) {
-        await tx.location.update({
-          where: {
-            id: existing.location.id,
-          },
-          data: {
-            verification: requestedLocationVerification!,
-          },
-        });
-      }
+                  address:
+                    requestedAddress ??
+                    null,
 
-      await tx.business.update({
-        where: { id },
-        data,
-      });
+                  lat:
+                    resolvedLat ??
+                    null,
 
-      if (categoryIdsProvided) {
-        await tx.businessCategory.deleteMany({
-          where: {
-            businessId: id,
-          },
-        });
+                  long:
+                    resolvedLong ??
+                    null,
 
-        if (categoryIds && categoryIds.length > 0) {
-          await tx.businessCategory.createMany({
-            data: categoryIds.map((categoryId) => ({
-              businessId: id,
-              categoryId,
-            })),
-            skipDuplicates: true,
-          });
+                  verification:
+                    LocationVerificationStatus.UNVERIFIED,
+                },
+              }
+            );
+
+          data.locationId =
+            location.id;
+        } else if (
+          locationVerificationWasProvided &&
+          existing.location
+        ) {
+          await tx.location.update(
+            {
+              where: {
+                id:
+                  existing
+                    .location
+                    .id,
+              },
+
+              data: {
+                verification:
+                  requestedLocationVerification!,
+              },
+            }
+          );
+        }
+
+        await tx.business.update(
+          {
+            where: {
+              id,
+            },
+
+            data,
+          }
+        );
+
+        if (
+          categoryIdsProvided
+        ) {
+          await tx.businessCategory.deleteMany(
+            {
+              where: {
+                businessId:
+                  id,
+              },
+            }
+          );
+
+          if (
+            categoryIds &&
+            categoryIds.length >
+              0
+          ) {
+            await tx.businessCategory.createMany(
+              {
+                data:
+                  categoryIds.map(
+                    (
+                      categoryId
+                    ) => ({
+                      businessId:
+                        id,
+
+                      categoryId,
+                    })
+                  ),
+
+                skipDuplicates:
+                  true,
+              }
+            );
+          }
+        }
+
+        if (
+          socialLinksProvided
+        ) {
+          await tx.businessSocialLink.deleteMany(
+            {
+              where: {
+                businessId:
+                  id,
+              },
+            }
+          );
+
+          if (
+            socialLinks &&
+            socialLinks.length >
+              0
+          ) {
+            await tx.businessSocialLink.createMany(
+              {
+                data:
+                  socialLinks.map(
+                    (
+                      link
+                    ) => ({
+                      businessId:
+                        id,
+
+                      platform:
+                        link.platform,
+
+                      handle:
+                        link.handle,
+                    })
+                  ),
+
+                skipDuplicates:
+                  true,
+              }
+            );
+          }
+        } else if (
+          legacyPhoneProvided
+        ) {
+          /*
+           * Older callers can still
+           * submit only phone.
+           *
+           * Keep the PHONE social link
+           * synchronized for them.
+           */
+          await tx.businessSocialLink.deleteMany(
+            {
+              where: {
+                businessId:
+                  id,
+
+                platform:
+                  SocialPlatform.PHONE,
+              },
+            }
+          );
+
+          if (
+            legacyPhone
+          ) {
+            await tx.businessSocialLink.create(
+              {
+                data: {
+                  businessId:
+                    id,
+
+                  platform:
+                    SocialPlatform.PHONE,
+
+                  handle:
+                    legacyPhone,
+                },
+              }
+            );
+          }
         }
       }
+    );
 
-      if (socialLinksProvided) {
-        await tx.businessSocialLink.deleteMany({
-          where: {
-            businessId: id,
-          },
-        });
+    const updatedBusiness =
+      await loadBusiness(
+        id
+      );
 
-        if (socialLinks && socialLinks.length > 0) {
-          await tx.businessSocialLink.createMany({
-            data: socialLinks.map((link) => ({
-              businessId: id,
-              platform: link.platform,
-              handle: link.handle,
-            })),
-            skipDuplicates: true,
-          });
-        }
-      }
-    });
-
-    /*
-     * -----------------------------------------
-     * RELOAD
-     * -----------------------------------------
-     */
-    const updatedBusiness = await loadBusiness(id);
-
-    if (!updatedBusiness) {
+    if (
+      !updatedBusiness
+    ) {
       return NextResponse.json(
         {
           error:
             "Business was updated but could not be reloaded.",
         },
-        { status: 500 }
+        {
+          status: 500,
+        }
       );
     }
 
-    return NextResponse.json({
-      success: true,
-      business: updatedBusiness,
-    });
+    return NextResponse.json(
+      {
+        success:
+          true,
+
+        business:
+          updatedBusiness,
+      }
+    );
   } catch (error) {
-    console.error("Admin business PATCH error:", error);
+    console.error(
+      "Admin business PATCH error:",
+      error
+    );
 
     return NextResponse.json(
-      { error: "Unable to update business." },
-      { status: 500 }
+      {
+        error:
+          "Unable to update business.",
+      },
+      {
+        status: 500,
+      }
     );
   }
 }
@@ -919,78 +1709,123 @@ export async function PATCH(
  * -----------------------------------------
  * SOFT DELETE
  * -----------------------------------------
- *
- * DELETE /api/admin/businesses/[id]
- *
- * This does NOT remove the database record.
- * It only sets deletedAt.
  */
+
 export async function DELETE(
   _request: NextRequest,
   context: RouteContext
 ) {
-  const auth = await requireAdmin();
+  const auth =
+    await requireAdmin();
 
   if (!auth.authorized) {
     return auth.response;
   }
 
-  const { id } = await context.params;
+  const { id } =
+    await context.params;
 
   if (!id) {
     return NextResponse.json(
-      { error: "Business ID is required." },
-      { status: 400 }
+      {
+        error:
+          "Business ID is required.",
+      },
+      {
+        status: 400,
+      }
     );
   }
 
   try {
-    const existing = await prisma.business.findUnique({
-      where: { id },
-      select: {
-        id: true,
-        name: true,
-        deletedAt: true,
-      },
-    });
+    const existing =
+      await prisma.business.findUnique(
+        {
+          where: {
+            id,
+          },
+
+          select: {
+            id: true,
+            name: true,
+            deletedAt:
+              true,
+          },
+        }
+      );
 
     if (!existing) {
       return NextResponse.json(
-        { error: "Business not found." },
-        { status: 404 }
+        {
+          error:
+            "Business not found.",
+        },
+        {
+          status: 404,
+        }
       );
     }
 
-    if (existing.deletedAt) {
+    if (
+      existing.deletedAt
+    ) {
       return NextResponse.json(
-        { error: "Business is already deleted." },
-        { status: 409 }
+        {
+          error:
+            "Business is already deleted.",
+        },
+        {
+          status: 409,
+        }
       );
     }
 
-    const business = await prisma.business.update({
-      where: { id },
-      data: {
-        deletedAt: new Date(),
-      },
-      select: {
-        id: true,
-        name: true,
-        deletedAt: true,
-      },
-    });
+    const business =
+      await prisma.business.update(
+        {
+          where: {
+            id,
+          },
 
-    return NextResponse.json({
-      success: true,
-      deleted: true,
-      business,
-    });
-  } catch (error) {
-    console.error("Admin business DELETE error:", error);
+          data: {
+            deletedAt:
+              new Date(),
+          },
+
+          select: {
+            id: true,
+            name: true,
+            deletedAt:
+              true,
+          },
+        }
+      );
 
     return NextResponse.json(
-      { error: "Unable to delete business." },
-      { status: 500 }
+      {
+        success:
+          true,
+
+        deleted:
+          true,
+
+        business,
+      }
+    );
+  } catch (error) {
+    console.error(
+      "Admin business DELETE error:",
+      error
+    );
+
+    return NextResponse.json(
+      {
+        error:
+          "Unable to delete business.",
+      },
+      {
+        status: 500,
+      }
     );
   }
 }

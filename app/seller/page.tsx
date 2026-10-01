@@ -3,11 +3,14 @@
 import {
   useEffect,
   useState,
+  type FormEvent,
 } from "react";
 
 import Link from "next/link";
 import { signOut } from "next-auth/react";
 import { useRouter } from "next/navigation";
+
+import ProductImageUpload from "@/components/ProductImageUpload";
 
 import {
   Store,
@@ -35,6 +38,557 @@ type SellerCategory = {
   name: string;
 };
 
+type SocialPlatform =
+  | "WHATSAPP"
+  | "INSTAGRAM"
+  | "TIKTOK"
+  | "FACEBOOK"
+  | "PHONE"
+  | "DIRECTIONS";
+
+type SellerSocialLink = {
+  id: string;
+  platform: SocialPlatform;
+  handle: string;
+};
+
+const SOCIAL_PLATFORMS: {
+  value: SocialPlatform;
+  label: string;
+}[] = [
+  {
+    value: "WHATSAPP",
+    label: "WhatsApp",
+  },
+  {
+    value: "INSTAGRAM",
+    label: "Instagram",
+  },
+  {
+    value: "TIKTOK",
+    label: "TikTok",
+  },
+  {
+    value: "FACEBOOK",
+    label: "Facebook",
+  },
+  {
+    value: "PHONE",
+    label: "Phone",
+  },
+  {
+    value: "DIRECTIONS",
+    label: "Directions",
+  },
+];
+
+function getSocialValue(
+  links: SellerSocialLink[] | undefined,
+  platform: SocialPlatform
+): string {
+  return (
+    links?.find(
+      (link) =>
+        link.platform === platform
+    )?.handle ?? ""
+  );
+}
+
+function getSocialValues(
+  links: SellerSocialLink[] | undefined,
+  fallbackPhone?: string | null
+): Record<SocialPlatform, string> {
+  return {
+    WHATSAPP: getSocialValue(
+      links,
+      "WHATSAPP"
+    ),
+    INSTAGRAM: getSocialValue(
+      links,
+      "INSTAGRAM"
+    ),
+    TIKTOK: getSocialValue(
+      links,
+      "TIKTOK"
+    ),
+    FACEBOOK: getSocialValue(
+      links,
+      "FACEBOOK"
+    ),
+    PHONE:
+      getSocialValue(
+        links,
+        "PHONE"
+      ) ||
+      fallbackPhone?.trim() ||
+      "",
+    DIRECTIONS: getSocialValue(
+      links,
+      "DIRECTIONS"
+    ),
+  };
+}
+
+function buildSocialLinks(
+  values: Record<SocialPlatform, string>
+) {
+  return SOCIAL_PLATFORMS
+    .map(({ value }) => ({
+      platform: value,
+      handle: values[value].trim(),
+    }))
+    .filter((item) => item.handle);
+}
+
+const LAGOS_AREA_GROUPS = [
+  {
+    lga: "Agege",
+    areas: [
+      "Agege",
+      "Orile Agege",
+      "Dopemu",
+      "Oko-Oba",
+      "Isale Odo",
+      "Keke",
+    ],
+  },
+  {
+    lga: "Ajeromi-Ifelodun",
+    areas: [
+      "Ajegunle",
+      "Tolu",
+      "Olodi",
+      "Alaba Oro",
+      "Awodi-Ora",
+      "Layeni",
+      "Mosafejo",
+    ],
+  },
+  {
+    lga: "Alimosho",
+    areas: [
+      "Alimosho",
+      "Egbeda",
+      "Akowonjo",
+      "Shasha",
+      "Idimu",
+      "Egbe",
+      "Ikotun",
+      "Ijegun",
+      "Igando",
+      "Iyana-Ipaja",
+      "Ayobo",
+      "Abule Egba",
+      "Aboru",
+      "Meiran",
+      "Oke-Odo",
+      "Pleasure",
+    ],
+  },
+  {
+    lga: "Amuwo-Odofin",
+    areas: [
+      "Amuwo",
+      "Festac",
+      "Mile 2",
+      "Satellite Town",
+      "Kirikiri",
+      "Irede",
+      "Ibeshe",
+    ],
+  },
+  {
+    lga: "Apapa",
+    areas: [
+      "Apapa",
+      "Apapa Wharf",
+      "Iganmu",
+      "Ijora",
+      "Liverpool",
+      "Tin Can",
+    ],
+  },
+  {
+    lga: "Badagry",
+    areas: [
+      "Badagry",
+      "Badagry West",
+      "Olorunda",
+      "Oko-Afo",
+    ],
+  },
+  {
+    lga: "Epe",
+    areas: [
+      "Epe",
+      "Eredo",
+      "Ikosi-Ejinrin",
+    ],
+  },
+  {
+    lga: "Eti-Osa",
+    areas: [
+      "Ikoyi",
+      "Obalende",
+      "Victoria Island",
+      "Oniru",
+      "Lekki Phase 1",
+      "Ikate",
+      "Jakande",
+      "Osapa London",
+      "Agungi",
+      "Igbo-Efon",
+      "Idado",
+      "Chevron",
+      "Ikota",
+      "VGC",
+      "Ajah",
+      "Badore",
+      "Sangotedo",
+    ],
+  },
+  {
+    lga: "Ibeju-Lekki",
+    areas: [
+      "Ibeju-Lekki",
+      "Abijo",
+      "Awoyaya",
+      "Lakowe",
+      "Bogije",
+      "Eleko",
+      "Akodo",
+    ],
+  },
+  {
+    lga: "Ifako-Ijaiye",
+    areas: [
+      "Ifako",
+      "Ijaiye",
+      "Ojokoro",
+      "Oke-Ira",
+      "Agbado",
+    ],
+  },
+  {
+    lga: "Ikeja",
+    areas: [
+      "Ikeja",
+      "Ikeja GRA",
+      "Alausa",
+      "Allen Avenue",
+      "Oregun",
+      "Opebi",
+      "Ogba",
+      "Ojodu",
+      "Onigbongbo",
+      "Computer Village",
+      "Airport Road",
+    ],
+  },
+  {
+    lga: "Ikorodu",
+    areas: [
+      "Ikorodu",
+      "Ikorodu North",
+      "Ikorodu West",
+      "Igbogbo",
+      "Baiyeku",
+      "Ijede",
+      "Imota",
+      "Odogunyan",
+      "Itamaga",
+      "Agric",
+    ],
+  },
+  {
+    lga: "Kosofe",
+    areas: [
+      "Kosofe",
+      "Ketu",
+      "Agboyi",
+      "Ojota",
+      "Gbagada",
+      "Anthony",
+      "Maryland",
+      "Magodo",
+      "Isheri",
+      "Mile 12",
+    ],
+  },
+  {
+    lga: "Lagos Island",
+    areas: [
+      "Lagos Island",
+      "Idumota",
+      "Balogun",
+      "Marina",
+      "Broad Street",
+      "Isale Eko",
+      "Lafiaji",
+      "Onikan",
+      "Epetedo",
+      "Okepopo",
+    ],
+  },
+  {
+    lga: "Lagos Mainland",
+    areas: [
+      "Yaba",
+      "Ebute Metta",
+      "Akoka",
+      "Sabo",
+      "Alagomeji",
+      "Adekunle",
+      "Abule Oja",
+      "Onike",
+      "Iwaya",
+      "Makoko",
+      "Jibowu",
+      "Oyingbo",
+      "Tejuosho",
+    ],
+  },
+  {
+    lga: "Mushin",
+    areas: [
+      "Mushin",
+      "Papa Ajao",
+      "Idi-Araba",
+      "Ilupeju",
+      "Odi-Olowo",
+      "Ojuwoye",
+    ],
+  },
+  {
+    lga: "Ojo",
+    areas: [
+      "Ojo",
+      "Iba",
+      "Iyana-Iba",
+      "Ajangbadi",
+      "Oto-Awori",
+      "Alaba",
+    ],
+  },
+  {
+    lga: "Oshodi-Isolo",
+    areas: [
+      "Oshodi",
+      "Isolo",
+      "Ejigbo",
+      "Okota",
+      "Ajao Estate",
+      "Mafoluku",
+      "Ago Palace",
+    ],
+  },
+  {
+    lga: "Shomolu",
+    areas: [
+      "Shomolu",
+      "Bariga",
+      "Pedro",
+      "Onipanu",
+      "Palmgrove",
+      "Fadeyi",
+    ],
+  },
+  {
+    lga: "Surulere",
+    areas: [
+      "Surulere",
+      "Ojuelegba",
+      "Lawanson",
+      "Itire",
+      "Aguda",
+      "Coker",
+      "Ijeshatedo",
+    ],
+  },
+] as const;
+
+const DEFAULT_COUNTRY = "Nigeria";
+
+function isKnownLagosArea(
+  area: string
+): boolean {
+  const normalized = area
+    .trim()
+    .toLowerCase();
+
+  if (!normalized) {
+    return false;
+  }
+
+  return LAGOS_AREA_GROUPS.some(
+    (group) =>
+      group.areas.some(
+        (item) =>
+          item.toLowerCase() ===
+          normalized
+      )
+  );
+}
+
+function looksLikeHouseNumber(
+  value: string
+): boolean {
+  const normalized = value
+    .trim()
+    .toLowerCase();
+
+  if (!normalized) {
+    return false;
+  }
+
+  return (
+    /^\d+[a-z]?\b/.test(normalized) ||
+    /^(shop|house|building|block|plot|suite|unit|flat)\b/.test(
+      normalized
+    )
+  );
+}
+
+function parseLocationAddress(
+  address: string | null | undefined,
+  area: string
+): {
+  houseNumber: string;
+  street: string;
+  city: string;
+} {
+  const fallback = {
+    houseNumber: "",
+    street: "",
+    city: "",
+  };
+
+  const trimmedAddress =
+    typeof address === "string"
+      ? address.trim()
+      : "";
+
+  if (!trimmedAddress) {
+    return fallback;
+  }
+
+  const parts = trimmedAddress
+    .split(",")
+    .map((part) => part.trim())
+    .filter(Boolean);
+
+  if (parts.length === 0) {
+    return fallback;
+  }
+
+  const withoutCountry =
+    parts[parts.length - 1].toLowerCase() ===
+    DEFAULT_COUNTRY.toLowerCase()
+      ? parts.slice(0, -1)
+      : parts;
+
+  const normalizedArea = area
+    .trim()
+    .toLowerCase();
+
+  const areaIndex = normalizedArea
+    ? withoutCountry.findLastIndex(
+        (part) =>
+          part.toLowerCase() ===
+          normalizedArea
+      )
+    : -1;
+
+  if (areaIndex < 0) {
+    return {
+      houseNumber: "",
+      street: withoutCountry.join(", "),
+      city: "",
+    };
+  }
+
+  const beforeArea = withoutCountry.slice(
+    0,
+    areaIndex
+  );
+
+  const afterArea = withoutCountry.slice(
+    areaIndex + 1
+  );
+
+  if (afterArea.length > 0) {
+    return {
+      houseNumber: "",
+      street: beforeArea.join(", "),
+      city: afterArea[0] ?? "",
+    };
+  }
+
+  if (beforeArea.length === 0) {
+    return fallback;
+  }
+
+  if (beforeArea.length === 1) {
+    return {
+      houseNumber: "",
+      street: beforeArea[0],
+      city: "",
+    };
+  }
+
+  if (beforeArea.length === 2) {
+    const [first, second] = beforeArea;
+
+    if (looksLikeHouseNumber(first)) {
+      return {
+        houseNumber: first,
+        street: second,
+        city: "",
+      };
+    }
+
+    return {
+      houseNumber: "",
+      street: first,
+      city: second,
+    };
+  }
+
+  return {
+    houseNumber: beforeArea
+      .slice(0, -2)
+      .join(", "),
+    street:
+      beforeArea[beforeArea.length - 2],
+    city:
+      beforeArea[beforeArea.length - 1],
+  };
+}
+
+function buildLocationAddressPreview(
+  area: string,
+  houseNumber: string,
+  street: string,
+  city: string
+): string {
+  return [
+    houseNumber.trim(),
+    street.trim(),
+    city.trim(),
+    area.trim(),
+    DEFAULT_COUNTRY,
+  ]
+    .filter(Boolean)
+    .join(", ");
+}
+
+type SellerProductImage = {
+  id: string;
+  url: string;
+  publicId: string | null;
+  sortOrder: number;
+};
+
 type SellerProduct = {
   id: string;
   name: string;
@@ -47,6 +601,7 @@ type SellerProduct = {
     | "ASK_SELLER"
     | "UNAVAILABLE";
   imageUrl: string | null;
+  images: SellerProductImage[];
   status:
     | "ACTIVE"
     | "INACTIVE"
@@ -73,6 +628,7 @@ type SellerBusiness = {
     | "UNAVAILABLE";
   phone: string | null;
   imageUrl: string | null;
+  socialLinks: SellerSocialLink[];
   priceMin: number | null;
   priceMax: number | null;
   deletedAt: string | null;
@@ -82,6 +638,9 @@ type SellerBusiness = {
     address: string | null;
     lat: number | null;
     long: number | null;
+    verification:
+      | "VERIFIED"
+      | "UNVERIFIED";
   } | null;
   categories: {
     category: SellerCategory;
@@ -107,8 +666,9 @@ type BusinessForm = {
   ownerName: string;
   description: string;
   area: string;
-  address: string;
-  phone: string;
+  houseNumber: string;
+  street: string;
+  city: string;
   categoryId: string;
   availability:
     | "AVAILABLE"
@@ -129,7 +689,7 @@ type ProductForm = {
     | "AVAILABLE"
     | "ASK_SELLER"
     | "UNAVAILABLE";
-  imageUrl: string;
+  images: string[];
 };
 
 const INITIAL_BUSINESS_FORM: BusinessForm = {
@@ -137,8 +697,9 @@ const INITIAL_BUSINESS_FORM: BusinessForm = {
   ownerName: "",
   description: "",
   area: "",
-  address: "",
-  phone: "",
+  houseNumber: "",
+  street: "",
+  city: "",
   categoryId: "",
   availability: "ASK_SELLER",
   priceMin: "",
@@ -153,7 +714,7 @@ const INITIAL_PRODUCT_FORM: ProductForm = {
   priceMin: "",
   priceMax: "",
   availability: "ASK_SELLER",
-  imageUrl: "",
+  images: [],
 };
 
 export default function SellerDashboard() {
@@ -207,6 +768,16 @@ export default function SellerDashboard() {
 
   const [categoryChanged, setCategoryChanged] =
     useState(false);
+
+  const [socialValues, setSocialValues] =
+    useState<Record<SocialPlatform, string>>({
+      WHATSAPP: "",
+      INSTAGRAM: "",
+      TIKTOK: "",
+      FACEBOOK: "",
+      PHONE: "",
+      DIRECTIONS: "",
+    });
 
   const [businessLatitude, setBusinessLatitude] =
     useState<string>("");
@@ -363,6 +934,18 @@ export default function SellerDashboard() {
         );
 
         if (loadedBusiness) {
+          const parsedLocation =
+            parseLocationAddress(
+              loadedBusiness.location?.address,
+              loadedBusiness.location?.area ?? ""
+            );
+
+          setSocialValues(
+            getSocialValues(
+              loadedBusiness.socialLinks,
+              loadedBusiness.phone
+            )
+          );
           setBusinessForm({
             name:
               loadedBusiness.name ??
@@ -376,12 +959,12 @@ export default function SellerDashboard() {
             area:
               loadedBusiness.location
                 ?.area ?? "",
-            address:
-              loadedBusiness.location
-                ?.address ?? "",
-            phone:
-              loadedBusiness.phone ??
-              "",
+            houseNumber:
+              parsedLocation.houseNumber,
+            street:
+              parsedLocation.street,
+            city:
+              parsedLocation.city,
             categoryId:
               loadedBusiness
                 .categories?.[0]
@@ -471,7 +1054,9 @@ export default function SellerDashboard() {
 
     if (
       field === "area" ||
-      field === "address"
+      field === "houseNumber" ||
+      field === "street" ||
+      field === "city"
     ) {
       setLocationError("");
       setLocationStatus("");
@@ -487,6 +1072,24 @@ export default function SellerDashboard() {
     setProductForm((current) => ({
       ...current,
       [field]: value,
+    }));
+
+    if (error) {
+      setError("");
+    }
+
+    if (success) {
+      setSuccess("");
+    }
+  }
+
+  function updateSocial(
+    platform: SocialPlatform,
+    value: string
+  ) {
+    setSocialValues((current) => ({
+      ...current,
+      [platform]: value,
     }));
 
     if (error) {
@@ -569,22 +1172,27 @@ export default function SellerDashboard() {
     const area =
       businessForm.area.trim();
 
-    const address =
-      businessForm.address.trim();
+    const street =
+      businessForm.street.trim();
 
     if (!area) {
       setError(
         "Business area is required."
       );
-
       return false;
     }
 
-    if (!address) {
+    if (!isKnownLagosArea(area)) {
       setError(
-        "Business address is required."
+        "Select a business area from the Lagos area list."
       );
+      return false;
+    }
 
+    if (!street) {
+      setError(
+        "Street, road, or close is required."
+      );
       return false;
     }
 
@@ -601,7 +1209,6 @@ export default function SellerDashboard() {
       setError(
         "Business coordinates must be captured as a complete location pair."
       );
-
       return false;
     }
 
@@ -626,7 +1233,6 @@ export default function SellerDashboard() {
         setError(
           "The captured business latitude is invalid."
         );
-
         return false;
       }
 
@@ -640,7 +1246,6 @@ export default function SellerDashboard() {
         setError(
           "The captured business longitude is invalid."
         );
-
         return false;
       }
     }
@@ -658,6 +1263,19 @@ export default function SellerDashboard() {
     setLocationError("");
     setLocationStatus("");
 
+    const parsedLocation =
+      parseLocationAddress(
+        business.location?.address,
+        business.location?.area ?? ""
+      );
+
+    setSocialValues(
+      getSocialValues(
+        business.socialLinks,
+        business.phone
+      )
+    );
+
     setBusinessForm({
       name:
         business.name ?? "",
@@ -670,11 +1288,12 @@ export default function SellerDashboard() {
       area:
         business.location?.area ??
         "",
-      address:
-        business.location?.address ??
-        "",
-      phone:
-        business.phone ?? "",
+      houseNumber:
+        parsedLocation.houseNumber,
+      street:
+        parsedLocation.street,
+      city:
+        parsedLocation.city,
       categoryId:
         business.categories?.[0]
           ?.category?.id ?? "",
@@ -722,49 +1341,73 @@ export default function SellerDashboard() {
       return;
     }
 
+    const parsedLocation =
+      parseLocationAddress(
+        business.location?.address,
+        business.location?.area ?? ""
+      );
+
     setError("");
     setSuccess("");
     setLocationError("");
     setLocationStatus("");
 
-    setBusinessForm({
-      name:
-        business.name ?? "",
-      ownerName:
-        business.ownerName ??
-        "",
-      description:
-        business.description ??
-        "",
-      area:
-        business.location?.area ??
-        "",
-      address:
-        business.location?.address ??
-        "",
-      phone:
-        business.phone ?? "",
-      categoryId:
-        business.categories?.[0]
-          ?.category?.id ?? "",
-      availability:
-        business.availability ??
-        "ASK_SELLER",
-      priceMin:
-        business.priceMin !==
-        null
-          ? String(
-              business.priceMin
-            )
-          : "",
-      priceMax:
-        business.priceMax !==
-        null
-          ? String(
-              business.priceMax
-            )
-          : "",
-    });
+    setSocialValues(
+      getSocialValues(
+        business.socialLinks,
+        business.phone
+      )
+    );
+
+   setBusinessForm({
+  name:
+    business.name ?? "",
+
+  ownerName:
+    business.ownerName ??
+    "",
+
+  description:
+    business.description ??
+    "",
+
+  area:
+    business.location?.area ??
+    "",
+
+  houseNumber:
+    parsedLocation.houseNumber,
+
+  street:
+    parsedLocation.street,
+
+  city:
+    parsedLocation.city,
+
+  categoryId:
+    business.categories?.[0]
+      ?.category?.id ?? "",
+
+  availability:
+    business.availability ??
+    "ASK_SELLER",
+
+  priceMin:
+    business.priceMin !==
+    null
+      ? String(
+          business.priceMin
+        )
+      : "",
+
+  priceMax:
+    business.priceMax !==
+    null
+      ? String(
+          business.priceMax
+        )
+      : "",
+});
 
     setBusinessLatitude(
       business.location?.lat != null
@@ -922,17 +1565,26 @@ export default function SellerDashboard() {
     return {
       area:
         businessForm.area.trim(),
-      address:
-        businessForm.address.trim(),
+
+      houseNumber:
+        businessForm.houseNumber.trim(),
+
+      street:
+        businessForm.street.trim(),
+
+      city:
+        businessForm.city.trim(),
+
       lat:
         latitude,
+
       long:
         longitude,
     };
   }
 
   async function createBusiness(
-    event: React.SubmitEvent<HTMLFormElement>
+    event: FormEvent<HTMLFormElement>
   ) {
     event.preventDefault();
 
@@ -984,8 +1636,10 @@ export default function SellerDashboard() {
 
               ...locationPayload,
 
-              phone:
-                businessForm.phone,
+              socialLinks:
+                buildSocialLinks(
+                  socialValues
+                ),
 
               categoryIds:
                 businessForm.categoryId
@@ -1034,6 +1688,12 @@ export default function SellerDashboard() {
       );
 
       if (createdBusiness) {
+        const parsedLocation =
+          parseLocationAddress(
+            createdBusiness.location?.address,
+            createdBusiness.location?.area ?? ""
+          );
+
         setBusinessLatitude(
           createdBusiness.location
             ?.lat != null
@@ -1067,12 +1727,12 @@ export default function SellerDashboard() {
           area:
             createdBusiness.location
               ?.area ?? "",
-          address:
-            createdBusiness.location
-              ?.address ?? "",
-          phone:
-            createdBusiness.phone ??
-            "",
+          houseNumber:
+            parsedLocation.houseNumber,
+          street:
+            parsedLocation.street,
+          city:
+            parsedLocation.city,
           categoryId:
             createdBusiness
               .categories?.[0]
@@ -1097,6 +1757,12 @@ export default function SellerDashboard() {
         });
       }
 
+      setSocialValues(
+        getSocialValues(
+          createdBusiness?.socialLinks
+        )
+      );
+
       setLocationError("");
       setLocationStatus("");
 
@@ -1118,7 +1784,7 @@ export default function SellerDashboard() {
   }
 
   async function updateBusiness(
-    event: React.SubmitEvent<HTMLFormElement>
+    event: FormEvent<HTMLFormElement>
   ) {
     event.preventDefault();
 
@@ -1167,8 +1833,10 @@ export default function SellerDashboard() {
 
         ...locationPayload,
 
-        phone:
-          businessForm.phone,
+        socialLinks:
+          buildSocialLinks(
+            socialValues
+          ),
 
         availability:
           businessForm.availability,
@@ -1233,6 +1901,30 @@ export default function SellerDashboard() {
       );
 
       if (updatedBusiness) {
+        const parsedLocation =
+          parseLocationAddress(
+            updatedBusiness.location?.address,
+            updatedBusiness.location?.area ?? ""
+          );
+
+        setBusinessForm((current) => ({
+          ...current,
+          area:
+            updatedBusiness.location?.area ?? "",
+          houseNumber:
+            parsedLocation.houseNumber,
+          street:
+            parsedLocation.street,
+          city:
+            parsedLocation.city,
+        }));
+
+        setSocialValues(
+          getSocialValues(
+            updatedBusiness.socialLinks
+          )
+        );
+
         setBusinessLatitude(
           updatedBusiness.location
             ?.lat != null
@@ -1360,8 +2052,22 @@ export default function SellerDashboard() {
       availability:
         product.availability ??
         "ASK_SELLER",
-      imageUrl:
-        product.imageUrl ?? "",
+      images:
+        Array.isArray(product.images)
+          ? product.images
+              .slice()
+              .sort(
+                (a, b) =>
+                  a.sortOrder -
+                  b.sortOrder
+              )
+              .map(
+                (image) =>
+                  image.url
+              )
+          : product.imageUrl
+            ? [product.imageUrl]
+            : [],
     });
 
     setEditingProductId(
@@ -1474,7 +2180,7 @@ export default function SellerDashboard() {
   }
 
   async function createProduct(
-    event: React.SubmitEvent<HTMLFormElement>
+    event: FormEvent<HTMLFormElement>
   ) {
     event.preventDefault();
 
@@ -1533,9 +2239,8 @@ export default function SellerDashboard() {
               priceMax,
               availability:
                 productForm.availability,
-              imageUrl:
-                productForm.imageUrl ||
-                null,
+              images:
+                productForm.images,
             }),
           }
         );
@@ -1587,7 +2292,7 @@ export default function SellerDashboard() {
   }
 
   async function updateProduct(
-    event: React.SubmitEvent<HTMLFormElement>
+    event: FormEvent<HTMLFormElement>
   ) {
     event.preventDefault();
 
@@ -1645,9 +2350,8 @@ export default function SellerDashboard() {
               priceMax,
               availability:
                 productForm.availability,
-              imageUrl:
-                productForm.imageUrl ||
-                null,
+              images:
+                productForm.images,
             }),
           }
         );
@@ -1815,7 +2519,7 @@ export default function SellerDashboard() {
   }
 
   async function submitDeletionRequest(
-    event: React.SubmitEvent<HTMLFormElement>
+    event: FormEvent<HTMLFormElement>
   ) {
     event.preventDefault();
 
@@ -2276,6 +2980,44 @@ export default function SellerDashboard() {
                         </div>
                       )}
 
+                      <div className="mt-5 border-t border-[#EAE6DF] pt-5">
+                        <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-gray-400">
+                          Contact & social links
+                        </p>
+
+                        {business.socialLinks.length > 0 ? (
+                          <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                            {business.socialLinks.map((link) => {
+                              const label =
+                                SOCIAL_PLATFORMS.find(
+                                  (platform) =>
+                                    platform.value ===
+                                    link.platform
+                                )?.label ?? link.platform;
+
+                              return (
+                                <div
+                                  key={link.id}
+                                  className="rounded-2xl bg-[#FCFAF6] p-4"
+                                >
+                                  <p className="text-[10px] font-semibold uppercase tracking-wide text-gray-400">
+                                    {label}
+                                  </p>
+
+                                  <p className="mt-2 truncate text-sm font-semibold text-gray-800">
+                                    {link.handle}
+                                  </p>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        ) : (
+                          <p className="mt-2 text-xs text-gray-500">
+                            No contact or social links have been added yet.
+                          </p>
+                        )}
+                      </div>
+
                       {/* Business deletion */}
 
                       <div className="mt-6 border-t border-[#EAE6DF] pt-5">
@@ -2580,94 +3322,149 @@ export default function SellerDashboard() {
                             Business area
                           </label>
 
-                          <input
+                          <select
                             id="edit-area"
-                            type="text"
-                            value={
-                              businessForm.area
-                            }
-                            onChange={(
-                              event
-                            ) =>
+                            value={businessForm.area}
+                            onChange={(event) =>
                               updateBusinessField(
                                 "area",
-                                event.target
-                                  .value
+                                event.target.value
                               )
                             }
                             required
-                            disabled={
-                              savingBusiness
+                            disabled={savingBusiness}
+                            className="h-12 w-full rounded-xl border border-[#D9DEE5] bg-white px-4 text-sm text-[#17202A] outline-none transition focus:border-[#FF694F] focus:ring-4 focus:ring-[#FF5A36]/10 disabled:bg-gray-50"
+                          >
+                            <option value="">
+                              Select area
+                            </option>
+
+                            {!isKnownLagosArea(businessForm.area) &&
+                              businessForm.area && (
+                                <option value={businessForm.area}>
+                                  {businessForm.area} (saved area)
+                                </option>
+                              )}
+
+                            {LAGOS_AREA_GROUPS.map((group) => (
+                              <optgroup
+                                key={group.lga}
+                                label={group.lga}
+                              >
+                                {group.areas.map((item) => (
+                                  <option
+                                    key={item}
+                                    value={item}
+                                  >
+                                    {item}
+                                  </option>
+                                ))}
+                              </optgroup>
+                            ))}
+                          </select>
+                        </div>
+
+                        <div>
+                          <label
+                            htmlFor="edit-city"
+                            className="mb-2 block text-xs font-bold text-gray-700"
+                          >
+                            City
+                          </label>
+
+                          <input
+                            id="edit-city"
+                            type="text"
+                            value={businessForm.city}
+                            onChange={(event) =>
+                              updateBusinessField(
+                                "city",
+                                event.target.value
+                              )
                             }
-                            className="h-12 w-full rounded-xl border border-[#D9DEE5] bg-white px-4 text-sm text-[#17202A] outline-none transition focus:border-[#FF694F] focus:ring-4 focus:ring-[#FF694F]/10 disabled:bg-gray-50"
+                            placeholder="Lagos"
+                            disabled={savingBusiness}
+                            className="h-12 w-full rounded-xl border border-[#D9DEE5] bg-white px-4 text-sm text-[#17202A] outline-none transition focus:border-[#FF694F] focus:ring-4 focus:ring-[#FF5A36]/10 disabled:bg-gray-50"
+                          />
+                        </div>
+                      </div>
+
+                      <div className="grid gap-5 sm:grid-cols-2">
+                        <div>
+                          <label
+                            htmlFor="edit-house-number"
+                            className="mb-2 block text-xs font-bold text-gray-700"
+                          >
+                            House / Shop / Building number
+                          </label>
+
+                          <input
+                            id="edit-house-number"
+                            type="text"
+                            value={businessForm.houseNumber}
+                            onChange={(event) =>
+                              updateBusinessField(
+                                "houseNumber",
+                                event.target.value
+                              )
+                            }
+                            placeholder="e.g. 12 or Shop 4"
+                            disabled={savingBusiness}
+                            className="h-12 w-full rounded-xl border border-[#D9DEE5] bg-white px-4 text-sm text-[#17202A] outline-none transition focus:border-[#FF694F] focus:ring-4 focus:ring-[#FF5A36]/10 disabled:bg-gray-50"
                           />
                         </div>
 
                         <div>
                           <label
-                            htmlFor="edit-phone"
+                            htmlFor="edit-street"
                             className="mb-2 block text-xs font-bold text-gray-700"
                           >
-                            Phone number
+                            Street / Road / Close
                           </label>
 
                           <input
-                            id="edit-phone"
-                            type="tel"
-                            value={
-                              businessForm.phone
-                            }
-                            onChange={(
-                              event
-                            ) =>
+                            id="edit-street"
+                            type="text"
+                            value={businessForm.street}
+                            onChange={(event) =>
                               updateBusinessField(
-                                "phone",
-                                event.target
-                                  .value
+                                "street",
+                                event.target.value
                               )
                             }
-                            disabled={
-                              savingBusiness
-                            }
-                            className="h-12 w-full rounded-xl border border-[#D9DEE5] bg-white px-4 text-sm text-[#17202A] outline-none transition focus:border-[#FF694F] focus:ring-4 focus:ring-[#FF694F]/10 disabled:bg-gray-50"
+                            placeholder="e.g. Agidingbi Road"
+                            required
+                            disabled={savingBusiness}
+                            className="h-12 w-full rounded-xl border border-[#D9DEE5] bg-white px-4 text-sm text-[#17202A] outline-none transition focus:border-[#FF694F] focus:ring-4 focus:ring-[#FF5A36]/10 disabled:bg-gray-50"
                           />
                         </div>
                       </div>
 
-                      <div>
-                        <label
-                          htmlFor="edit-address"
-                          className="mb-2 block text-xs font-bold text-gray-700"
-                        >
-                          Business address
-                        </label>
+                      <div className="rounded-2xl border border-[#E8E4DE] bg-[#FCFAF6] p-4">
+                        <div className="flex items-start gap-3">
+                          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-[#FFF0EB] text-[#FF5A36]">
+                            <MapPin className="h-5 w-5" />
+                          </div>
 
-                        <textarea
-                          id="edit-address"
-                          value={
-                            businessForm.address
-                          }
-                          onChange={(
-                            event
-                          ) =>
-                            updateBusinessField(
-                              "address",
-                              event.target
-                                .value
-                            )
-                          }
-                          rows={3}
-                          required
-                          disabled={
-                            savingBusiness
-                          }
-                          placeholder="Shop/building, street/road/close, city"
-                          className="w-full resize-none rounded-xl border border-[#D9DEE5] bg-white px-4 py-3 text-sm text-[#17202A] outline-none transition focus:border-[#FF694F] focus:ring-4 focus:ring-[#FF694F]/10 disabled:bg-gray-50"
-                        />
+                          <div className="min-w-0">
+                            <p className="text-xs font-bold text-[#17202A]">
+                              Address preview
+                            </p>
 
-                        <p className="mt-1.5 text-[10px] leading-5 text-gray-400">
-                          Enter the physical business address. ReMarket can use this address to determine the map location when GPS is not captured.
-                        </p>
+                            <p className="mt-2 text-[11px] leading-5 text-gray-600">
+                              {buildLocationAddressPreview(
+                                businessForm.area,
+                                businessForm.houseNumber,
+                                businessForm.street,
+                                businessForm.city
+                              ) || "Complete the location fields above."}
+                            </p>
+
+                            <p className="mt-2 text-[10px] leading-5 text-gray-400">
+                              Country: Nigeria
+                            </p>
+                          </div>
+                        </div>
                       </div>
 
                       <div className="rounded-2xl border border-[#E8E4DE] bg-[#FCFAF6] p-4">
@@ -2738,6 +3535,64 @@ export default function SellerDashboard() {
                               </p>
                             </div>
                           )}
+                      </div>
+
+
+                      <div className="rounded-2xl border border-[#E8E4DE] bg-[#FCFAF6] p-4">
+                        <div>
+                          <p className="text-xs font-bold text-[#17202A]">
+                            Contact & social links
+                          </p>
+
+                          <p className="mt-1 text-[10px] leading-5 text-gray-500">
+                            Add the contact methods customers can use to reach your business. Phone is managed here as the Phone social link.
+                          </p>
+                        </div>
+
+                        <div className="mt-4 grid gap-4 sm:grid-cols-2">
+                          {SOCIAL_PLATFORMS.map(
+                            ({ value, label }) => (
+                              <div key={value}>
+                                <label
+                                  htmlFor={`edit-social-${value.toLowerCase()}`}
+                                  className="mb-2 block text-xs font-bold text-gray-700"
+                                >
+                                  {label}
+                                </label>
+
+                                <input
+                                  id={`edit-social-${value.toLowerCase()}`}
+                                  type={
+                                    value === "PHONE"
+                                      ? "tel"
+                                      : "text"
+                                  }
+                                  value={
+                                    socialValues[value]
+                                  }
+                                  onChange={(event) =>
+                                    updateSocial(
+                                      value,
+                                      event.target.value
+                                    )
+                                  }
+                                  placeholder={
+                                    value === "PHONE" ||
+                                    value === "WHATSAPP"
+                                      ? "080..."
+                                      : value === "DIRECTIONS"
+                                        ? "https://maps.google.com/..."
+                                        : "@username or URL"
+                                  }
+                                  disabled={
+                                    savingBusiness
+                                  }
+                                  className="h-12 w-full rounded-xl border border-[#D9DEE5] bg-white px-4 text-sm text-[#17202A] outline-none transition focus:border-[#FF694F] focus:ring-4 focus:ring-[#FF694F]/10 disabled:bg-gray-50"
+                                />
+                              </div>
+                            )
+                          )}
+                        </div>
                       </div>
 
                       <div className="grid gap-5 sm:grid-cols-3">
@@ -3369,36 +4224,36 @@ export default function SellerDashboard() {
                               </div>
                             </div>
 
-                            <div>
-                              <label
-                                htmlFor="product-image-url"
-                                className="mb-2 block text-xs font-bold text-gray-700"
-                              >
-                                Product image URL
-                              </label>
+                            <div className="rounded-2xl border border-[#E8E4DE] bg-white p-4">
+                              <div className="flex items-center justify-between gap-3">
+                                <div>
+                                  <p className="text-xs font-bold text-[#17202A]">
+                                    Product images
+                                  </p>
+                                  <p className="mt-1 text-[10px] leading-4 text-gray-400">
+                                    The first image is the product cover.
+                                  </p>
+                                </div>
+                              </div>
 
-                              <input
-                                id="product-image-url"
-                                type="url"
-                                value={
-                                  productForm.imageUrl
-                                }
-                                onChange={(
-                                  event
-                                ) =>
-                                  updateProductField(
-                                    "imageUrl",
-                                    event.target
-                                      .value
-                                  )
-                                }
-                                placeholder="https://..."
-                                disabled={
-                                  creatingProduct ||
-                                  updatingProduct
-                                }
-                                className="h-12 w-full rounded-xl border border-[#D9DEE5] bg-white px-4 text-sm text-[#17202A] outline-none transition focus:border-[#FF694F] focus:ring-4 focus:ring-[#FF694F]/10 disabled:bg-gray-50"
-                              />
+                              <div className="mt-3">
+                                <ProductImageUpload
+                                  value={
+                                    productForm.images
+                                  }
+                                  onChange={
+                                    (images) =>
+                                      updateProductField(
+                                        "images",
+                                        images
+                                      )
+                                  }
+                                  disabled={
+                                    creatingProduct ||
+                                    updatingProduct
+                                  }
+                                />
+                              </div>
                             </div>
                           </div>
 
@@ -3496,10 +4351,13 @@ export default function SellerDashboard() {
                                   className="overflow-hidden rounded-2xl border border-[#E8E4DE] bg-white"
                                 >
                                   <div className="h-[150px] overflow-hidden bg-[#FCFAF6]">
-                                    {product.imageUrl ? (
+                                    {(product.images?.[0]?.url ??
+                                      product.imageUrl) ? (
                                       <img
                                         src={
-                                          product.imageUrl
+                                          product.images?.[0]?.url ??
+                                          product.imageUrl ??
+                                          ""
                                         }
                                         alt={
                                           product.name
@@ -3737,106 +4595,152 @@ export default function SellerDashboard() {
                       />
                     </div>
 
-                    <div className="grid gap-5 sm:grid-cols-2">
-                      <div>
-                        <label
-                          htmlFor="create-area"
-                          className="mb-2 block text-xs font-bold text-gray-700"
-                        >
-                          Business area
-                        </label>
+                      <div className="grid gap-5 sm:grid-cols-2">
+                        <div>
+                          <label
+                            htmlFor="create-area"
+                            className="mb-2 block text-xs font-bold text-gray-700"
+                          >
+                            Business area
+                          </label>
 
-                        <input
-                          id="create-area"
-                          type="text"
-                          value={
-                            businessForm.area
-                          }
-                          onChange={(
-                            event
-                          ) =>
-                            updateBusinessField(
-                              "area",
-                              event.target
-                                .value
-                            )
-                          }
-                          placeholder="e.g. Ogba"
-                          required
-                          disabled={
-                            savingBusiness
-                          }
-                          className="h-12 w-full rounded-xl border border-[#D9DEE5] bg-white px-4 text-sm text-[#17202A] outline-none transition focus:border-[#FF694F] focus:ring-4 focus:ring-[#FF694F]/10 disabled:bg-gray-50"
-                        />
+                          <select
+                            id="create-area"
+                            value={businessForm.area}
+                            onChange={(event) =>
+                              updateBusinessField(
+                                "area",
+                                event.target.value
+                              )
+                            }
+                            required
+                            disabled={savingBusiness}
+                            className="h-12 w-full rounded-xl border border-[#D9DEE5] bg-white px-4 text-sm text-[#17202A] outline-none transition focus:border-[#FF694F] focus:ring-4 focus:ring-[#FF5A36]/10 disabled:bg-gray-50"
+                          >
+                            <option value="">
+                              Select area
+                            </option>
+
+                            {LAGOS_AREA_GROUPS.map((group) => (
+                              <optgroup
+                                key={group.lga}
+                                label={group.lga}
+                              >
+                                {group.areas.map((item) => (
+                                  <option
+                                    key={item}
+                                    value={item}
+                                  >
+                                    {item}
+                                  </option>
+                                ))}
+                              </optgroup>
+                            ))}
+                          </select>
+                        </div>
+
+                        <div>
+                          <label
+                            htmlFor="create-city"
+                            className="mb-2 block text-xs font-bold text-gray-700"
+                          >
+                            City
+                          </label>
+
+                          <input
+                            id="create-city"
+                            type="text"
+                            value={businessForm.city}
+                            onChange={(event) =>
+                              updateBusinessField(
+                                "city",
+                                event.target.value
+                              )
+                            }
+                            placeholder="Lagos"
+                            disabled={savingBusiness}
+                            className="h-12 w-full rounded-xl border border-[#D9DEE5] bg-white px-4 text-sm text-[#17202A] outline-none transition focus:border-[#FF694F] focus:ring-4 focus:ring-[#FF5A36]/10 disabled:bg-gray-50"
+                          />
+                        </div>
                       </div>
 
-                      <div>
-                        <label
-                          htmlFor="create-phone"
-                          className="mb-2 block text-xs font-bold text-gray-700"
-                        >
-                          Phone number
-                        </label>
+                      <div className="grid gap-5 sm:grid-cols-2">
+                        <div>
+                          <label
+                            htmlFor="create-house-number"
+                            className="mb-2 block text-xs font-bold text-gray-700"
+                          >
+                            House / Shop / Building number
+                          </label>
 
-                        <input
-                          id="create-phone"
-                          type="tel"
-                          value={
-                            businessForm.phone
-                          }
-                          onChange={(
-                            event
-                          ) =>
-                            updateBusinessField(
-                              "phone",
-                              event.target
-                                .value
-                            )
-                          }
-                          placeholder="Your business phone"
-                          disabled={
-                            savingBusiness
-                          }
-                          className="h-12 w-full rounded-xl border border-[#D9DEE5] bg-white px-4 text-sm text-[#17202A] outline-none transition focus:border-[#FF694F] focus:ring-4 focus:ring-[#FF694F]/10 disabled:bg-gray-50"
-                        />
+                          <input
+                            id="create-house-number"
+                            type="text"
+                            value={businessForm.houseNumber}
+                            onChange={(event) =>
+                              updateBusinessField(
+                                "houseNumber",
+                                event.target.value
+                              )
+                            }
+                            placeholder="e.g. 12 or Shop 4"
+                            disabled={savingBusiness}
+                            className="h-12 w-full rounded-xl border border-[#D9DEE5] bg-white px-4 text-sm text-[#17202A] outline-none transition focus:border-[#FF694F] focus:ring-4 focus:ring-[#FF5A36]/10 disabled:bg-gray-50"
+                          />
+                        </div>
+
+                        <div>
+                          <label
+                            htmlFor="create-street"
+                            className="mb-2 block text-xs font-bold text-gray-700"
+                          >
+                            Street / Road / Close
+                          </label>
+
+                          <input
+                            id="create-street"
+                            type="text"
+                            value={businessForm.street}
+                            onChange={(event) =>
+                              updateBusinessField(
+                                "street",
+                                event.target.value
+                              )
+                            }
+                            placeholder="e.g. Agidingbi Road"
+                            required
+                            disabled={savingBusiness}
+                            className="h-12 w-full rounded-xl border border-[#D9DEE5] bg-white px-4 py-3 text-sm text-[#17202A] outline-none transition focus:border-[#FF694F] focus:ring-4 focus:ring-[#FF5A36]/10 disabled:bg-gray-50"
+                          />
+                        </div>
                       </div>
-                    </div>
 
-                    <div>
-                      <label
-                        htmlFor="create-address"
-                        className="mb-2 block text-xs font-bold text-gray-700"
-                      >
-                        Business address
-                      </label>
+                      <div className="rounded-2xl border border-[#E8E4DE] bg-[#FCFAF6] p-4">
+                        <div className="flex items-start gap-3">
+                          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-[#FFF0EB] text-[#FF5A36]">
+                            <MapPin className="h-5 w-5" />
+                          </div>
 
-                      <textarea
-                        id="create-address"
-                        value={
-                          businessForm.address
-                        }
-                        onChange={(
-                          event
-                        ) =>
-                          updateBusinessField(
-                            "address",
-                            event.target
-                              .value
-                          )
-                        }
-                        rows={3}
-                        required
-                        disabled={
-                          savingBusiness
-                        }
-                        placeholder="Shop/building, street/road/close, city"
-                        className="w-full resize-none rounded-xl border border-[#D9DEE5] bg-white px-4 py-3 text-sm text-[#17202A] outline-none transition focus:border-[#FF694F] focus:ring-4 focus:ring-[#FF694F]/10 disabled:bg-gray-50"
-                      />
+                          <div className="min-w-0">
+                            <p className="text-xs font-bold text-[#17202A]">
+                              Address preview
+                            </p>
 
-                      <p className="mt-1.5 text-[10px] leading-5 text-gray-400">
-                        Enter the physical business address. ReMarket can determine the map location from this address when GPS is not captured.
-                      </p>
-                    </div>
+                            <p className="mt-2 text-[11px] leading-5 text-gray-600">
+                              {buildLocationAddressPreview(
+                                businessForm.area,
+                                businessForm.houseNumber,
+                                businessForm.street,
+                                businessForm.city
+                              ) || "Complete the location fields above."}
+                            </p>
+
+                            <p className="mt-2 text-[10px] leading-5 text-gray-400">
+                              Country: Nigeria
+                            </p>
+                          </div>
+                        </div>
+                      </div>
 
                     <div className="rounded-2xl border border-[#E8E4DE] bg-[#FCFAF6] p-4">
                       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
@@ -3907,6 +4811,64 @@ export default function SellerDashboard() {
                           </div>
                         )}
                     </div>
+
+
+                      <div className="rounded-2xl border border-[#E8E4DE] bg-[#FCFAF6] p-4">
+                        <div>
+                          <p className="text-xs font-bold text-[#17202A]">
+                            Contact & social links
+                          </p>
+
+                          <p className="mt-1 text-[10px] leading-5 text-gray-500">
+                            Add the contact methods customers can use to reach your business. Phone is managed here as the Phone social link.
+                          </p>
+                        </div>
+
+                        <div className="mt-4 grid gap-4 sm:grid-cols-2">
+                          {SOCIAL_PLATFORMS.map(
+                            ({ value, label }) => (
+                              <div key={value}>
+                                <label
+                                  htmlFor={`create-social-${value.toLowerCase()}`}
+                                  className="mb-2 block text-xs font-bold text-gray-700"
+                                >
+                                  {label}
+                                </label>
+
+                                <input
+                                  id={`create-social-${value.toLowerCase()}`}
+                                  type={
+                                    value === "PHONE"
+                                      ? "tel"
+                                      : "text"
+                                  }
+                                  value={
+                                    socialValues[value]
+                                  }
+                                  onChange={(event) =>
+                                    updateSocial(
+                                      value,
+                                      event.target.value
+                                    )
+                                  }
+                                  placeholder={
+                                    value === "PHONE" ||
+                                    value === "WHATSAPP"
+                                      ? "080..."
+                                      : value === "DIRECTIONS"
+                                        ? "https://maps.google.com/..."
+                                        : "@username or URL"
+                                  }
+                                  disabled={
+                                    savingBusiness
+                                  }
+                                  className="h-12 w-full rounded-xl border border-[#D9DEE5] bg-white px-4 text-sm text-[#17202A] outline-none transition focus:border-[#FF694F] focus:ring-4 focus:ring-[#FF694F]/10 disabled:bg-gray-50"
+                                />
+                              </div>
+                            )
+                          )}
+                        </div>
+                      </div>
 
                     <div className="grid gap-5 sm:grid-cols-3">
                       <div>

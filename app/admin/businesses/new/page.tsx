@@ -40,22 +40,19 @@ type SocialLinkInput = {
 };
 
 /*
- * Controlled Lagos Region vocabulary.
+ * Controlled Lagos area vocabulary.
  *
- * These are ReMarket-facing Region/locality values.
- * They are grouped by LGA for easier administration
- * and selection.
+ * The list is grouped by LGA for easier selection.
+ * The selected neighborhood/area value is stored
+ * in the existing Location.area field.
  *
- * The selected Region continues to be stored in the
- * existing Location.area field.
- *
- * We are intentionally not introducing a separate
- * Region database model.
+ * This is intentionally kept in this page for now
+ * so we do not introduce another location system.
  */
-const LAGOS_REGION_GROUPS = [
+const LAGOS_AREA_GROUPS = [
   {
     lga: "Agege",
-    regions: [
+    areas: [
       "Agege",
       "Orile Agege",
       "Dopemu",
@@ -66,18 +63,19 @@ const LAGOS_REGION_GROUPS = [
   },
   {
     lga: "Ajeromi-Ifelodun",
-    regions: [
+    areas: [
       "Ajegunle",
       "Tolu",
       "Olodi",
       "Alaba Oro",
       "Awodi-Ora",
       "Layeni",
+      "Mosafejo",
     ],
   },
   {
     lga: "Alimosho",
-    regions: [
+    areas: [
       "Alimosho",
       "Egbeda",
       "Akowonjo",
@@ -98,7 +96,7 @@ const LAGOS_REGION_GROUPS = [
   },
   {
     lga: "Amuwo-Odofin",
-    regions: [
+    areas: [
       "Amuwo",
       "Festac",
       "Mile 2",
@@ -110,7 +108,7 @@ const LAGOS_REGION_GROUPS = [
   },
   {
     lga: "Apapa",
-    regions: [
+    areas: [
       "Apapa",
       "Apapa Wharf",
       "Iganmu",
@@ -121,7 +119,7 @@ const LAGOS_REGION_GROUPS = [
   },
   {
     lga: "Badagry",
-    regions: [
+    areas: [
       "Badagry",
       "Badagry West",
       "Olorunda",
@@ -130,7 +128,7 @@ const LAGOS_REGION_GROUPS = [
   },
   {
     lga: "Epe",
-    regions: [
+    areas: [
       "Epe",
       "Eredo",
       "Ikosi-Ejinrin",
@@ -138,7 +136,7 @@ const LAGOS_REGION_GROUPS = [
   },
   {
     lga: "Eti-Osa",
-    regions: [
+    areas: [
       "Ikoyi",
       "Obalende",
       "Victoria Island",
@@ -160,7 +158,7 @@ const LAGOS_REGION_GROUPS = [
   },
   {
     lga: "Ibeju-Lekki",
-    regions: [
+    areas: [
       "Ibeju-Lekki",
       "Abijo",
       "Awoyaya",
@@ -172,7 +170,7 @@ const LAGOS_REGION_GROUPS = [
   },
   {
     lga: "Ifako-Ijaiye",
-    regions: [
+    areas: [
       "Ifako",
       "Ijaiye",
       "Ojokoro",
@@ -182,21 +180,23 @@ const LAGOS_REGION_GROUPS = [
   },
   {
     lga: "Ikeja",
-    regions: [
+    areas: [
       "Ikeja",
       "Ikeja GRA",
       "Alausa",
+      "Allen Avenue",
       "Oregun",
       "Opebi",
       "Ogba",
       "Ojodu",
       "Onigbongbo",
       "Computer Village",
+      "Airport Road",
     ],
   },
   {
     lga: "Ikorodu",
-    regions: [
+    areas: [
       "Ikorodu",
       "Ikorodu North",
       "Ikorodu West",
@@ -211,7 +211,7 @@ const LAGOS_REGION_GROUPS = [
   },
   {
     lga: "Kosofe",
-    regions: [
+    areas: [
       "Kosofe",
       "Ketu",
       "Agboyi",
@@ -226,11 +226,12 @@ const LAGOS_REGION_GROUPS = [
   },
   {
     lga: "Lagos Island",
-    regions: [
+    areas: [
       "Lagos Island",
       "Idumota",
       "Balogun",
       "Marina",
+      "Broad Street",
       "Isale Eko",
       "Lafiaji",
       "Onikan",
@@ -240,7 +241,7 @@ const LAGOS_REGION_GROUPS = [
   },
   {
     lga: "Lagos Mainland",
-    regions: [
+    areas: [
       "Yaba",
       "Ebute Metta",
       "Akoka",
@@ -258,7 +259,7 @@ const LAGOS_REGION_GROUPS = [
   },
   {
     lga: "Mushin",
-    regions: [
+    areas: [
       "Mushin",
       "Papa Ajao",
       "Idi-Araba",
@@ -269,19 +270,18 @@ const LAGOS_REGION_GROUPS = [
   },
   {
     lga: "Ojo",
-    regions: [
+    areas: [
       "Ojo",
       "Iba",
       "Iyana-Iba",
       "Ajangbadi",
       "Oto-Awori",
       "Alaba",
-      "Mosafejo",
     ],
   },
   {
     lga: "Oshodi-Isolo",
-    regions: [
+    areas: [
       "Oshodi",
       "Isolo",
       "Ejigbo",
@@ -293,7 +293,7 @@ const LAGOS_REGION_GROUPS = [
   },
   {
     lga: "Shomolu",
-    regions: [
+    areas: [
       "Shomolu",
       "Bariga",
       "Pedro",
@@ -304,7 +304,7 @@ const LAGOS_REGION_GROUPS = [
   },
   {
     lga: "Surulere",
-    regions: [
+    areas: [
       "Surulere",
       "Ojuelegba",
       "Lawanson",
@@ -330,12 +330,7 @@ export default function NewBusinessPage() {
   const [description, setDescription] =
     useState("");
 
-  /*
-   * UI terminology is Region.
-   *
-   * The existing API/database field remains `area`.
-   */
-  const [region, setRegion] =
+  const [area, setArea] =
     useState("");
 
   const [houseNumber, setHouseNumber] =
@@ -345,16 +340,11 @@ export default function NewBusinessPage() {
     useState("");
 
   const [city, setCity] =
-    useState("Lagos");
+    useState("");
 
   /*
-   * Coordinates remain internal.
-   *
-   * GPS capture is optional.
-   *
-   * When coordinates are not captured,
-   * the Admin API can resolve the location
-   * from the business address.
+   * Coordinates are captured internally.
+   * The admin never types latitude or longitude.
    */
   const [lat, setLat] =
     useState("");
@@ -407,36 +397,26 @@ export default function NewBusinessPage() {
       DEFAULT_CATEGORIES
     );
 
-  const [
-    usingCategoryFallback,
-    setUsingCategoryFallback,
-  ] = useState(true);
+  const [usingCategoryFallback, setUsingCategoryFallback] =
+    useState(true);
 
-  const [
-    selectedCategoryIds,
-    setSelectedCategoryIds,
-  ] = useState<string[]>([]);
+  const [selectedCategoryIds, setSelectedCategoryIds] =
+    useState<string[]>([]);
 
   const [socialLinks, setSocialLinks] =
     useState<SocialLinkInput[]>([]);
 
-  const [
-    loadingCategories,
-    setLoadingCategories,
-  ] = useState(true);
+  const [loadingCategories, setLoadingCategories] =
+    useState(true);
 
   const [locating, setLocating] =
     useState(false);
 
-  const [
-    locationStatus,
-    setLocationStatus,
-  ] = useState("");
+  const [locationStatus, setLocationStatus] =
+    useState("");
 
-  const [
-    locationError,
-    setLocationError,
-  ] = useState("");
+  const [locationError, setLocationError] =
+    useState("");
 
   const [saving, setSaving] =
     useState(false);
@@ -471,8 +451,7 @@ export default function NewBusinessPage() {
 
         if (
           !data ||
-          typeof data !==
-            "object" ||
+          typeof data !== "object" ||
           Array.isArray(data)
         ) {
           throw new Error(
@@ -529,8 +508,7 @@ export default function NewBusinessPage() {
           );
 
         if (
-          mergedCategories.length >
-          0
+          mergedCategories.length > 0
         ) {
           setCategories(
             mergedCategories
@@ -603,7 +581,6 @@ export default function NewBusinessPage() {
       setError(
         "Categories could not be loaded from the database. Please refresh and try again before assigning categories."
       );
-
       return;
     }
 
@@ -616,8 +593,7 @@ export default function NewBusinessPage() {
         )
           ? current.filter(
               (id) =>
-                id !==
-                categoryId
+                id !== categoryId
             )
           : [
               ...current,
@@ -643,7 +619,6 @@ export default function NewBusinessPage() {
       setLocationError(
         "Location services are not available on this device."
       );
-
       return;
     }
 
@@ -738,8 +713,7 @@ export default function NewBusinessPage() {
       (current) => [
         ...current,
         {
-          platform:
-            "WHATSAPP",
+          platform: "WHATSAPP",
           handle: "",
         },
       ]
@@ -760,8 +734,7 @@ export default function NewBusinessPage() {
             link,
             linkIndex
           ) =>
-            linkIndex ===
-            index
+            linkIndex === index
               ? {
                   ...link,
                   [field]:
@@ -782,8 +755,7 @@ export default function NewBusinessPage() {
             _,
             linkIndex
           ) =>
-            linkIndex !==
-            index
+            linkIndex !== index
         )
     );
   }
@@ -798,8 +770,8 @@ export default function NewBusinessPage() {
     const trimmedName =
       name.trim();
 
-    const trimmedRegion =
-      region.trim();
+    const trimmedArea =
+      area.trim();
 
     const trimmedHouseNumber =
       houseNumber.trim();
@@ -810,24 +782,12 @@ export default function NewBusinessPage() {
     const trimmedCity =
       city.trim();
 
-    /*
-     * Canonical ReMarket address format:
-     *
-     * house/shop/building number,
-     * street/road/close,
-     * region,
-     * city,
-     * country
-     *
-     * Example:
-     * Shop 12, Adewale Street, Ogba, Lagos, Nigeria
-     */
     const composedAddress =
       [
         trimmedHouseNumber,
         trimmedStreet,
-        trimmedRegion,
         trimmedCity,
+        trimmedArea,
         DEFAULT_COUNTRY,
       ]
         .filter(Boolean)
@@ -837,15 +797,13 @@ export default function NewBusinessPage() {
       setError(
         "Business name is required."
       );
-
       return;
     }
 
-    if (!trimmedRegion) {
+    if (!trimmedArea) {
       setError(
-        "Business Region is required."
+        "Business area is required."
       );
-
       return;
     }
 
@@ -853,28 +811,13 @@ export default function NewBusinessPage() {
       setError(
         "Street, road, or close is required."
       );
-
-      return;
-    }
-
-    if (!trimmedCity) {
-      setError(
-        "City is required."
-      );
-
       return;
     }
 
     /*
-     * GPS is optional.
-     *
-     * If the admin captured the device location,
-     * send the captured coordinates.
-     *
-     * Otherwise send null coordinates and let
-     * the Admin API resolve the business location
-     * from the address through the existing
-     * geocoding flow.
+     * Coordinates are optional. When they are not
+     * captured on the device, the admin API can use
+     * the existing address/area geocoding fallback.
      */
     const parsedLat =
       lat.trim()
@@ -886,52 +829,41 @@ export default function NewBusinessPage() {
         ? Number(lng)
         : null;
 
-    /*
-     * Coordinates must always be supplied
-     * as a complete pair when present.
-     */
     if (
       (parsedLat === null) !==
       (parsedLng === null)
     ) {
       setError(
-        "Business coordinates must be captured as a complete location pair."
+        "Business location coordinates must be captured together."
       );
-
       return;
     }
 
     if (
       parsedLat !== null &&
-      (
-        !Number.isFinite(
-          parsedLat
-        ) ||
+      (!Number.isFinite(
+        parsedLat
+      ) ||
         parsedLat < -90 ||
-        parsedLat > 90
-      )
+        parsedLat > 90)
     ) {
       setError(
         "The captured business latitude is invalid."
       );
-
       return;
     }
 
     if (
       parsedLng !== null &&
-      (
-        !Number.isFinite(
-          parsedLng
-        ) ||
+      (!Number.isFinite(
+        parsedLng
+      ) ||
         parsedLng < -180 ||
-        parsedLng > 180
-      )
+        parsedLng > 180)
     ) {
       setError(
         "The captured business longitude is invalid."
       );
-
       return;
     }
 
@@ -946,57 +878,46 @@ export default function NewBusinessPage() {
         : null;
 
     if (
-      parsedPriceMin !==
-        null &&
-      (
-        !Number.isInteger(
-          parsedPriceMin
-        ) ||
-        parsedPriceMin < 0
-      )
+      parsedPriceMin !== null &&
+      (!Number.isInteger(
+        parsedPriceMin
+      ) ||
+        parsedPriceMin < 0)
     ) {
       setError(
         "Minimum price must be a valid non-negative integer."
       );
-
       return;
     }
 
     if (
-      parsedPriceMax !==
-        null &&
-      (
-        !Number.isInteger(
-          parsedPriceMax
-        ) ||
-        parsedPriceMax < 0
-      )
+      parsedPriceMax !== null &&
+      (!Number.isInteger(
+        parsedPriceMax
+      ) ||
+        parsedPriceMax < 0)
     ) {
       setError(
         "Maximum price must be a valid non-negative integer."
       );
-
       return;
     }
 
     if (
-      parsedPriceMin !==
-        null &&
-      parsedPriceMax !==
-        null &&
+      parsedPriceMin !== null &&
+      parsedPriceMax !== null &&
       parsedPriceMin >
         parsedPriceMax
     ) {
       setError(
         "Minimum price cannot be greater than maximum price."
       );
-
       return;
     }
 
     /*
-     * Never submit synthetic category IDs
-     * from the fallback UI.
+     * Never submit synthetic category IDs from
+     * the fallback UI.
      */
     const categoryIds =
       usingCategoryFallback
@@ -1011,12 +932,10 @@ export default function NewBusinessPage() {
           "/api/admin/businesses",
           {
             method: "POST",
-
             headers: {
               "Content-Type":
                 "application/json",
             },
-
             body: JSON.stringify({
               name:
                 trimmedName,
@@ -1029,14 +948,8 @@ export default function NewBusinessPage() {
                 description.trim() ||
                 null,
 
-              /*
-               * IMPORTANT:
-               *
-               * UI uses `region`.
-               * Existing API/database still use `area`.
-               */
               area:
-                trimmedRegion,
+                trimmedArea,
 
               /*
                * Store the structured address in
@@ -1046,13 +959,8 @@ export default function NewBusinessPage() {
                 composedAddress,
 
               /*
-               * Coordinates are optional.
-               *
-               * When present they came from
+               * These coordinates came from
                * browser geolocation.
-               *
-               * When null, the Admin API will
-               * attempt address geocoding.
                *
                * The database field is Location.long.
                */
@@ -1217,7 +1125,9 @@ export default function NewBusinessPage() {
           </div>
 
           <form
-            onSubmit={submit}
+            onSubmit={
+              submit
+            }
             className="space-y-7 p-5 sm:p-7"
           >
             {error && (
@@ -1241,9 +1151,13 @@ export default function NewBusinessPage() {
 
                   <input
                     value={name}
-                    onChange={(event) =>
+                    onChange={(
+                      event
+                    ) =>
                       setName(
-                        event.target.value
+                        event
+                          .target
+                          .value
                       )
                     }
                     placeholder="e.g. Mandy Treasures"
@@ -1257,10 +1171,16 @@ export default function NewBusinessPage() {
                   </label>
 
                   <input
-                    value={ownerName}
-                    onChange={(event) =>
+                    value={
+                      ownerName
+                    }
+                    onChange={(
+                      event
+                    ) =>
                       setOwnerName(
-                        event.target.value
+                        event
+                          .target
+                          .value
                       )
                     }
                     placeholder="Optional"
@@ -1274,14 +1194,22 @@ export default function NewBusinessPage() {
                   </label>
 
                   <textarea
-                    value={description}
-                    onChange={(event) =>
+                    value={
+                      description
+                    }
+                    onChange={(
+                      event
+                    ) =>
                       setDescription(
-                        event.target.value
+                        event
+                          .target
+                          .value
                       )
                     }
                     placeholder="What does this business sell or offer?"
-                    rows={4}
+                    rows={
+                      4
+                    }
                     className="mt-2 w-full resize-none rounded-xl border border-[#E8E4DE] bg-white px-3 py-3 text-xs outline-none focus:border-[#FF9B82] focus:ring-4 focus:ring-[#FF5A36]/10"
                   />
                 </div>
@@ -1323,11 +1251,11 @@ export default function NewBusinessPage() {
               </h2>
 
               <p className="mt-1 max-w-[760px] text-[11px] leading-5 text-gray-500">
-                Choose the business Region from the standardized Lagos
-                list and enter the physical address. ReMarket can use
-                the device location when available, or determine the
-                business coordinates from the address automatically.
-                You do not need to type latitude or longitude.
+                Choose the business area from the standardized Lagos
+                list and enter the physical street address. You can
+                capture the exact business location from the device
+                when available; you do not need to type latitude or
+                longitude.
               </p>
 
               <div className="mt-4 grid gap-4 sm:grid-cols-2">
@@ -1340,9 +1268,13 @@ export default function NewBusinessPage() {
                     value={
                       houseNumber
                     }
-                    onChange={(event) =>
+                    onChange={(
+                      event
+                    ) =>
                       setHouseNumber(
-                        event.target.value
+                        event
+                          .target
+                          .value
                       )
                     }
                     placeholder="e.g. Shop 12"
@@ -1360,13 +1292,20 @@ export default function NewBusinessPage() {
                   </label>
 
                   <input
-                    value={street}
-                    onChange={(event) =>
+                    value={
+                      street
+                    }
+                    onChange={(
+                      event
+                    ) =>
                       setStreet(
-                        event.target.value
+                        event
+                          .target
+                          .value
                       )
                     }
                     placeholder="e.g. Adewale Close"
+                    required
                     className="mt-2 h-11 w-full rounded-xl border border-[#E8E4DE] bg-white px-3 text-xs outline-none focus:border-[#FF9B82] focus:ring-4 focus:ring-[#FF5A36]/10"
                   />
                 </div>
@@ -1377,10 +1316,16 @@ export default function NewBusinessPage() {
                   </label>
 
                   <input
-                    value={city}
-                    onChange={(event) =>
+                    value={
+                      city
+                    }
+                    onChange={(
+                      event
+                    ) =>
                       setCity(
-                        event.target.value
+                        event
+                          .target
+                          .value
                       )
                     }
                     placeholder="e.g. Lagos or Epe"
@@ -1390,24 +1335,33 @@ export default function NewBusinessPage() {
 
                 <div>
                   <label className="text-xs font-semibold text-gray-700">
-                    Region
+                    Area / Region
                   </label>
 
                   <select
-                    value={region}
-                    onChange={(event) =>
-                      setRegion(
-                        event.target.value
+                    value={
+                      area
+                    }
+                    onChange={(
+                      event
+                    ) =>
+                      setArea(
+                        event
+                          .target
+                          .value
                       )
                     }
+                    required
                     className="mt-2 h-11 w-full rounded-xl border border-[#E8E4DE] bg-white px-3 text-xs outline-none focus:border-[#FF9B82] focus:ring-4 focus:ring-[#FF5A36]/10"
                   >
                     <option value="">
-                      Select a region
+                      Select an area
                     </option>
 
-                    {LAGOS_REGION_GROUPS.map(
-                      (group) => (
+                    {LAGOS_AREA_GROUPS.map(
+                      (
+                        group
+                      ) => (
                         <optgroup
                           key={
                             group.lga
@@ -1416,12 +1370,14 @@ export default function NewBusinessPage() {
                             group.lga
                           }
                         >
-                          {group.regions.map(
+                          {group.areas.map(
                             (
                               item
                             ) => (
                               <option
-                                key={`${group.lga}-${item}`}
+                                key={
+                                  `${group.lga}-${item}`
+                                }
                                 value={
                                   item
                                 }
@@ -1461,7 +1417,7 @@ export default function NewBusinessPage() {
                 houseNumber ||
                 street ||
                 city ||
-                region
+                area
               ) && (
                 <div className="mt-4 rounded-xl border border-[#E8E4DE] bg-[#FCFAF6] px-4 py-3">
                   <p className="text-[10px] font-semibold uppercase tracking-wide text-gray-400">
@@ -1472,8 +1428,8 @@ export default function NewBusinessPage() {
                     {[
                       houseNumber.trim(),
                       street.trim(),
-                      region.trim(),
                       city.trim(),
+                      area.trim(),
                       DEFAULT_COUNTRY,
                     ]
                       .filter(Boolean)
@@ -1496,9 +1452,7 @@ export default function NewBusinessPage() {
                       </p>
 
                       <p className="mt-1 text-[10px] leading-4 text-gray-500">
-                        Used internally for Near Me and Directions.
-                        GPS capture is optional when the business
-                        address can be resolved.
+                        Used internally for Near Me and Directions. A captured GPS point is preferred; the address can be geocoded when GPS is unavailable.
                       </p>
 
                       {locationStatus && (
@@ -1555,17 +1509,6 @@ export default function NewBusinessPage() {
 
                       <p className="text-[10px] font-medium text-[#137A59]">
                         Exact business location is ready to save.
-                      </p>
-                    </div>
-                  )}
-
-                {!lat &&
-                  !lng && (
-                    <div className="mt-3 rounded-lg bg-[#FCFAF6] px-3 py-2.5">
-                      <p className="text-[10px] font-medium text-gray-500">
-                        GPS capture is optional. When no GPS position
-                        is captured, ReMarket will try to determine
-                        the business coordinates from the address.
                       </p>
                     </div>
                   )}
@@ -1664,7 +1607,9 @@ export default function NewBusinessPage() {
                       event
                     ) =>
                       setPhone(
-                        event.target.value
+                        event
+                          .target
+                          .value
                       )
                     }
                     placeholder="Optional"
@@ -1685,7 +1630,9 @@ export default function NewBusinessPage() {
                       event
                     ) =>
                       setPriceMin(
-                        event.target.value
+                        event
+                          .target
+                          .value
                       )
                     }
                     inputMode="numeric"
@@ -1707,7 +1654,9 @@ export default function NewBusinessPage() {
                       event
                     ) =>
                       setPriceMax(
-                        event.target.value
+                        event
+                          .target
+                          .value
                       )
                     }
                     inputMode="numeric"

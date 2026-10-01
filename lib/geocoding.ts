@@ -60,12 +60,77 @@ const BROAD_TYPES =
     "residential",
   ]);
 
+const LOCALITY_ADDRESS_KEYS =
+  new Set([
+    "suburb",
+    "neighbourhood",
+    "quarter",
+    "village",
+    "town",
+    "city",
+    "municipality",
+    "district",
+    "city_district",
+    "county",
+    "state_district",
+    "region",
+  ]);
+
 function cleanPart(
   value: string | null | undefined
 ): string {
   return typeof value === "string"
     ? value.trim()
     : "";
+}
+
+function normalizeComparableText(
+  value: string
+): string {
+  return value
+    .normalize("NFKD")
+    .replace(
+      /[\u0300-\u036f]/g,
+      ""
+    )
+    .toLowerCase()
+    .replace(
+      /[^a-z0-9]+/g,
+      " "
+    )
+    .replace(
+      /\s+/g,
+      " "
+    )
+    .trim();
+}
+
+function containsPart(
+  value: string,
+  part: string
+): boolean {
+  const normalizedValue =
+    normalizeComparableText(
+      value
+    );
+
+  const normalizedPart =
+    normalizeComparableText(
+      part
+    );
+
+  if (
+    !normalizedValue ||
+    !normalizedPart
+  ) {
+    return false;
+  }
+
+  return (
+    ` ${normalizedValue} `.includes(
+      ` ${normalizedPart} `
+    )
+  );
 }
 
 function isValidLatitude(
@@ -87,19 +152,6 @@ function isValidLongitude(
     Number.isFinite(value) &&
     value >= -180 &&
     value <= 180
-  );
-}
-
-function containsPart(
-  value: string,
-  part: string
-): boolean {
-  return (
-    value
-      .toLowerCase()
-      .includes(
-        part.toLowerCase()
-      )
   );
 }
 
@@ -146,11 +198,6 @@ function buildQuery(
   }
 
   /*
-   * Do not hardcode Lagos here.
-   *
-   * The caller may provide Lagos, Epe,
-   * or another supported city explicitly.
-   *
    * Nigeria remains the country boundary
    * for this geocoding utility.
    */
@@ -194,20 +241,47 @@ function hasStreet(
   );
 }
 
+function getResultType(
+  result: NominatimResult
+): string {
+  return typeof result.type ===
+    "string"
+    ? result.type
+    : "";
+}
+
+function getResultCategory(
+  result: NominatimResult
+): string {
+  return typeof result.category ===
+    "string"
+    ? result.category
+    : "";
+}
+
+function isBroadResult(
+  result: NominatimResult
+): boolean {
+  const type =
+    getResultType(result);
+
+  const category =
+    getResultCategory(result);
+
+  return (
+    BROAD_TYPES.has(type) ||
+    BROAD_TYPES.has(category)
+  );
+}
+
 function isPreciseResult(
   result: NominatimResult
 ): boolean {
   const type =
-    typeof result.type ===
-    "string"
-      ? result.type
-      : "";
+    getResultType(result);
 
   const category =
-    typeof result.category ===
-    "string"
-      ? result.category
-      : "";
+    getResultCategory(result);
 
   /*
    * A result containing an actual house
@@ -238,20 +312,137 @@ function isPreciseResult(
   );
 }
 
-function getResultScore(
+function getLocalityValues(
   result: NominatimResult
+): string[] {
+  const values: string[] = [];
+
+  const address =
+    result.address ?? {};
+
+  for (
+    const [key, value] of Object.entries(
+      address
+    )
+  ) {
+    if (
+      !LOCALITY_ADDRESS_KEYS.has(
+        key
+      )
+    ) {
+      continue;
+    }
+
+    if (
+      typeof value === "string" &&
+      value.trim()
+    ) {
+      values.push(
+        value.trim()
+      );
+    }
+  }
+
+  if (
+    typeof result.display_name ===
+    "string" &&
+    result.display_name.trim()
+  ) {
+    values.push(
+      result.display_name.trim()
+    );
+  }
+
+  return values;
+}
+
+function hasRequestedArea(
+  result: NominatimResult,
+  area: string
+): boolean {
+  const cleanedArea =
+    cleanPart(area);
+
+  if (!cleanedArea) {
+    return false;
+  }
+
+  return getLocalityValues(
+    result
+  ).some((value) =>
+    containsPart(
+      value,
+      cleanedArea
+    )
+  );
+}
+
+function hasRequestedCity(
+  result: NominatimResult,
+  city: string
+): boolean {
+  const cleanedCity =
+    cleanPart(city);
+
+  if (!cleanedCity) {
+    return false;
+  }
+
+  return getLocalityValues(
+    result
+  ).some((value) =>
+    containsPart(
+      value,
+      cleanedCity
+    )
+  );
+}
+
+function getCountryCode(
+  result: NominatimResult
+): string {
+  const countryCode =
+    result.address
+      ?.country_code;
+
+  return typeof countryCode ===
+    "string"
+    ? countryCode
+        .trim()
+        .toLowerCase()
+    : "";
+}
+
+function isNigeriaResult(
+  result: NominatimResult
+): boolean {
+  const countryCode =
+    getCountryCode(result);
+
+  /*
+   * countrycodes=ng is already supplied to
+   * Nominatim. This additional validation makes
+   * the acceptance rule explicit.
+   */
+  if (!countryCode) {
+    return true;
+  }
+
+  return (
+    countryCode === "ng"
+  );
+}
+
+function getResultScore(
+  result: NominatimResult,
+  area: string,
+  city?: string | null
 ): number {
   const type =
-    typeof result.type ===
-    "string"
-      ? result.type
-      : "";
+    getResultType(result);
 
   const category =
-    typeof result.category ===
-    "string"
-      ? result.category
-      : "";
+    getResultCategory(result);
 
   let score = 0;
 
@@ -280,6 +471,31 @@ function getResultScore(
   }
 
   if (
+    hasRequestedArea(
+      result,
+      area
+    )
+  ) {
+    score += 120;
+  }
+
+  if (
+    city &&
+    hasRequestedCity(
+      result,
+      city
+    )
+  ) {
+    score += 60;
+  }
+
+  if (
+    isNigeriaResult(result)
+  ) {
+    score += 10;
+  }
+
+  if (
     BROAD_TYPES.has(type) ||
     BROAD_TYPES.has(category)
   ) {
@@ -290,11 +506,20 @@ function getResultScore(
 }
 
 function selectBestResult(
-  results: NominatimResult[]
+  results: NominatimResult[],
+  area: string,
+  city?: string | null
 ): NominatimResult | null {
+  /*
+   * The result must first be structurally
+   * precise enough for a business location.
+   */
   const preciseResults =
     results.filter(
-      isPreciseResult
+      (result) =>
+        isPreciseResult(
+          result
+        )
     );
 
   if (
@@ -303,11 +528,43 @@ function selectBestResult(
     return null;
   }
 
+  /*
+   * Only accept results that can be tied back
+   * to the requested ReMarket area.
+   *
+   * This prevents a precise building somewhere
+   * else from being accepted simply because
+   * Nominatim returned it as a good address match.
+   */
+  const areaMatchedResults =
+    preciseResults.filter(
+      (result) =>
+        hasRequestedArea(
+          result,
+          area
+        )
+    );
+
+  if (
+    areaMatchedResults.length ===
+    0
+  ) {
+    return null;
+  }
+
   const sorted =
-    [...preciseResults].sort(
+    [...areaMatchedResults].sort(
       (a, b) =>
-        getResultScore(b) -
-        getResultScore(a)
+        getResultScore(
+          b,
+          area,
+          city
+        ) -
+        getResultScore(
+          a,
+          area,
+          city
+        )
     );
 
   return (
@@ -333,6 +590,9 @@ export async function geocodeBusinessLocation(
   const area =
     cleanPart(input.area);
 
+  const city =
+    cleanPart(input.city);
+
   if (!address) {
     throw new Error(
       "A business address is required to determine its map location."
@@ -350,7 +610,7 @@ export async function geocodeBusinessLocation(
       address,
       area,
       city:
-        input.city,
+        city || undefined,
     });
 
   const url =
@@ -402,7 +662,8 @@ export async function geocodeBusinessLocation(
             "application/json",
         },
 
-        cache: "no-store",
+        cache:
+          "no-store",
       }
     );
 
@@ -449,12 +710,14 @@ export async function geocodeBusinessLocation(
 
   const bestResult =
     selectBestResult(
-      results
+      results,
+      area,
+      city || undefined
     );
 
   if (!bestResult) {
     throw new Error(
-      "The business address could not be resolved to a precise enough map location. Use a more complete address or capture the location while physically at the business."
+      "The business address could not be resolved to a precise enough map location within the selected area. Use a more complete address or capture the location while physically at the business."
     );
   }
 
@@ -484,6 +747,16 @@ export async function geocodeBusinessLocation(
   ) {
     throw new Error(
       "The location service returned invalid business coordinates."
+    );
+  }
+
+  if (
+    !isNigeriaResult(
+      bestResult
+    )
+  ) {
+    throw new Error(
+      "The location service returned a result outside Nigeria."
     );
   }
 

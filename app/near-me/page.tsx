@@ -114,23 +114,36 @@ const NAV_ITEMS = [
   },
 ];
 
-function formatPrice(product: Product): string {
-  if (product.price !== null) {
+function formatPrice(
+  product: Product
+): string {
+  if (
+    product.price !==
+    null
+  ) {
     return `₦${product.price.toLocaleString()}`;
   }
 
   if (
-    product.priceMin !== null &&
-    product.priceMax !== null
+    product.priceMin !==
+      null &&
+    product.priceMax !==
+      null
   ) {
     return `₦${product.priceMin.toLocaleString()} - ₦${product.priceMax.toLocaleString()}`;
   }
 
-  if (product.priceMin !== null) {
+  if (
+    product.priceMin !==
+    null
+  ) {
     return `From ₦${product.priceMin.toLocaleString()}`;
   }
 
-  if (product.priceMax !== null) {
+  if (
+    product.priceMax !==
+    null
+  ) {
     return `Up to ₦${product.priceMax.toLocaleString()}`;
   }
 
@@ -151,34 +164,45 @@ function getDistanceLabel(
   distanceKm: number | null
 ): string | null {
   if (
-    typeof distanceKm !== "number" ||
-    !Number.isFinite(distanceKm) ||
+    typeof distanceKm !==
+      "number" ||
+    !Number.isFinite(
+      distanceKm
+    ) ||
     distanceKm < 0
   ) {
     return null;
   }
 
   /*
-   * Haversine gives straight-line distance.
+   * Haversine gives straight-line
+   * distance.
    *
-   * Keep the presentation neutral and do not
-   * describe this value as driving distance.
+   * Keep the presentation neutral
+   * and do not describe this value as
+   * driving distance.
    */
 
-  if (distanceKm < 1) {
+  if (
+    distanceKm < 1
+  ) {
     const distanceMetres =
       Math.round(
         distanceKm * 1000
       );
 
-    if (distanceMetres < 1) {
+    if (
+      distanceMetres < 1
+    ) {
       return "Less than 1 m away";
     }
 
     return `${distanceMetres.toLocaleString()} m away`;
   }
 
-  if (distanceKm < 10) {
+  if (
+    distanceKm < 10
+  ) {
     return `${distanceKm.toFixed(1)} km away`;
   }
 
@@ -222,7 +246,10 @@ function subscribeToSavedBusinesses(
 function getSavedBusinessesSnapshot(): string {
   return JSON.stringify(
     getSavedBusinesses()
-      .map((business) => business.id)
+      .map(
+        (business) =>
+          business.id
+      )
       .sort()
   );
 }
@@ -237,19 +264,27 @@ export default function NearMePage() {
   const [area, setArea] =
     useState("");
 
-  const [businesses, setBusinesses] =
-    useState<Business[]>([]);
+  const [
+    businesses,
+    setBusinesses,
+  ] = useState<Business[]>(
+    []
+  );
 
   const [mode, setMode] =
     useState<
       "none" | "area" | "gps"
     >("none");
 
-  const [loading, setLoading] =
-    useState(false);
+  const [
+    loading,
+    setLoading,
+  ] = useState(false);
 
-  const [locating, setLocating] =
-    useState(false);
+  const [
+    locating,
+    setLocating,
+  ] = useState(false);
 
   const [error, setError] =
     useState("");
@@ -363,7 +398,9 @@ export default function NearMePage() {
       );
 
       setMode("area");
-    } catch (searchError) {
+    } catch (
+      searchError
+    ) {
       console.error(
         "Area near-me error:",
         searchError
@@ -478,7 +515,9 @@ export default function NearMePage() {
           );
 
           setMode("gps");
-        } catch (locationError) {
+        } catch (
+          locationError
+        ) {
           console.error(
             "GPS near-me error:",
             locationError
@@ -509,7 +548,9 @@ export default function NearMePage() {
         setBusinesses([]);
         setMode("none");
 
-        switch (geoError.code) {
+        switch (
+          geoError.code
+        ) {
           case geoError.PERMISSION_DENIED:
             setError(
               "Location permission was denied. Enter an area instead."
@@ -824,6 +865,16 @@ export default function NearMePage() {
                                 ? "No businesses were found in this area"
                                 : "Choose an area or use your current location"}
                       </p>
+
+                      {mode ===
+                        "gps" &&
+                        !loading &&
+                        businesses.length >
+                          0 && (
+                          <p className="mt-1 text-[10px] text-[#9A928B]">
+                            Distances shown are straight-line distances from your current location.
+                          </p>
+                        )}
                     </div>
 
                     {mode !==
@@ -1011,7 +1062,10 @@ export default function NearMePage() {
 
                                   {distanceLabel !==
                                     null && (
-                                    <span className="absolute left-3 top-3 rounded-full bg-white/90 px-2.5 py-1 text-[9px] font-bold text-[#9F2D18] shadow-sm">
+                                    <span
+                                      title="Straight-line distance from your current location"
+                                      className="absolute left-3 top-3 rounded-full bg-white/90 px-2.5 py-1 text-[9px] font-bold text-[#9F2D18] shadow-sm"
+                                    >
                                       {
                                         distanceLabel
                                       }

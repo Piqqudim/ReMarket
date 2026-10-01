@@ -20,6 +20,11 @@ import {
  */
 const DEFAULT_NEAR_ME_RADIUS_KM = 10;
 
+type ParsedCoordinate =
+  | number
+  | null
+  | "INVALID";
+
 function getNearMeRadiusKm(): number {
   const configured = Number(
     process.env.REMARKET_NEAR_ME_RADIUS_KM
@@ -43,30 +48,27 @@ function clean(
 
 function parseCoordinate(
   value: string | null
-): number | null {
-  if (value === null) {
+): ParsedCoordinate {
+  if (!value?.trim()) {
     return null;
   }
 
-  const cleaned = value.trim();
-
-  if (!cleaned) {
-    return null;
-  }
-
-  const parsed = Number(cleaned);
+  const parsed = Number(
+    value.trim()
+  );
 
   if (!Number.isFinite(parsed)) {
-    return null;
+    return "INVALID";
   }
 
   return parsed;
 }
 
 function isValidLatitude(
-  value: number
-): boolean {
+  value: number | null
+): value is number {
   return (
+    value !== null &&
     Number.isFinite(value) &&
     value >= -90 &&
     value <= 90
@@ -74,9 +76,10 @@ function isValidLatitude(
 }
 
 function isValidLongitude(
-  value: number
-): boolean {
+  value: number | null
+): value is number {
   return (
+    value !== null &&
     Number.isFinite(value) &&
     value >= -180 &&
     value <= 180
@@ -87,7 +90,7 @@ function formatDistance(
   distanceKm: number
 ): number {
   return Number(
-    distanceKm.toFixed(2)
+    distanceKm.toFixed(1)
   );
 }
 
@@ -135,28 +138,11 @@ export async function GET(
       searchParams.get("lng") ??
       searchParams.get("long");
 
-    const latitude =
-      parseCoordinate(
-        latitudeRaw
-      );
+    const parsedLatitude =
+      parseCoordinate(latitudeRaw);
 
-    const longitude =
-      parseCoordinate(
-        longitudeRaw
-      );
-
-    /*
-     * A coordinate parameter is considered
-     * supplied when it exists and is not blank.
-     *
-     * This lets us distinguish:
-     *
-     *   missing/blank -> no GPS supplied
-     *
-     * from:
-     *
-     *   "abc" -> invalid GPS supplied
-     */
+    const parsedLongitude =
+      parseCoordinate(longitudeRaw);
 
     const latitudeSupplied =
       latitudeRaw !== null &&
@@ -167,19 +153,14 @@ export async function GET(
       longitudeRaw.trim() !== "";
 
     /*
-     * -----------------------------------------
-     * INVALID NUMERIC GPS INPUT
-     * -----------------------------------------
-     *
-     * Do not silently treat invalid values as
-     * missing coordinates.
+     * A coordinate parameter that was actually
+     * supplied must be a valid number.
      */
-
     if (
       (latitudeSupplied &&
-        latitude === null) ||
+        parsedLatitude === "INVALID") ||
       (longitudeSupplied &&
-        longitude === null)
+        parsedLongitude === "INVALID")
     ) {
       return NextResponse.json(
         {
@@ -200,6 +181,16 @@ export async function GET(
       );
     }
 
+    const latitude: number | null =
+      parsedLatitude === "INVALID"
+        ? null
+        : parsedLatitude;
+
+    const longitude: number | null =
+      parsedLongitude === "INVALID"
+        ? null
+        : parsedLongitude;
+
     const hasLatitude =
       latitude !== null;
 
@@ -207,18 +198,22 @@ export async function GET(
       longitude !== null;
 
     /*
-     * -----------------------------------------
-     * GPS PAIR VALIDATION
-     * -----------------------------------------
+     * A client should provide both coordinates
+     * for GPS mode.
      *
-     * A GPS search must provide both coordinates.
+     * Existing area precedence is preserved:
+     * when an area is supplied, area search may
+     * still be used even if only one GPS value
+     * was also supplied.
      */
-
     const hasPartialGps =
       hasLatitude !==
       hasLongitude;
 
-    if (hasPartialGps) {
+    if (
+      hasPartialGps &&
+      !area
+    ) {
       return NextResponse.json(
         {
           businesses: [],
@@ -239,28 +234,18 @@ export async function GET(
     }
 
     /*
-     * At this point TypeScript still sees
-     * latitude/longitude as nullable.
-     *
-     * Narrow them explicitly before passing
-     * them to the existing distance validators,
-     * which accept `number`, not `number | null`.
-     */
-
-    const hasValidGps =
-      typeof latitude === "number" &&
-      typeof longitude === "number" &&
-      isValidLatitude(latitude) &&
-      isValidLongitude(longitude);
-
-    /*
-     * Coordinates were supplied as a pair but
-     * are outside their valid geographic ranges.
+     * Coordinates supplied by the client must
+     * also be within real geographic bounds.
      */
     if (
-      hasLatitude &&
-      hasLongitude &&
-      !hasValidGps
+      (hasLatitude &&
+        !isValidLatitude(
+          latitude
+        )) ||
+      (hasLongitude &&
+        !isValidLongitude(
+          longitude
+        ))
     ) {
       return NextResponse.json(
         {
@@ -269,7 +254,7 @@ export async function GET(
           mode: "none",
           location: null,
           error:
-            "Latitude or longitude is outside the valid coordinate range.",
+            "Latitude must be between -90 and 90, and longitude must be between -180 and 180.",
         },
         {
           status: 400,
@@ -281,16 +266,13 @@ export async function GET(
       );
     }
 
-    /*
-     * -----------------------------------------
-     * SEARCH MODE
-     * -----------------------------------------
-     *
-     * Explicit area search takes precedence
-     * when an area is supplied.
-     *
-     * Otherwise, valid GPS produces GPS mode.
-     */
+    const hasValidGps =
+      isValidLatitude(
+        latitude
+      ) &&
+      isValidLongitude(
+        longitude
+      );
 
     const searchMode = area
       ? "area"
@@ -375,10 +357,6 @@ export async function GET(
             },
           },
 
-          /*
-           * Only active categories are exposed
-           * publicly.
-           */
           categories: {
             where: {
               category: {
@@ -540,47 +518,15 @@ export async function GET(
      * GPS SEARCH
      * -----------------------------------------
      *
-     * The searchMode can only reach this point
-     * when valid GPS coordinates exist.
-     *
-     * Narrow them explicitly for TypeScript and
-     * for the distance calculation below.
+     * A business must have valid coordinates
+     * before it can participate in GPS Near Me.
      */
-
-    if (
-      typeof latitude !== "number" ||
-      typeof longitude !== "number" ||
-      !isValidLatitude(latitude) ||
-      !isValidLongitude(longitude)
-    ) {
-      return NextResponse.json(
-        {
-          businesses: [],
-          total: 0,
-          mode: "none",
-          location: null,
-          error:
-            "A valid latitude and longitude are required for current-location search.",
-        },
-        {
-          status: 400,
-          headers: {
-            "Cache-Control":
-              "no-store",
-          },
-        }
-      );
-    }
 
     const businessesWithCoordinates =
       baseBusinesses.filter(
         (business) =>
           business.location !==
             null &&
-          typeof business.location.lat ===
-            "number" &&
-          typeof business.location.long ===
-            "number" &&
           isValidLatitude(
             business.location.lat
           ) &&
@@ -597,15 +543,8 @@ export async function GET(
      * CALCULATE DISTANCES
      * -----------------------------------------
      *
-     * Haversine is the first-stage distance
-     * calculation.
-     *
-     * IMPORTANT:
-     *
-     * 1. Calculate raw distance.
-     * 2. Filter using raw distance.
-     * 3. Sort using raw distance.
-     * 4. Round only for the API response.
+     * Haversine distance is used for candidate
+     * filtering and sorting.
      */
 
     const gpsResults =
@@ -619,15 +558,17 @@ export async function GET(
           }
 
           if (
-            typeof location.lat !==
-              "number" ||
-            typeof location.long !==
-              "number" ||
             !isValidLatitude(
               location.lat
             ) ||
             !isValidLongitude(
               location.long
+            ) ||
+            !isValidLatitude(
+              latitude
+            ) ||
+            !isValidLongitude(
+              longitude
             )
           ) {
             return null;
@@ -693,9 +634,15 @@ export async function GET(
             socialLinks:
               business.socialLinks,
 
+            distanceKm: formatDistance(
+              distanceKm
+            ),
+
             /*
-             * Internal value used only for
-             * filtering and sorting.
+             * Keep the full numeric Haversine
+             * distance for accurate sorting.
+             * This value is removed before the
+             * response is returned to the client.
              */
             distanceKmRaw:
               distanceKm,
@@ -718,14 +665,8 @@ export async function GET(
           ({
             distanceKmRaw,
             ...business
-          }) => ({
-            ...business,
-
-            distanceKm:
-              formatDistance(
-                distanceKmRaw
-              ),
-          })
+          }) =>
+            business
         );
 
     /*

@@ -28,8 +28,6 @@ import {
   X,
 } from "lucide-react";
 
-import ImageUpload from "@/components/ImageUpload";
-
 import {
   DEFAULT_CATEGORIES,
   mergeCategories,
@@ -119,9 +117,6 @@ type Business = {
     address: string | null;
     lat: number | null;
     long: number | null;
-    verification:
-      | "VERIFIED"
-      | "UNVERIFIED";
   } | null;
 
   categories: Category[];
@@ -137,20 +132,19 @@ type AnalyticsMetric = {
 };
 
 /*
- * Controlled Lagos Region vocabulary.
+ * Controlled Lagos area vocabulary.
  *
- * These are ReMarket-facing Region/locality values.
- * They are grouped by LGA for easier selection.
+ * The list is grouped by LGA for easier selection.
+ * The selected neighborhood/area value is stored
+ * in the existing Location.area field.
  *
- * The selected Region continues to be stored in
- * the existing Location.area field.
- *
- * No new Region database model is introduced.
+ * This is intentionally kept in this page for now
+ * so we do not introduce another location system.
  */
-const LAGOS_REGION_GROUPS = [
+const LAGOS_AREA_GROUPS = [
   {
     lga: "Agege",
-    regions: [
+    areas: [
       "Agege",
       "Orile Agege",
       "Dopemu",
@@ -161,18 +155,19 @@ const LAGOS_REGION_GROUPS = [
   },
   {
     lga: "Ajeromi-Ifelodun",
-    regions: [
+    areas: [
       "Ajegunle",
       "Tolu",
       "Olodi",
       "Alaba Oro",
       "Awodi-Ora",
       "Layeni",
+      "Mosafejo",
     ],
   },
   {
     lga: "Alimosho",
-    regions: [
+    areas: [
       "Alimosho",
       "Egbeda",
       "Akowonjo",
@@ -193,7 +188,7 @@ const LAGOS_REGION_GROUPS = [
   },
   {
     lga: "Amuwo-Odofin",
-    regions: [
+    areas: [
       "Amuwo",
       "Festac",
       "Mile 2",
@@ -205,7 +200,7 @@ const LAGOS_REGION_GROUPS = [
   },
   {
     lga: "Apapa",
-    regions: [
+    areas: [
       "Apapa",
       "Apapa Wharf",
       "Iganmu",
@@ -216,7 +211,7 @@ const LAGOS_REGION_GROUPS = [
   },
   {
     lga: "Badagry",
-    regions: [
+    areas: [
       "Badagry",
       "Badagry West",
       "Olorunda",
@@ -225,7 +220,7 @@ const LAGOS_REGION_GROUPS = [
   },
   {
     lga: "Epe",
-    regions: [
+    areas: [
       "Epe",
       "Eredo",
       "Ikosi-Ejinrin",
@@ -233,7 +228,7 @@ const LAGOS_REGION_GROUPS = [
   },
   {
     lga: "Eti-Osa",
-    regions: [
+    areas: [
       "Ikoyi",
       "Obalende",
       "Victoria Island",
@@ -255,7 +250,7 @@ const LAGOS_REGION_GROUPS = [
   },
   {
     lga: "Ibeju-Lekki",
-    regions: [
+    areas: [
       "Ibeju-Lekki",
       "Abijo",
       "Awoyaya",
@@ -267,7 +262,7 @@ const LAGOS_REGION_GROUPS = [
   },
   {
     lga: "Ifako-Ijaiye",
-    regions: [
+    areas: [
       "Ifako",
       "Ijaiye",
       "Ojokoro",
@@ -277,21 +272,23 @@ const LAGOS_REGION_GROUPS = [
   },
   {
     lga: "Ikeja",
-    regions: [
+    areas: [
       "Ikeja",
       "Ikeja GRA",
       "Alausa",
+      "Allen Avenue",
       "Oregun",
       "Opebi",
       "Ogba",
       "Ojodu",
       "Onigbongbo",
       "Computer Village",
+      "Airport Road",
     ],
   },
   {
     lga: "Ikorodu",
-    regions: [
+    areas: [
       "Ikorodu",
       "Ikorodu North",
       "Ikorodu West",
@@ -306,7 +303,7 @@ const LAGOS_REGION_GROUPS = [
   },
   {
     lga: "Kosofe",
-    regions: [
+    areas: [
       "Kosofe",
       "Ketu",
       "Agboyi",
@@ -321,11 +318,12 @@ const LAGOS_REGION_GROUPS = [
   },
   {
     lga: "Lagos Island",
-    regions: [
+    areas: [
       "Lagos Island",
       "Idumota",
       "Balogun",
       "Marina",
+      "Broad Street",
       "Isale Eko",
       "Lafiaji",
       "Onikan",
@@ -335,7 +333,7 @@ const LAGOS_REGION_GROUPS = [
   },
   {
     lga: "Lagos Mainland",
-    regions: [
+    areas: [
       "Yaba",
       "Ebute Metta",
       "Akoka",
@@ -353,7 +351,7 @@ const LAGOS_REGION_GROUPS = [
   },
   {
     lga: "Mushin",
-    regions: [
+    areas: [
       "Mushin",
       "Papa Ajao",
       "Idi-Araba",
@@ -364,19 +362,18 @@ const LAGOS_REGION_GROUPS = [
   },
   {
     lga: "Ojo",
-    regions: [
+    areas: [
       "Ojo",
       "Iba",
       "Iyana-Iba",
       "Ajangbadi",
       "Oto-Awori",
       "Alaba",
-      "Mosafejo",
     ],
   },
   {
     lga: "Oshodi-Isolo",
-    regions: [
+    areas: [
       "Oshodi",
       "Isolo",
       "Ejigbo",
@@ -388,7 +385,7 @@ const LAGOS_REGION_GROUPS = [
   },
   {
     lga: "Shomolu",
-    regions: [
+    areas: [
       "Shomolu",
       "Bariga",
       "Pedro",
@@ -399,7 +396,7 @@ const LAGOS_REGION_GROUPS = [
   },
   {
     lga: "Surulere",
-    regions: [
+    areas: [
       "Surulere",
       "Ojuelegba",
       "Lawanson",
@@ -413,29 +410,41 @@ const LAGOS_REGION_GROUPS = [
 
 const DEFAULT_COUNTRY = "Nigeria";
 
-function isKnownLagosRegion(
-  region: string
-): boolean {
-  const normalized =
-    region.trim().toLowerCase();
+
+function isKnownLagosArea(area: string): boolean {
+  const normalized = area.trim().toLowerCase();
 
   if (!normalized) {
     return false;
   }
 
-  return LAGOS_REGION_GROUPS.some(
-    (group) =>
-      group.regions.some(
-        (item) =>
-          item.toLowerCase() ===
-          normalized
-      )
+  return LAGOS_AREA_GROUPS.some((group) =>
+    group.areas.some(
+      (item) => item.toLowerCase() === normalized
+    )
+  );
+}
+
+function looksLikeHouseNumber(value: string): boolean {
+  const normalized = value
+    .trim()
+    .toLowerCase();
+
+  if (!normalized) {
+    return false;
+  }
+
+  return (
+    /^\d+[a-z]?\b/.test(normalized) ||
+    /^(shop|house|building|block|plot|suite|unit|flat)\b/.test(
+      normalized
+    )
   );
 }
 
 function parseLocationAddress(
   address: string | null | undefined,
-  region: string
+  area: string
 ): {
   houseNumber: string;
   street: string;
@@ -444,7 +453,7 @@ function parseLocationAddress(
   const fallback = {
     houseNumber: "",
     street: "",
-    city: "Lagos",
+    city: "",
   };
 
   const trimmedAddress =
@@ -456,102 +465,97 @@ function parseLocationAddress(
     return fallback;
   }
 
-  const parts =
-    trimmedAddress
-      .split(",")
-      .map(
-        (part) =>
-          part.trim()
-      )
-      .filter(Boolean);
+  const parts = trimmedAddress
+    .split(",")
+    .map((part) => part.trim())
+    .filter(Boolean);
 
   if (parts.length === 0) {
     return fallback;
   }
 
   const withoutCountry =
-    parts[
-      parts.length - 1
-    ].toLowerCase() ===
+    parts[parts.length - 1].toLowerCase() ===
     DEFAULT_COUNTRY.toLowerCase()
       ? parts.slice(0, -1)
       : parts;
 
-  const normalizedRegion =
-    region.trim().toLowerCase();
+  const normalizedArea = area.trim().toLowerCase();
 
-  const regionIndex =
-    normalizedRegion
+  const areaIndex =
+    normalizedArea
       ? withoutCountry.findLastIndex(
           (part) =>
             part.toLowerCase() ===
-            normalizedRegion
+            normalizedArea
         )
       : -1;
 
-  if (regionIndex >= 0) {
-    const beforeRegion =
-      withoutCountry.slice(
-        0,
-        regionIndex
-      );
-
-    const afterRegion =
-      withoutCountry.slice(
-        regionIndex + 1
-      );
-
-    if (afterRegion.length > 0) {
-      const working = [
-        ...beforeRegion,
-      ];
-
-      const street =
-        working.pop() ??
-        "";
-
-      return {
-        houseNumber:
-          working.join(", "),
-        street,
-        city:
-          afterRegion[0] ||
-          "Lagos",
-      };
-    }
-
-    const working = [
-      ...beforeRegion,
-    ];
-
-    const city =
-      working.pop() ||
-      "Lagos";
-
-    const street =
-      working.pop() ||
-      "";
-
+  if (areaIndex < 0) {
+    // Legacy/unknown address format: preserve the complete
+    // saved address in the street field rather than inventing a city.
     return {
-      houseNumber:
-        working.join(", "),
-      street,
-      city,
+      houseNumber: "",
+      street: withoutCountry.join(", "),
+      city: "",
     };
   }
 
-  /*
-   * Legacy/unknown address format:
-   * preserve the complete saved address
-   * rather than dropping it.
-   */
+  const beforeArea = withoutCountry.slice(
+    0,
+    areaIndex
+  );
+
+  const afterArea = withoutCountry.slice(
+    areaIndex + 1
+  );
+
+  // Preserve the older address order used by some saved records:
+  // street, area, city, Nigeria.
+  if (afterArea.length > 0) {
+    return {
+      houseNumber: "",
+      street: beforeArea.join(", "),
+      city: afterArea[0] ?? "",
+    };
+  }
+
+  if (beforeArea.length === 0) {
+    return fallback;
+  }
+
+  if (beforeArea.length === 1) {
+    return {
+      houseNumber: "",
+      street: beforeArea[0],
+      city: "",
+    };
+  }
+
+  if (beforeArea.length === 2) {
+    const [first, second] = beforeArea;
+
+    if (looksLikeHouseNumber(first)) {
+      return {
+        houseNumber: first,
+        street: second,
+        city: "",
+      };
+    }
+
+    return {
+      houseNumber: "",
+      street: first,
+      city: second,
+    };
+  }
+
   return {
-    houseNumber: "",
-    street:
-      withoutCountry.join(
-        ", "
-      ),
-    city: "Lagos",
+    houseNumber: beforeArea
+      .slice(0, -2)
+      .join(", "),
+    street: beforeArea[beforeArea.length - 2],
+    city: beforeArea[beforeArea.length - 1],
   };
 }
 
@@ -585,39 +589,6 @@ const SOCIAL_PLATFORMS: {
   },
 ];
 
-function getLocationStatus(
-  location: Business["location"]
-): string {
-  if (!location) {
-    return "No business location has been saved yet.";
-  }
-
-  const hasExactCoordinates =
-    location.lat !== null &&
-    location.long !== null;
-
-  if (
-    location.verification ===
-      "VERIFIED" &&
-    hasExactCoordinates
-  ) {
-    return "Exact business coordinates are saved and the location is verified.";
-  }
-
-  if (
-    location.verification ===
-    "VERIFIED"
-  ) {
-    return "Business location is verified, but exact coordinates have not been captured yet.";
-  }
-
-  if (hasExactCoordinates) {
-    return "Exact business coordinates are saved, but the location is not yet verified.";
-  }
-
-  return "No exact business coordinates have been captured yet.";
-}
-
 function formatPrice(
   value: number | null
 ): string {
@@ -635,8 +606,7 @@ function getSocialValue(
   return (
     links.find(
       (link) =>
-        link.platform ===
-        platform
+        link.platform === platform
     )?.handle ?? ""
   );
 }
@@ -644,9 +614,7 @@ function getSocialValue(
 function prettifyMetricLabel(
   path: string[]
 ): string {
-  const label =
-    path[path.length - 1] ??
-    "";
+  const label = path[path.length - 1] ?? "";
 
   const knownLabels: Record<
     string,
@@ -663,7 +631,8 @@ function prettifyMetricLabel(
     totalContacts:
       "Total contacts",
     products: "Products",
-    productCount: "Products",
+    productCount:
+      "Products",
     totalProducts:
       "Total products",
     activeProducts:
@@ -675,7 +644,8 @@ function prettifyMetricLabel(
     totalMatches:
       "Total matches",
     requests: "Requests",
-    requestCount: "Requests",
+    requestCount:
+      "Requests",
     matchedRequests:
       "Matched requests",
     WHATSAPP: "WhatsApp",
@@ -697,14 +667,9 @@ function prettifyMetricLabel(
       /([a-z])([A-Z])/g,
       "$1 $2"
     )
-    .replace(
-      /[_-]+/g,
-      " "
-    )
-    .replace(
-      /\b\w/g,
-      (character) =>
-        character.toUpperCase()
+    .replace(/[_-]+/g, " ")
+    .replace(/\b\w/g, (character) =>
+      character.toUpperCase()
     );
 }
 
@@ -872,20 +837,17 @@ export default function BusinessDetailsPage() {
 
   const router = useRouter();
 
-  const businessId =
-    params.id;
+  const businessId = params.id;
 
   const [business, setBusiness] =
     useState<Business | null>(
       null
     );
 
-  const [
-    categories,
-    setCategories,
-  ] = useState<
-    ReMarketCategory[]
-  >(DEFAULT_CATEGORIES);
+  const [categories, setCategories] =
+    useState<ReMarketCategory[]>(
+      DEFAULT_CATEGORIES
+    );
 
   const [
     usingCategoryFallback,
@@ -986,8 +948,7 @@ export default function BusinessDetailsPage() {
       }
 
       setBusiness(
-        businessData.business ??
-          null
+        businessData.business ?? null
       );
 
       const backendCategories =
@@ -1074,9 +1035,7 @@ export default function BusinessDetailsPage() {
       }
 
       setAnalytics(data);
-    } catch (
-      analyticsLoadError
-    ) {
+    } catch (analyticsLoadError) {
       console.error(
         "Business analytics load error:",
         analyticsLoadError
@@ -1135,17 +1094,16 @@ export default function BusinessDetailsPage() {
         );
       }
 
-      setBusiness(
-        (current) =>
-          current
-            ? {
-                ...current,
-                deletedAt:
-                  data.business
-                    ?.deletedAt ??
-                  new Date().toISOString(),
-              }
-            : current
+      setBusiness((current) =>
+        current
+          ? {
+              ...current,
+              deletedAt:
+                data.business
+                  ?.deletedAt ??
+                new Date().toISOString(),
+            }
+          : current
       );
 
       setShowDeleteConfirmation(
@@ -1209,16 +1167,14 @@ export default function BusinessDetailsPage() {
         );
       }
 
-      setBusiness(
-        (current) =>
-          current
-            ? {
-                ...current,
-                ...(data.business ??
-                  {}),
-                deletedAt: null,
-              }
-            : current
+      setBusiness((current) =>
+        current
+          ? {
+              ...current,
+              ...(data.business ?? {}),
+              deletedAt: null,
+            }
+          : current
       );
 
       setSuccess(
@@ -1520,12 +1476,10 @@ function BusinessEditor({
   const [name, setName] =
     useState(business.name);
 
-  const [
-    ownerName,
-    setOwnerName,
-  ] = useState(
-    business.ownerName ?? ""
-  );
+  const [ownerName, setOwnerName] =
+    useState(
+      business.ownerName ?? ""
+    );
 
   const [
     description,
@@ -1534,51 +1488,27 @@ function BusinessEditor({
     business.description ?? ""
   );
 
-  const [phone, setPhone] =
+  const [imageUrl, setImageUrl] =
     useState(
-      business.phone ?? ""
+      business.imageUrl ?? ""
     );
-
-  const [
-    imageUrl,
-    setImageUrl,
-  ] = useState(
-    business.imageUrl ?? ""
-  );
 
   const initialAddress =
     parseLocationAddress(
       business.location?.address,
-      business.location?.area ??
-        ""
+      business.location?.area ?? ""
     );
 
-  const [
-    houseNumber,
-    setHouseNumber,
-  ] = useState(
-    initialAddress.houseNumber
-  );
+  const [houseNumber, setHouseNumber] =
+    useState(initialAddress.houseNumber);
 
-  const [
-    street,
-    setStreet,
-  ] = useState(
-    initialAddress.street
-  );
+  const [street, setStreet] =
+    useState(initialAddress.street);
 
   const [city, setCity] =
-    useState(
-      initialAddress.city
-    );
+    useState(initialAddress.city);
 
-  /*
-   * UI terminology is Region.
-   *
-   * The existing database/API value remains
-   * Location.area.
-   */
-  const [region, setRegion] =
+  const [area, setArea] =
     useState(
       business.location?.area ??
         ""
@@ -1590,8 +1520,10 @@ function BusinessEditor({
    */
   const [lat, setLat] =
     useState(
-      business.location?.lat ==
-        null
+      business.location?.lat ===
+        null ||
+      business.location?.lat ===
+        undefined
         ? ""
         : String(
             business.location.lat
@@ -1600,8 +1532,10 @@ function BusinessEditor({
 
   const [long, setLong] =
     useState(
-      business.location?.long ==
-        null
+      business.location?.long ===
+        null ||
+      business.location?.long ===
+        undefined
         ? ""
         : String(
             business.location.long
@@ -1612,19 +1546,16 @@ function BusinessEditor({
     locationStatus,
     setLocationStatus,
   ] = useState(
-    getLocationStatus(
-      business.location
-    )
-  );
-
-  const [
-    locationVerification,
-    setLocationVerification,
-  ] = useState<
-    "VERIFIED" | "UNVERIFIED"
-  >(
-    business.location?.verification ??
-      "UNVERIFIED"
+    business.location?.lat !==
+        null &&
+      business.location?.lat !==
+        undefined &&
+      business.location?.long !==
+        null &&
+      business.location?.long !==
+        undefined
+      ? "Business coordinates are already saved."
+      : "No exact business coordinates have been captured yet."
   );
 
   const [
@@ -1632,23 +1563,19 @@ function BusinessEditor({
     setCapturingLocation,
   ] = useState(false);
 
-  const [
-    priceMin,
-    setPriceMin,
-  ] = useState(
-    formatPrice(
-      business.priceMin
-    )
-  );
+  const [priceMin, setPriceMin] =
+    useState(
+      formatPrice(
+        business.priceMin
+      )
+    );
 
-  const [
-    priceMax,
-    setPriceMax,
-  ] = useState(
-    formatPrice(
-      business.priceMax
-    )
-  );
+  const [priceMax, setPriceMax] =
+    useState(
+      formatPrice(
+        business.priceMax
+      )
+    );
 
   const [
     availability,
@@ -1717,7 +1644,9 @@ function BusinessEditor({
       getSocialValue(
         business.socialLinks,
         "PHONE"
-      ),
+      ) ||
+      business.phone ||
+      "",
     DIRECTIONS:
       getSocialValue(
         business.socialLinks,
@@ -1742,12 +1671,8 @@ function BusinessEditor({
       return;
     }
 
-    setCapturingLocation(
-      true
-    );
-
+    setCapturingLocation(true);
     setError("");
-
     setLocationStatus(
       "Capturing business location..."
     );
@@ -1787,19 +1712,14 @@ function BusinessEditor({
           String(longitude)
         );
 
-        setLocationVerification(
-          "UNVERIFIED"
-        );
-
         setLocationStatus(
-          "Business location captured successfully. Save the changes to store this new location as unverified."
+          "Business location captured successfully."
         );
 
         setCapturingLocation(
           false
         );
       },
-
       (locationError) => {
         console.error(
           "Business location capture error:",
@@ -1818,7 +1738,6 @@ function BusinessEditor({
           false
         );
       },
-
       {
         enableHighAccuracy: true,
         timeout: 15000,
@@ -1882,8 +1801,8 @@ function BusinessEditor({
     const trimmedName =
       name.trim();
 
-    const trimmedRegion =
-      region.trim();
+    const trimmedArea =
+      area.trim();
 
     const trimmedHouseNumber =
       houseNumber.trim();
@@ -1894,21 +1813,12 @@ function BusinessEditor({
     const trimmedCity =
       city.trim();
 
-    /*
-     * Canonical ReMarket address order:
-     *
-     * shop/house number,
-     * street,
-     * region,
-     * city,
-     * country
-     */
     const composedAddress =
       [
         trimmedHouseNumber,
         trimmedStreet,
-        trimmedRegion,
         trimmedCity,
+        trimmedArea,
         DEFAULT_COUNTRY,
       ]
         .filter(Boolean)
@@ -1924,9 +1834,9 @@ function BusinessEditor({
       return;
     }
 
-    if (!trimmedRegion) {
+    if (!trimmedArea) {
       setError(
-        "Business Region is required."
+        "Business area is required."
       );
 
       setSaving(false);
@@ -1937,16 +1847,6 @@ function BusinessEditor({
     if (!trimmedStreet) {
       setError(
         "Street, road, or close is required."
-      );
-
-      setSaving(false);
-
-      return;
-    }
-
-    if (!trimmedCity) {
-      setError(
-        "City is required."
       );
 
       setSaving(false);
@@ -1993,21 +1893,7 @@ function BusinessEditor({
         : null;
 
     if (
-      (parsedLat === null) !==
-      (parsedLong === null)
-    ) {
-      setError(
-        "Business coordinates must be provided as a complete location pair."
-      );
-
-      setSaving(false);
-
-      return;
-    }
-
-    if (
-      parsedPriceMin !==
-        null &&
+      parsedPriceMin !== null &&
       !Number.isInteger(
         parsedPriceMin
       )
@@ -2022,8 +1908,7 @@ function BusinessEditor({
     }
 
     if (
-      parsedPriceMax !==
-        null &&
+      parsedPriceMax !== null &&
       !Number.isInteger(
         parsedPriceMax
       )
@@ -2038,10 +1923,8 @@ function BusinessEditor({
     }
 
     if (
-      parsedPriceMin !==
-        null &&
-      parsedPriceMax !==
-        null &&
+      parsedPriceMin !== null &&
+      parsedPriceMax !== null &&
       parsedPriceMin >
         parsedPriceMax
     ) {
@@ -2055,15 +1938,12 @@ function BusinessEditor({
     }
 
     if (
-      parsedLat !==
-        null &&
-      (
-        !Number.isFinite(
-          parsedLat
-        ) ||
+      parsedLat !== null &&
+      (!Number.isFinite(
+        parsedLat
+      ) ||
         parsedLat < -90 ||
-        parsedLat > 90
-      )
+        parsedLat > 90)
     ) {
       setError(
         "Saved business latitude is invalid."
@@ -2075,15 +1955,12 @@ function BusinessEditor({
     }
 
     if (
-      parsedLong !==
-        null &&
-      (
-        !Number.isFinite(
-          parsedLong
-        ) ||
+      parsedLong !== null &&
+      (!Number.isFinite(
+        parsedLong
+      ) ||
         parsedLong < -180 ||
-        parsedLong > 180
-      )
+        parsedLong > 180)
     ) {
       setError(
         "Saved business longitude is invalid."
@@ -2135,26 +2012,21 @@ function BusinessEditor({
                 description.trim() ||
                 null,
 
-              phone:
-                phone.trim() ||
-                null,
-
               imageUrl:
                 imageUrl.trim() ||
                 null,
 
-              /*
-               * IMPORTANT:
-               *
-               * UI uses `region`.
-               * Existing API/database use `area`.
-               */
               area:
-                trimmedRegion,
+                trimmedArea,
 
               address:
                 composedAddress,
 
+              /*
+               * Coordinates are supplied from the
+               * internally stored/captured values.
+               * The admin never types them.
+               */
               lat:
                 parsedLat,
 
@@ -2173,8 +2045,13 @@ function BusinessEditor({
 
               verification,
 
-              locationVerification,
-
+              /*
+               * Only send category IDs from the real
+               * backend category list. When the API
+               * failed and fallback categories are shown,
+               * preserve the existing real IDs instead of
+               * submitting synthetic IDs.
+               */
               categoryIds:
                 usingCategoryFallback
                   ? business.categories.map(
@@ -2222,11 +2099,6 @@ function BusinessEditor({
             ""
         );
 
-        setPhone(
-          updatedBusiness.phone ??
-            ""
-        );
-
         setImageUrl(
           updatedBusiness.imageUrl ??
             ""
@@ -2234,13 +2106,8 @@ function BusinessEditor({
 
         const updatedAddress =
           parseLocationAddress(
-            updatedBusiness
-              .location
-              ?.address,
-            updatedBusiness
-              .location
-              ?.area ??
-              ""
+            updatedBusiness.location?.address,
+            updatedBusiness.location?.area ?? ""
           );
 
         setHouseNumber(
@@ -2255,9 +2122,8 @@ function BusinessEditor({
           updatedAddress.city
         );
 
-        setRegion(
-          updatedBusiness
-            .location
+        setArea(
+          updatedBusiness.location
             ?.area ?? ""
         );
 
@@ -2286,85 +2152,70 @@ function BusinessEditor({
         );
 
         setAvailability(
-          updatedBusiness
-            .availability
+          updatedBusiness.availability
         );
 
         setStatus(
-          updatedBusiness
-            .status
+          updatedBusiness.status
         );
 
         setVerification(
-          updatedBusiness
-            .verification
-        );
-
-        setLocationVerification(
-          updatedBusiness
-            .location
-            ?.verification ??
-            "UNVERIFIED"
+          updatedBusiness.verification
         );
 
         setSelectedCategoryIds(
-          updatedBusiness
-            .categories
-            .map(
-              (category) =>
-                category.id
-            )
+          updatedBusiness.categories.map(
+            (category) =>
+              category.id
+          )
         );
 
-        setSocialValues({
-          WHATSAPP:
-            getSocialValue(
-              updatedBusiness
-                .socialLinks,
-              "WHATSAPP"
-            ),
-
-          INSTAGRAM:
-            getSocialValue(
-              updatedBusiness
-                .socialLinks,
-              "INSTAGRAM"
-            ),
-
-          TIKTOK:
-            getSocialValue(
-              updatedBusiness
-                .socialLinks,
-              "TIKTOK"
-            ),
-
-          FACEBOOK:
-            getSocialValue(
-              updatedBusiness
-                .socialLinks,
-              "FACEBOOK"
-            ),
-
-          PHONE:
-            getSocialValue(
-              updatedBusiness
-                .socialLinks,
-              "PHONE"
-            ),
-
-          DIRECTIONS:
-            getSocialValue(
-              updatedBusiness
-                .socialLinks,
-              "DIRECTIONS"
-            ),
-        });
+        setSocialValues(
+          {
+            WHATSAPP:
+              getSocialValue(
+                updatedBusiness.socialLinks,
+                "WHATSAPP"
+              ),
+            INSTAGRAM:
+              getSocialValue(
+                updatedBusiness.socialLinks,
+                "INSTAGRAM"
+              ),
+            TIKTOK:
+              getSocialValue(
+                updatedBusiness.socialLinks,
+                "TIKTOK"
+              ),
+            FACEBOOK:
+              getSocialValue(
+                updatedBusiness.socialLinks,
+                "FACEBOOK"
+              ),
+            PHONE:
+              getSocialValue(
+                updatedBusiness.socialLinks,
+                "PHONE"
+              ) ||
+              updatedBusiness.phone ||
+              "",
+            DIRECTIONS:
+              getSocialValue(
+                updatedBusiness.socialLinks,
+                "DIRECTIONS"
+              ),
+          }
+        );
 
         setLocationStatus(
-          getLocationStatus(
+          updatedBusiness
+            .location
+            ?.lat != null &&
             updatedBusiness
               .location
-          )
+              ?.long != null
+            ? "Business coordinates are saved."
+            : "No exact business coordinates have been captured yet."
         );
       }
 
@@ -2404,7 +2255,6 @@ function BusinessEditor({
             className="inline-flex items-center gap-2 rounded-xl px-1 py-2 text-xs font-semibold text-[#6F675F] transition hover:text-[#9F2D18]"
           >
             <ArrowLeft className="h-4 w-4" />
-
             Back to businesses
           </Link>
 
@@ -2418,7 +2268,6 @@ function BusinessEditor({
                   className="inline-flex items-center gap-2 rounded-xl border border-[#EAE6DF] bg-white px-4 py-2.5 text-xs font-bold text-[#6F675F] transition hover:border-[#FFB49F] hover:bg-[#FCFAF6]"
                 >
                   <ExternalLink className="h-4 w-4" />
-
                   View public page
                 </Link>
 
@@ -2427,7 +2276,6 @@ function BusinessEditor({
                   className="inline-flex items-center gap-2 rounded-xl bg-[#FF5A36] px-4 py-2.5 text-xs font-bold text-white transition hover:bg-[#E94F2D]"
                 >
                   <Package className="h-4 w-4" />
-
                   Add product
                 </Link>
 
@@ -2516,13 +2364,14 @@ function BusinessEditor({
 
                 <div className="mt-1 flex flex-wrap items-center gap-2">
                   <h1 className="truncate text-xl font-bold text-[#17202A]">
-                    {business.name}
+                    {
+                      business.name
+                    }
                   </h1>
 
                   {deleted && (
                     <span className="inline-flex items-center gap-1 rounded-full bg-[#FFF0ED] px-2.5 py-1 text-[10px] font-bold text-[#9F2D18]">
                       <Trash2 size={10} />
-
                       Deleted
                     </span>
                   )}
@@ -2540,7 +2389,9 @@ function BusinessEditor({
                         : "bg-[#F0ECE7] text-[#6F675F]"
                     }`}
                   >
-                    {business.status}
+                    {
+                      business.status
+                    }
                   </span>
 
                   <span
@@ -2640,39 +2491,13 @@ function BusinessEditor({
                 </div>
 
                 <Field
-                  label="Phone"
-                  value={phone}
+                  label="Image URL"
+                  value={imageUrl}
                   onChange={
-                    setPhone
+                    setImageUrl
                   }
-                  type="tel"
+                  type="url"
                 />
-
-                <div>
-                  <label className="text-[10px] font-semibold text-[#6F675F]">
-                    Business image
-                  </label>
-
-                  <p className="mt-1 text-[10px] leading-4 text-[#A39A91]">
-                    Change the business image using your file manager.
-                  </p>
-
-                  <div className="mt-3">
-                    <ImageUpload
-                      value={
-                        imageUrl ||
-                        undefined
-                      }
-                      onChange={
-                        setImageUrl
-                      }
-                      disabled={
-                        saving ||
-                        deleted
-                      }
-                    />
-                  </div>
-                </div>
               </div>
             </section>
 
@@ -2688,19 +2513,18 @@ function BusinessEditor({
               </div>
 
               <p className="mt-1 max-w-[760px] text-[11px] leading-5 text-[#7E766F]">
-                Choose the business Region from the standardized Lagos
-                list, enter the physical address, then capture the
-                exact business location from the device. You do not
-                need to type latitude or longitude.
+                Choose the business area from the standardized Lagos
+                list and enter the physical street address. You can
+                capture the exact business location from the device
+                when available; you do not need to type latitude or
+                longitude.
               </p>
 
               <div className="mt-4 grid gap-4 sm:grid-cols-2">
                 <Field
                   label="House / Shop / Building number"
                   value={houseNumber}
-                  onChange={
-                    setHouseNumber
-                  }
+                  onChange={setHouseNumber}
                   placeholder="e.g. Shop 12"
                 />
 
@@ -2717,69 +2541,46 @@ function BusinessEditor({
                   value={city}
                   onChange={setCity}
                   placeholder="e.g. Lagos or Epe"
-                  required
                 />
 
                 <div>
                   <label className="text-[10px] font-semibold text-[#6F675F]">
-                    Region
+                    Area / Region
                   </label>
 
                   <select
-                    value={region}
+                    value={area}
                     onChange={(event) =>
-                      setRegion(
-                        event.target.value
-                      )
+                      setArea(event.target.value)
                     }
                     required
                     className="mt-2 h-11 w-full rounded-xl border border-[#EAE6DF] bg-white px-3.5 text-xs font-medium text-[#17202A] outline-none focus:border-[#FF9B82]"
                   >
                     <option value="">
-                      Select a region
+                      Select an area
                     </option>
 
-                    {!isKnownLagosRegion(
-                      region
-                    ) &&
-                      region && (
-                        <option
-                          value={
-                            region
-                          }
-                        >
-                          {region}{" "}
-                          (current)
-                        </option>
-                      )}
-
-                    {LAGOS_REGION_GROUPS.map(
-                      (group) => (
-                        <optgroup
-                          key={
-                            group.lga
-                          }
-                          label={
-                            group.lga
-                          }
-                        >
-                          {group.regions.map(
-                            (
-                              item
-                            ) => (
-                              <option
-                                key={`${group.lga}-${item}`}
-                                value={
-                                  item
-                                }
-                              >
-                                {item}
-                              </option>
-                            )
-                          )}
-                        </optgroup>
-                      )
+                    {!isKnownLagosArea(area) && area && (
+                      <option value={area}>
+                        {area} (current)
+                      </option>
                     )}
+
+                    {LAGOS_AREA_GROUPS.map((group) => (
+                      <optgroup
+                        key={group.lga}
+                        label={group.lga}
+                      >
+                        {group.areas.map((item) => (
+                          <option
+                            key={`${group.lga}-${item}`}
+                            value={item}
+                          >
+                            {item}
+                          </option>
+                        ))}
+                      </optgroup>
+                    ))}
                   </select>
                 </div>
 
@@ -2789,9 +2590,7 @@ function BusinessEditor({
                   </label>
 
                   <input
-                    value={
-                      DEFAULT_COUNTRY
-                    }
+                    value={DEFAULT_COUNTRY}
                     readOnly
                     className="mt-2 h-11 w-full rounded-xl border border-[#EAE6DF] bg-[#F3F0EB] px-3.5 text-xs text-[#6F675F] outline-none"
                   />
@@ -2802,12 +2601,7 @@ function BusinessEditor({
                 </div>
               </div>
 
-              {(
-                houseNumber ||
-                street ||
-                city ||
-                region
-              ) && (
+              {(houseNumber || street || city || area) && (
                 <div className="mt-4 rounded-xl border border-[#EAE6DF] bg-[#FCFAF6] px-4 py-3">
                   <p className="text-[10px] font-semibold uppercase tracking-wide text-[#A39A91]">
                     Address that will be saved
@@ -2817,8 +2611,8 @@ function BusinessEditor({
                     {[
                       houseNumber.trim(),
                       street.trim(),
-                      region.trim(),
                       city.trim(),
+                      area.trim(),
                       DEFAULT_COUNTRY,
                     ]
                       .filter(Boolean)
@@ -2827,46 +2621,6 @@ function BusinessEditor({
                   </p>
                 </div>
               )}
-
-              <div className="mt-4 grid gap-4 sm:grid-cols-2">
-                <SelectField
-                  label="Location verification"
-                  value={
-                    locationVerification
-                  }
-                  onChange={(value) =>
-                    setLocationVerification(
-                      value as
-                        | "VERIFIED"
-                        | "UNVERIFIED"
-                    )
-                  }
-                  disabled={
-                    deleted ||
-                    !business.location
-                  }
-                  options={[
-                    {
-                      value:
-                        "VERIFIED",
-                      label:
-                        "Location verified",
-                    },
-                    {
-                      value:
-                        "UNVERIFIED",
-                      label:
-                        "Location unverified",
-                    },
-                  ]}
-                />
-              </div>
-
-              <p className="mt-2 text-[10px] leading-5 text-[#9A9087]">
-                Location verification is separate from business verification.
-                Changing the physical address or coordinates automatically
-                resets a changed location to unverified.
-              </p>
 
               <div className="mt-4 rounded-2xl border border-[#EAE6DF] bg-[#FCFAF6] p-4">
                 <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
@@ -2881,9 +2635,8 @@ function BusinessEditor({
                     </div>
 
                     <p className="mt-1 text-[11px] leading-5 text-[#7E766F]">
-                      {
-                        locationStatus
-                      }
+                      {locationStatus ||
+                        "GPS capture is optional. Use it when the device is physically at the business."}
                     </p>
                   </div>
 
@@ -3318,9 +3071,7 @@ function BusinessEditor({
 
               <button
                 type="submit"
-                disabled={
-                  saving
-                }
+                disabled={saving}
                 className="inline-flex items-center justify-center gap-2 rounded-xl bg-[#FF5A36] px-5 py-3 text-xs font-bold text-white transition hover:bg-[#E94B2D] disabled:cursor-not-allowed disabled:opacity-60"
               >
                 {saving ? (
@@ -3460,7 +3211,9 @@ function SelectField({
                 option.value
               }
             >
-              {option.label}
+              {
+                option.label
+              }
             </option>
           )
         )}
@@ -3497,7 +3250,9 @@ function DeleteConfirmationModal({
 
             <p className="mt-1 text-sm leading-6 text-[#6F675F]">
               <span className="font-bold text-[#17202A]">
-                {business.name}
+                {
+                  business.name
+                }
               </span>{" "}
               will be removed from customer-facing
               ReMarket results. Its information will
