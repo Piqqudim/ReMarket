@@ -152,7 +152,9 @@ function normalizeWhatsApp(
   if (
     digits.startsWith("0")
   ) {
-    return `+234${digits.slice(1)}`;
+    return `+234${digits.slice(
+      1
+    )}`;
   }
 
   return trimmed;
@@ -275,6 +277,97 @@ function isDeletionFilter(
     value === "ACTIVE" ||
     value === "DELETED"
   );
+}
+
+/*
+ * ------------------------------------------------
+ * LOCATION HELPERS
+ * ------------------------------------------------
+ *
+ * Admin location input now supports:
+ *
+ * area
+ * address
+ * street
+ * houseNumber
+ * city
+ *
+ * Existing address-only callers remain valid.
+ */
+
+function composeLocationAddress(
+  houseNumber: string,
+  street: string,
+  city: string,
+  area: string
+): string {
+  return [
+    houseNumber,
+    street,
+    city,
+    area,
+    "Nigeria",
+  ]
+    .filter(Boolean)
+    .join(", ");
+}
+
+function getLocationInput(
+  payload: Record<
+    string,
+    unknown
+  >
+): {
+  area: string;
+  address: string | null;
+  street: string | null;
+  houseNumber: string;
+  city: string;
+} {
+  const area =
+    cleanString(
+      payload.area
+    );
+
+  const street =
+    cleanString(
+      payload.street
+    );
+
+  const houseNumber =
+    cleanString(
+      payload.houseNumber
+    );
+
+  const city =
+    cleanString(
+      payload.city
+    );
+
+  const suppliedAddress =
+    cleanString(
+      payload.address
+    );
+
+  const address =
+    street
+      ? composeLocationAddress(
+          houseNumber,
+          street,
+          city,
+          area
+        )
+      : suppliedAddress;
+
+  return {
+    area,
+    address:
+      address || null,
+    street:
+      street || null,
+    houseNumber,
+    city,
+  };
 }
 
 export async function GET(
@@ -442,6 +535,22 @@ export async function GET(
                 ?.area ??
               "",
 
+            /*
+             * Expose the stored street to the
+             * admin UI so administrators can
+             * inspect the canonical Near Me
+             * street value.
+             */
+            street:
+              business.location
+                ?.street ??
+              "",
+
+            address:
+              business.location
+                ?.address ??
+              null,
+
             status:
               business.status,
 
@@ -544,6 +653,21 @@ export async function POST(
       );
     }
 
+    if (
+      name.length >
+      200
+    ) {
+      return NextResponse.json(
+        {
+          error:
+            "Business name is too long.",
+        },
+        {
+          status: 400,
+        }
+      );
+    }
+
     const ownerName =
       nullableString(
         payload.ownerName
@@ -554,10 +678,22 @@ export async function POST(
         payload.description
       );
 
-    const area =
-      cleanString(
-        payload.area
+    const locationInput =
+      getLocationInput(
+        payload
       );
+
+    const area =
+      locationInput.area;
+
+    const address =
+      locationInput.address;
+
+    const street =
+      locationInput.street;
+
+    const city =
+      locationInput.city;
 
     if (!area) {
       return NextResponse.json(
@@ -586,10 +722,20 @@ export async function POST(
       );
     }
 
-    const address =
-      nullableString(
-        payload.address
+    if (
+      !address &&
+      !street
+    ) {
+      return NextResponse.json(
+        {
+          error:
+            "Business street/address is required.",
+        },
+        {
+          status: 400,
+        }
       );
+    }
 
     if (
       address !== null &&
@@ -633,10 +779,38 @@ export async function POST(
       );
     }
 
+    const longitudeProvidedByLong =
+      Object.prototype.hasOwnProperty.call(
+        payload,
+        "long"
+      );
+
+    const longitudeProvidedByLng =
+      Object.prototype.hasOwnProperty.call(
+        payload,
+        "lng"
+      );
+
+    if (
+      longitudeProvidedByLong &&
+      longitudeProvidedByLng
+    ) {
+      return NextResponse.json(
+        {
+          error:
+            "Provide longitude using either 'long' or 'lng', not both.",
+        },
+        {
+          status: 400,
+        }
+      );
+    }
+
     const long =
       parseOptionalFloat(
-        payload.lng ??
-          payload.long
+        longitudeProvidedByLong
+          ? payload.long
+          : payload.lng
       );
 
     if (
@@ -690,17 +864,18 @@ export async function POST(
      * LOCATION RESOLUTION
      * ------------------------------------------------
      *
-     * GPS coordinates, when captured by the admin,
-     * are the strongest source and are used directly.
+     * Coordinates, when captured by the admin,
+     * are strongest and are used directly.
      *
-     * When GPS was not captured, use the existing
-     * business address + area to resolve coordinates
-     * through the shared Nominatim geocoder.
+     * When coordinates are absent, use the existing
+     * business address/area through the shared
+     * geocoder.
      *
-     * If geocoding cannot produce a sufficiently
-     * precise result, do not invent coordinates.
-     * The business can still be saved with its
-     * address and null coordinates.
+     * The geocoder can provide a canonical road
+     * through its `street` result.
+     *
+     * If geocoding fails, the manually supplied
+     * structured street is preserved.
      */
 
     let resolvedLat =
@@ -708,6 +883,11 @@ export async function POST(
 
     let resolvedLong =
       long;
+
+    let resolvedStreet:
+      | string
+      | null =
+      street;
 
     if (
       resolvedLat === null &&
@@ -720,6 +900,9 @@ export async function POST(
             {
               address,
               area,
+              city:
+                city ||
+                undefined,
             }
           );
 
@@ -728,6 +911,13 @@ export async function POST(
 
         resolvedLong =
           geocoded.longitude;
+
+        if (
+          geocoded.street
+        ) {
+          resolvedStreet =
+            geocoded.street;
+        }
       } catch (error) {
         console.warn(
           "Business address could not be geocoded. Saving without precise coordinates:",
@@ -737,7 +927,13 @@ export async function POST(
     }
 
     /*
-     * Price range.
+     * If coordinates were captured manually
+     * by the admin but no structured street was
+     * supplied, we intentionally leave street null
+     * rather than inventing one from coordinates.
+     *
+     * A later location update can populate the
+     * canonical street through address geocoding.
      */
 
     const priceMin =
@@ -933,6 +1129,13 @@ export async function POST(
               {
                 data: {
                   area,
+
+                  /*
+                   * Canonical street used by
+                   * ReMarket Near Me.
+                   */
+                  street:
+                    resolvedStreet,
 
                   address,
 

@@ -480,8 +480,7 @@ export async function GET(
 
           name: business.name,
 
-          ownerName:
-            business.ownerName,
+          ownerName:business.ownerName,
 
           description:
             business.description,

@@ -100,6 +100,14 @@ model Location {
   // NOT unique because many businesses can exist in the same area.
   area String
 
+  // Canonical street/road name used by the
+  // ReMarket Near Me street-ranking system.
+  //
+  // Nullable for backwards compatibility with
+  // existing locations created before street
+  // storage was introduced.
+  street String?
+
   // Human-readable business location/address.
   address String?
 
@@ -113,15 +121,16 @@ model Location {
   businesses Business[]
 
   @@index([area])
+  @@index([street])
   @@index([lat, long])
   @@index([verification])
 }
 
 model BusinessSocialLink {
-  id         String @id @default(cuid())
-  businessId String
+  id String @id @default(cuid())
 
-  business Business @relation(fields: [businessId],references: [id],onDelete: Cascade)
+  businessId String
+  business   Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
 
   platform SocialPlatform
   handle   String
@@ -155,9 +164,8 @@ model BusinessCategory {
   businessId String
   categoryId String
 
-  business Business @relation(fields: [businessId],references: [id],onDelete: Cascade)
-
-  category Category @relation(fields: [categoryId],references: [id],onDelete: Cascade)
+  business Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  category Category @relation(fields: [categoryId], references: [id], onDelete: Cascade)
 
   @@id([businessId, categoryId])
   @@index([categoryId])
@@ -177,7 +185,7 @@ model Business {
   description String?
 
   locationId String?
-  location   Location? @relation(fields: [locationId],references: [id],onDelete: SetNull)
+  location   Location? @relation(fields: [locationId], references: [id], onDelete: SetNull)
 
   priceMin Int?
   priceMax Int?
@@ -200,15 +208,18 @@ model Business {
   // timestamp = soft-deleted
   deletedAt DateTime?
 
-  categories   BusinessCategory[]
-  products     Product[]
-  socialLinks  BusinessSocialLink[]
-  matches      Match[]
+  categories BusinessCategory[]
+  products   Product[]
+  socialLinks BusinessSocialLink[]
+
+  matches Match[]
+
   contactEvents ContactEvent[]
 
   deletionRequests BusinessDeletionRequest[]
-  claimRequests    BusinessClaimRequest[]
-  viewEvents       BusinessViewEvent[]
+  claimRequests   BusinessClaimRequest[]
+
+  viewEvents BusinessViewEvent[]
 
   @@index([status])
   @@index([verification])
@@ -222,7 +233,7 @@ model Product {
   id         String @id @default(cuid())
   businessId String
 
-  business Business @relation(fields: [businessId],references: [id],onDelete: Cascade)
+  business Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
 
   name        String
   description String?
@@ -249,8 +260,7 @@ model Product {
 
   // Audit: which authenticated user deleted this product?
   deletedById String?
-
-  deletedBy User? @relation("ProductDeletedBy",fields: [deletedById],references: [id],onDelete: SetNull)
+  deletedBy   User? @relation("ProductDeletedBy",fields: [deletedById],references: [id],onDelete: SetNull)
 
   updatedAt DateTime @updatedAt
 
@@ -264,7 +274,7 @@ model ProductImage {
   id        String @id @default(cuid())
   productId String
 
-  product Product @relation(fields: [productId],references: [id],onDelete: Cascade)
+  product Product @relation(fields: [productId], references: [id], onDelete: Cascade)
 
   url       String
   publicId  String?
@@ -276,7 +286,8 @@ model ProductImage {
 }
 
 model BuyerRequest {
-  id          String @id @default(cuid())
+  id String @id @default(cuid())
+
   query       String
   requestCode String @unique
 
@@ -284,7 +295,7 @@ model BuyerRequest {
 
   // A category can be deactivated/deleted without destroying
   // historical buyer requests.
-  category Category? @relation(fields: [categoryId],references: [id],onDelete: SetNull)
+  category Category? @relation(fields: [categoryId], references: [id], onDelete: SetNull)
 
   budget       Int?
   locationArea String?
@@ -309,16 +320,15 @@ model Match {
   id String @id @default(cuid())
 
   requestId String
-
-  request BuyerRequest @relation(fields: [requestId],references: [id],onDelete: Cascade)
+  request   BuyerRequest @relation(fields: [requestId], references: [id], onDelete: Cascade)
 
   businessId String
+  business   Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
 
-  business Business @relation(fields: [businessId],references: [id],onDelete: Cascade)
-
-  score         Int     @default(0)
+  score         Int  @default(0)
   addedManually Boolean @default(false)
-  createdAt     DateTime @default(now())
+
+  createdAt DateTime @default(now())
 
   @@unique([requestId, businessId])
   @@index([businessId])
@@ -328,8 +338,7 @@ model ContactEvent {
   id String @id @default(cuid())
 
   businessId String
-
-  business Business @relation(fields: [businessId],references: [id])
+  business   Business @relation(fields: [businessId], references: [id])
 
   // Existing request reference preserved as a scalar.
   requestId String?
@@ -347,7 +356,7 @@ model SearchEvent {
 
   query       String
   category    String?
-  resultCount Int @default(0)
+  resultCount Int     @default(0)
   location    String?
   minPrice    Int?
   maxPrice    Int?
@@ -362,8 +371,7 @@ model BusinessViewEvent {
   id String @id @default(cuid())
 
   businessId String
-
-  business Business @relation(fields: [businessId],references: [id])
+  business   Business @relation(fields: [businessId], references: [id])
 
   // Anonymous stable visitor identifier generated by the application.
   // This is not the user's email or phone number.
@@ -401,8 +409,7 @@ model BusinessDeletionRequest {
 
   // Seller/admin account that submitted the request.
   requestedById String
-
-  requestedBy User @relation("BusinessDeletionRequestedBy",fields: [requestedById],references: [id],onDelete: Restrict)
+  requestedBy   User   @relation("BusinessDeletionRequestedBy",fields: [requestedById],references: [id],onDelete: Restrict)
 
   reason String?
 
@@ -410,8 +417,7 @@ model BusinessDeletionRequest {
 
   // Admin who reviewed the request.
   reviewedById String?
-
-  reviewedBy User? @relation("BusinessDeletionReviewedBy",fields: [reviewedById],references: [id],onDelete: SetNull)
+  reviewedBy   User? @relation("BusinessDeletionReviewedBy",fields: [reviewedById],references: [id],onDelete: SetNull)
 
   reviewedAt DateTime?
 

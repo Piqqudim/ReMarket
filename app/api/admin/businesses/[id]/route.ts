@@ -323,6 +323,161 @@ function parseCategoryIds(
   );
 }
 
+/*
+ * ------------------------------------------------
+ * LOCATION HELPERS
+ * ------------------------------------------------
+ */
+
+function composeLocationAddress(
+  houseNumber: string,
+  street: string,
+  city: string,
+  area: string
+): string {
+  return [
+    houseNumber,
+    street,
+    city,
+    area,
+    "Nigeria",
+  ]
+    .filter(Boolean)
+    .join(", ");
+}
+
+function parseStoredLocationAddress(
+  address: string | null,
+  area: string
+): {
+  houseNumber: string;
+  street: string;
+  city: string;
+} {
+  if (!address) {
+    return {
+      houseNumber: "",
+      street: "",
+      city: "",
+    };
+  }
+
+  let parts =
+    address
+      .split(",")
+      .map((part) =>
+        part.trim()
+      )
+      .filter(Boolean);
+
+  if (
+    parts.length ===
+    0
+  ) {
+    return {
+      houseNumber: "",
+      street: "",
+      city: "",
+    };
+  }
+
+  const lastPart =
+    parts[
+      parts.length - 1
+    ];
+
+  if (
+    lastPart.toLowerCase() ===
+    "nigeria"
+  ) {
+    parts =
+      parts.slice(
+        0,
+        -1
+      );
+  }
+
+  if (
+    parts.length > 0 &&
+    area &&
+    parts[
+      parts.length - 1
+    ].toLowerCase() ===
+      area.trim().toLowerCase()
+  ) {
+    parts =
+      parts.slice(
+        0,
+        -1
+      );
+  }
+
+  if (
+    parts.length ===
+    0
+  ) {
+    return {
+      houseNumber: "",
+      street: "",
+      city: "",
+    };
+  }
+
+  if (
+    parts.length ===
+    1
+  ) {
+    return {
+      houseNumber: "",
+      street:
+        parts[0],
+      city: "",
+    };
+  }
+
+  if (
+    parts.length ===
+    2
+  ) {
+    const firstPart =
+      parts[0];
+
+    const looksLikeHouseNumber =
+      /^\d+[A-Za-z]?(?:\s*[/-]\s*[\w-]+)?$/.test(
+        firstPart
+      );
+
+    if (
+      looksLikeHouseNumber
+    ) {
+      return {
+        houseNumber:
+          firstPart,
+        street:
+          parts[1],
+        city: "",
+      };
+    }
+
+    return {
+      houseNumber: "",
+      street:
+        parts[0],
+      city:
+        parts[1],
+    };
+  }
+
+  return {
+    houseNumber:
+      parts[0],
+    street:
+      parts[1],
+    city:
+      parts.slice(2).join(", "),
+  };
+}
+
 async function loadBusiness(
   id: string
 ) {
@@ -651,6 +806,21 @@ export async function PATCH(
         );
       }
 
+      if (
+        name.length >
+        200
+      ) {
+        return NextResponse.json(
+          {
+            error:
+              "Business name is too long.",
+          },
+          {
+            status: 400,
+          }
+        );
+      }
+
       data.name =
         name;
     }
@@ -842,6 +1012,14 @@ export async function PATCH(
      * -----------------------------------------
      */
 
+    const priceMinProvided =
+      "priceMin" in
+      payload;
+
+    const priceMaxProvided =
+      "priceMax" in
+      payload;
+
     const priceMin =
       parseOptionalInt(
         payload.priceMin
@@ -883,30 +1061,26 @@ export async function PATCH(
     }
 
     if (
-      "priceMin" in
-      payload
+      priceMinProvided
     ) {
       data.priceMin =
         priceMin;
     }
 
     if (
-      "priceMax" in
-      payload
+      priceMaxProvided
     ) {
       data.priceMax =
         priceMax;
     }
 
     const finalPriceMin =
-      "priceMin" in
-      payload
+      priceMinProvided
         ? priceMin
         : existing.priceMin;
 
     const finalPriceMax =
-      "priceMax" in
-      payload
+      priceMaxProvided
         ? priceMax
         : existing.priceMax;
 
@@ -933,12 +1107,23 @@ export async function PATCH(
      * -----------------------------------------
      * RELATIONSHIP FLAGS
      * -----------------------------------------
+     *
+     * Structured location fields are included
+     * so an admin can change the street without
+     * having to manually construct a combined
+     * address string.
      */
 
     const locationWasProvided =
       "area" in
       payload ||
       "address" in
+      payload ||
+      "street" in
+      payload ||
+      "houseNumber" in
+      payload ||
+      "city" in
       payload ||
       "lat" in
       payload ||
@@ -1090,13 +1275,6 @@ export async function PATCH(
       } else if (
         legacyPhone
       ) {
-        /*
-         * Legacy phone was supplied but
-         * no PHONE social link exists.
-         *
-         * Add it so both representations
-         * remain synchronized.
-         */
         socialLinks.push({
           platform:
             SocialPlatform.PHONE,
@@ -1107,12 +1285,6 @@ export async function PATCH(
         data.phone =
           legacyPhone;
       } else {
-        /*
-         * socialLinks were explicitly
-         * supplied without a phone,
-         * so clear the compatibility
-         * phone field.
-         */
         data.phone =
           null;
       }
@@ -1129,6 +1301,11 @@ export async function PATCH(
       | undefined;
 
     let requestedAddress:
+      | string
+      | null
+      | undefined;
+
+    let requestedStreet:
       | string
       | null
       | undefined;
@@ -1153,6 +1330,11 @@ export async function PATCH(
       | null
       | undefined;
 
+    let resolvedStreet:
+      | string
+      | null
+      | undefined;
+
     let locationChanged =
       false;
 
@@ -1163,6 +1345,11 @@ export async function PATCH(
         existing.location
           ?.area ??
         "";
+
+      const currentStreet =
+        existing.location
+          ?.street ??
+        null;
 
       const currentAddress =
         existing.location
@@ -1178,6 +1365,17 @@ export async function PATCH(
         existing.location
           ?.long ??
         null;
+
+      const parsedExistingAddress =
+        parseStoredLocationAddress(
+          currentAddress,
+          currentArea
+        );
+
+      const existingStreet =
+        currentStreet ?
+        parsedExistingAddress.street :
+        "";
 
       requestedArea =
         "area" in
@@ -1214,13 +1412,98 @@ export async function PATCH(
         );
       }
 
-      requestedAddress =
-        "address" in
-        payload
-          ? nullableString(
-              payload.address
-            )
-          : currentAddress;
+      /*
+       * -----------------------------------------
+       * STRUCTURED LOCATION INPUT
+       * -----------------------------------------
+       */
+
+      const streetProvided =
+        "street" in
+        payload;
+
+      const houseNumberProvided =
+        "houseNumber" in
+        payload;
+
+      const cityProvided =
+        "city" in
+        payload;
+
+      const structuredLocationWasProvided =
+        streetProvided ||
+        houseNumberProvided ||
+        cityProvided;
+
+      if (
+        structuredLocationWasProvided
+      ) {
+        const resultingStreet =
+          streetProvided
+            ? cleanString(
+                payload.street
+              )
+            : existingStreet;
+
+        const resultingHouseNumber =
+          houseNumberProvided
+            ? cleanString(
+                payload.houseNumber
+              )
+            : parsedExistingAddress.houseNumber;
+
+        const resultingCity =
+          cityProvided
+            ? cleanString(
+                payload.city
+              )
+            : parsedExistingAddress.city;
+
+        if (!resultingStreet) {
+          return NextResponse.json(
+            {
+              error:
+                "Street, road, or close is required.",
+            },
+            {
+              status: 400,
+            }
+          );
+        }
+
+        requestedStreet =
+          resultingStreet;
+
+        requestedAddress =
+          composeLocationAddress(
+            resultingHouseNumber,
+            resultingStreet,
+            resultingCity,
+            requestedArea
+          );
+      } else {
+        /*
+         * Backward-compatible address-only
+         * update path.
+         */
+        requestedAddress =
+          "address" in
+          payload
+            ? nullableString(
+                payload.address
+              )
+            : currentAddress;
+
+        /*
+         * When no new structured street is
+         * supplied, preserve the existing
+         * canonical street until a new address
+         * is successfully geocoded.
+         */
+        requestedStreet =
+          existingStreet ||
+          null;
+      }
 
       if (
         requestedAddress !==
@@ -1239,6 +1522,12 @@ export async function PATCH(
         );
       }
 
+      /*
+       * -----------------------------------------
+       * COORDINATES
+       * -----------------------------------------
+       */
+
       requestedLat =
         "lat" in
         payload
@@ -1255,6 +1544,23 @@ export async function PATCH(
           {
             error:
               "Latitude must be a valid number.",
+          },
+          {
+            status: 400,
+          }
+        );
+      }
+
+      if (
+        "long" in
+        payload &&
+        "lng" in
+        payload
+      ) {
+        return NextResponse.json(
+          {
+            error:
+              "Provide longitude using either 'long' or 'lng', not both.",
           },
           {
             status: 400,
@@ -1357,6 +1663,13 @@ export async function PATCH(
         requestedAddress !==
         currentAddress;
 
+      const streetChanged =
+        (
+          requestedStreet ??
+          null
+        ) !==
+        currentStreet;
+
       const coordinatesChanged =
         requestedLat !==
           currentLat ||
@@ -1369,9 +1682,26 @@ export async function PATCH(
       resolvedLong =
         requestedLong;
 
+      resolvedStreet =
+        requestedStreet ??
+        null;
+
+      /*
+       * -----------------------------------------
+       * RE-GEOCODE CHANGED LOCATION
+       * -----------------------------------------
+       *
+       * Address/area changes should not retain
+       * stale coordinates from the old location.
+       *
+       * Successful geocoding supplies the canonical
+       * road/street as well.
+       */
+
       if (
         areaChanged ||
-        addressChanged
+        addressChanged ||
+        streetChanged
       ) {
         const hasFreshCoordinates =
           requestedLat !==
@@ -1383,6 +1713,20 @@ export async function PATCH(
         if (
           !hasFreshCoordinates
         ) {
+          /*
+           * If the location was changed using
+           * structured fields, retain the newly
+           * supplied street as a fallback.
+           *
+           * For an address-only update, do not
+           * blindly carry the old street.
+           */
+          resolvedStreet =
+            structuredLocationWasProvided
+              ? requestedStreet ??
+                null
+              : null;
+
           if (
             requestedAddress
           ) {
@@ -1402,6 +1746,13 @@ export async function PATCH(
 
               resolvedLong =
                 geocoded.longitude;
+
+              if (
+                geocoded.street
+              ) {
+                resolvedStreet =
+                  geocoded.street;
+              }
             } catch (
               error
             ) {
@@ -1411,9 +1762,8 @@ export async function PATCH(
               );
 
               /*
-               * Do not retain stale
-               * coordinates after the
-               * address/location changes.
+               * Do not retain stale coordinates
+               * belonging to the old location.
                */
               resolvedLat =
                 null;
@@ -1428,13 +1778,44 @@ export async function PATCH(
             resolvedLong =
               null;
           }
+        } else {
+          /*
+           * Fresh coordinates were explicitly
+           * captured. Keep the structured street
+           * supplied by the admin.
+           */
+          resolvedStreet =
+            requestedStreet ??
+            null;
         }
+      }
+
+      /*
+       * If only the street value changed and
+       * the other location fields did not,
+       * preserve that explicit street value.
+       */
+      if (
+        streetChanged &&
+        !(
+          areaChanged ||
+          addressChanged
+        )
+      ) {
+        resolvedStreet =
+          requestedStreet ??
+          null;
       }
 
       locationChanged =
         !existing.location ||
         requestedArea !==
           currentArea ||
+        (
+          resolvedStreet ??
+          null
+        ) !==
+          currentStreet ||
         requestedAddress !==
           currentAddress ||
         resolvedLat !==
@@ -1472,12 +1853,11 @@ export async function PATCH(
           locationChanged
         ) {
           /*
-           * A changed location always
-           * becomes UNVERIFIED.
+           * A changed location always becomes
+           * UNVERIFIED.
            *
-           * Verification must happen
-           * separately after the new
-           * coordinates/address are saved.
+           * Verification must happen separately
+           * after the new location is confirmed.
            */
           const location =
             await tx.location.create(
@@ -1485,6 +1865,10 @@ export async function PATCH(
                 data: {
                   area:
                     requestedArea!,
+
+                  street:
+                    resolvedStreet ??
+                    null,
 
                   address:
                     requestedAddress ??
@@ -1537,6 +1921,10 @@ export async function PATCH(
           }
         );
 
+        /*
+         * CATEGORIES
+         */
+
         if (
           categoryIdsProvided
         ) {
@@ -1574,6 +1962,10 @@ export async function PATCH(
             );
           }
         }
+
+        /*
+         * SOCIAL LINKS
+         */
 
         if (
           socialLinksProvided
@@ -1619,11 +2011,10 @@ export async function PATCH(
           legacyPhoneProvided
         ) {
           /*
-           * Older callers can still
-           * submit only phone.
+           * Older callers can still submit only
+           * phone.
            *
-           * Keep the PHONE social link
-           * synchronized for them.
+           * Keep the PHONE social link synchronized.
            */
           await tx.businessSocialLink.deleteMany(
             {
@@ -1706,9 +2097,9 @@ export async function PATCH(
 }
 
 /*
- * -----------------------------------------
+ * ------------------------------------------------
  * SOFT DELETE
- * -----------------------------------------
+ * ------------------------------------------------
  */
 
 export async function DELETE(

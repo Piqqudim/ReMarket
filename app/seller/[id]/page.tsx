@@ -1520,7 +1520,7 @@ function SellerPageContent({
                   </h1>
 
                   <p className="mt-2 text-[13px] leading-6 text-[#77716C]">
-                    We couldn&apos;t find the seller you&apos;re looking for.
+                    We couldn't find the seller you are looking for.
                   </p>
 
                   <Link
@@ -1753,34 +1753,7 @@ function SellerPageContent({
                         </div>
                       )}
 
-                      {seller.location && (
-                        <div className="mt-2 inline-flex items-center gap-2 rounded-xl bg-[#FCFAF6] px-3 py-2 text-[11px] font-semibold">
-                          <CheckCircle2
-                            size={14}
-                            className={
-                              seller.location.verification ===
-                              "VERIFIED"
-                                ? "text-[#237A48]"
-                                : "text-[#9F2D18]"
-                            }
-                          />
-
-                          <span
-                            className={
-                              seller.location.verification ===
-                              "VERIFIED"
-                                ? "text-[#237A48]"
-                                : "text-[#9F2D18]"
-                            }
-                          >
-                            {seller.location.verification ===
-                            "VERIFIED"
-                              ? "Location verified"
-                              : "Location not yet verified"}
-                          </span>
-                        </div>
-                      )}
-
+                      
                       {getDirectionsUrl() !==
                         "#" && (
                         <button
@@ -1812,7 +1785,6 @@ function SellerPageContent({
                       )}
                     </div>
                   </div>
-
                   <div className="mt-5 grid gap-5 lg:grid-cols-[minmax(0,1fr)_300px]">
                     <div
                       className="

@@ -282,12 +282,7 @@ function normalizeSocialHandle(
  *   preserve all other platforms.
  *
  * An empty handle intentionally removes
- * that specific platform:
- *
- * {
- *   platform: "INSTAGRAM",
- *   handle: ""
- * }
+ * that specific platform.
  *
  * An omitted platform is NOT changed.
  */
@@ -424,14 +419,15 @@ function parseCategoryIds(
 function composeLocationAddress(
   houseNumber: string,
   street: string,
-  city: string,
-  area: string
+  area: string,
+  city: string
 ): string {
   return [
     houseNumber,
     street,
-    city,
     area,
+    city,
+    
     "Nigeria",
   ]
     .filter(Boolean)
@@ -487,8 +483,9 @@ function parseLocationInput(
       ? composeLocationAddress(
           houseNumber,
           street,
-          city,
-          area
+          area,
+          city
+          
         )
       : suppliedAddress;
 
@@ -502,14 +499,13 @@ function parseLocationInput(
 }
 
 /*
- * Existing Location only stores one canonical
- * address string, not separate house/street/city
- * columns.
+ * Existing Location stores the structured
+ * street separately now, but older locations
+ * may not have it populated yet.
  *
- * This helper recovers the structured parts
- * from addresses created by composeLocationAddress
- * while remaining conservative with older/custom
- * addresses.
+ * This helper still recovers structured parts
+ * from addresses created by the existing
+ * composeLocationAddress format.
  */
 function parseStoredLocationAddress(
   address: string | null,
@@ -1497,6 +1493,15 @@ export async function POST(
      * 2. address geocoding is used when GPS is absent;
      * 3. failed geocoding does not prevent
      *    business creation.
+     *
+     * Street:
+     *
+     * 1. seller-provided structured street is
+     *    used as the initial value;
+     * 2. successful geocoding can provide the
+     *    geocoder-confirmed road/street;
+     * 3. when geocoding fails, the seller's
+     *    supplied street is preserved.
      */
 
     let resolvedLat =
@@ -1504,6 +1509,11 @@ export async function POST(
 
     let resolvedLong =
       parsedLong;
+
+    let resolvedStreet:
+      | string
+      | null =
+      street || null;
 
     if (
       resolvedLat ===
@@ -1518,6 +1528,9 @@ export async function POST(
             {
               address,
               area,
+              city:
+                locationInput.city ||
+                undefined,
             }
           );
 
@@ -1526,6 +1539,13 @@ export async function POST(
 
         resolvedLong =
           geocoded.longitude;
+
+        if (
+          geocoded.street
+        ) {
+          resolvedStreet =
+            geocoded.street;
+        }
       } catch (error) {
         console.warn(
           "Seller business address could not be geocoded. Saving without precise coordinates:",
@@ -1583,6 +1603,14 @@ export async function POST(
               {
                 data: {
                   area,
+
+                  /*
+                   * Canonical street used by
+                   * the Near Me street-ranking
+                   * system.
+                   */
+                  street:
+                    resolvedStreet,
 
                   address:
                     address ||
@@ -1853,6 +1881,7 @@ export async function PATCH(
               select: {
                 id: true,
                 area: true,
+                street: true,
                 address: true,
                 lat: true,
                 long: true,
@@ -2026,7 +2055,7 @@ export async function PATCH(
       return NextResponse.json(
         {
           error:
-            "Business description is too long.",
+            "Description is too long.",
         },
         {
           status: 400,
@@ -2197,7 +2226,7 @@ export async function PATCH(
      * membership.
      *
      * This is intentionally different from
-     * socialLinks, which now use per-platform
+     * socialLinks, which use per-platform
      * PATCH semantics.
      */
 
@@ -2518,6 +2547,7 @@ export async function PATCH(
     let newLocationData:
       | {
           area: string;
+          street: string | null;
           address: string | null;
           lat: number | null;
           long: number | null;
@@ -2533,6 +2563,12 @@ export async function PATCH(
           .location
           ?.area ??
         "";
+
+      const currentStoredStreet =
+        existingBusiness
+          .location
+          ?.street ??
+        null;
 
       const currentAddress =
         existingBusiness
@@ -2551,6 +2587,24 @@ export async function PATCH(
           .location
           ?.long ??
         null;
+
+      /*
+       * Recover the existing structured
+       * address components where possible.
+       *
+       * Prefer the dedicated Location.street
+       * field when it already exists.
+       */
+      const parsedExistingAddress =
+        parseStoredLocationAddress(
+          currentAddress,
+          currentArea
+        );
+
+      const existingStreet =
+        currentStoredStreet ?
+        parsedExistingAddress.street:
+        "";
 
       const resultingArea =
         areaProvided
@@ -2590,33 +2644,26 @@ export async function PATCH(
         );
       }
 
-      /*
-       * Recover the existing structured
-       * address components where possible.
-       */
-      const parsedExistingAddress =
-        parseStoredLocationAddress(
-          currentAddress,
-          currentArea
-        );
-
-      let resultingAddress =
-        "";
-
       const structuredLocationWasProvided =
         streetProvided ||
         houseNumberProvided ||
         cityProvided;
 
+      let resultingStreet =
+        existingStreet;
+
+      let resultingAddress =
+        "";
+
       if (
         structuredLocationWasProvided
       ) {
-        const resultingStreet =
+        resultingStreet =
           streetProvided
             ? cleanString(
                 payload.street
               )
-            : parsedExistingAddress.street;
+            : existingStreet;
 
         const resultingHouseNumber =
           houseNumberProvided
@@ -2636,9 +2683,9 @@ export async function PATCH(
          * A structured update still needs
          * a usable street.
          *
-         * This now preserves the existing street
-         * when the seller changes only house number
-         * or city.
+         * This preserves the existing street
+         * when the seller changes only the
+         * house number or city.
          */
         if (!resultingStreet) {
           return NextResponse.json(
@@ -2675,12 +2722,6 @@ export async function PATCH(
               "";
       }
 
-      /*
-       * If the seller explicitly submits an
-       * empty address without structured fields,
-       * reject it instead of silently creating
-       * an unusable location.
-       */
       if (
         !structuredLocationWasProvided &&
         !resultingAddress
@@ -2780,6 +2821,11 @@ export async function PATCH(
         (resultingAddress ||
           null);
 
+      const streetChanged =
+        existingStreet !==
+        (resultingStreet ||
+          null);
+
       const coordinatesChanged =
         currentLat !==
           parsedLat ||
@@ -2793,10 +2839,23 @@ export async function PATCH(
         parsedLong;
 
       /*
+       * Start with the requested/dedicated
+       * street value.
+       */
+      let resolvedStreet:
+        | string
+        | null =
+        resultingStreet ||
+        null;
+
+      /*
        * If the area/address changes and the seller
        * did not provide a newly captured coordinate
        * pair, resolve the new address instead of
        * retaining coordinates from the old location.
+       *
+       * Geocoding also supplies a canonical road/street
+       * when one is available.
        */
       if (
         areaChanged ||
@@ -2810,6 +2869,19 @@ export async function PATCH(
         if (
           !hasFreshCoordinates
         ) {
+          /*
+           * Do not carry the old street forward
+           * for an address-only location change.
+           *
+           * A newly entered structured street remains
+           * available as a fallback if geocoding fails.
+           */
+          resolvedStreet =
+            structuredLocationWasProvided
+              ? resultingStreet ||
+                null
+              : null;
+
           if (
             resultingAddress
           ) {
@@ -2829,6 +2901,13 @@ export async function PATCH(
 
               resolvedLong =
                 geocoded.longitude;
+
+              if (
+                geocoded.street
+              ) {
+                resolvedStreet =
+                  geocoded.street;
+              }
             } catch (error) {
               console.warn(
                 "Seller business address could not be geocoded. Saving the changed address without precise coordinates:",
@@ -2855,10 +2934,31 @@ export async function PATCH(
         }
       }
 
+      /*
+       * If the seller explicitly changed only
+       * the street/structured location while the
+       * address and coordinates happen to remain
+       * unchanged, preserve that street value.
+       */
+      if (
+        streetChanged &&
+        !(
+          areaChanged ||
+          addressChanged
+        )
+      ) {
+        resolvedStreet =
+          resultingStreet ||
+          null;
+      }
+
       const locationChanged =
         !existingBusiness.location ||
         currentArea !==
           resultingArea ||
+        currentStoredStreet !==
+          (resolvedStreet ||
+            null) ||
         currentAddress !==
           (resultingAddress ||
             null) ||
@@ -2895,6 +2995,9 @@ export async function PATCH(
         newLocationData = {
           area:
             resultingArea,
+
+          street:
+            resolvedStreet,
 
           address:
             resultingAddress ||
@@ -3019,6 +3122,9 @@ export async function PATCH(
                   area:
                     newLocationData.area,
 
+                  street:
+                    newLocationData.street,
+
                   address:
                     newLocationData.address,
 
@@ -3123,10 +3229,6 @@ export async function PATCH(
             /*
              * Remove the existing record only
              * for this platform.
-             *
-             * This also safely handles schemas
-             * that do not have a unique
-             * [businessId, platform] constraint.
              */
             await tx.businessSocialLink.deleteMany(
               {

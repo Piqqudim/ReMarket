@@ -10,6 +10,19 @@ export type GeocodeBusinessLocationResult = {
   latitude: number;
   longitude: number;
   formattedAddress: string | null;
+  street: string | null;
+};
+
+export type ReverseGeocodeLocationInput = {
+  latitude: number;
+  longitude: number;
+};
+
+export type ReverseGeocodeLocationResult = {
+  street: string | null;
+  area: string | null;
+  city: string | null;
+  formattedAddress: string | null;
 };
 
 type NominatimAddress = Record<
@@ -29,6 +42,9 @@ type NominatimResult = {
 
 const NOMINATIM_URL =
   "https://nominatim.openstreetmap.org/search";
+
+const NOMINATIM_REVERSE_URL =
+  "https://nominatim.openstreetmap.org/reverse";
 
 const PRECISE_TYPES =
   new Set([
@@ -239,6 +255,24 @@ function hasStreet(
     typeof road === "string" &&
     road.trim().length > 0
   );
+}
+
+function getStreet(
+  result: NominatimResult
+): string | null {
+  const road =
+    result.address?.road;
+
+  if (
+    typeof road !== "string"
+  ) {
+    return null;
+  }
+
+  const cleaned =
+    road.trim();
+
+  return cleaned || null;
 }
 
 function getResultType(
@@ -496,8 +530,7 @@ function getResultScore(
   }
 
   if (
-    BROAD_TYPES.has(type) ||
-    BROAD_TYPES.has(category)
+    isBroadResult(result)
   ) {
     score -= 100;
   }
@@ -570,6 +603,180 @@ function selectBestResult(
   return (
     sorted[0] ?? null
   );
+}
+
+function getAddressValue(
+  result: NominatimResult,
+  key: string
+): string | null {
+  const value =
+    result.address?.[key];
+
+  if (
+    typeof value !== "string"
+  ) {
+    return null;
+  }
+
+  const cleaned =
+    value.trim();
+
+  return cleaned || null;
+}
+
+function getReverseArea(
+  result: NominatimResult
+): string | null {
+  const address =
+    result.address ?? {};
+
+  const preferredKeys = [
+    "suburb",
+    "neighbourhood",
+    "quarter",
+    "village",
+    "town",
+    "district",
+  ];
+
+  for (
+    const key of preferredKeys
+  ) {
+    const value =
+      address[key];
+
+    if (
+      typeof value === "string" &&
+      value.trim()
+    ) {
+      return value.trim();
+    }
+  }
+
+  return null;
+}
+
+function getReverseCity(
+  result: NominatimResult
+): string | null {
+  const address =
+    result.address ?? {};
+
+  const preferredKeys = [
+    "city",
+    "municipality",
+    "town",
+    "county",
+    "state_district",
+  ];
+
+  for (
+    const key of preferredKeys
+  ) {
+    const value =
+      address[key];
+
+    if (
+      typeof value === "string" &&
+      value.trim()
+    ) {
+      return value.trim();
+    }
+  }
+
+  return null;
+}
+
+function parseNominatimObject(
+  value: unknown
+): NominatimResult | null {
+  if (
+    !value ||
+    typeof value !== "object" ||
+    Array.isArray(value)
+  ) {
+    return null;
+  }
+
+  return value as NominatimResult;
+}
+
+async function fetchNominatim(
+  url: URL,
+  userAgent: string
+): Promise<NominatimResult | NominatimResult[]> {
+  const response =
+    await fetch(
+      url.toString(),
+      {
+        method: "GET",
+
+        headers: {
+          "User-Agent":
+            userAgent,
+
+          "Accept":
+            "application/json",
+        },
+
+        cache:
+          "no-store",
+      }
+    );
+
+  if (!response.ok) {
+    console.error(
+      "Nominatim request failed:",
+      {
+        status:
+          response.status,
+
+        statusText:
+          response.statusText,
+
+        url:
+          url.pathname,
+      }
+    );
+
+    throw new Error(
+      "The location service could not be reached right now."
+    );
+  }
+
+  const data: unknown =
+    await response.json();
+
+  if (
+    Array.isArray(data)
+  ) {
+    return data
+      .map(
+        (item) =>
+          parseNominatimObject(
+            item
+          )
+      )
+      .filter(
+        (
+          item
+        ): item is NominatimResult =>
+          item !== null
+      );
+  }
+
+  const result =
+    parseNominatimObject(
+      data
+    );
+
+  if (!result) {
+    throw new Error(
+      "The location service returned an invalid response."
+    );
+  }
+
+  return result;
 }
 
 export async function geocodeBusinessLocation(
@@ -649,64 +856,15 @@ export async function geocodeBusinessLocation(
   );
 
   const response =
-    await fetch(
-      url.toString(),
-      {
-        method: "GET",
-
-        headers: {
-          "User-Agent":
-            userAgent,
-
-          "Accept":
-            "application/json",
-        },
-
-        cache:
-          "no-store",
-      }
+    await fetchNominatim(
+      url,
+      userAgent
     );
-
-  if (!response.ok) {
-    console.error(
-      "Nominatim geocoding request failed:",
-      {
-        status:
-          response.status,
-
-        statusText:
-          response.statusText,
-      }
-    );
-
-    throw new Error(
-      "The business address could not be located right now."
-    );
-  }
-
-  const data: unknown =
-    await response.json();
-
-  if (
-    !Array.isArray(data)
-  ) {
-    throw new Error(
-      "The location service returned an invalid response."
-    );
-  }
 
   const results =
-    data.filter(
-      (
-        item
-      ): item is NominatimResult =>
-        Boolean(
-          item &&
-            typeof item ===
-              "object" &&
-            !Array.isArray(item)
-        )
-    );
+    Array.isArray(response)
+      ? response
+      : [response];
 
   const bestResult =
     selectBestResult(
@@ -768,6 +926,160 @@ export async function geocodeBusinessLocation(
       typeof bestResult.display_name ===
       "string"
         ? bestResult.display_name
+        : null,
+
+    street:
+      getStreet(
+        bestResult
+      ),
+  };
+}
+
+/*
+ * ------------------------------------------------
+ * REVERSE GEOCODING
+ * ------------------------------------------------
+ *
+ * Used by the Near Me flow to determine the
+ * street corresponding to the buyer's current
+ * coordinates.
+ *
+ * Nominatim reverse geocoding returns the closest
+ * suitable OSM object, so the street is treated
+ * as a location signal rather than an absolute
+ * guarantee of the user's exact road.
+ */
+export async function reverseGeocodeLocation(
+  input: ReverseGeocodeLocationInput
+): Promise<ReverseGeocodeLocationResult> {
+  const userAgent =
+    process.env.NOMINATIM_USER_AGENT?.trim();
+
+  if (!userAgent) {
+    throw new Error(
+      "NOMINATIM_USER_AGENT is not configured."
+    );
+  }
+
+  if (
+    !isValidLatitude(
+      input.latitude
+    )
+  ) {
+    throw new Error(
+      "Latitude must be between -90 and 90."
+    );
+  }
+
+  if (
+    !isValidLongitude(
+      input.longitude
+    )
+  ) {
+    throw new Error(
+      "Longitude must be between -180 and 180."
+    );
+  }
+
+  const url =
+    new URL(
+      NOMINATIM_REVERSE_URL
+    );
+
+  url.searchParams.set(
+    "lat",
+    String(
+      input.latitude
+    )
+  );
+
+  url.searchParams.set(
+    "lon",
+    String(
+      input.longitude
+    )
+  );
+
+  url.searchParams.set(
+    "format",
+    "jsonv2"
+  );
+
+  url.searchParams.set(
+    "addressdetails",
+    "1"
+  );
+
+  /*
+   * Zoom 18 requests the most detailed
+   * address level available.
+   */
+  url.searchParams.set(
+    "zoom",
+    "18"
+  );
+
+  /*
+   * Restrict reverse results to address
+   * objects rather than unrelated themes.
+   */
+  url.searchParams.set(
+    "layer",
+    "address"
+  );
+
+  url.searchParams.set(
+    "accept-language",
+    "en"
+  );
+
+  const response =
+    await fetchNominatim(
+      url,
+      userAgent
+    );
+
+  if (
+    Array.isArray(response)
+  ) {
+    throw new Error(
+      "The reverse location service returned an unexpected response."
+    );
+  }
+
+  const result =
+    response;
+
+  if (
+    !isNigeriaResult(
+      result
+    )
+  ) {
+    throw new Error(
+      "The current location could not be confirmed within Nigeria."
+    );
+  }
+
+  return {
+    street:
+      getStreet(
+        result
+      ),
+
+    area:
+      getReverseArea(
+        result
+      ),
+
+    city:
+      getReverseCity(
+        result
+      ),
+
+    formattedAddress:
+      typeof result.display_name ===
+      "string"
+        ? result.display_name
         : null,
   };
 }

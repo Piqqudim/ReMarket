@@ -58,7 +58,20 @@ type Product = {
 type BusinessLocation = {
   id: string;
   area: string;
+  street: string | null;
 };
+
+type NearMeRanking =
+  | 1
+  | 2
+  | 3
+  | 4;
+
+type NearMeRankingLabel =
+  | "same-street"
+  | "adjacent-street"
+  | "nearby-street"
+  | "whole-area";
 
 type Business = {
   id: string;
@@ -68,27 +81,44 @@ type Business = {
   imageUrl: string | null;
   area: string;
   location: BusinessLocation | null;
+
   availability:
     | "AVAILABLE"
     | "ASK_SELLER"
     | "UNAVAILABLE";
+
   verification:
     | "VERIFIED"
     | "UNVERIFIED";
+
   verified: boolean;
+
   categories: {
     category: {
       id: string;
       name: string;
     };
   }[];
+
   products: Product[];
+
   socialLinks: {
     id: string;
     platform: string;
     handle: string;
   }[];
+
   distanceKm: number | null;
+
+  ranking?: NearMeRanking;
+
+  rankingLabel?:
+    NearMeRankingLabel;
+};
+
+type SearchLocation = {
+  street: string | null;
+  area: string | null;
 };
 
 const NAV_ITEMS = [
@@ -211,6 +241,31 @@ function getDistanceLabel(
   ).toLocaleString()} km away`;
 }
 
+function getRankingLabel(
+  rankingLabel:
+    | NearMeRankingLabel
+    | undefined
+): string | null {
+  switch (
+    rankingLabel
+  ) {
+    case "same-street":
+      return "Same street";
+
+    case "adjacent-street":
+      return "Adjacent street";
+
+    case "nearby-street":
+      return "Nearby street";
+
+    case "whole-area":
+      return "Whole area";
+
+    default:
+      return null;
+  }
+}
+
 /*
  * -----------------------------------------
  * SAVED BUSINESSES EXTERNAL STORE
@@ -289,6 +344,16 @@ export default function NearMePage() {
   const [error, setError] =
     useState("");
 
+  const [
+    searchLocation,
+    setSearchLocation,
+  ] = useState<SearchLocation>(
+    {
+      street: null,
+      area: null,
+    }
+  );
+
   const savedSnapshot =
     useSyncExternalStore(
       subscribeToSavedBusinesses,
@@ -341,9 +406,15 @@ export default function NearMePage() {
     if (!trimmedArea) {
       setBusinesses([]);
       setMode("none");
+      setSearchLocation({
+        street: null,
+        area: null,
+      });
+
       setError(
         "Enter an area to search for nearby businesses."
       );
+
       return;
     }
 
@@ -351,6 +422,10 @@ export default function NearMePage() {
     setError("");
     setBusinesses([]);
     setMode("none");
+    setSearchLocation({
+      street: null,
+      area: null,
+    });
 
     try {
       const params =
@@ -436,6 +511,9 @@ export default function NearMePage() {
    * Latitude and longitude are obtained
    * internally from the browser.
    * The user never types them.
+   *
+   * The API converts the coordinates into
+   * the buyer's current street and area.
    */
 
   function useCurrentLocation() {
@@ -447,6 +525,7 @@ export default function NearMePage() {
       setError(
         "Location services are not available in this browser."
       );
+
       return;
     }
 
@@ -455,6 +534,11 @@ export default function NearMePage() {
     setError("");
     setBusinesses([]);
     setMode("none");
+
+    setSearchLocation({
+      street: null,
+      area: null,
+    });
 
     navigator.geolocation.getCurrentPosition(
       async (position) => {
@@ -507,6 +591,31 @@ export default function NearMePage() {
               : [];
 
           /*
+           * Preserve the location context
+           * returned by the API.
+           *
+           * Exact buyer coordinates are never
+           * displayed or stored here.
+           */
+          setSearchLocation({
+            street:
+              typeof data?.location
+                ?.street ===
+              "string"
+                ? data.location
+                    .street
+                : null,
+
+            area:
+              typeof data?.location
+                ?.area ===
+              "string"
+                ? data.location
+                    .area
+                : null,
+          });
+
+          /*
            * A successful empty GPS response
            * is still a valid nearby search.
            */
@@ -526,6 +635,11 @@ export default function NearMePage() {
           setBusinesses([]);
           setMode("none");
 
+          setSearchLocation({
+            street: null,
+            area: null,
+          });
+
           setError(
             locationError instanceof
               Error
@@ -537,6 +651,7 @@ export default function NearMePage() {
           setLoading(false);
         }
       },
+
       (geoError) => {
         console.error(
           "Geolocation error:",
@@ -548,6 +663,11 @@ export default function NearMePage() {
         setBusinesses([]);
         setMode("none");
 
+        setSearchLocation({
+          street: null,
+          area: null,
+        });
+
         switch (
           geoError.code
         ) {
@@ -555,18 +675,21 @@ export default function NearMePage() {
             setError(
               "Location permission was denied. Enter an area instead."
             );
+
             break;
 
           case geoError.POSITION_UNAVAILABLE:
             setError(
               "Your current location is unavailable. Enter an area instead."
             );
+
             break;
 
           case geoError.TIMEOUT:
             setError(
               "Finding your location took too long. Enter an area instead."
             );
+
             break;
 
           default:
@@ -575,10 +698,16 @@ export default function NearMePage() {
             );
         }
       },
+
       {
-        enableHighAccuracy: true,
-        timeout: 10000,
-        maximumAge: 60000,
+        enableHighAccuracy:
+          true,
+
+        timeout:
+          10000,
+
+        maximumAge:
+          60000,
       }
     );
   }
@@ -616,13 +745,17 @@ export default function NearMePage() {
         business.area ??
         business.location?.area ??
         "Local",
+
       category,
+
       verified:
         business.verified ??
         business.verification ===
           "VERIFIED",
+
       availability:
         business.availability,
+
       imageUrl:
         business.imageUrl,
     });
@@ -799,7 +932,9 @@ export default function NearMePage() {
 
                     <button
                       type="submit"
-                      disabled={loading}
+                      disabled={
+                        loading
+                      }
                       className="rounded-full bg-[#FF5A36] px-5 py-2.5 text-xs font-bold text-white disabled:opacity-60"
                     >
                       {loading
@@ -859,7 +994,7 @@ export default function NearMePage() {
                               } found`
                             : mode ===
                                 "gps"
-                              ? "No businesses were found within the nearby search area"
+                              ? "No businesses were found around your current street or area"
                               : mode ===
                                   "area"
                                 ? "No businesses were found in this area"
@@ -869,10 +1004,43 @@ export default function NearMePage() {
                       {mode ===
                         "gps" &&
                         !loading &&
+                        (
+                          searchLocation.street ||
+                          searchLocation.area
+                        ) && (
+                          <div className="mt-2 flex flex-wrap items-center gap-1.5 text-[10px] text-[#9A928B]">
+                            <MapPin className="h-3 w-3 shrink-0" />
+
+                            {searchLocation.street && (
+                              <span className="font-semibold text-[#6F665F]">
+                                {searchLocation.street}
+                              </span>
+                            )}
+
+                            {searchLocation.street &&
+                              searchLocation.area && (
+                                <span className="text-[#C6BDB5]">
+                                  ·
+                                </span>
+                              )}
+
+                            {searchLocation.area && (
+                              <span>
+                                {
+                                  searchLocation.area
+                                }
+                              </span>
+                            )}
+                          </div>
+                        )}
+
+                      {mode ===
+                        "gps" &&
+                        !loading &&
                         businesses.length >
                           0 && (
                           <p className="mt-1 text-[10px] text-[#9A928B]">
-                            Distances shown are straight-line distances from your current location.
+                            Results are ranked by street first, then by distance within each ranking level.
                           </p>
                         )}
                     </div>
@@ -955,7 +1123,7 @@ export default function NearMePage() {
                         <p className="mx-auto mt-1 max-w-[360px] text-xs leading-5 text-gray-400">
                           {mode ===
                           "gps"
-                            ? "We don't have businesses registered within the nearby search area yet. Try searching another area or browse all businesses."
+                            ? "We searched your current street first, then nearby streets and your wider area."
                             : `We don't have businesses registered around ${area.trim()} yet. Try another area or browse all businesses.`}
                         </p>
 
@@ -973,6 +1141,16 @@ export default function NearMePage() {
 
                               setError(
                                 ""
+                              );
+
+                              setSearchLocation(
+                                {
+                                  street:
+                                    null,
+
+                                  area:
+                                    null,
+                                }
                               );
                             }}
                             className="inline-flex items-center justify-center gap-2 rounded-lg bg-[#FF5A36] px-4 py-2.5 text-[11px] font-bold text-white"
@@ -1033,6 +1211,20 @@ export default function NearMePage() {
                                 business.distanceKm
                               );
 
+                            const rankingLabel =
+                              mode ===
+                              "gps"
+                                ? getRankingLabel(
+                                    business.rankingLabel
+                                  )
+                                : null;
+
+                            const street =
+                              business
+                                .location
+                                ?.street ??
+                              null;
+
                             return (
                               <article
                                 key={
@@ -1060,11 +1252,25 @@ export default function NearMePage() {
                                     </div>
                                   )}
 
+                                  {rankingLabel !==
+                                    null && (
+                                    <span className="absolute left-3 top-3 rounded-full bg-white/95 px-2.5 py-1 text-[9px] font-bold text-[#9F2D18] shadow-sm">
+                                      {
+                                        rankingLabel
+                                      }
+                                    </span>
+                                  )}
+
                                   {distanceLabel !==
                                     null && (
                                     <span
                                       title="Straight-line distance from your current location"
-                                      className="absolute left-3 top-3 rounded-full bg-white/90 px-2.5 py-1 text-[9px] font-bold text-[#9F2D18] shadow-sm"
+                                      className={`absolute ${
+                                        rankingLabel !==
+                                        null
+                                          ? "left-3 top-10"
+                                          : "left-3 top-3"
+                                      } rounded-full bg-white/90 px-2.5 py-1 text-[9px] font-bold text-[#9F2D18] shadow-sm`}
                                     >
                                       {
                                         distanceLabel
@@ -1107,10 +1313,25 @@ export default function NearMePage() {
                                           <MapPin className="h-3 w-3 shrink-0" />
 
                                           {
+                                            street ??
                                             business.area
                                           }
                                         </span>
                                       </p>
+
+                                      {street &&
+                                        business.area &&
+                                        street.trim()
+                                          .toLowerCase() !==
+                                          business.area
+                                            .trim()
+                                            .toLowerCase() && (
+                                          <p className="mt-1 truncate pl-4 text-[10px] text-gray-400">
+                                            {
+                                              business.area
+                                            }
+                                          </p>
+                                        )}
                                     </div>
 
                                     <button

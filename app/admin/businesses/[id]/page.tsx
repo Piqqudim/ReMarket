@@ -2611,8 +2611,8 @@ function BusinessEditor({
                     {[
                       houseNumber.trim(),
                       street.trim(),
-                      city.trim(),
                       area.trim(),
+                      city.trim(),
                       DEFAULT_COUNTRY,
                     ]
                       .filter(Boolean)
