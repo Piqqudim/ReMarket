@@ -81,6 +81,13 @@ type Verification =
   | "VERIFIED"
   | "UNVERIFIED";
 
+type ProductImage = {
+  id?: string;
+  url: string;
+  publicId?: string | null;
+  sortOrder?: number;
+};
+
 type Product = {
   id: string;
   name: string;
@@ -90,6 +97,12 @@ type Product = {
   priceMax?: number | null;
   availability?: Availability;
   imageUrl?: string | null;
+  images: ProductImage[];
+  category?: {
+    id?: string;
+    name: string;
+  } | null;
+  keywords: string[];
 };
 
 type SocialLink = {
@@ -104,7 +117,6 @@ type SellerLocation = {
   address?: string | null;
   lat?: number | null;
   long?: number | null;
-  verification?: Verification;
 } | null;
 
 type Seller = {
@@ -197,6 +209,33 @@ function formatPrice(
   }
 
   return "Ask seller";
+}
+
+function getProductImages(
+  product: Product
+): ProductImage[] {
+  const images = Array.isArray(product.images)
+    ? product.images
+        .filter(
+          (image) =>
+            image &&
+            typeof image.url === "string" &&
+            image.url.trim()
+        )
+        .sort(
+          (a, b) =>
+            (a.sortOrder ?? 0) -
+            (b.sortOrder ?? 0)
+        )
+    : [];
+
+  if (images.length > 0) {
+    return images;
+  }
+
+  return product.imageUrl
+    ? [{ url: product.imageUrl }]
+    : [];
 }
 
 function getAvailabilityLabel(
@@ -822,11 +861,77 @@ function SellerPageContent({
                         "string"
                         ? product.imageUrl
                         : null,
+
+                    images:
+                      Array.isArray(
+                        product.images
+                      )
+                        ? product.images
+                            .filter(
+                              (image): image is Record<string, unknown> =>
+                                typeof image ===
+                                  "object" &&
+                                image !== null &&
+                                typeof (image as Record<string, unknown>).url ===
+                                  "string"
+                            )
+                            .map((image) => ({
+                              id:
+                                typeof image.id ===
+                                  "string"
+                                  ? image.id
+                                  : undefined,
+                              url:
+                                image.url as string,
+                              publicId:
+                                typeof image.publicId ===
+                                  "string"
+                                  ? image.publicId
+                                  : null,
+                              sortOrder:
+                                typeof image.sortOrder ===
+                                  "number"
+                                  ? image.sortOrder
+                                  : 0,
+                            }))
+                            .sort(
+                              (a, b) =>
+                                (a.sortOrder ?? 0) -
+                                (b.sortOrder ?? 0)
+                            )
+                        : [],
+
+                    keywords:
+                      Array.isArray(product.keywords)
+                        ? product.keywords.filter(
+                            (keyword): keyword is string =>
+                              typeof keyword === "string" && keyword.trim().length > 0
+                          )
+                        : [],
+
+                    category:
+                      typeof product.category ===
+                        "object" &&
+                      product.category !== null &&
+                      "name" in product.category &&
+                      typeof product.category.name ===
+                        "string"
+                        ? {
+                            id:
+                              "id" in product.category &&
+                              typeof product.category.id ===
+                                "string"
+                                ? product.category.id
+                                : undefined,
+                            name:
+                              product.category.name,
+                          }
+                        : null,
                   })
                 )
             : [];
 
-        const location: SellerLocation =
+        const location =
           typeof rawLocation ===
               "object" &&
           rawLocation !== null
@@ -866,14 +971,6 @@ function SellerPageContent({
                     "number"
                     ? rawLocation.long
                     : null,
-
-                verification:
-                  "verification" in
-                    rawLocation &&
-                  rawLocation.verification ===
-                    "VERIFIED"
-                    ? "VERIFIED"
-                    : "UNVERIFIED",
               }
             : null;
 
@@ -1520,7 +1617,7 @@ function SellerPageContent({
                   </h1>
 
                   <p className="mt-2 text-[13px] leading-6 text-[#77716C]">
-                    We couldn't find the seller you are looking for.
+                    We couldn&apos;t find the seller you&apos;re looking for.
                   </p>
 
                   <Link
@@ -1585,6 +1682,7 @@ function SellerPageContent({
                               shrink-0
                               items-center
                               justify-center
+                              overflow-hidden
                               rounded-2xl
                               bg-[#FFE0D6]
                               text-[18px]
@@ -1595,8 +1693,14 @@ function SellerPageContent({
                               sm:text-xl
                             "
                           >
-                            {getInitials(
-                              seller.name
+                            {seller.imageUrl ? (
+                              <img
+                                src={seller.imageUrl}
+                                alt={seller.name}
+                                className="h-full w-full object-cover"
+                              />
+                            ) : (
+                              getInitials(seller.name)
                             )}
                           </div>
 
@@ -1753,7 +1857,6 @@ function SellerPageContent({
                         </div>
                       )}
 
-                      
                       {getDirectionsUrl() !==
                         "#" && (
                         <button
@@ -1785,6 +1888,7 @@ function SellerPageContent({
                       )}
                     </div>
                   </div>
+
                   <div className="mt-5 grid gap-5 lg:grid-cols-[minmax(0,1fr)_300px]">
                     <div
                       className="
@@ -1838,20 +1942,32 @@ function SellerPageContent({
                                   hover:shadow-sm
                                 "
                               >
-                                {product.imageUrl ? (
-                                  <img
-                                    src={
-                                      product.imageUrl
-                                    }
-                                    alt={
-                                      product.name
-                                    }
-                                    className="
-                                      h-40
-                                      w-full
-                                      object-cover
-                                    "
-                                  />
+                                {getProductImages(product).length > 0 ? (
+                                  <div>
+                                    <img
+                                      src={
+                                        getProductImages(product)[0]?.url ??
+                                        ""
+                                      }
+                                      alt={
+                                        product.name
+                                      }
+                                      className="h-40 w-full object-cover"
+                                    />
+
+                                    {getProductImages(product).length > 1 && (
+                                      <div className="flex gap-2 overflow-x-auto border-t border-[#E8E4DE] bg-white p-2">
+                                        {getProductImages(product).map((image, imageIndex) => (
+                                          <img
+                                            key={image.id ?? `${product.id}-image-${imageIndex}`}
+                                            src={image.url}
+                                            alt=""
+                                            className="h-12 w-12 shrink-0 rounded-lg object-cover"
+                                          />
+                                        ))}
+                                      </div>
+                                    )}
+                                  </div>
                                 ) : (
                                   <div
                                     className="
@@ -1876,11 +1992,19 @@ function SellerPageContent({
 
                                 <div className="p-4">
                                   <div className="flex items-start justify-between gap-3">
-                                    <h3 className="text-[13px] font-bold text-[#2E2925]">
-                                      {
-                                        product.name
-                                      }
-                                    </h3>
+                                    <div className="min-w-0">
+                                      <h3 className="text-[13px] font-bold text-[#2E2925]">
+                                        {
+                                          product.name
+                                        }
+                                      </h3>
+
+                                      {product.category?.name && (
+                                        <p className="mt-1 text-[10px] font-semibold text-[#8B847E]">
+                                          {product.category.name}
+                                        </p>
+                                      )}
+                                    </div>
 
                                     <span
                                       className={`
@@ -1902,10 +2026,8 @@ function SellerPageContent({
                                   </div>
 
                                   {product.description && (
-                                    <p className="mt-2 line-clamp-2 text-[11px] leading-5 text-[#878079]">
-                                      {
-                                        product.description
-                                      }
+                                    <p className="mt-2 text-[11px] leading-5 text-[#878079]">
+                                      {product.description}
                                     </p>
                                   )}
 
@@ -1914,6 +2036,19 @@ function SellerPageContent({
                                       product
                                     )}
                                   </div>
+
+                                  {product.keywords.length > 0 && (
+                                    <div className="mt-3 flex flex-wrap gap-1.5">
+                                      {product.keywords.map((keyword) => (
+                                        <span
+                                          key={`${product.id}-${keyword}`}
+                                          className="rounded-full bg-[#F3F0EB] px-2 py-1 text-[9px] font-semibold text-[#6F675F]"
+                                        >
+                                          {keyword}
+                                        </span>
+                                      ))}
+                                    </div>
+                                  )}
                                 </div>
                               </div>
                             )

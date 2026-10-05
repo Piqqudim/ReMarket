@@ -327,19 +327,23 @@ function parseCategoryIds(
  * ------------------------------------------------
  * LOCATION HELPERS
  * ------------------------------------------------
+ *
+ * Canonical ReMarket address:
+ *
+ * House Number, Street, Area, City, Nigeria
  */
 
 function composeLocationAddress(
   houseNumber: string,
   street: string,
-  city: string,
-  area: string
+  area: string,
+  city: string
 ): string {
   return [
     houseNumber,
     street,
-    city,
     area,
+    city,
     "Nigeria",
   ]
     .filter(Boolean)
@@ -381,13 +385,13 @@ function parseStoredLocationAddress(
     };
   }
 
-  const lastPart =
+  /*
+   * Remove Nigeria.
+   */
+  if (
     parts[
       parts.length - 1
-    ];
-
-  if (
-    lastPart.toLowerCase() ===
+    ].toLowerCase() ===
     "nigeria"
   ) {
     parts =
@@ -398,18 +402,47 @@ function parseStoredLocationAddress(
   }
 
   if (
-    parts.length > 0 &&
-    area &&
-    parts[
-      parts.length - 1
-    ].toLowerCase() ===
-      area.trim().toLowerCase()
+    parts.length ===
+    0
   ) {
-    parts =
-      parts.slice(
-        0,
-        -1
+    return {
+      houseNumber: "",
+      street: "",
+      city: "",
+    };
+  }
+
+  /*
+   * Remove the known Area wherever it appears
+   * as its own address component.
+   *
+   * This supports:
+   *
+   * House, Street, Area, City, Nigeria
+   *
+   * and older:
+   *
+   * House, Street, City, Area, Nigeria
+   */
+  const normalizedArea =
+    area
+      .trim()
+      .toLowerCase();
+
+  if (normalizedArea) {
+    const areaIndex =
+      parts.findIndex(
+        (part) =>
+          part.toLowerCase() ===
+          normalizedArea
       );
+
+    if (areaIndex >= 0) {
+      parts.splice(
+        areaIndex,
+        1
+      );
+    }
   }
 
   if (
@@ -468,13 +501,24 @@ function parseStoredLocationAddress(
     };
   }
 
+  /*
+   * After removing Area and Nigeria,
+   * the canonical structure is:
+   *
+   * House Number, Street, City
+   *
+   * Any extra components remain part of the city
+   * rather than being invented into another field.
+   */
   return {
     houseNumber:
       parts[0],
     street:
       parts[1],
     city:
-      parts.slice(2).join(", "),
+      parts
+        .slice(2)
+        .join(", "),
   };
 }
 
@@ -758,8 +802,10 @@ export async function PATCH(
         {
           success:
             true,
+
           restored:
             true,
+
           business,
         }
       );
@@ -1107,11 +1153,6 @@ export async function PATCH(
      * -----------------------------------------
      * RELATIONSHIP FLAGS
      * -----------------------------------------
-     *
-     * Structured location fields are included
-     * so an admin can change the street without
-     * having to manually construct a combined
-     * address string.
      */
 
     const locationWasProvided =
@@ -1278,6 +1319,7 @@ export async function PATCH(
         socialLinks.push({
           platform:
             SocialPlatform.PHONE,
+
           handle:
             legacyPhone,
         });
@@ -1372,10 +1414,14 @@ export async function PATCH(
           currentArea
         );
 
+      /*
+       * Location.street is the canonical
+       * street source. The stored address is
+       * only the backwards-compatible fallback.
+       */
       const existingStreet =
-        currentStreet ?
-        parsedExistingAddress.street :
-        "";
+        currentStreet ||
+        parsedExistingAddress.street;
 
       requestedArea =
         "area" in
@@ -1474,12 +1520,17 @@ export async function PATCH(
         requestedStreet =
           resultingStreet;
 
+        /*
+         * Exact ReMarket order:
+         *
+         * House Number, Street, Area, City, Nigeria
+         */
         requestedAddress =
           composeLocationAddress(
             resultingHouseNumber,
             resultingStreet,
-            resultingCity,
-            requestedArea
+            requestedArea,
+            resultingCity
           );
       } else {
         /*
@@ -1494,12 +1545,6 @@ export async function PATCH(
               )
             : currentAddress;
 
-        /*
-         * When no new structured street is
-         * supplied, preserve the existing
-         * canonical street until a new address
-         * is successfully geocoded.
-         */
         requestedStreet =
           existingStreet ||
           null;
@@ -1690,12 +1735,6 @@ export async function PATCH(
        * -----------------------------------------
        * RE-GEOCODE CHANGED LOCATION
        * -----------------------------------------
-       *
-       * Address/area changes should not retain
-       * stale coordinates from the old location.
-       *
-       * Successful geocoding supplies the canonical
-       * road/street as well.
        */
 
       if (
@@ -1713,14 +1752,6 @@ export async function PATCH(
         if (
           !hasFreshCoordinates
         ) {
-          /*
-           * If the location was changed using
-           * structured fields, retain the newly
-           * supplied street as a fallback.
-           *
-           * For an address-only update, do not
-           * blindly carry the old street.
-           */
           resolvedStreet =
             structuredLocationWasProvided
               ? requestedStreet ??
@@ -1736,6 +1767,7 @@ export async function PATCH(
                   {
                     address:
                       requestedAddress,
+
                     area:
                       requestedArea,
                   }
@@ -1781,8 +1813,7 @@ export async function PATCH(
         } else {
           /*
            * Fresh coordinates were explicitly
-           * captured. Keep the structured street
-           * supplied by the admin.
+           * supplied/captured.
            */
           resolvedStreet =
             requestedStreet ??
@@ -1793,7 +1824,7 @@ export async function PATCH(
       /*
        * If only the street value changed and
        * the other location fields did not,
-       * preserve that explicit street value.
+       * preserve the explicitly supplied street.
        */
       if (
         streetChanged &&

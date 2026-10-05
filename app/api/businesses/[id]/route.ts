@@ -115,10 +115,29 @@ export async function GET(
           availability: true,
           verification: true,
 
+          /*
+           * Business.phone remains available as a
+           * compatibility fallback for older
+           * manually onboarded businesses.
+           *
+           * PHONE socialLinks remains the source
+           * of truth whenever it exists.
+           */
+          phone: true,
+
           location: {
             select: {
               id: true,
+
               area: true,
+
+              /*
+               * Canonical street used by the
+               * ReMarket Near Me street-ranking
+               * system.
+               */
+              street: true,
+
               address: true,
               lat: true,
               long: true,
@@ -242,6 +261,65 @@ export async function GET(
      * -----------------------------------------
      */
 
+    /*
+     * Normalize the stored social links first.
+     *
+     * PHONE social link is the canonical phone
+     * value whenever it exists.
+     */
+    const formattedSocialLinks =
+      business.socialLinks.map(
+        (link) => ({
+          id: link.id,
+
+          platform:
+            link.platform,
+
+          handle:
+            normalizeSocialHandle(
+              link.platform,
+              link.handle
+            ),
+        })
+      );
+
+    /*
+     * Legacy compatibility:
+     *
+     * Some older manually onboarded businesses
+     * may have Business.phone populated without
+     * a PHONE social-link record.
+     *
+     * In that case only, expose Business.phone
+     * as a fallback PHONE social link.
+     *
+     * Newly created/updated businesses should
+     * already have PHONE stored in socialLinks,
+     * so the canonical PHONE social value wins.
+     */
+    const hasPhoneSocialLink =
+      formattedSocialLinks.some(
+        (link) =>
+          link.platform ===
+          "PHONE"
+      );
+
+    if (
+      !hasPhoneSocialLink &&
+      business.phone
+    ) {
+      formattedSocialLinks.push({
+        id: `legacy-phone-${business.id}`,
+
+        platform: "PHONE",
+
+        handle:
+          normalizeNigerianPhone(
+            business.phone
+          ),
+      });
+    }
+
     const formattedBusiness = {
       id: business.id,
 
@@ -268,6 +346,14 @@ export async function GET(
         area:
           business.location?.area ??
           "Location not added",
+
+        /*
+         * Canonical street used by
+         * street-based discovery.
+         */
+        street:
+          business.location?.street ??
+          null,
 
         address:
           business.location?.address ??
@@ -363,20 +449,7 @@ export async function GET(
        * before exposing them to the client.
        */
       socialLinks:
-        business.socialLinks.map(
-          (link) => ({
-            id: link.id,
-
-            platform:
-              link.platform,
-
-            handle:
-              normalizeSocialHandle(
-                link.platform,
-                link.handle
-              ),
-          })
-        ),
+        formattedSocialLinks,
     };
 
     return NextResponse.json({

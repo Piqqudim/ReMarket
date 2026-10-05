@@ -298,14 +298,14 @@ function isDeletionFilter(
 function composeLocationAddress(
   houseNumber: string,
   street: string,
-  city: string,
-  area: string
+  area: string,
+  city: string
 ): string {
   return [
     houseNumber,
     street,
-    city,
     area,
+    city,
     "Nigeria",
   ]
     .filter(Boolean)
@@ -354,8 +354,8 @@ function getLocationInput(
       ? composeLocationAddress(
           houseNumber,
           street,
-          city,
-          area
+          area,
+          city
         )
       : suppliedAddress;
 
@@ -864,12 +864,11 @@ export async function POST(
      * LOCATION RESOLUTION
      * ------------------------------------------------
      *
-     * Coordinates, when captured by the admin,
-     * are strongest and are used directly.
+     * Coordinates, when explicitly supplied by an
+     * API caller, are used directly.
      *
-     * When coordinates are absent, use the existing
-     * business address/area through the shared
-     * geocoder.
+     * When coordinates are absent, use the business
+     * address through the shared geocoder.
      *
      * The geocoder can provide a canonical road
      * through its `street` result.
@@ -927,10 +926,10 @@ export async function POST(
     }
 
     /*
-     * If coordinates were captured manually
-     * by the admin but no structured street was
-     * supplied, we intentionally leave street null
-     * rather than inventing one from coordinates.
+     * If coordinates are supplied without a
+     * structured street, we intentionally leave
+     * street null rather than inventing one from
+     * coordinates.
      *
      * A later location update can populate the
      * canonical street through address geocoding.

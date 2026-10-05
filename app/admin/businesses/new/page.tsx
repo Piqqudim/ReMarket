@@ -8,9 +8,7 @@ import {
 import {
   ArrowLeft,
   Loader2,
-  MapPin,
   Plus,
-  RefreshCw,
   Store,
 } from "lucide-react";
 
@@ -327,14 +325,18 @@ export default function NewBusinessPage() {
   const [ownerName, setOwnerName] =
     useState("");
 
-  const [description, setDescription] =
-    useState("");
+  const [
+    description,
+    setDescription,
+  ] = useState("");
 
   const [area, setArea] =
     useState("");
 
-  const [houseNumber, setHouseNumber] =
-    useState("");
+  const [
+    houseNumber,
+    setHouseNumber,
+  ] = useState("");
 
   const [street, setStreet] =
     useState("");
@@ -342,47 +344,49 @@ export default function NewBusinessPage() {
   const [city, setCity] =
     useState("");
 
-  /*
-   * Coordinates are captured internally.
-   * The admin never types latitude or longitude.
-   */
-  const [lat, setLat] =
-    useState("");
-
-  const [lng, setLng] =
-    useState("");
-
   const [phone, setPhone] =
     useState("");
 
-  const [priceMin, setPriceMin] =
-    useState("");
+  const [
+    priceMin,
+    setPriceMin,
+  ] = useState("");
 
-  const [priceMax, setPriceMax] =
-    useState("");
+  const [
+    priceMax,
+    setPriceMax,
+  ] = useState("");
 
-  const [availability, setAvailability] =
-    useState<
-      | "AVAILABLE"
-      | "ASK_SELLER"
-      | "UNAVAILABLE"
-    >("ASK_SELLER");
+  const [
+    availability,
+    setAvailability,
+  ] = useState<
+    | "AVAILABLE"
+    | "ASK_SELLER"
+    | "UNAVAILABLE"
+  >("ASK_SELLER");
 
-  const [status, setStatus] =
-    useState<
-      | "ACTIVE"
-      | "INACTIVE"
-      | "PENDING"
-    >("ACTIVE");
+  const [
+    status,
+    setStatus,
+  ] = useState<
+    | "ACTIVE"
+    | "INACTIVE"
+    | "PENDING"
+  >("ACTIVE");
 
-  const [verification, setVerification] =
-    useState<
-      | "VERIFIED"
-      | "UNVERIFIED"
-    >("UNVERIFIED");
+  const [
+    verification,
+    setVerification,
+  ] = useState<
+    | "VERIFIED"
+    | "UNVERIFIED"
+  >("UNVERIFIED");
 
-  const [imageUrl, setImageUrl] =
-    useState("");
+  const [
+    imageUrl,
+    setImageUrl,
+  ] = useState("");
 
   /*
    * Shared ReMarket category system.
@@ -392,31 +396,36 @@ export default function NewBusinessPage() {
    *
    * DEFAULT_CATEGORIES is display fallback only.
    */
-  const [categories, setCategories] =
-    useState<Category[]>(
-      DEFAULT_CATEGORIES
-    );
+  const [
+    categories,
+    setCategories,
+  ] = useState<Category[]>(
+    DEFAULT_CATEGORIES
+  );
 
-  const [usingCategoryFallback, setUsingCategoryFallback] =
-    useState(true);
+  const [
+    usingCategoryFallback,
+    setUsingCategoryFallback,
+  ] = useState(true);
 
-  const [selectedCategoryIds, setSelectedCategoryIds] =
-    useState<string[]>([]);
+  const [
+    selectedCategoryIds,
+    setSelectedCategoryIds,
+  ] = useState<string[]>(
+    []
+  );
 
-  const [socialLinks, setSocialLinks] =
-    useState<SocialLinkInput[]>([]);
+  const [
+    socialLinks,
+    setSocialLinks,
+  ] = useState<
+    SocialLinkInput[]
+  >([]);
 
-  const [loadingCategories, setLoadingCategories] =
-    useState(true);
-
-  const [locating, setLocating] =
-    useState(false);
-
-  const [locationStatus, setLocationStatus] =
-    useState("");
-
-  const [locationError, setLocationError] =
-    useState("");
+  const [
+    loadingCategories,
+    setLoadingCategories,
+  ] = useState(true);
 
   const [saving, setSaving] =
     useState(false);
@@ -451,7 +460,8 @@ export default function NewBusinessPage() {
 
         if (
           !data ||
-          typeof data !== "object" ||
+          typeof data !==
+            "object" ||
           Array.isArray(data)
         ) {
           throw new Error(
@@ -508,7 +518,8 @@ export default function NewBusinessPage() {
           );
 
         if (
-          mergedCategories.length > 0
+          mergedCategories.length >
+          0
         ) {
           setCategories(
             mergedCategories
@@ -581,6 +592,7 @@ export default function NewBusinessPage() {
       setError(
         "Categories could not be loaded from the database. Please refresh and try again before assigning categories."
       );
+
       return;
     }
 
@@ -593,7 +605,8 @@ export default function NewBusinessPage() {
         )
           ? current.filter(
               (id) =>
-                id !== categoryId
+                id !==
+                categoryId
             )
           : [
               ...current,
@@ -602,118 +615,13 @@ export default function NewBusinessPage() {
     );
   }
 
-  function captureCurrentLocation() {
-    setLocationError("");
-    setLocationStatus("");
-
-    if (
-      typeof window ===
-      "undefined"
-    ) {
-      return;
-    }
-
-    if (
-      !navigator.geolocation
-    ) {
-      setLocationError(
-        "Location services are not available on this device."
-      );
-      return;
-    }
-
-    setLocating(true);
-
-    navigator.geolocation.getCurrentPosition(
-      (position) => {
-        const latitude =
-          position.coords.latitude;
-
-        const longitude =
-          position.coords.longitude;
-
-        if (
-          !Number.isFinite(
-            latitude
-          ) ||
-          !Number.isFinite(
-            longitude
-          )
-        ) {
-          setLocationError(
-            "We couldn't get a valid business location."
-          );
-
-          setLocating(false);
-
-          return;
-        }
-
-        setLat(
-          String(latitude)
-        );
-
-        setLng(
-          String(longitude)
-        );
-
-        setLocationStatus(
-          "Exact business location captured."
-        );
-
-        setLocating(false);
-      },
-
-      (geoError) => {
-        console.error(
-          "Business location error:",
-          geoError
-        );
-
-        let message =
-          "We couldn't get the business location.";
-
-        if (
-          geoError.code ===
-          geoError.PERMISSION_DENIED
-        ) {
-          message =
-            "Location permission was denied. Allow location access and try again.";
-        } else if (
-          geoError.code ===
-          geoError.POSITION_UNAVAILABLE
-        ) {
-          message =
-            "Your device could not determine its current location.";
-        } else if (
-          geoError.code ===
-          geoError.TIMEOUT
-        ) {
-          message =
-            "Location detection timed out. Please try again.";
-        }
-
-        setLocationError(
-          message
-        );
-
-        setLocating(false);
-      },
-
-      {
-        enableHighAccuracy: true,
-        timeout: 15000,
-        maximumAge: 60000,
-      }
-    );
-  }
-
   function addSocialLink() {
     setSocialLinks(
       (current) => [
         ...current,
         {
-          platform: "WHATSAPP",
+          platform:
+            "WHATSAPP",
           handle: "",
         },
       ]
@@ -734,7 +642,8 @@ export default function NewBusinessPage() {
             link,
             linkIndex
           ) =>
-            linkIndex === index
+            linkIndex ===
+            index
               ? {
                   ...link,
                   [field]:
@@ -755,7 +664,8 @@ export default function NewBusinessPage() {
             _,
             linkIndex
           ) =>
-            linkIndex !== index
+            linkIndex !==
+            index
         )
     );
   }
@@ -782,12 +692,17 @@ export default function NewBusinessPage() {
     const trimmedCity =
       city.trim();
 
+    /*
+     * Exact ReMarket canonical address:
+     *
+     * House Number, Street, Area, City, Nigeria
+     */
     const composedAddress =
       [
         trimmedHouseNumber,
         trimmedStreet,
-        trimmedCity,
         trimmedArea,
+        trimmedCity,
         DEFAULT_COUNTRY,
       ]
         .filter(Boolean)
@@ -797,6 +712,7 @@ export default function NewBusinessPage() {
       setError(
         "Business name is required."
       );
+
       return;
     }
 
@@ -804,6 +720,7 @@ export default function NewBusinessPage() {
       setError(
         "Business area is required."
       );
+
       return;
     }
 
@@ -811,59 +728,15 @@ export default function NewBusinessPage() {
       setError(
         "Street, road, or close is required."
       );
+
       return;
     }
 
-    /*
-     * Coordinates are optional. When they are not
-     * captured on the device, the admin API can use
-     * the existing address/area geocoding fallback.
-     */
-    const parsedLat =
-      lat.trim()
-        ? Number(lat)
-        : null;
-
-    const parsedLng =
-      lng.trim()
-        ? Number(lng)
-        : null;
-
-    if (
-      (parsedLat === null) !==
-      (parsedLng === null)
-    ) {
+    if (!composedAddress) {
       setError(
-        "Business location coordinates must be captured together."
+        "A business address is required."
       );
-      return;
-    }
 
-    if (
-      parsedLat !== null &&
-      (!Number.isFinite(
-        parsedLat
-      ) ||
-        parsedLat < -90 ||
-        parsedLat > 90)
-    ) {
-      setError(
-        "The captured business latitude is invalid."
-      );
-      return;
-    }
-
-    if (
-      parsedLng !== null &&
-      (!Number.isFinite(
-        parsedLng
-      ) ||
-        parsedLng < -180 ||
-        parsedLng > 180)
-    ) {
-      setError(
-        "The captured business longitude is invalid."
-      );
       return;
     }
 
@@ -887,6 +760,7 @@ export default function NewBusinessPage() {
       setError(
         "Minimum price must be a valid non-negative integer."
       );
+
       return;
     }
 
@@ -900,6 +774,7 @@ export default function NewBusinessPage() {
       setError(
         "Maximum price must be a valid non-negative integer."
       );
+
       return;
     }
 
@@ -912,12 +787,13 @@ export default function NewBusinessPage() {
       setError(
         "Minimum price cannot be greater than maximum price."
       );
+
       return;
     }
 
     /*
-     * Never submit synthetic category IDs from
-     * the fallback UI.
+     * Never submit synthetic category IDs
+     * from the fallback UI.
      */
     const categoryIds =
       usingCategoryFallback
@@ -932,10 +808,12 @@ export default function NewBusinessPage() {
           "/api/admin/businesses",
           {
             method: "POST",
+
             headers: {
               "Content-Type":
                 "application/json",
             },
+
             body: JSON.stringify({
               name:
                 trimmedName,
@@ -948,27 +826,36 @@ export default function NewBusinessPage() {
                 description.trim() ||
                 null,
 
+              /*
+               * Structured location fields.
+               *
+               * Canonical address:
+               *
+               * House Number, Street, Area, City, Nigeria
+               */
+              houseNumber:
+                trimmedHouseNumber,
+
+              street:
+                trimmedStreet,
+
               area:
                 trimmedArea,
 
-              /*
-               * Store the structured address in
-               * the existing Location.address field.
-               */
+              city:
+                trimmedCity,
+
               address:
                 composedAddress,
 
               /*
-               * These coordinates came from
-               * browser geolocation.
+               * No browser GPS coordinates are
+               * submitted by the Admin creation page.
                *
-               * The database field is Location.long.
+               * The Admin API will geocode the
+               * supplied business address when
+               * coordinates are absent.
                */
-              lat:
-                parsedLat,
-
-              long:
-                parsedLng,
 
               phone:
                 phone.trim() ||
@@ -1207,9 +1094,7 @@ export default function NewBusinessPage() {
                       )
                     }
                     placeholder="What does this business sell or offer?"
-                    rows={
-                      4
-                    }
+                    rows={4}
                     className="mt-2 w-full resize-none rounded-xl border border-[#E8E4DE] bg-white px-3 py-3 text-xs outline-none focus:border-[#FF9B82] focus:ring-4 focus:ring-[#FF5A36]/10"
                   />
                 </div>
@@ -1252,10 +1137,9 @@ export default function NewBusinessPage() {
 
               <p className="mt-1 max-w-[760px] text-[11px] leading-5 text-gray-500">
                 Choose the business area from the standardized Lagos
-                list and enter the physical street address. You can
-                capture the exact business location from the device
-                when available; you do not need to type latitude or
-                longitude.
+                list and enter the physical street address. ReMarket
+                will use the supplied business address for location
+                geocoding.
               </p>
 
               <div className="mt-4 grid gap-4 sm:grid-cols-2">
@@ -1375,9 +1259,7 @@ export default function NewBusinessPage() {
                               item
                             ) => (
                               <option
-                                key={
-                                  `${group.lga}-${item}`
-                                }
+                                key={`${group.lga}-${item}`}
                                 value={
                                   item
                                 }
@@ -1428,8 +1310,8 @@ export default function NewBusinessPage() {
                     {[
                       houseNumber.trim(),
                       street.trim(),
-                      city.trim(),
                       area.trim(),
+                      city.trim(),
                       DEFAULT_COUNTRY,
                     ]
                       .filter(Boolean)
@@ -1439,79 +1321,17 @@ export default function NewBusinessPage() {
                 </div>
               )}
 
-              <div className="mt-4 rounded-xl border border-[#E8E4DE] bg-white p-4">
-                <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-                  <div className="flex items-start gap-3">
-                    <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-[#FFF1ED] text-[#9F2D18]">
-                      <MapPin className="h-5 w-5" />
-                    </div>
+              <div className="mt-4 rounded-xl border border-[#E8E4DE] bg-[#FCFAF6] px-4 py-3">
+                <p className="text-[10px] font-semibold uppercase tracking-wide text-gray-400">
+                  Location handling
+                </p>
 
-                    <div>
-                      <p className="text-xs font-bold text-[#17202A]">
-                        Exact business location
-                      </p>
-
-                      <p className="mt-1 text-[10px] leading-4 text-gray-500">
-                        Used internally for Near Me and Directions. A captured GPS point is preferred; the address can be geocoded when GPS is unavailable.
-                      </p>
-
-                      {locationStatus && (
-                        <p className="mt-2 text-[10px] font-semibold text-[#137A59]">
-                          {
-                            locationStatus
-                          }
-                        </p>
-                      )}
-
-                      {locationError && (
-                        <p className="mt-2 text-[10px] font-medium text-red-600">
-                          {
-                            locationError
-                          }
-                        </p>
-                      )}
-                    </div>
-                  </div>
-
-                  <button
-                    type="button"
-                    onClick={
-                      captureCurrentLocation
-                    }
-                    disabled={
-                      locating ||
-                      saving
-                    }
-                    className="inline-flex shrink-0 items-center justify-center gap-2 rounded-xl bg-[#FF5A36] px-4 py-2.5 text-[11px] font-bold text-white shadow-sm transition hover:bg-[#E94F2D] disabled:cursor-not-allowed disabled:opacity-60"
-                  >
-                    {locating ? (
-                      <Loader2 className="h-4 w-4 animate-spin" />
-                    ) : lat &&
-                      lng ? (
-                      <RefreshCw className="h-4 w-4" />
-                    ) : (
-                      <MapPin className="h-4 w-4" />
-                    )}
-
-                    {locating
-                      ? "Getting location..."
-                      : lat &&
-                          lng
-                        ? "Recapture location"
-                        : "Use current location"}
-                  </button>
-                </div>
-
-                {lat &&
-                  lng && (
-                    <div className="mt-3 flex items-center gap-2 rounded-lg bg-[#F7FBF8] px-3 py-2.5">
-                      <MapPin className="h-3.5 w-3.5 text-[#137A59]" />
-
-                      <p className="text-[10px] font-medium text-[#137A59]">
-                        Exact business location is ready to save.
-                      </p>
-                    </div>
-                  )}
+                <p className="mt-1 text-[11px] leading-5 text-gray-500">
+                  ReMarket uses the business address entered above
+                  to resolve the business&apos;s coordinates. The
+                  admin&apos;s current device location is not used
+                  for business creation.
+                </p>
               </div>
             </section>
 
@@ -1904,10 +1724,7 @@ export default function NewBusinessPage() {
 
               <button
                 type="submit"
-                disabled={
-                  saving ||
-                  locating
-                }
+                disabled={saving}
                 className="inline-flex items-center gap-2 rounded-xl bg-[#FF5A36] px-5 py-3 text-xs font-bold text-white shadow-sm disabled:cursor-not-allowed disabled:opacity-60"
               >
                 {saving && (

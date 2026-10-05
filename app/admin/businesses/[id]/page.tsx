@@ -19,6 +19,8 @@ import {
   ExternalLink,
   Loader2,
   MapPin,
+  Plus,
+  Upload,
   Navigation,
   Package,
   RotateCcw,
@@ -114,6 +116,7 @@ type Business = {
   location: {
     id: string;
     area: string;
+    street: string | null;
     address: string | null;
     lat: number | null;
     long: number | null;
@@ -410,38 +413,62 @@ const LAGOS_AREA_GROUPS = [
 
 const DEFAULT_COUNTRY = "Nigeria";
 
-
-function isKnownLagosArea(area: string): boolean {
-  const normalized = area.trim().toLowerCase();
+function isKnownLagosArea(
+  area: string
+): boolean {
+  const normalized =
+    area.trim().toLowerCase();
 
   if (!normalized) {
     return false;
   }
 
-  return LAGOS_AREA_GROUPS.some((group) =>
-    group.areas.some(
-      (item) => item.toLowerCase() === normalized
-    )
+  return LAGOS_AREA_GROUPS.some(
+    (group) =>
+      group.areas.some(
+        (item) =>
+          item.toLowerCase() ===
+          normalized
+      )
   );
 }
 
-function looksLikeHouseNumber(value: string): boolean {
-  const normalized = value
-    .trim()
-    .toLowerCase();
+function looksLikeHouseNumber(
+  value: string
+): boolean {
+  const normalized =
+    value
+      .trim()
+      .toLowerCase();
 
   if (!normalized) {
     return false;
   }
 
   return (
-    /^\d+[a-z]?\b/.test(normalized) ||
+    /^\d+[a-z]?\b/.test(
+      normalized
+    ) ||
     /^(shop|house|building|block|plot|suite|unit|flat)\b/.test(
       normalized
     )
   );
 }
 
+/*
+ * Canonical address order:
+ *
+ * House Number, Street, Area, City, Nigeria
+ *
+ * This helper also supports older saved records
+ * that may have used:
+ *
+ * House Number, Street, City, Area, Nigeria
+ *
+ * or:
+ *
+ * Street, Area, City, Nigeria
+ */
 function parseLocationAddress(
   address: string | null | undefined,
   area: string
@@ -465,97 +492,195 @@ function parseLocationAddress(
     return fallback;
   }
 
-  const parts = trimmedAddress
+  let parts = trimmedAddress
     .split(",")
-    .map((part) => part.trim())
+    .map((part) =>
+      part.trim()
+    )
     .filter(Boolean);
 
   if (parts.length === 0) {
     return fallback;
   }
 
-  const withoutCountry =
-    parts[parts.length - 1].toLowerCase() ===
+  /*
+   * Remove Nigeria.
+   */
+  if (
+    parts[
+      parts.length - 1
+    ].toLowerCase() ===
     DEFAULT_COUNTRY.toLowerCase()
-      ? parts.slice(0, -1)
-      : parts;
+  ) {
+    parts =
+      parts.slice(
+        0,
+        -1
+      );
+  }
 
-  const normalizedArea = area.trim().toLowerCase();
+  if (parts.length === 0) {
+    return fallback;
+  }
 
+  const normalizedArea =
+    area.trim().toLowerCase();
+
+  /*
+   * Find the known Area in the address.
+   */
   const areaIndex =
     normalizedArea
-      ? withoutCountry.findLastIndex(
+      ? parts.findLastIndex(
           (part) =>
             part.toLowerCase() ===
             normalizedArea
         )
       : -1;
 
+  /*
+   * Unknown/legacy free-form address:
+   * do not invent structured values.
+   */
   if (areaIndex < 0) {
-    // Legacy/unknown address format: preserve the complete
-    // saved address in the street field rather than inventing a city.
     return {
       houseNumber: "",
-      street: withoutCountry.join(", "),
+      street:
+        parts.join(", "),
       city: "",
     };
   }
 
-  const beforeArea = withoutCountry.slice(
-    0,
-    areaIndex
-  );
+  const beforeArea =
+    parts.slice(
+      0,
+      areaIndex
+    );
 
-  const afterArea = withoutCountry.slice(
-    areaIndex + 1
-  );
+  const afterArea =
+    parts.slice(
+      areaIndex + 1
+    );
 
-  // Preserve the older address order used by some saved records:
-  // street, area, city, Nigeria.
-  if (afterArea.length > 0) {
+  /*
+   * In the canonical format:
+   *
+   * House Number, Street, Area, City
+   *
+   * therefore everything after Area belongs
+   * to City.
+   */
+  const city =
+    afterArea.join(", ");
+
+  if (beforeArea.length === 0) {
     return {
       houseNumber: "",
-      street: beforeArea.join(", "),
-      city: afterArea[0] ?? "",
+      street: "",
+      city,
     };
   }
 
-  if (beforeArea.length === 0) {
-    return fallback;
-  }
-
+  /*
+   * No explicit house number.
+   *
+   * Example:
+   *
+   * Allen Avenue, Ogba, Ikeja, Nigeria
+   */
   if (beforeArea.length === 1) {
     return {
       houseNumber: "",
-      street: beforeArea[0],
-      city: "",
+      street:
+        beforeArea[0],
+      city,
     };
   }
 
+  /*
+   * Two components before Area can be:
+   *
+   * House Number, Street
+   */
   if (beforeArea.length === 2) {
-    const [first, second] = beforeArea;
+    const [
+      first,
+      second,
+    ] = beforeArea;
 
-    if (looksLikeHouseNumber(first)) {
+    if (
+      looksLikeHouseNumber(
+        first
+      )
+    ) {
       return {
-        houseNumber: first,
-        street: second,
-        city: "",
+        houseNumber:
+          first,
+        street:
+          second,
+        city,
       };
     }
 
+    /*
+     * Legacy:
+     *
+     * Street, City, Area
+     */
     return {
       houseNumber: "",
-      street: first,
-      city: second,
+      street:
+        first,
+      city:
+        city ||
+        second,
     };
   }
 
+  /*
+   * Three or more components before Area can
+   * represent the older order:
+   *
+   * House Number, Street, City, Area
+   *
+   * Prefer the first value as the house number
+   * only when it clearly looks like one.
+   */
+  const first =
+    beforeArea[0];
+
+  if (
+    looksLikeHouseNumber(
+      first
+    )
+  ) {
+    return {
+      houseNumber:
+        first,
+      street:
+        beforeArea[1],
+      city:
+        beforeArea
+          .slice(2)
+          .join(", ") ||
+        city,
+    };
+  }
+
+  /*
+   * Otherwise preserve the first component
+   * as the street and remaining components
+   * as city information.
+   */
   return {
-    houseNumber: beforeArea
-      .slice(0, -2)
-      .join(", "),
-    street: beforeArea[beforeArea.length - 2],
-    city: beforeArea[beforeArea.length - 1],
+    houseNumber: "",
+    street:
+      beforeArea[0],
+    city:
+      beforeArea
+        .slice(1)
+        .join(", ") ||
+      city,
   };
 }
 
@@ -599,22 +724,89 @@ function formatPrice(
   return String(value);
 }
 
-function getSocialValue(
+type EditableSocialLink = {
+  id: string;
+  platform: SocialPlatform;
+  handle: string;
+};
+
+function createSocialLink(
+  platform: SocialPlatform =
+    "WHATSAPP",
+  handle = ""
+): EditableSocialLink {
+  return {
+    id: `social-${Date.now()}-${Math.random()
+      .toString(36)
+      .slice(2)}`,
+    platform,
+    handle,
+  };
+}
+
+function getInitialSocialLinks(
   links: SocialLink[],
-  platform: SocialPlatform
-): string {
-  return (
-    links.find(
-      (link) =>
-        link.platform === platform
-    )?.handle ?? ""
+  phone: string | null
+): EditableSocialLink[] {
+  if (links.length > 0) {
+    const mappedLinks =
+      links.map((link) => ({
+        id: link.id,
+        platform:
+          link.platform,
+        handle:
+          link.handle,
+      }));
+
+    /*
+     * Legacy compatibility:
+     *
+     * If Business.phone exists but the
+     * PHONE social-link row is missing,
+     * expose the legacy phone as PHONE.
+     *
+     * This does not override an existing
+     * PHONE social-link value.
+     */
+    const hasPhone =
+      mappedLinks.some(
+        (link) =>
+          link.platform ===
+          "PHONE"
+      );
+
+    if (
+      !hasPhone &&
+      phone
+    ) {
+      mappedLinks.push(
+        createSocialLink(
+          "PHONE",
+          phone
+        )
+      );
+    }
+
+    return mappedLinks;
+  }
+
+  return SOCIAL_PLATFORMS.map(
+    ({ value }) =>
+      createSocialLink(
+        value,
+        value === "PHONE"
+          ? phone ?? ""
+          : ""
+      )
   );
 }
 
 function prettifyMetricLabel(
   path: string[]
 ): string {
-  const label = path[path.length - 1] ?? "";
+  const label =
+    path[path.length - 1] ??
+    "";
 
   const knownLabels: Record<
     string,
@@ -623,11 +815,13 @@ function prettifyMetricLabel(
     views: "Views",
     viewCount: "Views",
     totalViews: "Total views",
-    uniqueViews: "Unique views",
+    uniqueViews:
+      "Unique views",
     uniqueVisitors:
       "Unique visitors",
     contacts: "Contacts",
-    contactCount: "Contacts",
+    contactCount:
+      "Contacts",
     totalContacts:
       "Total contacts",
     products: "Products",
@@ -667,9 +861,14 @@ function prettifyMetricLabel(
       /([a-z])([A-Z])/g,
       "$1 $2"
     )
-    .replace(/[_-]+/g, " ")
-    .replace(/\b\w/g, (character) =>
-      character.toUpperCase()
+    .replace(
+      /[_-]+/g,
+      " "
+    )
+    .replace(
+      /\b\w/g,
+      (character) =>
+        character.toUpperCase()
     );
 }
 
@@ -710,7 +909,8 @@ function collectAnalyticsMetrics(
   output: AnalyticsMetric[] = []
 ): AnalyticsMetric[] {
   if (
-    typeof value !== "object" ||
+    typeof value !==
+      "object" ||
     value === null
   ) {
     return output;
@@ -835,16 +1035,21 @@ export default function BusinessDetailsPage() {
       id: string;
     }>();
 
-  const router = useRouter();
+  const router =
+    useRouter();
 
-  const businessId = params.id;
+  const businessId =
+    params.id;
 
   const [business, setBusiness] =
     useState<Business | null>(
       null
     );
 
-  const [categories, setCategories] =
+  const [
+    categories,
+    setCategories,
+  ] =
     useState<ReMarketCategory[]>(
       DEFAULT_CATEGORIES
     );
@@ -948,7 +1153,8 @@ export default function BusinessDetailsPage() {
       }
 
       setBusiness(
-        businessData.business ?? null
+        businessData.business ??
+          null
       );
 
       const backendCategories =
@@ -1171,7 +1377,8 @@ export default function BusinessDetailsPage() {
         current
           ? {
               ...current,
-              ...(data.business ?? {}),
+              ...(data.business ??
+                {}),
               deletedAt: null,
             }
           : current
@@ -1476,10 +1683,12 @@ function BusinessEditor({
   const [name, setName] =
     useState(business.name);
 
-  const [ownerName, setOwnerName] =
-    useState(
-      business.ownerName ?? ""
-    );
+  const [
+    ownerName,
+    setOwnerName,
+  ] = useState(
+    business.ownerName ?? ""
+  );
 
   const [
     description,
@@ -1488,25 +1697,37 @@ function BusinessEditor({
     business.description ?? ""
   );
 
-  const [imageUrl, setImageUrl] =
-    useState(
-      business.imageUrl ?? ""
-    );
+  const [
+    imageUrl,
+    setImageUrl,
+  ] = useState(
+    business.imageUrl ?? ""
+  );
 
   const initialAddress =
     parseLocationAddress(
       business.location?.address,
-      business.location?.area ?? ""
+      business.location?.area ??
+        ""
     );
 
-  const [houseNumber, setHouseNumber] =
-    useState(initialAddress.houseNumber);
+  const [
+    houseNumber,
+    setHouseNumber,
+  ] = useState(
+    initialAddress.houseNumber
+  );
 
   const [street, setStreet] =
-    useState(initialAddress.street);
+    useState(
+      business.location?.street ??
+        initialAddress.street
+    );
 
   const [city, setCity] =
-    useState(initialAddress.city);
+    useState(
+      initialAddress.city
+    );
 
   const [area, setArea] =
     useState(
@@ -1563,19 +1784,23 @@ function BusinessEditor({
     setCapturingLocation,
   ] = useState(false);
 
-  const [priceMin, setPriceMin] =
-    useState(
-      formatPrice(
-        business.priceMin
-      )
-    );
+  const [
+    priceMin,
+    setPriceMin,
+  ] = useState(
+    formatPrice(
+      business.priceMin
+    )
+  );
 
-  const [priceMax, setPriceMax] =
-    useState(
-      formatPrice(
-        business.priceMax
-      )
-    );
+  const [
+    priceMax,
+    setPriceMax,
+  ] = useState(
+    formatPrice(
+      business.priceMax
+    )
+  );
 
   const [
     availability,
@@ -1612,47 +1837,21 @@ function BusinessEditor({
   );
 
   const [
-    socialValues,
-    setSocialValues,
+    socialLinks,
+    setSocialLinks,
   ] = useState<
-    Record<
-      SocialPlatform,
-      string
-    >
-  >({
-    WHATSAPP:
-      getSocialValue(
-        business.socialLinks,
-        "WHATSAPP"
-      ),
-    INSTAGRAM:
-      getSocialValue(
-        business.socialLinks,
-        "INSTAGRAM"
-      ),
-    TIKTOK:
-      getSocialValue(
-        business.socialLinks,
-        "TIKTOK"
-      ),
-    FACEBOOK:
-      getSocialValue(
-        business.socialLinks,
-        "FACEBOOK"
-      ),
-    PHONE:
-      getSocialValue(
-        business.socialLinks,
-        "PHONE"
-      ) ||
-      business.phone ||
-      "",
-    DIRECTIONS:
-      getSocialValue(
-        business.socialLinks,
-        "DIRECTIONS"
-      ),
-  });
+    EditableSocialLink[]
+  >(() =>
+    getInitialSocialLinks(
+      business.socialLinks,
+      business.phone
+    )
+  );
+
+  const [
+    uploadingBusinessImage,
+    setUploadingBusinessImage,
+  ] = useState(false);
 
   function captureCurrentLocation() {
     if (
@@ -1774,19 +1973,154 @@ function BusinessEditor({
   }
 
   function updateSocial(
-    platform: SocialPlatform,
+    id: string,
+    field:
+      | "platform"
+      | "handle",
     value: string
   ) {
     if (deleted) {
       return;
     }
 
-    setSocialValues(
-      (current) => ({
-        ...current,
-        [platform]: value,
-      })
+    setSocialLinks((current) =>
+      current.map((link) =>
+        link.id === id
+          ? {
+              ...link,
+              [field]: value,
+            }
+          : link
+      )
     );
+  }
+
+  function addSocialLink() {
+    if (deleted) {
+      return;
+    }
+
+    setSocialLinks((current) => [
+      ...current,
+      createSocialLink(),
+    ]);
+  }
+
+  function removeSocialLink(
+    id: string
+  ) {
+    if (deleted) {
+      return;
+    }
+
+    setSocialLinks((current) => {
+      const next =
+        current.filter(
+          (link) =>
+            link.id !== id
+        );
+
+      return next.length > 0
+        ? next
+        : [
+            createSocialLink(),
+          ];
+    });
+  }
+
+  async function uploadBusinessImage(
+    file: File
+  ) {
+    if (deleted) {
+      return;
+    }
+
+    if (
+      !file.type.startsWith(
+        "image/"
+      )
+    ) {
+      setError(
+        "Please select a valid image file."
+      );
+
+      return;
+    }
+
+    if (
+      file.size >
+      5 * 1024 * 1024
+    ) {
+      setError(
+        "Business image must be 5MB or smaller."
+      );
+
+      return;
+    }
+
+    try {
+      setUploadingBusinessImage(
+        true
+      );
+      setError("");
+
+      const formData =
+        new FormData();
+
+      formData.append(
+        "file",
+        file
+      );
+
+      const response =
+        await fetch(
+          "/api/upload",
+          {
+            method: "POST",
+            body: formData,
+          }
+        );
+
+      const data =
+        await response.json();
+
+      if (
+        !response.ok ||
+        typeof data?.url !==
+          "string"
+      ) {
+        throw new Error(
+          typeof data?.error ===
+            "string"
+            ? data.error
+            : "Unable to upload business image."
+        );
+      }
+
+      setImageUrl(
+        data.url
+      );
+
+      setSuccess(
+        "Business image uploaded. Save the business to keep the change."
+      );
+    } catch (uploadError) {
+      console.error(
+        "Business image upload error:",
+        uploadError
+      );
+
+      setError(
+        uploadError instanceof
+          Error
+          ? uploadError.message
+          : "Unable to upload business image."
+      );
+    } finally {
+      setUploadingBusinessImage(
+        false
+      );
+    }
   }
 
   async function submit(
@@ -1813,12 +2147,17 @@ function BusinessEditor({
     const trimmedCity =
       city.trim();
 
+    /*
+     * Exact ReMarket address order:
+     *
+     * House Number, Street, Area, City, Nigeria
+     */
     const composedAddress =
       [
         trimmedHouseNumber,
         trimmedStreet,
-        trimmedCity,
         trimmedArea,
+        trimmedCity,
         DEFAULT_COUNTRY,
       ]
         .filter(Boolean)
@@ -1971,23 +2310,17 @@ function BusinessEditor({
       return;
     }
 
-    const socialLinks =
-      SOCIAL_PLATFORMS
-        .map(
-          ({
-            value,
-          }) => ({
-            platform:
-              value,
-            handle:
-              socialValues[
-                value
-              ].trim(),
-          })
-        )
+    const submittedSocialLinks =
+      socialLinks
+        .map((link) => ({
+          platform:
+            link.platform,
+          handle:
+            link.handle.trim(),
+        }))
         .filter(
-          (item) =>
-            item.handle
+          (link) =>
+            link.handle
         );
 
     try {
@@ -1996,10 +2329,12 @@ function BusinessEditor({
           `/api/admin/businesses/${business.id}`,
           {
             method: "PATCH",
+
             headers: {
               "Content-Type":
                 "application/json",
             },
+
             body: JSON.stringify({
               name:
                 trimmedName,
@@ -2016,8 +2351,24 @@ function BusinessEditor({
                 imageUrl.trim() ||
                 null,
 
+              /*
+               * Structured location fields.
+               *
+               * Canonical address:
+               *
+               * House Number, Street, Area, City, Nigeria
+               */
+              houseNumber:
+                trimmedHouseNumber,
+
+              street:
+                trimmedStreet,
+
               area:
                 trimmedArea,
+
+              city:
+                trimmedCity,
 
               address:
                 composedAddress,
@@ -2055,12 +2406,15 @@ function BusinessEditor({
               categoryIds:
                 usingCategoryFallback
                   ? business.categories.map(
-                      (category) =>
+                      (
+                        category
+                      ) =>
                         category.id
                     )
                   : selectedCategoryIds,
 
-              socialLinks,
+              socialLinks:
+                submittedSocialLinks,
             }),
           }
         );
@@ -2068,7 +2422,9 @@ function BusinessEditor({
       const data =
         await response.json();
 
-      if (!response.ok) {
+      if (
+        !response.ok
+      ) {
         throw new Error(
           typeof data?.error ===
             "string"
@@ -2106,16 +2462,28 @@ function BusinessEditor({
 
         const updatedAddress =
           parseLocationAddress(
-            updatedBusiness.location?.address,
-            updatedBusiness.location?.area ?? ""
+            updatedBusiness
+              .location
+              ?.address,
+            updatedBusiness
+              .location
+              ?.area ?? ""
           );
 
         setHouseNumber(
           updatedAddress.houseNumber
         );
 
+        /*
+         * Prefer Location.street
+         * because it is the canonical
+         * street field.
+         */
         setStreet(
-          updatedAddress.street
+          updatedBusiness
+            .location
+            ?.street ??
+            updatedAddress.street
         );
 
         setCity(
@@ -2123,8 +2491,10 @@ function BusinessEditor({
         );
 
         setArea(
-          updatedBusiness.location
-            ?.area ?? ""
+          updatedBusiness
+            .location
+            ?.area ??
+            ""
         );
 
         setLat(
@@ -2165,46 +2535,18 @@ function BusinessEditor({
 
         setSelectedCategoryIds(
           updatedBusiness.categories.map(
-            (category) =>
+            (
+              category
+            ) =>
               category.id
           )
         );
 
-        setSocialValues(
-          {
-            WHATSAPP:
-              getSocialValue(
-                updatedBusiness.socialLinks,
-                "WHATSAPP"
-              ),
-            INSTAGRAM:
-              getSocialValue(
-                updatedBusiness.socialLinks,
-                "INSTAGRAM"
-              ),
-            TIKTOK:
-              getSocialValue(
-                updatedBusiness.socialLinks,
-                "TIKTOK"
-              ),
-            FACEBOOK:
-              getSocialValue(
-                updatedBusiness.socialLinks,
-                "FACEBOOK"
-              ),
-            PHONE:
-              getSocialValue(
-                updatedBusiness.socialLinks,
-                "PHONE"
-              ) ||
-              updatedBusiness.phone ||
-              "",
-            DIRECTIONS:
-              getSocialValue(
-                updatedBusiness.socialLinks,
-                "DIRECTIONS"
-              ),
-          }
+        setSocialLinks(
+          getInitialSocialLinks(
+            updatedBusiness.socialLinks,
+            updatedBusiness.phone
+          )
         );
 
         setLocationStatus(
@@ -2364,9 +2706,7 @@ function BusinessEditor({
 
                 <div className="mt-1 flex flex-wrap items-center gap-2">
                   <h1 className="truncate text-xl font-bold text-[#17202A]">
-                    {
-                      business.name
-                    }
+                    {business.name}
                   </h1>
 
                   {deleted && (
@@ -2389,9 +2729,7 @@ function BusinessEditor({
                         : "bg-[#F0ECE7] text-[#6F675F]"
                     }`}
                   >
-                    {
-                      business.status
-                    }
+                    {business.status}
                   </span>
 
                   <span
@@ -2402,9 +2740,7 @@ function BusinessEditor({
                         : "bg-[#F3F0EB] text-[#6F675F]"
                     }`}
                   >
-                    {
-                      business.verification
-                    }
+                    {business.verification}
                   </span>
 
                   <span className="rounded-full bg-[#F3F0EB] px-2.5 py-1 text-[10px] font-bold text-[#6F675F]">
@@ -2490,14 +2826,87 @@ function BusinessEditor({
                   />
                 </div>
 
-                <Field
-                  label="Image URL"
-                  value={imageUrl}
-                  onChange={
-                    setImageUrl
-                  }
-                  type="url"
-                />
+                <div className="sm:col-span-2">
+                  <label className="text-[10px] font-semibold text-[#6F675F]">
+                    Business image
+                  </label>
+
+                  <div className="mt-2 flex flex-col gap-3 rounded-2xl border border-[#EAE6DF] bg-white p-3 sm:flex-row sm:items-center">
+                    <div className="h-24 w-24 shrink-0 overflow-hidden rounded-2xl bg-[#F3F0EB]">
+                      {imageUrl ? (
+                        <img
+                          src={
+                            imageUrl
+                          }
+                          alt={
+                            business.name
+                          }
+                          className="h-full w-full object-cover"
+                        />
+                      ) : (
+                        <div className="flex h-full w-full items-center justify-center">
+                          <Store className="h-7 w-7 text-[#A39A91]" />
+                        </div>
+                      )}
+                    </div>
+
+                    <div className="min-w-0 flex-1">
+                      <p className="text-xs font-semibold text-[#17202A]">
+                        {imageUrl
+                          ? "Business image selected"
+                          : "No business image selected"}
+                      </p>
+
+                      <p className="mt-1 text-[10px] leading-5 text-[#A39A91]">
+                        Choose a JPEG, PNG, or WebP image up to 5MB. The image is uploaded to Cloudinary and saved when you submit the form.
+                      </p>
+
+                      <label className="mt-3 inline-flex cursor-pointer items-center gap-2 rounded-xl bg-[#FF5A36] px-3.5 py-2.5 text-[10px] font-bold text-white transition hover:bg-[#E94F2D] has-[:disabled]:cursor-not-allowed has-[:disabled]:opacity-50">
+                        {uploadingBusinessImage ? (
+                          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                        ) : (
+                          <Upload className="h-3.5 w-3.5" />
+                        )}
+
+                        {uploadingBusinessImage
+                          ? "Uploading..."
+                          : imageUrl
+                          ? "Change image"
+                          : "Choose image"}
+
+                        <input
+                          type="file"
+                          accept="image/jpeg,image/png,image/webp"
+                          className="sr-only"
+                          disabled={
+                            deleted ||
+                            saving ||
+                            uploadingBusinessImage
+                          }
+                          onChange={(
+                            event
+                          ) => {
+                            const file =
+                              event
+                                .target
+                                .files?.[0];
+
+                            event.target.value =
+                              "";
+
+                            if (
+                              file
+                            ) {
+                              void uploadBusinessImage(
+                                file
+                              );
+                            }
+                          }}
+                        />
+                      </label>
+                    </div>
+                  </div>
+                </div>
               </div>
             </section>
 
@@ -2524,7 +2933,9 @@ function BusinessEditor({
                 <Field
                   label="House / Shop / Building number"
                   value={houseNumber}
-                  onChange={setHouseNumber}
+                  onChange={
+                    setHouseNumber
+                  }
                   placeholder="e.g. Shop 12"
                 />
 
@@ -2550,8 +2961,13 @@ function BusinessEditor({
 
                   <select
                     value={area}
-                    onChange={(event) =>
-                      setArea(event.target.value)
+                    onChange={(
+                      event
+                    ) =>
+                      setArea(
+                        event.target
+                          .value
+                      )
                     }
                     required
                     className="mt-2 h-11 w-full rounded-xl border border-[#EAE6DF] bg-white px-3.5 text-xs font-medium text-[#17202A] outline-none focus:border-[#FF9B82]"
@@ -2560,27 +2976,51 @@ function BusinessEditor({
                       Select an area
                     </option>
 
-                    {!isKnownLagosArea(area) && area && (
-                      <option value={area}>
-                        {area} (current)
-                      </option>
-                    )}
+                    {!isKnownLagosArea(
+                      area
+                    ) &&
+                      area && (
+                        <option
+                          value={
+                            area
+                          }
+                        >
+                          {area}{" "}
+                          (current)
+                        </option>
+                      )}
 
-                    {LAGOS_AREA_GROUPS.map((group) => (
-                      <optgroup
-                        key={group.lga}
-                        label={group.lga}
-                      >
-                        {group.areas.map((item) => (
-                          <option
-                            key={`${group.lga}-${item}`}
-                            value={item}
-                          >
-                            {item}
-                          </option>
-                        ))}
-                      </optgroup>
-                    ))}
+                    {LAGOS_AREA_GROUPS.map(
+                      (
+                        group
+                      ) => (
+                        <optgroup
+                          key={
+                            group.lga
+                          }
+                          label={
+                            group.lga
+                          }
+                        >
+                          {group.areas.map(
+                            (
+                              item
+                            ) => (
+                              <option
+                                key={`${group.lga}-${item}`}
+                                value={
+                                  item
+                                }
+                              >
+                                {
+                                  item
+                                }
+                              </option>
+                            )
+                          )}
+                        </optgroup>
+                      )
+                    )}
                   </select>
                 </div>
 
@@ -2590,7 +3030,9 @@ function BusinessEditor({
                   </label>
 
                   <input
-                    value={DEFAULT_COUNTRY}
+                    value={
+                      DEFAULT_COUNTRY
+                    }
                     readOnly
                     className="mt-2 h-11 w-full rounded-xl border border-[#EAE6DF] bg-[#F3F0EB] px-3.5 text-xs text-[#6F675F] outline-none"
                   />
@@ -2601,7 +3043,12 @@ function BusinessEditor({
                 </div>
               </div>
 
-              {(houseNumber || street || city || area) && (
+              {(
+                houseNumber ||
+                street ||
+                city ||
+                area
+              ) && (
                 <div className="mt-4 rounded-xl border border-[#EAE6DF] bg-[#FCFAF6] px-4 py-3">
                   <p className="text-[10px] font-semibold uppercase tracking-wide text-[#A39A91]">
                     Address that will be saved
@@ -2728,7 +3175,9 @@ function BusinessEditor({
                         | "UNAVAILABLE"
                     )
                   }
-                  disabled={deleted}
+                  disabled={
+                    deleted
+                  }
                   options={[
                     {
                       value:
@@ -2764,7 +3213,9 @@ function BusinessEditor({
                         | "PENDING"
                     )
                   }
-                  disabled={deleted}
+                  disabled={
+                    deleted
+                  }
                   options={[
                     {
                       value:
@@ -2801,7 +3252,9 @@ function BusinessEditor({
                         | "UNVERIFIED"
                     )
                   }
-                  disabled={deleted}
+                  disabled={
+                    deleted
+                  }
                   options={[
                     {
                       value:
@@ -2914,42 +3367,144 @@ function BusinessEditor({
                 Contact and social links
               </h2>
 
-              <div className="mt-4 grid gap-4 sm:grid-cols-2">
-                {SOCIAL_PLATFORMS.map(
-                  ({
-                    value,
-                    label,
-                  }) => (
-                    <Field
-                      key={value}
-                      label={label}
-                      value={
-                        socialValues[
-                          value
-                        ]
-                      }
-                      onChange={(
-                        nextValue
-                      ) =>
-                        updateSocial(
-                          value,
-                          nextValue
-                        )
-                      }
-                      placeholder={
-                        value ===
-                        "WHATSAPP"
-                          ? "080..."
-                          : value ===
-                            "PHONE"
-                          ? "080..."
-                          : value ===
-                            "DIRECTIONS"
-                          ? "https://maps.google.com/..."
-                          : "@username or URL"
-                      }
-                    />
-                  )
+              <div className="mt-4 space-y-3">
+                {socialLinks.map(
+                  (
+                    link,
+                    index
+                  ) => {
+                    const platformLabel =
+                      SOCIAL_PLATFORMS.find(
+                        (
+                          platform
+                        ) =>
+                          platform.value ===
+                          link.platform
+                      )?.label ??
+                      link.platform;
+
+                    return (
+                      <div
+                        key={
+                          link.id
+                        }
+                        className="rounded-2xl border border-[#EAE6DF] bg-white p-3"
+                      >
+                        <div className="grid gap-3 sm:grid-cols-[180px_1fr_auto] sm:items-end">
+                          <div>
+                            <label className="text-[10px] font-semibold text-[#6F675F]">
+                              Platform
+                            </label>
+
+                            <select
+                              value={
+                                link.platform
+                              }
+                              onChange={(
+                                event
+                              ) =>
+                                updateSocial(
+                                  link.id,
+                                  "platform",
+                                  event.target.value
+                                )
+                              }
+                              disabled={
+                                deleted ||
+                                saving
+                              }
+                              className="mt-2 h-11 w-full rounded-xl border border-[#EAE6DF] bg-white px-3 text-xs font-medium text-[#17202A] outline-none focus:border-[#FF9B82] disabled:bg-[#F3F0EB]"
+                            >
+                              {SOCIAL_PLATFORMS.map(
+                                (
+                                  platform
+                                ) => (
+                                  <option
+                                    key={
+                                      platform.value
+                                    }
+                                    value={
+                                      platform.value
+                                    }
+                                  >
+                                    {
+                                      platform.label
+                                    }
+                                  </option>
+                                )
+                              )}
+                            </select>
+                          </div>
+
+                          <Field
+                            label={`${platformLabel} link or number`}
+                            value={
+                              link.handle
+                            }
+                            onChange={(
+                              nextValue
+                            ) =>
+                              updateSocial(
+                                link.id,
+                                "handle",
+                                nextValue
+                              )
+                            }
+                            placeholder={
+                              link.platform ===
+                                "WHATSAPP" ||
+                              link.platform ===
+                                "PHONE"
+                                ? "080..."
+                                : link.platform ===
+                                  "DIRECTIONS"
+                                ? "https://maps.google.com/..."
+                                : "@username or URL"
+                            }
+                          />
+
+                          <button
+                            type="button"
+                            onClick={() =>
+                              removeSocialLink(
+                                link.id
+                              )
+                            }
+                            disabled={
+                              deleted ||
+                              saving ||
+                              socialLinks.length ===
+                                1
+                            }
+                            className="inline-flex h-11 items-center justify-center gap-2 rounded-xl border border-[#F2C7BC] bg-[#FFF5F2] px-3 text-[10px] font-bold text-[#9F2D18] transition hover:bg-[#FFE9E3] disabled:cursor-not-allowed disabled:opacity-40"
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                            Remove
+                          </button>
+                        </div>
+
+                        {index ===
+                          socialLinks.length -
+                            1 && (
+                          <button
+                            type="button"
+                            onClick={
+                              addSocialLink
+                            }
+                            disabled={
+                              deleted ||
+                              saving
+                            }
+                            className="mt-3 inline-flex items-center gap-2 rounded-xl border border-[#EAE6DF] bg-[#FCFAF6] px-3.5 py-2.5 text-[10px] font-bold text-[#6F675F] transition hover:border-[#FFB49F] hover:text-[#9F2D18] disabled:cursor-not-allowed disabled:opacity-40"
+                          >
+                            <Plus className="h-3.5 w-3.5" />
+                            Add another
+                            link
+                          </button>
+                        )}
+                      </div>
+                    );
+                  }
                 )}
               </div>
             </section>
@@ -3129,7 +3684,9 @@ function Field({
       {multiline ? (
         <textarea
           value={value}
-          onChange={(event) =>
+          onChange={(
+            event
+          ) =>
             onChange(
               event.target.value
             )
@@ -3145,7 +3702,9 @@ function Field({
         <input
           type={type}
           value={value}
-          onChange={(event) =>
+          onChange={(
+            event
+          ) =>
             onChange(
               event.target.value
             )
