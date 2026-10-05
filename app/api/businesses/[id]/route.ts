@@ -215,6 +215,10 @@ export async function GET(
           /*
            * Count only products currently
            * visible to customers.
+           *
+           * Reviews are counted separately below
+           * so the existing product count behavior
+           * remains unchanged.
            */
           _count: {
             select: {
@@ -257,7 +261,55 @@ export async function GET(
 
     /*
      * -----------------------------------------
-     * FORMAT BUSINESS
+     * REVIEW SUMMARY
+     * -----------------------------------------
+     *
+     * Reviews belong to the business and are
+     * already restricted by the public business
+     * lookup above to ACTIVE + non-deleted
+     * businesses.
+     *
+     * We expose only summary information here.
+     * Individual reviews remain available through:
+     *
+     * /api/businesses/[id]/reviews
+     */
+
+    const reviewSummary =
+      await prisma.businessReview.aggregate(
+        {
+          where: {
+            businessId:
+              business.id,
+          },
+
+          _avg: {
+            rating: true,
+          },
+
+          _count: {
+            _all: true,
+          },
+        }
+      );
+
+    const reviewCount =
+      reviewSummary._count._all;
+
+    const averageRating =
+      reviewCount > 0 &&
+      reviewSummary._avg.rating !==
+        null
+        ? Number(
+            reviewSummary._avg.rating.toFixed(
+              1
+            )
+          )
+        : 0;
+
+    /*
+     * -----------------------------------------
+     * FORMAT SOCIAL LINKS
      * -----------------------------------------
      */
 
@@ -319,6 +371,12 @@ export async function GET(
           ),
       });
     }
+
+    /*
+     * -----------------------------------------
+     * FORMAT BUSINESS
+     * -----------------------------------------
+     */
 
     const formattedBusiness = {
       id: business.id,
@@ -398,6 +456,13 @@ export async function GET(
        */
       productCount:
         business._count.products,
+
+      /*
+       * Review summary.
+       */
+      averageRating,
+
+      reviewCount,
 
       products:
         business.products.map(

@@ -10,6 +10,7 @@ import {
 
 import Link from "next/link";
 import { useParams } from "next/navigation";
+import { getSession } from "next-auth/react";
 
 import {
   Home,
@@ -26,6 +27,10 @@ import {
   Music2,
   Package,
   ExternalLink,
+  Star,
+  Pencil,
+  Trash2,
+  LoaderCircle,
 } from "lucide-react";
 
 import { trackContactEvent } from "@/lib/contact-event";
@@ -114,10 +119,31 @@ type SocialLink = {
 type SellerLocation = {
   id?: string;
   area: string;
+  street?: string | null;
   address?: string | null;
   lat?: number | null;
   long?: number | null;
 } | null;
+
+type Review = {
+  id: string;
+  rating: number;
+  comment: string | null;
+  createdAt: string;
+  updatedAt: string;
+  user: {
+    id: string;
+    name: string;
+  };
+};
+
+type RatingBreakdown = {
+  1: number;
+  2: number;
+  3: number;
+  4: number;
+  5: number;
+};
 
 type Seller = {
   id: string;
@@ -140,6 +166,9 @@ type Seller = {
   socialLinks: SocialLink[];
 
   imageUrl?: string | null;
+
+  averageRating: number;
+  reviewCount: number;
 };
 
 function getInitials(
@@ -214,7 +243,9 @@ function formatPrice(
 function getProductImages(
   product: Product
 ): ProductImage[] {
-  const images = Array.isArray(product.images)
+  const images = Array.isArray(
+    product.images
+  )
     ? product.images
         .filter(
           (image) =>
@@ -357,28 +388,12 @@ function buildDirectionsUrl(
       longitude
     )
   ) {
-    /*
-     * Coordinates are the preferred destination
-     * because they represent the exact ReMarket
-     * business location.
-     */
     destination = `${latitude},${longitude}`;
   } else if (
     typeof address ===
       "string" &&
     address.trim()
   ) {
-    /*
-     * Text fallback.
-     *
-     * Do NOT add:
-     * - business name
-     * - area again
-     * - country again
-     *
-     * The Location.address value is already
-     * expected to contain the complete address.
-     */
     destination =
       address.trim();
   }
@@ -602,6 +617,82 @@ function getSavedBusinessesSnapshot(
   return isBusinessSaved(id);
 }
 
+function formatReviewDate(
+  value: string
+) {
+  const date =
+    new Date(value);
+
+  if (
+    Number.isNaN(
+      date.getTime()
+    )
+  ) {
+    return "";
+  }
+
+  return date.toLocaleDateString(
+    undefined,
+    {
+      year: "numeric",
+      month: "short",
+      day: "numeric",
+    }
+  );
+}
+
+function ReviewStars({
+  rating,
+  size = 16,
+}: {
+  rating: number;
+  size?: number;
+}) {
+  return (
+    <div className="flex items-center">
+      {[1, 2, 3, 4, 5].map(
+        (star) => (
+          <Star
+            key={star}
+            size={size}
+            strokeWidth={2}
+            className={
+              star <=
+              Math.round(rating)
+                ? "fill-[#FFB300] text-[#FFB300]"
+                : "text-[#D8D1CA]"
+            }
+          />
+        )
+      )}
+    </div>
+  );
+}
+
+function getRatingLabel(
+  rating: number
+) {
+  switch (rating) {
+    case 1:
+      return "Poor";
+
+    case 2:
+      return "Fair";
+
+    case 3:
+      return "Good";
+
+    case 4:
+      return "Very good";
+
+    case 5:
+      return "Excellent";
+
+    default:
+      return "Select a rating";
+  }
+}
+
 function SellerPageContent({
   id,
 }: {
@@ -627,6 +718,92 @@ function SellerPageContent({
     setDirectionsLoading,
   ] = useState(false);
 
+  const [
+    reviews,
+    setReviews,
+  ] = useState<Review[]>([]);
+
+  const [
+    reviewsLoading,
+    setReviewsLoading,
+  ] = useState(true);
+
+  const [
+    reviewError,
+    setReviewError,
+  ] = useState("");
+
+  const [
+    reviewSuccess,
+    setReviewSuccess,
+  ] = useState("");
+
+  const [
+    reviewRating,
+    setReviewRating,
+  ] = useState(0);
+
+  const [
+    reviewComment,
+    setReviewComment,
+  ] = useState("");
+
+  const [
+    reviewSubmitting,
+    setReviewSubmitting,
+  ] = useState(false);
+
+  const [
+    currentUserId,
+    setCurrentUserId,
+  ] = useState<string | null>(
+    null
+  );
+
+  const [
+    editingReviewId,
+    setEditingReviewId,
+  ] = useState<string | null>(
+    null
+  );
+
+  const [
+    editingRating,
+    setEditingRating,
+  ] = useState(0);
+
+  const [
+    editingComment,
+    setEditingComment,
+  ] = useState("");
+
+  const [
+    reviewUpdatingId,
+    setReviewUpdatingId,
+  ] = useState<string | null>(
+    null
+  );
+
+  const [
+    reviewDeletingId,
+    setReviewDeletingId,
+  ] = useState<string | null>(
+    null
+  );
+
+  const [
+    ratingBreakdown,
+    setRatingBreakdown,
+  ] = useState<RatingBreakdown>(
+    {
+      1: 0,
+      2: 0,
+      3: 0,
+      4: 0,
+      5: 0,
+    }
+  );
+
   const getSavedSnapshot =
     useCallback(
       () =>
@@ -642,6 +819,70 @@ function SellerPageContent({
       getSavedSnapshot,
       () => false
     );
+
+  /*
+   * -----------------------------------------
+   * LOAD CURRENT SESSION USER
+   * -----------------------------------------
+   *
+   * Used only to decide whether the UI should
+   * show edit/delete controls for the current
+   * user's own review.
+   *
+   * The API remains the final authorization
+   * layer.
+   */
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadCurrentUser() {
+      try {
+        const session =
+          await getSession();
+
+        if (cancelled) {
+          return;
+        }
+
+        const sessionUser =
+          session?.user as
+            | {
+                id?: unknown;
+              }
+            | undefined;
+
+        setCurrentUserId(
+          typeof sessionUser?.id ===
+            "string"
+            ? sessionUser.id
+            : null
+        );
+      } catch (sessionError) {
+        console.error(
+          "Review session lookup error:",
+          sessionError
+        );
+
+        if (!cancelled) {
+          setCurrentUserId(
+            null
+          );
+        }
+      }
+    }
+
+    void loadCurrentUser();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  /*
+   * -----------------------------------------
+   * LOAD SELLER
+   * -----------------------------------------
+   */
 
   useEffect(() => {
     const controller =
@@ -868,44 +1109,75 @@ function SellerPageContent({
                       )
                         ? product.images
                             .filter(
-                              (image): image is Record<string, unknown> =>
+                              (
+                                image
+                              ): image is Record<
+                                string,
+                                unknown
+                              > =>
                                 typeof image ===
                                   "object" &&
                                 image !== null &&
-                                typeof (image as Record<string, unknown>).url ===
+                                typeof (
+                                  image as Record<
+                                    string,
+                                    unknown
+                                  >
+                                ).url ===
                                   "string"
                             )
-                            .map((image) => ({
-                              id:
-                                typeof image.id ===
-                                  "string"
-                                  ? image.id
-                                  : undefined,
-                              url:
-                                image.url as string,
-                              publicId:
-                                typeof image.publicId ===
-                                  "string"
-                                  ? image.publicId
-                                  : null,
-                              sortOrder:
-                                typeof image.sortOrder ===
-                                  "number"
-                                  ? image.sortOrder
-                                  : 0,
-                            }))
+                            .map(
+                              (
+                                image
+                              ) => ({
+                                id:
+                                  typeof image.id ===
+                                    "string"
+                                    ? image.id
+                                    : undefined,
+
+                                url:
+                                  image.url as string,
+
+                                publicId:
+                                  typeof image.publicId ===
+                                    "string"
+                                    ? image.publicId
+                                    : null,
+
+                                sortOrder:
+                                  typeof image.sortOrder ===
+                                    "number"
+                                    ? image.sortOrder
+                                    : 0,
+                              })
+                            )
                             .sort(
-                              (a, b) =>
-                                (a.sortOrder ?? 0) -
-                                (b.sortOrder ?? 0)
+                              (
+                                a,
+                                b
+                              ) =>
+                                (a.sortOrder ??
+                                  0) -
+                                (b.sortOrder ??
+                                  0)
                             )
                         : [],
 
                     keywords:
-                      Array.isArray(product.keywords)
+                      Array.isArray(
+                        product.keywords
+                      )
                         ? product.keywords.filter(
-                            (keyword): keyword is string =>
-                              typeof keyword === "string" && keyword.trim().length > 0
+                            (
+                              keyword
+                            ): keyword is string =>
+                              typeof keyword ===
+                                "string" &&
+                              keyword
+                                .trim()
+                                .length >
+                                0
                           )
                         : [],
 
@@ -913,18 +1185,24 @@ function SellerPageContent({
                       typeof product.category ===
                         "object" &&
                       product.category !== null &&
-                      "name" in product.category &&
+                      "name" in
+                        product.category &&
                       typeof product.category.name ===
                         "string"
                         ? {
                             id:
-                              "id" in product.category &&
-                              typeof product.category.id ===
+                              "id" in
+                                product.category &&
+                              typeof product.category
+                                .id ===
                                 "string"
-                                ? product.category.id
+                                ? product.category
+                                    .id
                                 : undefined,
+
                             name:
-                              product.category.name,
+                              product.category
+                                .name,
                           }
                         : null,
                   })
@@ -949,6 +1227,13 @@ function SellerPageContent({
                     "string"
                     ? rawLocation.area
                     : "",
+
+                street:
+                  "street" in rawLocation &&
+                  typeof rawLocation.street ===
+                    "string"
+                    ? rawLocation.street
+                    : null,
 
                 address:
                   "address" in
@@ -1009,6 +1294,32 @@ function SellerPageContent({
           "number"
             ? rawProductCount
             : products.length;
+
+        const rawAverageRating =
+          rawBusiness.averageRating;
+
+        const averageRating =
+          typeof rawAverageRating ===
+            "number" &&
+          Number.isFinite(
+            rawAverageRating
+          ) &&
+          rawAverageRating >= 0
+            ? rawAverageRating
+            : 0;
+
+        const rawReviewCount =
+          rawBusiness.reviewCount;
+
+        const reviewCount =
+          typeof rawReviewCount ===
+            "number" &&
+          Number.isInteger(
+            rawReviewCount
+          ) &&
+          rawReviewCount >= 0
+            ? rawReviewCount
+            : 0;
 
         setSeller({
           id:
@@ -1092,6 +1403,10 @@ function SellerPageContent({
             "string"
               ? rawBusiness.imageUrl
               : null,
+
+          averageRating,
+
+          reviewCount,
         });
       } catch (
         fetchError
@@ -1131,6 +1446,302 @@ function SellerPageContent({
       controller.abort();
     };
   }, [id]);
+
+  /*
+   * -----------------------------------------
+   * LOAD REVIEWS
+   * -----------------------------------------
+   */
+
+  const loadReviews =
+    useCallback(
+      async () => {
+        if (!id) {
+          return;
+        }
+
+        try {
+          setReviewsLoading(
+            true
+          );
+
+          setReviewError("");
+
+          const response =
+            await fetch(
+              `/api/businesses/${encodeURIComponent(
+                id
+              )}/reviews`,
+              {
+                cache: "no-store",
+              }
+            );
+
+          let data:
+            | {
+                reviews?: unknown;
+                averageRating?: unknown;
+                reviewCount?: unknown;
+                ratingBreakdown?: unknown;
+                error?: unknown;
+              }
+            | null = null;
+
+          try {
+            data =
+              await response.json();
+          } catch {
+            throw new Error(
+              "Unable to read reviews."
+            );
+          }
+
+          if (!response.ok) {
+            const message =
+              typeof data?.error ===
+              "string"
+                ? data.error
+                : "Unable to load reviews.";
+
+            throw new Error(
+              message
+            );
+          }
+
+          const rawReviews =
+            Array.isArray(
+              data?.reviews
+            )
+              ? data.reviews
+              : [];
+
+          const normalizedReviews =
+            rawReviews
+              .filter(
+                (
+                  review
+                ): review is Record<
+                  string,
+                  unknown
+                > =>
+                  typeof review ===
+                    "object" &&
+                  review !== null &&
+                  "id" in review &&
+                  typeof review.id ===
+                    "string" &&
+                  "rating" in review &&
+                  typeof review.rating ===
+                    "number" &&
+                  "user" in review &&
+                  typeof review.user ===
+                    "object" &&
+                  review.user !== null
+              )
+              .map(
+                (
+                  review
+                ): Review => {
+                  const rawUser =
+                    review.user as Record<
+                      string,
+                      unknown
+                    >;
+
+                  return {
+                    id:
+                      review.id as string,
+
+                    rating:
+                      Number.isInteger(
+                        review.rating as number
+                      )
+                        ? Math.min(
+                            5,
+                            Math.max(
+                              1,
+                              review.rating as number
+                            )
+                          )
+                        : 0,
+
+                    comment:
+                      typeof review.comment ===
+                        "string"
+                        ? review.comment
+                        : null,
+
+                    createdAt:
+                      typeof review.createdAt ===
+                        "string"
+                        ? review.createdAt
+                        : "",
+
+                    updatedAt:
+                      typeof review.updatedAt ===
+                        "string"
+                        ? review.updatedAt
+                        : "",
+
+                    user: {
+                      id:
+                        typeof rawUser.id ===
+                          "string"
+                          ? rawUser.id
+                          : "",
+
+                      name:
+                        typeof rawUser.name ===
+                          "string" &&
+                        rawUser.name.trim()
+                          ? rawUser.name
+                          : "ReMarket user",
+                    },
+                  };
+                }
+              )
+              .filter(
+                (
+                  review
+                ) =>
+                  review.rating >= 1
+              );
+
+          setReviews(
+            normalizedReviews
+          );
+
+          const rawAverage =
+            data?.averageRating;
+
+          const averageRating =
+            typeof rawAverage ===
+              "number" &&
+            Number.isFinite(
+              rawAverage
+            )
+              ? rawAverage
+              : 0;
+
+          const rawReviewCount =
+            data?.reviewCount;
+
+          const reviewCount =
+            typeof rawReviewCount ===
+              "number" &&
+            Number.isInteger(
+              rawReviewCount
+            ) &&
+            rawReviewCount >= 0
+              ? rawReviewCount
+              : normalizedReviews.length;
+
+          const rawBreakdown =
+            data?.ratingBreakdown;
+
+          const breakdown: RatingBreakdown =
+            {
+              1: 0,
+              2: 0,
+              3: 0,
+              4: 0,
+              5: 0,
+            };
+
+          if (
+            typeof rawBreakdown ===
+              "object" &&
+            rawBreakdown !== null
+          ) {
+            const source =
+              rawBreakdown as Record<
+                string,
+                unknown
+              >;
+
+            for (
+              let rating = 1;
+              rating <= 5;
+              rating += 1
+            ) {
+              const value =
+                source[String(rating)];
+
+              if (
+                typeof value ===
+                  "number" &&
+                Number.isInteger(
+                  value
+                ) &&
+                value >= 0
+              ) {
+                breakdown[
+                  rating as 1 | 2 | 3 | 4 | 5
+                ] = value;
+              }
+            }
+          } else {
+            for (
+              const review of
+                normalizedReviews
+            ) {
+              breakdown[
+                review.rating as
+                  | 1
+                  | 2
+                  | 3
+                  | 4
+                  | 5
+              ] += 1;
+            }
+          }
+
+          setRatingBreakdown(
+            breakdown
+          );
+
+          setSeller(
+            (currentSeller) =>
+              currentSeller
+                ? {
+                    ...currentSeller,
+                    averageRating,
+                    reviewCount,
+                  }
+                : currentSeller
+          );
+        } catch (
+          reviewsFetchError
+        ) {
+          console.error(
+            "Reviews load error:",
+            reviewsFetchError
+          );
+
+          setReviewError(
+            reviewsFetchError instanceof
+              Error
+              ? reviewsFetchError.message
+              : "Unable to load reviews."
+          );
+        } finally {
+          setReviewsLoading(
+            false
+          );
+        }
+      },
+      [id]
+    );
+
+  useEffect(() => {
+    void loadReviews();
+  }, [loadReviews]);
+
+  /*
+   * -----------------------------------------
+   * SAVE BUSINESS
+   * -----------------------------------------
+   */
 
   function toggleSavedBusiness() {
     if (!seller) {
@@ -1179,6 +1790,12 @@ function SellerPageContent({
     });
   }
 
+  /*
+   * -----------------------------------------
+   * CONTACT
+   * -----------------------------------------
+   */
+
   function handleContactClick(
     platform: string
   ) {
@@ -1210,6 +1827,12 @@ function SellerPageContent({
     toggleSavedBusiness();
   }
 
+  /*
+   * -----------------------------------------
+   * DIRECTIONS
+   * -----------------------------------------
+   */
+
   function getDirectionsUrl() {
     if (!seller) {
       return "#";
@@ -1238,8 +1861,13 @@ function SellerPageContent({
       return;
     }
 
-    handleContactClick("DIRECTIONS");
-    setDirectionsLoading(true);
+    handleContactClick(
+      "DIRECTIONS"
+    );
+
+    setDirectionsLoading(
+      true
+    );
 
     const navigationWindow =
       window.open(
@@ -1248,7 +1876,9 @@ function SellerPageContent({
       );
 
     if (!navigator.geolocation) {
-      setDirectionsLoading(false);
+      setDirectionsLoading(
+        false
+      );
 
       if (!navigationWindow) {
         window.location.assign(
@@ -1266,8 +1896,10 @@ function SellerPageContent({
             seller.location?.address,
             seller.location?.lat,
             seller.location?.long,
-            position.coords.latitude,
-            position.coords.longitude
+            position.coords
+              .latitude,
+            position.coords
+              .longitude
           );
 
         if (
@@ -1278,15 +1910,14 @@ function SellerPageContent({
             exactUrl;
         }
 
-        setDirectionsLoading(false);
+        setDirectionsLoading(
+          false
+        );
       },
       () => {
-        /*
-         * Location access can be denied or
-         * unavailable. The already-opened map keeps
-         * the existing destination-only fallback.
-         */
-        setDirectionsLoading(false);
+        setDirectionsLoading(
+          false
+        );
 
         if (!navigationWindow) {
           window.location.assign(
@@ -1300,6 +1931,498 @@ function SellerPageContent({
         maximumAge: 60000,
       }
     );
+  }
+
+  /*
+   * -----------------------------------------
+   * REVIEW CREATION
+   * -----------------------------------------
+   */
+
+  async function submitReview(
+    event: React.FormEvent<HTMLFormElement>
+  ) {
+    event.preventDefault();
+
+    if (
+      reviewSubmitting ||
+      !seller
+    ) {
+      return;
+    }
+
+    setReviewError("");
+    setReviewSuccess("");
+
+    if (
+      reviewRating < 1 ||
+      reviewRating > 5
+    ) {
+      setReviewError(
+        "Please select a rating from 1 to 5 stars."
+      );
+
+      return;
+    }
+
+    if (
+      reviewComment.trim()
+        .length > 2000
+    ) {
+      setReviewError(
+        "Your review is too long. Please keep it under 2000 characters."
+      );
+
+      return;
+    }
+
+    setReviewSubmitting(
+      true
+    );
+
+    try {
+      const response =
+        await fetch(
+          `/api/businesses/${encodeURIComponent(
+            id
+          )}/reviews`,
+          {
+            method: "POST",
+            headers: {
+              "Content-Type":
+                "application/json",
+            },
+            body: JSON.stringify({
+              rating:
+                reviewRating,
+              comment:
+                reviewComment,
+            }),
+          }
+        );
+
+      let data:
+        | {
+            review?: Review;
+            error?: unknown;
+          }
+        | null = null;
+
+      try {
+        data =
+          await response.json();
+      } catch {
+        data = null;
+      }
+
+      if (
+        response.status ===
+        401
+      ) {
+        setReviewError(
+          "You must be signed in as a buyer to leave a review."
+        );
+
+        return;
+      }
+
+      if (
+        response.status ===
+        403
+      ) {
+        setReviewError(
+          "Only buyer accounts can leave business reviews."
+        );
+
+        return;
+      }
+
+      if (
+        response.status ===
+        409
+      ) {
+        setReviewError(
+          typeof data?.error ===
+            "string"
+            ? data.error
+            : "You have already reviewed this business."
+        );
+
+        return;
+      }
+
+      if (!response.ok) {
+        setReviewError(
+          typeof data?.error ===
+            "string"
+            ? data.error
+            : "Unable to submit your review."
+        );
+
+        return;
+      }
+
+      setReviewRating(
+        0
+      );
+
+      setReviewComment("");
+
+      setReviewSuccess(
+        "Your review was submitted successfully."
+      );
+
+      await loadReviews();
+    } catch (submitError) {
+      console.error(
+        "Review submission error:",
+        submitError
+      );
+
+      setReviewError(
+        "Something went wrong. Please try again."
+      );
+    } finally {
+      setReviewSubmitting(
+        false
+      );
+    }
+  }
+
+  /*
+   * -----------------------------------------
+   * REVIEW EDIT
+   * -----------------------------------------
+   */
+
+  function startEditingReview(
+    review: Review
+  ) {
+    setReviewError("");
+    setReviewSuccess("");
+
+    setEditingReviewId(
+      review.id
+    );
+
+    setEditingRating(
+      review.rating
+    );
+
+    setEditingComment(
+      review.comment ?? ""
+    );
+  }
+
+  function cancelEditingReview() {
+    if (
+      reviewUpdatingId
+    ) {
+      return;
+    }
+
+    setEditingReviewId(
+      null
+    );
+
+    setEditingRating(
+      0
+    );
+
+    setEditingComment(
+      ""
+    );
+
+    setReviewError("");
+  }
+
+  async function updateReview(
+    reviewId: string
+  ) {
+    if (
+      reviewUpdatingId ||
+      editingReviewId !==
+        reviewId
+    ) {
+      return;
+    }
+
+    setReviewError("");
+    setReviewSuccess("");
+
+    if (
+      editingRating < 1 ||
+      editingRating > 5
+    ) {
+      setReviewError(
+        "Please select a rating from 1 to 5 stars."
+      );
+
+      return;
+    }
+
+    if (
+      editingComment.trim()
+        .length > 2000
+    ) {
+      setReviewError(
+        "Your review is too long. Please keep it under 2000 characters."
+      );
+
+      return;
+    }
+
+    setReviewUpdatingId(
+      reviewId
+    );
+
+    try {
+      const response =
+        await fetch(
+          `/api/businesses/${encodeURIComponent(
+            id
+          )}/reviews/${encodeURIComponent(
+            reviewId
+          )}`,
+          {
+            method: "PATCH",
+            headers: {
+              "Content-Type":
+                "application/json",
+            },
+            body: JSON.stringify({
+              rating:
+                editingRating,
+              comment:
+                editingComment,
+            }),
+          }
+        );
+
+      let data:
+        | {
+            review?: Review;
+            error?: unknown;
+          }
+        | null = null;
+
+      try {
+        data =
+          await response.json();
+      } catch {
+        data = null;
+      }
+
+      if (
+        response.status ===
+        401
+      ) {
+        setReviewError(
+          "Your session has expired. Please sign in again."
+        );
+
+        return;
+      }
+
+      if (
+        response.status ===
+        403
+      ) {
+        setReviewError(
+          "Only buyer accounts can manage reviews."
+        );
+
+        return;
+      }
+
+      if (
+        response.status ===
+        404
+      ) {
+        setReviewError(
+          typeof data?.error ===
+            "string"
+            ? data.error
+            : "This review could not be found."
+        );
+
+        return;
+      }
+
+      if (!response.ok) {
+        setReviewError(
+          typeof data?.error ===
+            "string"
+            ? data.error
+            : "Unable to update your review."
+        );
+
+        return;
+      }
+
+      setEditingReviewId(
+        null
+      );
+
+      setEditingRating(
+        0
+      );
+
+      setEditingComment(
+        ""
+      );
+
+      setReviewSuccess(
+        "Your review was updated successfully."
+      );
+
+      await loadReviews();
+    } catch (updateError) {
+      console.error(
+        "Review update error:",
+        updateError
+      );
+
+      setReviewError(
+        "Something went wrong. Please try again."
+      );
+    } finally {
+      setReviewUpdatingId(
+        null
+      );
+    }
+  }
+
+  /*
+   * -----------------------------------------
+   * REVIEW DELETE
+   * -----------------------------------------
+   */
+
+  async function deleteReview(
+    reviewId: string
+  ) {
+    if (
+      reviewDeletingId
+    ) {
+      return;
+    }
+
+    const confirmed =
+      window.confirm(
+        "Delete your review from this business?"
+      );
+
+    if (!confirmed) {
+      return;
+    }
+
+    setReviewError("");
+    setReviewSuccess("");
+
+    setReviewDeletingId(
+      reviewId
+    );
+
+    try {
+      const response =
+        await fetch(
+          `/api/businesses/${encodeURIComponent(
+            id
+          )}/reviews/${encodeURIComponent(
+            reviewId
+          )}`,
+          {
+            method: "DELETE",
+          }
+        );
+
+      let data:
+        | {
+            error?: unknown;
+          }
+        | null = null;
+
+      try {
+        data =
+          await response.json();
+      } catch {
+        data = null;
+      }
+
+      if (
+        response.status ===
+        401
+      ) {
+        setReviewError(
+          "Your session has expired. Please sign in again."
+        );
+
+        return;
+      }
+
+      if (
+        response.status ===
+        403
+      ) {
+        setReviewError(
+          "Only buyer accounts can manage reviews."
+        );
+
+        return;
+      }
+
+      if (
+        response.status ===
+        404
+      ) {
+        setReviewError(
+          typeof data?.error ===
+            "string"
+            ? data.error
+            : "This review could not be found."
+        );
+
+        return;
+      }
+
+      if (!response.ok) {
+        setReviewError(
+          typeof data?.error ===
+            "string"
+            ? data.error
+            : "Unable to delete your review."
+        );
+
+        return;
+      }
+
+      if (
+        editingReviewId ===
+        reviewId
+      ) {
+        cancelEditingReview();
+      }
+
+      setReviewSuccess(
+        "Your review was deleted successfully."
+      );
+
+      await loadReviews();
+    } catch (deleteError) {
+      console.error(
+        "Review deletion error:",
+        deleteError
+      );
+
+      setReviewError(
+        "Something went wrong. Please try again."
+      );
+    } finally {
+      setReviewDeletingId(
+        null
+      );
+    }
   }
 
   if (!id) {
@@ -1695,12 +2818,18 @@ function SellerPageContent({
                           >
                             {seller.imageUrl ? (
                               <img
-                                src={seller.imageUrl}
-                                alt={seller.name}
+                                src={
+                                  seller.imageUrl
+                                }
+                                alt={
+                                  seller.name
+                                }
                                 className="h-full w-full object-cover"
                               />
                             ) : (
-                              getInitials(seller.name)
+                              getInitials(
+                                seller.name
+                              )
                             )}
                           </div>
 
@@ -1777,6 +2906,41 @@ function SellerPageContent({
                                 "VERIFIED" && (
                                 <span className="rounded-full bg-[#E4F7EC] px-2.5 py-1 text-[10px] font-bold text-[#237A48]">
                                   Verified
+                                </span>
+                              )}
+                            </div>
+
+                            <div className="mt-3 flex flex-wrap items-center gap-2">
+                              {seller.reviewCount >
+                                0 ? (
+                                <>
+                                  <ReviewStars
+                                    rating={
+                                      seller.averageRating
+                                    }
+                                    size={
+                                      15
+                                    }
+                                  />
+
+                                  <span className="text-[12px] font-black text-[#17202A]">
+                                    {seller.averageRating.toFixed(
+                                      1
+                                    )}
+                                  </span>
+
+                                  <span className="text-[11px] text-[#8B847E]">
+                                    ({seller.reviewCount}{" "}
+                                    {seller.reviewCount ===
+                                    1
+                                      ? "review"
+                                      : "reviews"}
+                                    )
+                                  </span>
+                                </>
+                              ) : (
+                                <span className="text-[11px] font-semibold text-[#8B847E]">
+                                  No reviews yet
                                 </span>
                               )}
                             </div>
@@ -2001,7 +3165,10 @@ function SellerPageContent({
 
                                       {product.category?.name && (
                                         <p className="mt-1 text-[10px] font-semibold text-[#8B847E]">
-                                          {product.category.name}
+                                          {
+                                            product.category
+                                              .name
+                                          }
                                         </p>
                                       )}
                                     </div>
@@ -2027,7 +3194,9 @@ function SellerPageContent({
 
                                   {product.description && (
                                     <p className="mt-2 text-[11px] leading-5 text-[#878079]">
-                                      {product.description}
+                                      {
+                                        product.description
+                                      }
                                     </p>
                                   )}
 
@@ -2039,14 +3208,20 @@ function SellerPageContent({
 
                                   {product.keywords.length > 0 && (
                                     <div className="mt-3 flex flex-wrap gap-1.5">
-                                      {product.keywords.map((keyword) => (
-                                        <span
-                                          key={`${product.id}-${keyword}`}
-                                          className="rounded-full bg-[#F3F0EB] px-2 py-1 text-[9px] font-semibold text-[#6F675F]"
-                                        >
-                                          {keyword}
-                                        </span>
-                                      ))}
+                                      {product.keywords.map(
+                                        (
+                                          keyword
+                                        ) => (
+                                          <span
+                                            key={`${product.id}-${keyword}`}
+                                            className="rounded-full bg-[#F3F0EB] px-2 py-1 text-[9px] font-semibold text-[#6F675F]"
+                                          >
+                                            {
+                                              keyword
+                                            }
+                                          </span>
+                                        )
+                                      )}
                                     </div>
                                   )}
                                 </div>
@@ -2389,6 +3564,704 @@ function SellerPageContent({
                       </div>
                     </aside>
                   </div>
+
+                  {/* Reviews */}
+
+                  <section
+                    className="
+                      mt-5
+                      rounded-[18px]
+                      border
+                      border-[#E8E4DE]
+                      bg-white
+                      p-5
+                      shadow-[0_4px_18px_rgba(30,20,10,0.035)]
+                      sm:p-6
+                    "
+                  >
+                    <div className="flex flex-col gap-5 lg:flex-row lg:items-start lg:justify-between">
+                      <div>
+                        <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-[#FF5A36]">
+                          Customer feedback
+                        </p>
+
+                        <div className="mt-1 flex flex-wrap items-center gap-3">
+                          <h2 className="text-[20px] font-black text-[#17202A]">
+                            Ratings & Reviews
+                          </h2>
+
+                          {seller.reviewCount >
+                            0 && (
+                            <div className="flex items-center gap-2 rounded-full bg-[#FFF7ED] px-3 py-1.5">
+                              <ReviewStars
+                                rating={
+                                  seller.averageRating
+                                }
+                                size={
+                                  14
+                                }
+
+                              />
+
+                              <span className="text-[11px] font-black text-[#17202A]">
+                                {seller.averageRating.toFixed(
+                                  1
+                                )}
+                              </span>
+
+                              <span className="text-[10px] text-[#8B847E]">
+                                {seller.reviewCount}{" "}
+                                {seller.reviewCount ===
+                                1
+                                  ? "review"
+                                  : "reviews"}
+                              </span>
+                            </div>
+                          )}
+                        </div>
+
+                        <p className="mt-1 text-[11px] leading-5 text-[#8B847E]">
+                          See what customers are saying about this business.
+                        </p>
+                      </div>
+                    </div>
+
+                    {reviewSuccess && (
+                      <div className="mt-4 rounded-xl border border-[#BDE8D8] bg-[#EFFBF6] px-3 py-2.5 text-[11px] font-semibold text-[#137A59]">
+                        {
+                          reviewSuccess
+                        }
+                      </div>
+                    )}
+
+                    {reviewError && (
+                      <div className="mt-4 rounded-xl border border-[#F0C9BF] bg-[#FFF1ED] px-3 py-2.5 text-[11px] font-semibold text-[#9F2D18]">
+                        {
+                          reviewError
+                        }
+                      </div>
+                    )}
+
+                    <div className="mt-5 grid gap-5 lg:grid-cols-[220px_minmax(0,1fr)]">
+                      {/* Rating summary */}
+
+                      <div className="rounded-[16px] border border-[#E8E4DE] bg-[#FCFAF6] p-4">
+                        <div className="text-center">
+                          <p className="text-[34px] font-black leading-none text-[#17202A]">
+                            {seller.reviewCount >
+                            0
+                              ? seller.averageRating.toFixed(
+                                  1
+                                )
+                              : "—"}
+                          </p>
+
+                          <div className="mt-2 flex justify-center">
+                            <ReviewStars
+                              rating={
+                                seller.averageRating
+                              }
+                              size={
+                                18
+                              }
+                            />
+                          </div>
+
+                          <p className="mt-2 text-[10px] font-semibold text-[#8B847E]">
+                            {seller.reviewCount}{" "}
+                            {seller.reviewCount ===
+                            1
+                              ? "customer review"
+                              : "customer reviews"}
+                          </p>
+                        </div>
+
+                        <div className="mt-5 space-y-2">
+                          {[5, 4, 3, 2, 1].map(
+                            (
+                              rating
+                            ) => {
+                              const count =
+                                ratingBreakdown[
+                                  rating as
+                                    | 1
+                                    | 2
+                                    | 3
+                                    | 4
+                                    | 5
+                                ];
+
+                              const percentage =
+                                seller.reviewCount >
+                                0
+                                  ? Math.round(
+                                      (count /
+                                        seller.reviewCount) *
+                                        100
+                                    )
+                                  : 0;
+
+                              return (
+                                <div
+                                  key={
+                                    rating
+                                  }
+                                  className="flex items-center gap-2"
+                                >
+                                  <span className="w-5 text-right text-[10px] font-bold text-[#746D67]">
+                                    {
+                                      rating
+                                    }
+                                  </span>
+
+                                  <Star
+                                    size={
+                                      12
+                                    }
+                                    className="fill-[#FFB300] text-[#FFB300]"
+                                  />
+
+                                  <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-[#E7E0D8]">
+                                    <div
+                                      className="h-full rounded-full bg-[#FF5A36] transition-all"
+                                      style={{
+                                        width: `${percentage}%`,
+                                      }}
+                                    />
+                                  </div>
+
+                                  <span className="w-7 text-right text-[9px] font-semibold text-[#8B847E]">
+                                    {
+                                      count
+                                    }
+                                  </span>
+                                </div>
+                              );
+                            }
+                          )}
+                        </div>
+                      </div>
+
+                      {/* Review form */}
+
+                      <div className="rounded-[16px] border border-[#E8E4DE] bg-white p-4">
+                        <div className="flex items-start gap-3">
+                          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-[#FFF0E9] text-[#FF5A36]">
+                            <Star
+                              size={18}
+                              className="fill-current"
+                            />
+                          </div>
+
+                          <div>
+                            <h3 className="text-[13px] font-black text-[#17202A]">
+                              Leave a review
+                            </h3>
+
+                            <p className="mt-1 text-[10px] leading-5 text-[#8B847E]">
+                              Share your experience with this business.
+                            </p>
+                          </div>
+                        </div>
+
+                        <form
+                          onSubmit={
+                            submitReview
+                          }
+                          className="mt-4"
+                        >
+                          <div>
+                            <p className="text-[10px] font-bold uppercase tracking-[0.1em] text-[#8C8580]">
+                              Your rating
+                            </p>
+
+                            <div className="mt-2 flex flex-wrap items-center gap-2">
+                              <div className="flex items-center gap-1">
+                                {[1, 2, 3, 4, 5].map(
+                                  (
+                                    rating
+                                  ) => (
+                                    <button
+                                      key={
+                                        rating
+                                      }
+                                      type="button"
+                                      aria-label={`Rate ${rating} out of 5`}
+                                      aria-pressed={
+                                        reviewRating ===
+                                        rating
+                                      }
+                                      onClick={() =>
+                                        setReviewRating(
+                                          rating
+                                        )
+                                      }
+                                      className="rounded-lg p-1 transition hover:bg-[#FFF0E9]"
+                                    >
+                                      <Star
+                                        size={
+                                          22
+                                        }
+                                        className={
+                                          rating <=
+                                          reviewRating
+                                            ? "fill-[#FFB300] text-[#FFB300]"
+                                            : "text-[#D6CFC8]"
+                                        }
+                                      />
+                                    </button>
+                                  )
+                                )}
+                              </div>
+
+                              <span className="text-[10px] font-semibold text-[#8B847E]">
+                                {getRatingLabel(
+                                  reviewRating
+                                )}
+                              </span>
+                            </div>
+                          </div>
+
+                          <div className="mt-4">
+                            <label
+                              htmlFor="review-comment"
+                              className="text-[10px] font-bold uppercase tracking-[0.1em] text-[#8C8580]"
+                            >
+                              Review
+                            </label>
+
+                            <textarea
+                              id="review-comment"
+                              value={
+                                reviewComment
+                              }
+                              onChange={(
+                                event
+                              ) =>
+                                setReviewComment(
+                                  event
+                                    .target
+                                    .value
+                                )
+                              }
+                              rows={
+                                4
+                              }
+                              maxLength={
+                                2000
+                              }
+                              placeholder="What was your experience with this business?"
+                              className="
+                                mt-2
+                                w-full
+                                resize-none
+                                rounded-xl
+                                border
+                                border-[#E8E4DE]
+                                bg-[#FCFAF6]
+                                px-3
+                                py-3
+                                text-[11px]
+                                leading-5
+                                text-[#35302C]
+                                outline-none
+                                transition
+                                focus:border-[#FF9B86]
+                                focus:bg-white
+                                focus:ring-4
+                                focus:ring-[#FF5A36]/10
+                              "
+                            />
+
+                            <div className="mt-1 flex justify-end">
+                              <span className="text-[9px] text-[#A29B94]">
+                                {
+                                  reviewComment.length
+                                }
+                                /2000
+                              </span>
+                            </div>
+                          </div>
+
+                          <div className="mt-4 flex justify-end">
+                            <button
+                              type="submit"
+                              disabled={
+                                reviewSubmitting
+                              }
+                              className="
+                                inline-flex
+                                items-center
+                                justify-center
+                                gap-2
+                                rounded-xl
+                                bg-[#FF5A36]
+                                px-4
+                                py-2.5
+                                text-[11px]
+                                font-bold
+                                text-white
+                                transition
+                                hover:bg-[#E94E2C]
+                                disabled:cursor-not-allowed
+                                disabled:opacity-60
+                              "
+                            >
+                              {reviewSubmitting ? (
+                                <>
+                                  <LoaderCircle
+                                    size={
+                                      14
+                                    }
+                                    className="animate-spin"
+                                  />
+
+                                  Submitting...
+                                </>
+                              ) : (
+                                "Submit review"
+                              )}
+                            </button>
+                          </div>
+                        </form>
+                      </div>
+                    </div>
+
+                    {/* Review list */}
+
+                    <div className="mt-6 border-t border-[#EAE6DF] pt-5">
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <h3 className="text-[14px] font-black text-[#17202A]">
+                            Customer reviews
+                          </h3>
+
+                          <p className="mt-1 text-[10px] text-[#8B847E]">
+                            Recent feedback from ReMarket buyers.
+                          </p>
+                        </div>
+
+                        {reviews.length >
+                          0 && (
+                          <span className="rounded-full bg-[#FCFAF6] px-2.5 py-1 text-[9px] font-bold text-[#746D67]">
+                            {
+                              reviews.length
+                            }
+                          </span>
+                        )}
+                      </div>
+
+                      {reviewsLoading ? (
+                        <div className="mt-4 flex items-center justify-center rounded-xl border border-dashed border-[#DDD6CE] bg-[#FCFAF6] px-5 py-8">
+                          <div className="flex items-center gap-2 text-[11px] font-semibold text-[#817970]">
+                            <LoaderCircle
+                              size={
+                                15
+                              }
+                              className="animate-spin text-[#FF5A36]"
+                            />
+
+                            Loading reviews...
+                          </div>
+                        </div>
+                      ) : reviews.length ===
+                        0 ? (
+                        <div className="mt-4 rounded-xl border border-dashed border-[#DDD6CE] bg-[#FCFAF6] px-5 py-8 text-center">
+                          <Star
+                            size={
+                              24
+                            }
+                            className="mx-auto text-[#B7AFA7]"
+                          />
+
+                          <p className="mt-3 text-[12px] font-bold text-[#625B55]">
+                            No reviews yet
+                          </p>
+
+                          <p className="mt-1 text-[10px] leading-5 text-[#928A83]">
+                            Be the first customer to rate this business.
+                          </p>
+                        </div>
+                      ) : (
+                        <div className="mt-4 space-y-3">
+                          {reviews.map(
+                            (
+                              review
+                            ) => {
+                              const isOwnReview =
+                                Boolean(
+                                  currentUserId &&
+                                  review.user
+                                    .id ===
+                                    currentUserId
+                                );
+
+                              const isEditing =
+                                editingReviewId ===
+                                review.id;
+
+                              return (
+                                <article
+                                  key={
+                                    review.id
+                                  }
+                                  className="rounded-[15px] border border-[#E8E4DE] bg-[#FFFDFC] p-4"
+                                >
+                                  <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                                    <div className="min-w-0">
+                                      <div className="flex flex-wrap items-center gap-2">
+                                        <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[#FFE0D6] text-[10px] font-black text-[#9F2D18]">
+                                          {getInitials(
+                                            review
+                                              .user
+                                              .name
+                                          )}
+                                        </div>
+
+                                        <div>
+                                          <p className="text-[11px] font-bold text-[#3D3834]">
+                                            {
+                                              review
+                                                .user
+                                                .name
+                                            }
+                                          </p>
+
+                                          <p className="text-[9px] text-[#A29B94]">
+                                            {formatReviewDate(
+                                              review.createdAt
+                                            )}
+                                            {review.updatedAt !==
+                                              review.createdAt &&
+                                              " · Edited"}
+                                          </p>
+                                        </div>
+                                      </div>
+
+                                      {!isEditing ? (
+                                        <>
+                                          <div className="mt-3">
+                                            <ReviewStars
+                                              rating={
+                                                review.rating
+                                              }
+                                              size={
+                                                15
+                                              }
+                                            />
+                                          </div>
+
+                                          {review.comment && (
+                                            <p className="mt-3 text-[11px] leading-5 text-[#68615C]">
+                                              {
+                                                review.comment
+                                              }
+                                            </p>
+                                          )}
+                                        </>
+                                      ) : (
+                                        <div className="mt-3">
+                                          <div className="flex flex-wrap items-center gap-2">
+                                            <div className="flex items-center gap-1">
+                                              {[
+                                                1,
+                                                2,
+                                                3,
+                                                4,
+                                                5,
+                                              ].map(
+                                                (
+                                                  rating
+                                                ) => (
+                                                  <button
+                                                    key={
+                                                      rating
+                                                    }
+                                                    type="button"
+                                                    aria-label={`Change rating to ${rating} out of 5`}
+                                                    onClick={() =>
+                                                      setEditingRating(
+                                                        rating
+                                                      )
+                                                    }
+                                                    className="rounded-lg p-0.5 transition hover:bg-[#FFF0E9]"
+                                                  >
+                                                    <Star
+                                                      size={
+                                                        18
+                                                      }
+                                                      className={
+                                                        rating <=
+                                                        editingRating
+                                                          ? "fill-[#FFB300] text-[#FFB300]"
+                                                          : "text-[#D6CFC8]"
+                                                      }
+                                                    />
+                                                  </button>
+                                                )
+                                              )}
+                                            </div>
+
+                                            <span className="text-[9px] font-semibold text-[#8B847E]">
+                                              {getRatingLabel(
+                                                editingRating
+                                              )}
+                                            </span>
+                                          </div>
+
+                                          <textarea
+                                            value={
+                                              editingComment
+                                            }
+                                            onChange={(
+                                              event
+                                            ) =>
+                                              setEditingComment(
+                                                event
+                                                  .target
+                                                  .value
+                                              )
+                                            }
+                                            maxLength={
+                                              2000
+                                            }
+                                            rows={
+                                              4
+                                            }
+                                            className="
+                                              mt-3
+                                              w-full
+                                              resize-none
+                                              rounded-xl
+                                              border
+                                              border-[#E8E4DE]
+                                              bg-[#FCFAF6]
+                                              px-3
+                                              py-3
+                                              text-[11px]
+                                              leading-5
+                                              text-[#35302C]
+                                              outline-none
+                                              transition
+                                              focus:border-[#FF9B86]
+                                              focus:bg-white
+                                              focus:ring-4
+                                              focus:ring-[#FF5A36]/10
+                                            "
+                                          />
+
+                                          <div className="mt-3 flex flex-wrap justify-end gap-2">
+                                            <button
+                                              type="button"
+                                              onClick={
+                                                cancelEditingReview
+                                              }
+                                              disabled={
+                                                reviewUpdatingId ===
+                                                review.id
+                                              }
+                                              className="rounded-xl border border-[#E8E4DE] bg-white px-3 py-2 text-[10px] font-bold text-[#746D67] transition hover:bg-[#FCFAF6] disabled:cursor-not-allowed disabled:opacity-60"
+                                            >
+                                              Cancel
+                                            </button>
+
+                                            <button
+                                              type="button"
+                                              onClick={() =>
+                                                updateReview(
+                                                  review.id
+                                                )
+                                              }
+                                              disabled={
+                                                reviewUpdatingId ===
+                                                review.id
+                                              }
+                                              className="inline-flex items-center gap-2 rounded-xl bg-[#FF5A36] px-3 py-2 text-[10px] font-bold text-white transition hover:bg-[#E94E2C] disabled:cursor-not-allowed disabled:opacity-60"
+                                            >
+                                              {reviewUpdatingId ===
+                                              review.id ? (
+                                                <>
+                                                  <LoaderCircle
+                                                    size={
+                                                      13
+                                                    }
+                                                    className="animate-spin"
+                                                  />
+
+                                                  Saving...
+                                                </>
+                                              ) : (
+                                                "Save changes"
+                                              )}
+                                            </button>
+                                          </div>
+                                        </div>
+                                      )}
+                                    </div>
+
+                                    {isOwnReview &&
+                                      !isEditing && (
+                                        <div className="flex shrink-0 items-center gap-1">
+                                          <button
+                                            type="button"
+                                            onClick={() =>
+                                              startEditingReview(
+                                                review
+                                              )
+                                            }
+                                            className="inline-flex items-center gap-1 rounded-lg px-2 py-1.5 text-[9px] font-bold text-[#746D67] transition hover:bg-[#FFF0E9] hover:text-[#FF5A36]"
+                                          >
+                                            <Pencil
+                                              size={
+                                                12
+                                              }
+                                            />
+
+                                            Edit
+                                          </button>
+
+                                          <button
+                                            type="button"
+                                            onClick={() =>
+                                              deleteReview(
+                                                review.id
+                                              )
+                                            }
+                                            disabled={
+                                              reviewDeletingId ===
+                                              review.id
+                                            }
+                                            className="inline-flex items-center gap-1 rounded-lg px-2 py-1.5 text-[9px] font-bold text-[#9F2D18] transition hover:bg-[#FFF1ED] disabled:cursor-not-allowed disabled:opacity-60"
+                                          >
+                                            {reviewDeletingId ===
+                                            review.id ? (
+                                              <LoaderCircle
+                                                size={
+                                                  12
+                                                }
+                                                className="animate-spin"
+                                              />
+                                            ) : (
+                                              <Trash2
+                                                size={
+                                                  12
+                                                }
+                                              />
+                                            )}
+
+                                            Delete
+                                          </button>
+                                        </div>
+                                      )}
+                                  </div>
+                                </article>
+                              );
+                            }
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  </section>
                 </>
               )}
           </section>
