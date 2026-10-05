@@ -1,3 +1,4 @@
+
 "use client";
 
 import {
@@ -65,10 +66,7 @@ const NAV_ITEMS = [
   },
 ];
 
-const CATEGORY_COLORS: Record<
-  string,
-  string
-> = {
+const CATEGORY_COLORS: Record<string, string> = {
   Fashion: "#FFE0D6",
   Electronics: "#DDF5EA",
   Food: "#FFF0C7",
@@ -145,6 +143,11 @@ type RatingBreakdown = {
   5: number;
 };
 
+type ReMarketRole =
+  | "ADMIN"
+  | "SELLER"
+  | "BUYER";
+
 type Seller = {
   id: string;
   name: string;
@@ -171,9 +174,7 @@ type Seller = {
   reviewCount: number;
 };
 
-function getInitials(
-  name: string
-) {
+function getInitials(name: string) {
   const words = name
     .trim()
     .split(/\s+/)
@@ -334,13 +335,11 @@ function hasValidCoordinates(
   longitude?: number | null
 ): latitude is number {
   return (
-    typeof latitude ===
-      "number" &&
+    typeof latitude === "number" &&
     Number.isFinite(latitude) &&
     latitude >= -90 &&
     latitude <= 90 &&
-    typeof longitude ===
-      "number" &&
+    typeof longitude === "number" &&
     Number.isFinite(longitude) &&
     longitude >= -180 &&
     longitude <= 180
@@ -390,12 +389,10 @@ function buildDirectionsUrl(
   ) {
     destination = `${latitude},${longitude}`;
   } else if (
-    typeof address ===
-      "string" &&
+    typeof address === "string" &&
     address.trim()
   ) {
-    destination =
-      address.trim();
+    destination = address.trim();
   }
 
   if (!destination) {
@@ -761,6 +758,18 @@ function SellerPageContent({
   );
 
   const [
+    currentUserRole,
+    setCurrentUserRole,
+  ] = useState<
+    ReMarketRole | null
+  >(null);
+
+  const [
+    currentUserLoading,
+    setCurrentUserLoading,
+  ] = useState(true);
+
+  const [
     editingReviewId,
     setEditingReviewId,
   ] = useState<string | null>(
@@ -825,9 +834,12 @@ function SellerPageContent({
    * LOAD CURRENT SESSION USER
    * -----------------------------------------
    *
-   * Used only to decide whether the UI should
-   * show edit/delete controls for the current
-   * user's own review.
+   * Used to determine:
+   *
+   * - whether the visitor is signed in
+   * - the user's role
+   * - whether edit/delete controls should
+   *   appear for their own review
    *
    * The API remains the final authorization
    * layer.
@@ -837,6 +849,10 @@ function SellerPageContent({
 
     async function loadCurrentUser() {
       try {
+        setCurrentUserLoading(
+          true
+        );
+
         const session =
           await getSession();
 
@@ -845,11 +861,7 @@ function SellerPageContent({
         }
 
         const sessionUser =
-          session?.user as
-            | {
-                id?: unknown;
-              }
-            | undefined;
+          session?.user;
 
         setCurrentUserId(
           typeof sessionUser?.id ===
@@ -857,6 +869,23 @@ function SellerPageContent({
             ? sessionUser.id
             : null
         );
+
+        if (
+          sessionUser?.role ===
+            "ADMIN" ||
+          sessionUser?.role ===
+            "SELLER" ||
+          sessionUser?.role ===
+            "BUYER"
+        ) {
+          setCurrentUserRole(
+            sessionUser.role
+          );
+        } else {
+          setCurrentUserRole(
+            null
+          );
+        }
       } catch (sessionError) {
         console.error(
           "Review session lookup error:",
@@ -866,6 +895,16 @@ function SellerPageContent({
         if (!cancelled) {
           setCurrentUserId(
             null
+          );
+
+          setCurrentUserRole(
+            null
+          );
+        }
+      } finally {
+        if (!cancelled) {
+          setCurrentUserLoading(
+            false
           );
         }
       }
@@ -924,7 +963,7 @@ function SellerPageContent({
         if (!response.ok) {
           const responseError =
             typeof data ===
-              "object" &&
+                "object" &&
             data !== null &&
             "error" in data &&
             typeof data.error ===
@@ -984,7 +1023,7 @@ function SellerPageContent({
                 .map((item) => {
                   if (
                     typeof item ===
-                      "string"
+                    "string"
                   ) {
                     return item;
                   }
@@ -1300,7 +1339,7 @@ function SellerPageContent({
 
         const averageRating =
           typeof rawAverageRating ===
-            "number" &&
+              "number" &&
           Number.isFinite(
             rawAverageRating
           ) &&
@@ -1313,7 +1352,7 @@ function SellerPageContent({
 
         const reviewCount =
           typeof rawReviewCount ===
-            "number" &&
+              "number" &&
           Number.isInteger(
             rawReviewCount
           ) &&
@@ -1676,7 +1715,12 @@ function SellerPageContent({
                 value >= 0
               ) {
                 breakdown[
-                  rating as 1 | 2 | 3 | 4 | 5
+                  rating as
+                    | 1
+                    | 2
+                    | 3
+                    | 4
+                    | 5
                 ] = value;
               }
             }
@@ -1951,6 +1995,19 @@ function SellerPageContent({
       return;
     }
 
+    if (
+      currentUserRole !==
+      "BUYER"
+    ) {
+      setReviewError(
+        currentUserRole
+          ? "Only buyer accounts can leave business reviews."
+          : "You must be signed in as a buyer to leave a review."
+      );
+
+      return;
+    }
+
     setReviewError("");
     setReviewSuccess("");
 
@@ -2151,6 +2208,19 @@ function SellerPageContent({
     setReviewSuccess("");
 
     if (
+      currentUserRole !==
+      "BUYER"
+    ) {
+      setReviewError(
+        currentUserRole
+          ? "Only buyer accounts can manage reviews."
+          : "You must be signed in as a buyer to manage reviews."
+      );
+
+      return;
+    }
+
+    if (
       editingRating < 1 ||
       editingRating > 5
     ) {
@@ -2305,6 +2375,19 @@ function SellerPageContent({
     if (
       reviewDeletingId
     ) {
+      return;
+    }
+
+    if (
+      currentUserRole !==
+      "BUYER"
+    ) {
+      setReviewError(
+        currentUserRole
+          ? "Only buyer accounts can manage reviews."
+          : "You must be signed in as a buyer to manage reviews."
+      );
+
       return;
     }
 
@@ -2912,7 +2995,7 @@ function SellerPageContent({
 
                             <div className="mt-3 flex flex-wrap items-center gap-2">
                               {seller.reviewCount >
-                                0 ? (
+                              0 ? (
                                 <>
                                   <ReviewStars
                                     rating={
@@ -3110,7 +3193,9 @@ function SellerPageContent({
                                   <div>
                                     <img
                                       src={
-                                        getProductImages(product)[0]?.url ??
+                                        getProductImages(
+                                          product
+                                        )[0]?.url ??
                                         ""
                                       }
                                       alt={
@@ -3119,16 +3204,29 @@ function SellerPageContent({
                                       className="h-40 w-full object-cover"
                                     />
 
-                                    {getProductImages(product).length > 1 && (
+                                    {getProductImages(product).length >
+                                      1 && (
                                       <div className="flex gap-2 overflow-x-auto border-t border-[#E8E4DE] bg-white p-2">
-                                        {getProductImages(product).map((image, imageIndex) => (
-                                          <img
-                                            key={image.id ?? `${product.id}-image-${imageIndex}`}
-                                            src={image.url}
-                                            alt=""
-                                            className="h-12 w-12 shrink-0 rounded-lg object-cover"
-                                          />
-                                        ))}
+                                        {getProductImages(
+                                          product
+                                        ).map(
+                                          (
+                                            image,
+                                            imageIndex
+                                          ) => (
+                                            <img
+                                              key={
+                                                image.id ??
+                                                `${product.id}-image-${imageIndex}`
+                                              }
+                                              src={
+                                                image.url
+                                              }
+                                              alt=""
+                                              className="h-12 w-12 shrink-0 rounded-lg object-cover"
+                                            />
+                                          )
+                                        )}
                                       </div>
                                     )}
                                   </div>
@@ -3206,7 +3304,8 @@ function SellerPageContent({
                                     )}
                                   </div>
 
-                                  {product.keywords.length > 0 && (
+                                  {product.keywords.length >
+                                    0 && (
                                     <div className="mt-3 flex flex-wrap gap-1.5">
                                       {product.keywords.map(
                                         (
@@ -3600,7 +3699,6 @@ function SellerPageContent({
                                 size={
                                   14
                                 }
-
                               />
 
                               <span className="text-[11px] font-black text-[#17202A]">
@@ -3745,185 +3843,265 @@ function SellerPageContent({
                       {/* Review form */}
 
                       <div className="rounded-[16px] border border-[#E8E4DE] bg-white p-4">
-                        <div className="flex items-start gap-3">
-                          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-[#FFF0E9] text-[#FF5A36]">
-                            <Star
-                              size={18}
-                              className="fill-current"
-                            />
+                        {currentUserLoading ? (
+                          <div className="flex min-h-[180px] items-center justify-center">
+                            <div className="flex items-center gap-2 text-[11px] font-semibold text-[#817970]">
+                              <LoaderCircle
+                                size={
+                                  15
+                                }
+                                className="animate-spin text-[#FF5A36]"
+                              />
+
+                              Checking your account...
+                            </div>
                           </div>
-
-                          <div>
-                            <h3 className="text-[13px] font-black text-[#17202A]">
-                              Leave a review
-                            </h3>
-
-                            <p className="mt-1 text-[10px] leading-5 text-[#8B847E]">
-                              Share your experience with this business.
-                            </p>
-                          </div>
-                        </div>
-
-                        <form
-                          onSubmit={
-                            submitReview
-                          }
-                          className="mt-4"
-                        >
-                          <div>
-                            <p className="text-[10px] font-bold uppercase tracking-[0.1em] text-[#8C8580]">
-                              Your rating
-                            </p>
-
-                            <div className="mt-2 flex flex-wrap items-center gap-2">
-                              <div className="flex items-center gap-1">
-                                {[1, 2, 3, 4, 5].map(
-                                  (
-                                    rating
-                                  ) => (
-                                    <button
-                                      key={
-                                        rating
-                                      }
-                                      type="button"
-                                      aria-label={`Rate ${rating} out of 5`}
-                                      aria-pressed={
-                                        reviewRating ===
-                                        rating
-                                      }
-                                      onClick={() =>
-                                        setReviewRating(
-                                          rating
-                                        )
-                                      }
-                                      className="rounded-lg p-1 transition hover:bg-[#FFF0E9]"
-                                    >
-                                      <Star
-                                        size={
-                                          22
-                                        }
-                                        className={
-                                          rating <=
-                                          reviewRating
-                                            ? "fill-[#FFB300] text-[#FFB300]"
-                                            : "text-[#D6CFC8]"
-                                        }
-                                      />
-                                    </button>
-                                  )
-                                )}
+                        ) : currentUserRole ===
+                          "BUYER" ? (
+                          <>
+                            <div className="flex items-start gap-3">
+                              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-[#FFF0E9] text-[#FF5A36]">
+                                <Star
+                                  size={
+                                    18
+                                  }
+                                  className="fill-current"
+                                />
                               </div>
 
-                              <span className="text-[10px] font-semibold text-[#8B847E]">
-                                {getRatingLabel(
-                                  reviewRating
-                                )}
-                              </span>
+                              <div>
+                                <h3 className="text-[13px] font-black text-[#17202A]">
+                                  Leave a review
+                                </h3>
+
+                                <p className="mt-1 text-[10px] leading-5 text-[#8B847E]">
+                                  Share your experience with this business.
+                                </p>
+                              </div>
                             </div>
-                          </div>
 
-                          <div className="mt-4">
-                            <label
-                              htmlFor="review-comment"
-                              className="text-[10px] font-bold uppercase tracking-[0.1em] text-[#8C8580]"
+                            <form
+                              onSubmit={
+                                submitReview
+                              }
+                              className="mt-4"
                             >
-                              Review
-                            </label>
+                              <div>
+                                <p className="text-[10px] font-bold uppercase tracking-[0.1em] text-[#8C8580]">
+                                  Your rating
+                                </p>
 
-                            <textarea
-                              id="review-comment"
-                              value={
-                                reviewComment
-                              }
-                              onChange={(
-                                event
-                              ) =>
-                                setReviewComment(
-                                  event
-                                    .target
-                                    .value
-                                )
-                              }
-                              rows={
-                                4
-                              }
-                              maxLength={
-                                2000
-                              }
-                              placeholder="What was your experience with this business?"
-                              className="
-                                mt-2
-                                w-full
-                                resize-none
-                                rounded-xl
-                                border
-                                border-[#E8E4DE]
-                                bg-[#FCFAF6]
-                                px-3
-                                py-3
-                                text-[11px]
-                                leading-5
-                                text-[#35302C]
-                                outline-none
-                                transition
-                                focus:border-[#FF9B86]
-                                focus:bg-white
-                                focus:ring-4
-                                focus:ring-[#FF5A36]/10
-                              "
-                            />
+                                <div className="mt-2 flex flex-wrap items-center gap-2">
+                                  <div className="flex items-center gap-1">
+                                    {[
+                                      1,
+                                      2,
+                                      3,
+                                      4,
+                                      5,
+                                    ].map(
+                                      (
+                                        rating
+                                      ) => (
+                                        <button
+                                          key={
+                                            rating
+                                          }
+                                          type="button"
+                                          aria-label={`Rate ${rating} out of 5`}
+                                          aria-pressed={
+                                            reviewRating ===
+                                            rating
+                                          }
+                                          onClick={() =>
+                                            setReviewRating(
+                                              rating
+                                            )
+                                          }
+                                          className="rounded-lg p-1 transition hover:bg-[#FFF0E9]"
+                                        >
+                                          <Star
+                                            size={
+                                              22
+                                            }
+                                            className={
+                                              rating <=
+                                              reviewRating
+                                                ? "fill-[#FFB300] text-[#FFB300]"
+                                                : "text-[#D6CFC8]"
+                                            }
+                                          />
+                                        </button>
+                                      )
+                                    )}
+                                  </div>
 
-                            <div className="mt-1 flex justify-end">
-                              <span className="text-[9px] text-[#A29B94]">
-                                {
-                                  reviewComment.length
-                                }
-                                /2000
-                              </span>
-                            </div>
-                          </div>
+                                  <span className="text-[10px] font-semibold text-[#8B847E]">
+                                    {getRatingLabel(
+                                      reviewRating
+                                    )}
+                                  </span>
+                                </div>
+                              </div>
 
-                          <div className="mt-4 flex justify-end">
-                            <button
-                              type="submit"
-                              disabled={
-                                reviewSubmitting
-                              }
-                              className="
-                                inline-flex
-                                items-center
-                                justify-center
-                                gap-2
-                                rounded-xl
-                                bg-[#FF5A36]
-                                px-4
-                                py-2.5
-                                text-[11px]
-                                font-bold
-                                text-white
-                                transition
-                                hover:bg-[#E94E2C]
-                                disabled:cursor-not-allowed
-                                disabled:opacity-60
-                              "
-                            >
-                              {reviewSubmitting ? (
-                                <>
-                                  <LoaderCircle
-                                    size={
-                                      14
+                              <div className="mt-4">
+                                <label
+                                  htmlFor="review-comment"
+                                  className="text-[10px] font-bold uppercase tracking-[0.1em] text-[#8C8580]"
+                                >
+                                  Review
+                                </label>
+
+                                <textarea
+                                  id="review-comment"
+                                  value={
+                                    reviewComment
+                                  }
+                                  onChange={(
+                                    event
+                                  ) =>
+                                    setReviewComment(
+                                      event
+                                        .target
+                                        .value
+                                    )
+                                  }
+                                  rows={
+                                    4
+                                  }
+                                  maxLength={
+                                    2000
+                                  }
+                                  placeholder="What was your experience with this business?"
+                                  className="
+                                    mt-2
+                                    w-full
+                                    resize-none
+                                    rounded-xl
+                                    border
+                                    border-[#E8E4DE]
+                                    bg-[#FCFAF6]
+                                    px-3
+                                    py-3
+                                    text-[11px]
+                                    leading-5
+                                    text-[#35302C]
+                                    outline-none
+                                    transition
+                                    focus:border-[#FF9B86]
+                                    focus:bg-white
+                                    focus:ring-4
+                                    focus:ring-[#FF5A36]/10
+                                  "
+                                />
+
+                                <div className="mt-1 flex justify-end">
+                                  <span className="text-[9px] text-[#A29B94]">
+                                    {
+                                      reviewComment.length
                                     }
-                                    className="animate-spin"
-                                  />
+                                    /2000
+                                  </span>
+                                </div>
+                              </div>
 
-                                  Submitting...
-                                </>
-                              ) : (
-                                "Submit review"
-                              )}
-                            </button>
+                              <div className="mt-4 flex justify-end">
+                                <button
+                                  type="submit"
+                                  disabled={
+                                    reviewSubmitting
+                                  }
+                                  className="
+                                    inline-flex
+                                    items-center
+                                    justify-center
+                                    gap-2
+                                    rounded-xl
+                                    bg-[#FF5A36]
+                                    px-4
+                                    py-2.5
+                                    text-[11px]
+                                    font-bold
+                                    text-white
+                                    transition
+                                    hover:bg-[#E94E2C]
+                                    disabled:cursor-not-allowed
+                                    disabled:opacity-60
+                                  "
+                                >
+                                  {reviewSubmitting ? (
+                                    <>
+                                      <LoaderCircle
+                                        size={
+                                          14
+                                        }
+                                        className="animate-spin"
+                                      />
+
+                                      Submitting...
+                                    </>
+                                  ) : (
+                                    "Submit review"
+                                  )}
+                                </button>
+                              </div>
+                            </form>
+                          </>
+                        ) : currentUserRole ===
+                          null ? (
+                          <div className="flex min-h-[180px] flex-col items-center justify-center text-center">
+                            <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-[#FFF0E9] text-[#FF5A36]">
+                              <Star
+                                size={
+                                  20
+                                }
+                                className="fill-current"
+                              />
+                            </div>
+
+                            <h3 className="mt-3 text-[13px] font-black text-[#17202A]">
+                              Sign in to leave a review
+                            </h3>
+
+                            <p className="mt-1 max-w-[320px] text-[10px] leading-5 text-[#8B847E]">
+                              You can browse this business and read customer reviews as a guest. Sign in as a buyer to share your experience.
+                            </p>
+
+                            <div className="mt-4 flex flex-wrap justify-center gap-2">
+                              <Link
+                                href="/buyer/login"
+                                className="inline-flex items-center justify-center rounded-xl bg-[#FF5A36] px-4 py-2.5 text-[10px] font-bold text-white transition hover:bg-[#E94E2C]"
+                              >
+                                Sign in as buyer
+                              </Link>
+
+                              <Link
+                                href="/buyer/signup"
+                                className="inline-flex items-center justify-center rounded-xl border border-[#E8E4DE] bg-white px-4 py-2.5 text-[10px] font-bold text-[#746D67] transition hover:bg-[#FCFAF6]"
+                              >
+                                Create buyer account
+                              </Link>
+                            </div>
                           </div>
-                        </form>
+                        ) : (
+                          <div className="flex min-h-[180px] flex-col items-center justify-center text-center">
+                            <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-[#F3ECEA] text-[#8B6960]">
+                              <Star
+                                size={
+                                  20
+                                }
+                              />
+                            </div>
+
+                            <h3 className="mt-3 text-[13px] font-black text-[#17202A]">
+                              Buyer reviews only
+                            </h3>
+
+                            <p className="mt-1 max-w-[320px] text-[10px] leading-5 text-[#8B847E]">
+                              Reviews can be submitted by buyer accounts. You can still browse this business and read its customer reviews.
+                            </p>
+                          </div>
+                        )}
                       </div>
                     </div>
 
@@ -3989,6 +4167,8 @@ function SellerPageContent({
                               review
                             ) => {
                               const isOwnReview =
+                                currentUserRole ===
+                                  "BUYER" &&
                                 Boolean(
                                   currentUserId &&
                                   review.user
