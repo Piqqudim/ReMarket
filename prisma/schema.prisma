@@ -3,8 +3,9 @@ generator client {
 }
 
 datasource db {
-  provider = "postgresql"
-  url      = env("DATABASE_URL")
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
 }
 
 enum Role {
@@ -91,6 +92,9 @@ model User {
 
   // Business claim requests reviewed by this user.
   claimRequestsReviewed BusinessClaimRequest[] @relation("BusinessClaimReviewedBy")
+
+  // Reviews written by this buyer.
+  reviews BusinessReview[]
 }
 
 model Location {
@@ -172,8 +176,9 @@ model BusinessCategory {
 }
 
 model Business {
-  id        String @id @default(cuid())
-  name      String
+  id   String @id @default(cuid())
+  name String
+
   ownerName String?
 
   // Seller account that owns this business.
@@ -208,18 +213,17 @@ model Business {
   // timestamp = soft-deleted
   deletedAt DateTime?
 
-  categories BusinessCategory[]
-  products   Product[]
-  socialLinks BusinessSocialLink[]
-
-  matches Match[]
-
-  contactEvents ContactEvent[]
-
+  categories       BusinessCategory[]
+  products         Product[]
+  socialLinks      BusinessSocialLink[]
+  matches          Match[]
+  contactEvents    ContactEvent[]
   deletionRequests BusinessDeletionRequest[]
-  claimRequests   BusinessClaimRequest[]
+  claimRequests    BusinessClaimRequest[]
+  viewEvents       BusinessViewEvent[]
 
-  viewEvents BusinessViewEvent[]
+  // Ratings and reviews submitted by buyers.
+  reviews BusinessReview[]
 
   @@index([status])
   @@index([verification])
@@ -227,6 +231,33 @@ model Business {
   @@index([status, deletedAt])
   @@index([ownerId])
   @@index([locationId])
+}
+
+model BusinessReview {
+  id String @id @default(cuid())
+
+  businessId String
+  business   Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  // Whole-number rating from 1 to 5.
+  // API validation will enforce the allowed range.
+  rating Int
+
+  // Optional written review.
+  comment String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // One buyer can have only one review
+  // for a particular business.
+  @@unique([businessId, userId])
+  @@index([businessId])
+  @@index([userId])
+  @@index([createdAt])
 }
 
 model Product {
@@ -260,7 +291,7 @@ model Product {
 
   // Audit: which authenticated user deleted this product?
   deletedById String?
-  deletedBy   User? @relation("ProductDeletedBy",fields: [deletedById],references: [id],onDelete: SetNull)
+  deletedBy   User?   @relation("ProductDeletedBy", fields: [deletedById], references: [id], onDelete: SetNull)
 
   updatedAt DateTime @updatedAt
 
@@ -292,10 +323,9 @@ model BuyerRequest {
   requestCode String @unique
 
   categoryId String?
-
   // A category can be deactivated/deleted without destroying
   // historical buyer requests.
-  category Category? @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+  category   Category? @relation(fields: [categoryId], references: [id], onDelete: SetNull)
 
   budget       Int?
   locationArea String?
@@ -325,10 +355,9 @@ model Match {
   businessId String
   business   Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
 
-  score         Int  @default(0)
-  addedManually Boolean @default(false)
-
-  createdAt DateTime @default(now())
+  score         Int      @default(0)
+  addedManually Boolean  @default(false)
+  createdAt     DateTime @default(now())
 
   @@unique([requestId, businessId])
   @@index([businessId])
@@ -343,7 +372,8 @@ model ContactEvent {
   // Existing request reference preserved as a scalar.
   requestId String?
 
-  platform  SocialPlatform
+  platform SocialPlatform
+
   createdAt DateTime @default(now())
 
   @@index([businessId])
@@ -390,8 +420,8 @@ model AdminNote {
 
   businessId String?
   requestId  String?
+  content    String
 
-  content   String
   createdAt DateTime @default(now())
 
   @@index([businessId])
@@ -405,11 +435,11 @@ model BusinessDeletionRequest {
 
   // Preserve deletion-request history rather than cascading it away
   // during an accidental hard-delete of a business.
-  business Business @relation(fields: [businessId],references: [id],onDelete: Restrict)
+  business Business @relation(fields: [businessId], references: [id], onDelete: Restrict)
 
   // Seller/admin account that submitted the request.
   requestedById String
-  requestedBy   User   @relation("BusinessDeletionRequestedBy",fields: [requestedById],references: [id],onDelete: Restrict)
+  requestedBy   User   @relation("BusinessDeletionRequestedBy", fields: [requestedById], references: [id], onDelete: Restrict)
 
   reason String?
 
@@ -417,7 +447,7 @@ model BusinessDeletionRequest {
 
   // Admin who reviewed the request.
   reviewedById String?
-  reviewedBy   User? @relation("BusinessDeletionReviewedBy",fields: [reviewedById],references: [id],onDelete: SetNull)
+  reviewedBy   User?   @relation("BusinessDeletionReviewedBy", fields: [reviewedById], references: [id], onDelete: SetNull)
 
   reviewedAt DateTime?
 
@@ -434,13 +464,11 @@ model BusinessClaimRequest {
   id String @id @default(cuid())
 
   businessId String
-
-  business Business @relation(fields: [businessId],references: [id],onDelete: Restrict)
+  business   Business @relation(fields: [businessId], references: [id], onDelete: Restrict)
 
   // Seller account requesting ownership.
   requestedById String
-
-  requestedBy User @relation("BusinessClaimRequestedBy",fields: [requestedById],references: [id],onDelete: Restrict)
+  requestedBy   User   @relation("BusinessClaimRequestedBy", fields: [requestedById], references: [id], onDelete: Restrict)
 
   reason String?
 
@@ -448,8 +476,7 @@ model BusinessClaimRequest {
 
   // Admin who reviewed the claim.
   reviewedById String?
-
-  reviewedBy User? @relation("BusinessClaimReviewedBy",fields: [reviewedById],references: [id],onDelete: SetNull)
+  reviewedBy   User?   @relation("BusinessClaimReviewedBy", fields: [reviewedById], references: [id], onDelete: SetNull)
 
   reviewedAt DateTime?
 
