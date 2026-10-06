@@ -40,6 +40,24 @@ type NominatimResult = {
   address?: NominatimAddress;
 };
 
+type EsriAddress = Record<
+  string,
+  unknown
+>;
+
+type EsriReverseResult = {
+  address?: EsriAddress;
+  location?: {
+    x?: unknown;
+    y?: unknown;
+  };
+  error?: {
+    code?: unknown;
+    message?: unknown;
+    details?: unknown;
+  };
+};
+
 const NOMINATIM_URL =
   "https://nominatim.openstreetmap.org/search";
 
@@ -47,10 +65,25 @@ const NOMINATIM_REVERSE_URL =
   "https://nominatim.openstreetmap.org/reverse";
 
 /*
+ * Esri World Geocoding reverse-geocode endpoint.
+ *
+ * This is used by ReMarket Near Me to determine
+ * the user's current street and area.
+ */
+const ESRI_REVERSE_URL =
+  "https://geocode-api.arcgis.com/arcgis/rest/services/World/GeocodeServer/reverseGeocode";
+
+/*
  * Maximum amount of time ReMarket will wait
  * for a Nominatim response.
  */
 const NOMINATIM_TIMEOUT_MS = 10_000;
+
+/*
+ * Maximum amount of time ReMarket will wait
+ * for an Esri response.
+ */
+const ESRI_TIMEOUT_MS = 10_000;
 
 const PRECISE_TYPES =
   new Set([
@@ -974,6 +1007,376 @@ export async function geocodeBusinessLocation(
 
 /*
  * ------------------------------------------------
+ * ESRI REVERSE GEOCODING HELPERS
+ * ------------------------------------------------
+ */
+
+function parseEsriReverseObject(
+  value: unknown
+): EsriReverseResult | null {
+  if (
+    !value ||
+    typeof value !== "object" ||
+    Array.isArray(value)
+  ) {
+    return null;
+  }
+
+  return value as EsriReverseResult;
+}
+
+function getEsriAddressValue(
+  result: EsriReverseResult,
+  key: string
+): string | null {
+  const value =
+    result.address?.[key];
+
+  if (
+    typeof value !== "string"
+  ) {
+    return null;
+  }
+
+  const cleaned =
+    value.trim();
+
+  return cleaned || null;
+}
+
+function removeLeadingHouseNumber(
+  value: string
+): string {
+  /*
+   * Esri's Address field can contain:
+   *
+   * 301 Front St W
+   * 400-444 Terracina Blvd
+   *
+   * ReMarket needs the street itself for
+   * street comparison, so remove the leading
+   * house-number/range portion.
+   */
+  return value
+    .replace(
+      /^\s*\d+[A-Za-z]?(?:\s*[-–]\s*\d+[A-Za-z]?)?\s+/,
+      ""
+    )
+    .trim();
+}
+
+function getEsriReverseStreet(
+  result: EsriReverseResult
+): string | null {
+  const address =
+    getEsriAddressValue(
+      result,
+      "Address"
+    );
+
+  if (address) {
+    const street =
+      removeLeadingHouseNumber(
+        address
+      );
+
+    if (street) {
+      return street;
+    }
+  }
+
+  /*
+   * Fallback to Match_addr when Address is
+   * unavailable.
+   */
+  const matchAddress =
+    getEsriAddressValue(
+      result,
+      "Match_addr"
+    );
+
+  if (!matchAddress) {
+    return null;
+  }
+
+  /*
+   * In a normal street/address response,
+   * the first comma-separated section contains
+   * the address/street portion.
+   */
+  const firstPart =
+    matchAddress
+      .split(",")[0]
+      ?.trim() ?? "";
+
+  if (!firstPart) {
+    return null;
+  }
+
+  const street =
+    removeLeadingHouseNumber(
+      firstPart
+    );
+
+  return street || null;
+}
+
+function getEsriReverseArea(
+  result: EsriReverseResult
+): string | null {
+  /*
+   * ReMarket's "area" should remain a local
+   * neighborhood/district rather than immediately
+   * falling back to the city.
+   *
+   * Neighborhood is preferred because it is usually
+   * the more local subdivision.
+   */
+  const preferredKeys = [
+    "Neighborhood",
+    "District",
+  ];
+
+  for (
+    const key of preferredKeys
+  ) {
+    const value =
+      getEsriAddressValue(
+        result,
+        key
+      );
+
+    if (value) {
+      return value;
+    }
+  }
+
+  return null;
+}
+
+function getEsriReverseCity(
+  result: EsriReverseResult
+): string | null {
+  /*
+   * City is the primary city field returned by
+   * the Esri World Geocoding service.
+   */
+  const city =
+    getEsriAddressValue(
+      result,
+      "City"
+    );
+
+  if (city) {
+    return city;
+  }
+
+  /*
+   * Subregion is a fallback for responses where
+   * City is not populated.
+   */
+  const subregion =
+    getEsriAddressValue(
+      result,
+      "Subregion"
+    );
+
+  return subregion;
+}
+
+function isEsriNigeriaResult(
+  result: EsriReverseResult
+): boolean {
+  const countryCode =
+    getEsriAddressValue(
+      result,
+      "CountryCode"
+    );
+
+  if (!countryCode) {
+    /*
+     * Some responses may not include a country
+     * code. The request is still made to the
+     * World Geocoding service, so absence of the
+     * field alone is not treated as failure.
+     */
+    return true;
+  }
+
+  return (
+    countryCode
+      .trim()
+      .toUpperCase() ===
+      "NGA"
+  );
+}
+
+async function fetchEsriReverseGeocode(
+  latitude: number,
+  longitude: number,
+  apiKey: string
+): Promise<EsriReverseResult> {
+  const url =
+    new URL(
+      ESRI_REVERSE_URL
+    );
+
+  /*
+   * Esri expects longitude first and latitude
+   * second for the location parameter.
+   */
+  url.searchParams.set(
+    "location",
+    `${longitude},${latitude}`
+  );
+
+  url.searchParams.set(
+    "f",
+    "json"
+  );
+
+  url.searchParams.set(
+    "token",
+    apiKey
+  );
+
+  /*
+   * Ask Esri to focus the reverse-geocode result
+   * on address/street features instead of POIs.
+   *
+   * StreetInt is intentionally not included because
+   * Near Me needs the user's street, not an
+   * intersection label.
+   */
+  url.searchParams.set(
+    "featureTypes",
+    "PointAddress,StreetAddress,StreetName"
+  );
+
+  /*
+   * For PointAddress/Subaddress matches, use the
+   * street-access location where applicable.
+   */
+  url.searchParams.set(
+    "locationType",
+    "street"
+  );
+
+  /*
+   * Prefer English labels.
+   */
+  url.searchParams.set(
+    "langCode",
+    "ENG"
+  );
+
+  let response: Response;
+
+  try {
+    response =
+      await fetch(
+        url.toString(),
+        {
+          method: "GET",
+
+          headers: {
+            "Accept":
+              "application/json",
+          },
+
+          cache:
+            "no-store",
+
+          signal:
+            AbortSignal.timeout(
+              ESRI_TIMEOUT_MS
+            ),
+        }
+      );
+  } catch (error) {
+    if (
+      error instanceof
+        DOMException &&
+      error.name ===
+        "TimeoutError"
+    ) {
+      throw new Error(
+        "The Esri location service timed out."
+      );
+    }
+
+    throw new Error(
+      "The Esri location service could not be reached right now."
+    );
+  }
+
+  let data: unknown;
+
+  try {
+    data =
+      await response.json();
+  } catch {
+    throw new Error(
+      "The Esri location service returned an invalid response."
+    );
+  }
+
+  const result =
+    parseEsriReverseObject(
+      data
+    );
+
+  if (!response.ok) {
+    console.error(
+      "Esri reverse geocoding request failed:",
+      {
+        status:
+          response.status,
+
+        statusText:
+          response.statusText,
+
+        error:
+          result?.error ?? null,
+      }
+    );
+
+    throw new Error(
+      "The Esri location service could not be reached right now."
+    );
+  }
+
+  if (
+    result?.error
+  ) {
+    console.error(
+      "Esri reverse geocoding returned an error:",
+      result.error
+    );
+
+    const message =
+      typeof result.error.message ===
+      "string"
+        ? result.error.message
+        : null;
+
+    throw new Error(
+      message ||
+        "The Esri location service returned an error."
+    );
+  }
+
+  if (!result) {
+    throw new Error(
+      "The Esri location service returned an invalid response."
+    );
+  }
+
+  return result;
+}
+
+/*
+ * ------------------------------------------------
  * REVERSE GEOCODING
  * ------------------------------------------------
  *
@@ -981,20 +1384,22 @@ export async function geocodeBusinessLocation(
  * street corresponding to the buyer's current
  * coordinates.
  *
- * Nominatim reverse geocoding returns the closest
- * suitable OSM object, so the street is treated
- * as a location signal rather than an absolute
- * guarantee of the user's exact road.
+ * Esri World Geocoding is now the source used
+ * for this buyer-location lookup.
+ *
+ * Nominatim is still retained above for
+ * geocodeBusinessLocation(), because that function
+ * handles business-address geocoding separately.
  */
 export async function reverseGeocodeLocation(
   input: ReverseGeocodeLocationInput
 ): Promise<ReverseGeocodeLocationResult> {
-  const userAgent =
-    process.env.NOMINATIM_USER_AGENT?.trim();
+  const apiKey =
+    process.env.ESRI_API_KEY?.trim();
 
-  if (!userAgent) {
+  if (!apiKey) {
     throw new Error(
-      "NOMINATIM_USER_AGENT is not configured."
+      "ESRI_API_KEY is not configured."
     );
   }
 
@@ -1018,77 +1423,15 @@ export async function reverseGeocodeLocation(
     );
   }
 
-  const url =
-    new URL(
-      NOMINATIM_REVERSE_URL
-    );
-
-  url.searchParams.set(
-    "lat",
-    String(
-      input.latitude
-    )
-  );
-
-  url.searchParams.set(
-    "lon",
-    String(
-      input.longitude
-    )
-  );
-
-  url.searchParams.set(
-    "format",
-    "jsonv2"
-  );
-
-  url.searchParams.set(
-    "addressdetails",
-    "1"
-  );
-
-  /*
-   * Zoom 18 requests the most detailed
-   * address level available.
-   */
-  url.searchParams.set(
-    "zoom",
-    "18"
-  );
-
-  /*
-   * Restrict reverse results to address
-   * objects rather than unrelated themes.
-   */
-  url.searchParams.set(
-    "layer",
-    "address"
-  );
-
-  url.searchParams.set(
-    "accept-language",
-    "en"
-  );
-
-  const response =
-    await fetchNominatim(
-      url,
-      userAgent
-    );
-
-  if (
-    Array.isArray(response)
-  ) {
-    throw new Error(
-      "The reverse location service returned an unexpected response."
-    );
-  }
-
   const result =
-    response;
+    await fetchEsriReverseGeocode(
+      input.latitude,
+      input.longitude,
+      apiKey
+    );
 
   if (
-    !isNigeriaResult(
+    !isEsriNigeriaResult(
       result
     )
   ) {
@@ -1097,26 +1440,48 @@ export async function reverseGeocodeLocation(
     );
   }
 
+  const street =
+    getEsriReverseStreet(
+      result
+    );
+
+  const area =
+    getEsriReverseArea(
+      result
+    );
+
+  const city =
+    getEsriReverseCity(
+      result
+    );
+
+  const formattedAddress =
+    getEsriAddressValue(
+      result,
+      "LongLabel"
+    ) ??
+    getEsriAddressValue(
+      result,
+      "Match_addr"
+    );
+
+  /*
+   * The Near Me ranking depends on having a
+   * street-level result.
+   *
+   * We do not silently convert a city-only result
+   * into a street.
+   */
+  if (!street && !area && !city) {
+    throw new Error(
+      "Esri could not determine a street or area for the current location."
+    );
+  }
+
   return {
-    street:
-      getStreet(
-        result
-      ),
-
-    area:
-      getReverseArea(
-        result
-      ),
-
-    city:
-      getReverseCity(
-        result
-      ),
-
-    formattedAddress:
-      typeof result.display_name ===
-      "string"
-        ? result.display_name
-        : null,
+    street,
+    area,
+    city,
+    formattedAddress,
   };
 }
