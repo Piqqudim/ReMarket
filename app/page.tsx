@@ -218,9 +218,13 @@ function subscribeSavedBusinesses(
 }
 
 export default function HomePage() {
-  const [q, setQ] = useState("");
+  const [q, setQ] =
+    useState("");
 
-  const [categories, setCategories] =
+  const [
+    categories,
+    setCategories,
+  ] =
     useState<ReMarketCategory[]>(
       DEFAULT_CATEGORIES
     );
@@ -228,38 +232,45 @@ export default function HomePage() {
   const [
     featuredBusinesses,
     setFeaturedBusinesses,
-  ] = useState<FeaturedBusiness[]>(
-    []
-  );
+  ] =
+    useState<FeaturedBusiness[]>(
+      []
+    );
 
   const [
     businessLoading,
     setBusinessLoading,
-  ] = useState(true);
+  ] =
+    useState(true);
 
   const [
     nearbyBusinesses,
     setNearbyBusiness,
-  ] = useState<NearbyBusiness[]>(
-    []
-  );
+  ] =
+    useState<NearbyBusiness[]>(
+      []
+    );
 
   const [
     nearbyLoading,
     setNearbyLoading,
-  ] = useState(false);
+  ] =
+    useState(false);
 
   const [
     nearbyLocationRequested,
     setNearbyLocationRequested,
-  ] = useState(false);
+  ] =
+    useState(false);
 
   const [
     nearbyError,
     setNearbyError,
-  ] = useState("");
+  ] =
+    useState("");
 
-  const router = useRouter();
+  const router =
+    useRouter();
 
   /*
    * -----------------------------------------
@@ -334,7 +345,8 @@ export default function HomePage() {
    */
 
   useEffect(() => {
-    let cancelled = false;
+    let cancelled =
+      false;
 
     async function loadHomeData() {
       try {
@@ -416,7 +428,9 @@ export default function HomePage() {
             );
           }
         }
-      } catch (error) {
+      } catch (
+        error
+      ) {
         console.error(
           "Failed to load homepage data",
           error
@@ -523,7 +537,10 @@ export default function HomePage() {
         true
       );
 
-      setNearbyLoading(true);
+      setNearbyLoading(
+        true
+      );
+
       setNearbyError("");
 
       /*
@@ -534,12 +551,15 @@ export default function HomePage() {
       setNearbyBusiness([]);
 
       navigator.geolocation.getCurrentPosition(
-        async (position) => {
+        async (
+          position
+        ) => {
           try {
             const {
               latitude,
               longitude,
-            } = position.coords;
+            } =
+              position.coords;
 
             const response =
               await fetch(
@@ -577,7 +597,9 @@ export default function HomePage() {
                   )
                 : []
             );
-          } catch (error) {
+          } catch (
+            error
+          ) {
             console.error(
               "Failed to load nearby businesses:",
               error
@@ -593,7 +615,9 @@ export default function HomePage() {
           }
         },
 
-        (error) => {
+        (
+          error
+        ) => {
           console.error(
             "Geolocation error:",
             error
@@ -624,7 +648,7 @@ export default function HomePage() {
    */
 
   const submit = (
-    event: React.SubmitEvent<HTMLFormElement>
+    event: React.FormEvent<HTMLFormElement>
   ) => {
     event.preventDefault();
 
@@ -650,17 +674,17 @@ export default function HomePage() {
           {/* Header */}
 
           <header className="flex h-[64px] items-center justify-between border-b border-[#EAE6DF] bg-white px-4 sm:px-6 lg:h-[66px] lg:px-6">
-            <div className="flex items-center gap-2.5">
-              <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-[#FF5A36] text-white shadow-sm">
+            <div className="flex min-w-0 items-center gap-2.5">
+              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-[#FF5A36] text-white shadow-sm">
                 <Store className="h-5 w-5" />
               </div>
 
-              <div>
-                <p className="text-sm font-bold tracking-tight text-base">
+              <div className="min-w-0">
+                <p className="truncate text-sm font-bold tracking-tight text-base">
                   ReMarket
                 </p>
 
-                <p className="text-[10px] leading-none text-muted sm:text-[10px]">
+                <p className="truncate text-[10px] leading-none text-muted sm:text-[10px]">
                   Find it nearby
                 </p>
               </div>
@@ -693,7 +717,9 @@ export default function HomePage() {
 
             {/* Right Action */}
 
-            <div className="flex items-center gap-1.5 sm:gap-3">
+            <div className="flex shrink-0 items-center gap-1.5 sm:gap-3">
+              {/* Search */}
+
               <button
                 type="button"
                 onClick={() => {
@@ -710,6 +736,8 @@ export default function HomePage() {
                 <Search className="h-[19px] w-[19px] text-gray-700" />
               </button>
 
+              {/* Saved */}
+
               <button
                 type="button"
                 onClick={() =>
@@ -725,7 +753,11 @@ export default function HomePage() {
 
               {/* Notifications */}
 
-              <NotificationBell />
+              <div className="shrink-0">
+                <NotificationBell />
+              </div>
+
+              {/* Profile */}
 
               <button
                 type="button"
@@ -735,6 +767,8 @@ export default function HomePage() {
                 <UserCircle className="h-6 w-6 text-gray-700" />
               </button>
 
+              {/* Request */}
+
               <button
                 type="button"
                 onClick={() =>
@@ -742,9 +776,15 @@ export default function HomePage() {
                     "/request"
                   )
                 }
-                className="rounded-xl bg-[#FF5A36] px-3 py-2.5 text-[11px] font-bold text-white shadow-sm transition hover:opacity-90 sm:px-4 sm:text-xs"
+                className="shrink-0 whitespace-nowrap rounded-xl bg-[#FF5A36] px-2.5 py-2.5 text-[10px] font-bold text-white shadow-sm transition hover:opacity-90 sm:px-4 sm:text-xs"
               >
-                Request something
+                <span className="sm:hidden">
+                  Request
+                </span>
+
+                <span className="hidden sm:inline">
+                  Request something
+                </span>
               </button>
             </div>
           </header>
@@ -1253,8 +1293,10 @@ export default function HomePage() {
                                       </p>
 
                                       <p className="mt-0.5 truncate text-[11px] text-muted">
-                                        {business.category ??
-                                          "Local business"}
+                                        {
+                                          business.category ??
+                                          "Local business"
+                                        }
                                       </p>
                                     </div>
                                   </div>
@@ -1454,8 +1496,13 @@ export default function HomePage() {
                                       </Link>
 
                                       <p className="mt-1 truncate text-[10px] text-muted">
-                                        {category} ·{" "}
-                                        {location}
+                                        {
+                                          category
+                                        }{" "}
+                                        ·{" "}
+                                        {
+                                          location
+                                        }
                                       </p>
                                     </div>
 

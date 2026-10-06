@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+
 import {
   ArrowRight,
   ClipboardList,
@@ -17,9 +18,21 @@ import {
   Tags,
   Eye,
   AlertCircle,
+  LogOut,
 } from "lucide-react";
-import { useEffect, useState } from "react";
-import { usePathname } from "next/navigation";
+
+import {
+  useEffect,
+  useState,
+} from "react";
+
+import {
+  usePathname,
+} from "next/navigation";
+
+import {
+  signOut,
+} from "next-auth/react";
 
 import NotificationBell from "@/components/NotificationBell";
 
@@ -119,7 +132,9 @@ const ADMIN_NAV = [
 ];
 
 function formatDate(value: string) {
-  return new Date(value).toLocaleDateString(
+  return new Date(
+    value
+  ).toLocaleDateString(
     "en-NG",
     {
       day: "numeric",
@@ -129,7 +144,9 @@ function formatDate(value: string) {
   );
 }
 
-function statusClass(status: string) {
+function statusClass(
+  status: string
+) {
   switch (status) {
     case "MATCHED":
       return "bg-[#E7F7EF] text-[#287A4B]";
@@ -236,7 +253,11 @@ function StatCard({
     return content;
   }
 
-  return <Link href={href}>{content}</Link>;
+  return (
+    <Link href={href}>
+      {content}
+    </Link>
+  );
 }
 
 function OperationCard({
@@ -305,13 +326,21 @@ function OperationCard({
     return content;
   }
 
-  return <Link href={href}>{content}</Link>;
+  return (
+    <Link href={href}>
+      {content}
+    </Link>
+  );
 }
 
 export default function AdminPage() {
-  const pathname = usePathname();
+  const pathname =
+    usePathname();
 
-  const [data, setData] =
+  const [
+    data,
+    setData,
+  ] =
     useState<Overview | null>(
       null
     );
@@ -319,21 +348,43 @@ export default function AdminPage() {
   const [
     contactActivity,
     setContactActivity,
-  ] = useState<ContactActivity>(
-    DEFAULT_CONTACT_ACTIVITY
-  );
+  ] =
+    useState<ContactActivity>(
+      DEFAULT_CONTACT_ACTIVITY
+    );
 
   const [
     loading,
     setLoading,
-  ] = useState(true);
+  ] =
+    useState(true);
 
   const [
     error,
     setError,
-  ] = useState("");
+  ] =
+    useState("");
+
+  async function handleLogout() {
+    try {
+      await signOut({
+        callbackUrl:
+          "/admin/login",
+      });
+    } catch (
+      logoutError
+    ) {
+      console.error(
+        "Admin logout error:",
+        logoutError
+      );
+    }
+  }
 
   useEffect(() => {
+    let cancelled =
+      false;
+
     async function loadOverview() {
       try {
         setLoading(true);
@@ -365,33 +416,49 @@ export default function AdminPage() {
         const result: Overview =
           await response.json();
 
+        if (cancelled) {
+          return;
+        }
+
         setData(result);
 
         setContactActivity(
           result.contactActivity ??
             DEFAULT_CONTACT_ACTIVITY
         );
-      } catch (error) {
+      } catch (
+        error
+      ) {
         console.error(error);
 
-        setError(
-          "We couldn't load the admin dashboard."
-        );
+        if (!cancelled) {
+          setError(
+            "We couldn't load the admin dashboard."
+          );
+        }
       } finally {
-        setLoading(false);
+        if (!cancelled) {
+          setLoading(false);
+        }
       }
     }
 
     void loadOverview();
+
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   return (
     <div className="min-h-screen bg-[#FAF6EF] text-[#2E241F]">
       <div className="flex min-h-screen">
+
         {/* Sidebar */}
 
         <aside className="hidden w-64 shrink-0 border-r border-[#E8DED3] bg-[#FFFDFC] lg:block">
           <div className="sticky top-0 flex h-screen flex-col">
+
             <div className="border-b border-[#E8DED3] px-6 py-6">
               <Link
                 href="/admin"
@@ -463,14 +530,46 @@ export default function AdminPage() {
               </div>
             </nav>
 
-            <div className="border-t border-[#E8DED3] px-6 py-5">
-              <p className="text-xs text-[#9A9087]">
-                ReMarket Admin
-              </p>
+            {/* Admin footer + logout */}
 
-              <p className="mt-1 text-sm font-medium text-[#4B4038]">
-                Platform overview
-              </p>
+            <div className="border-t border-[#E8DED3] px-4 py-4">
+              <div className="mb-4 px-2">
+                <p className="text-xs text-[#9A9087]">
+                  ReMarket Admin
+                </p>
+
+                <p className="mt-1 text-sm font-medium text-[#4B4038]">
+                  Platform overview
+                </p>
+              </div>
+
+              <button
+                type="button"
+                onClick={() =>
+                  void handleLogout()
+                }
+                className="
+                  flex
+                  w-full
+                  items-center
+                  gap-3
+                  rounded-xl
+                  px-3
+                  py-3
+                  text-left
+                  text-sm
+                  font-medium
+                  text-[#9F2D18]
+                  transition
+                  hover:bg-[#FFF0E8]
+                "
+              >
+                <LogOut className="h-4 w-4" />
+
+                <span>
+                  Log out
+                </span>
+              </button>
             </div>
           </div>
         </aside>
@@ -479,6 +578,7 @@ export default function AdminPage() {
 
         <main className="min-w-0 flex-1">
           <div className="mx-auto max-w-7xl px-4 py-6 sm:px-6 lg:px-8 lg:py-8">
+
             {/* Header */}
 
             <div className="mb-8">
@@ -503,10 +603,43 @@ export default function AdminPage() {
                   </p>
                 </div>
 
-                {/* Notifications */}
+                {/* Notifications + Logout */}
 
-                <div className="flex items-center justify-end">
+                <div className="flex items-center justify-end gap-2">
                   <NotificationBell />
+
+                  <button
+                    type="button"
+                    onClick={() =>
+                      void handleLogout()
+                    }
+                    className="
+                      inline-flex
+                      items-center
+                      gap-2
+                      rounded-xl
+                      border
+                      border-[#E8DED3]
+                      bg-white
+                      px-3
+                      py-2
+                      text-xs
+                      font-semibold
+                      text-[#6F675F]
+                      transition
+                      hover:border-[#D8C9BC]
+                      hover:bg-[#FFF0E8]
+                      hover:text-[#9F2D18]
+                    "
+                    aria-label="Log out"
+                    title="Log out"
+                  >
+                    <LogOut className="h-4 w-4" />
+
+                    <span className="hidden sm:inline">
+                      Log out
+                    </span>
+                  </button>
                 </div>
               </div>
             </div>
@@ -525,6 +658,7 @@ export default function AdminPage() {
 
             {loading ? (
               <div className="space-y-6">
+
                 <div className="grid grid-cols-2 gap-4 xl:grid-cols-6">
                   {Array.from({
                     length: 6,
@@ -575,34 +709,43 @@ export default function AdminPage() {
               </div>
             ) : data ? (
               <>
+
                 {/* Stats */}
 
                 <section>
                   <div className="grid grid-cols-2 gap-4 xl:grid-cols-6">
+
                     <StatCard
                       label="Businesses"
                       value={
-                        data.stats
+                        data
+                          .stats
                           .businesses
                       }
-                      icon={Store}
+                      icon={
+                        Store
+                      }
                       href="/admin/businesses"
                     />
 
                     <StatCard
                       label="Products"
                       value={
-                        data.stats
+                        data
+                          .stats
                           .products
                       }
-                      icon={Package}
+                      icon={
+                        Package
+                      }
                       href="/admin/products"
                     />
 
                     <StatCard
                       label="Requests"
                       value={
-                        data.stats
+                        data
+                          .stats
                           .requests
                       }
                       icon={
@@ -614,29 +757,39 @@ export default function AdminPage() {
                     <StatCard
                       label="Matches"
                       value={
-                        data.stats
+                        data
+                          .stats
                           .matches
                       }
-                      icon={Users}
+                      icon={
+                        Users
+                      }
                     />
 
                     <StatCard
                       label="Seller contacts"
                       value={
-                        data.stats
+                        data
+                          .stats
                           .contacts
                       }
-                      icon={Contact}
+                      icon={
+                        Contact
+                      }
                     />
 
                     <StatCard
                       label="Business views"
                       value={
-                        data.stats
+                        data
+                          .stats
                           .businessViews
                       }
-                      icon={Eye}
+                      icon={
+                        Eye
+                      }
                     />
+
                   </div>
                 </section>
 
@@ -658,10 +811,12 @@ export default function AdminPage() {
                   </div>
 
                   <div className="grid grid-cols-2 gap-4 md:grid-cols-3 xl:grid-cols-5">
+
                     <OperationCard
                       label="Seller accounts"
                       value={
-                        data.operations
+                        data
+                          .operations
                           .sellerAccounts
                       }
                       description="Registered seller accounts"
@@ -678,7 +833,9 @@ export default function AdminPage() {
                           .pendingDeletionRequests
                       }
                       description="Business deletion requests awaiting review"
-                      icon={Trash2}
+                      icon={
+                        Trash2
+                      }
                       href="/admin/business-deletion-requests"
                       attention={
                         data
@@ -716,7 +873,9 @@ export default function AdminPage() {
                           .categories
                       }
                       description={`${data.operations.activeCategories} active categories`}
-                      icon={Tags}
+                      icon={
+                        Tags
+                      }
                       href="/admin/categories"
                     />
 
@@ -728,9 +887,12 @@ export default function AdminPage() {
                           .activeCategories
                       }
                       description="Categories currently available to the platform"
-                      icon={Tags}
+                      icon={
+                        Tags
+                      }
                       href="/admin/categories"
                     />
+
                   </div>
                 </section>
 
@@ -751,13 +913,16 @@ export default function AdminPage() {
                   </div>
 
                   <div className="grid grid-cols-2 gap-4 md:grid-cols-3 xl:grid-cols-6">
+
                     <ContactActivityCard
                       label="WhatsApp"
                       value={
                         contactActivity
                           .WHATSAPP
                       }
-                      icon={Contact}
+                      icon={
+                        Contact
+                      }
                     />
 
                     <ContactActivityCard
@@ -766,7 +931,9 @@ export default function AdminPage() {
                         contactActivity
                           .PHONE
                       }
-                      icon={Phone}
+                      icon={
+                        Phone
+                      }
                     />
 
                     <ContactActivityCard
@@ -786,7 +953,9 @@ export default function AdminPage() {
                         contactActivity
                           .TIKTOK
                       }
-                      icon={Contact}
+                      icon={
+                        Contact
+                      }
                     />
 
                     <ContactActivityCard
@@ -806,14 +975,18 @@ export default function AdminPage() {
                         contactActivity
                           .DIRECTIONS
                       }
-                      icon={MapPin}
+                      icon={
+                        MapPin
+                      }
                     />
+
                   </div>
                 </section>
 
                 {/* Recent data */}
 
                 <section className="mt-6 grid gap-6 xl:grid-cols-2">
+
                   {/* Recent Requests */}
 
                   <div className="rounded-2xl border border-[#E8DED3] bg-white">
@@ -1032,6 +1205,7 @@ export default function AdminPage() {
                       )}
                     </div>
                   </div>
+
                 </section>
               </>
             ) : null}
