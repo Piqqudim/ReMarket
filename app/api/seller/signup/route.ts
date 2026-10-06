@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+
 import bcrypt from "bcryptjs";
 
 import { prisma } from "@/lib/prisma";
@@ -44,8 +45,7 @@ export async function POST(
         },
         {
           status: 400,
-          headers:
-            jsonHeaders(),
+          headers: jsonHeaders(),
         }
       );
     }
@@ -86,8 +86,7 @@ export async function POST(
         },
         {
           status: 400,
-          headers:
-            jsonHeaders(),
+          headers: jsonHeaders(),
         }
       );
     }
@@ -103,8 +102,7 @@ export async function POST(
         },
         {
           status: 400,
-          headers:
-            jsonHeaders(),
+          headers: jsonHeaders(),
         }
       );
     }
@@ -117,8 +115,7 @@ export async function POST(
         },
         {
           status: 400,
-          headers:
-            jsonHeaders(),
+          headers: jsonHeaders(),
         }
       );
     }
@@ -131,8 +128,7 @@ export async function POST(
         },
         {
           status: 400,
-          headers:
-            jsonHeaders(),
+          headers: jsonHeaders(),
         }
       );
     }
@@ -148,8 +144,7 @@ export async function POST(
         },
         {
           status: 400,
-          headers:
-            jsonHeaders(),
+          headers: jsonHeaders(),
         }
       );
     }
@@ -162,8 +157,7 @@ export async function POST(
         },
         {
           status: 400,
-          headers:
-            jsonHeaders(),
+          headers: jsonHeaders(),
         }
       );
     }
@@ -179,8 +173,7 @@ export async function POST(
         },
         {
           status: 400,
-          headers:
-            jsonHeaders(),
+          headers: jsonHeaders(),
         }
       );
     }
@@ -200,8 +193,7 @@ export async function POST(
         },
         {
           status: 400,
-          headers:
-            jsonHeaders(),
+          headers: jsonHeaders(),
         }
       );
     }
@@ -217,7 +209,6 @@ export async function POST(
         where: {
           email,
         },
-
         select: {
           id: true,
         },
@@ -231,8 +222,7 @@ export async function POST(
         },
         {
           status: 409,
-          headers:
-            jsonHeaders(),
+          headers: jsonHeaders(),
         }
       );
     }
@@ -262,16 +252,12 @@ export async function POST(
         await prisma.user.create({
           data: {
             name,
-
             email,
-
             password:
               passwordHash,
-
             role:
               "SELLER",
           },
-
           select: {
             id: true,
             name: true,
@@ -284,22 +270,23 @@ export async function POST(
         {
           message:
             "Seller account created successfully.",
-
           user,
         },
         {
           status: 201,
-          headers:
-            jsonHeaders(),
+          headers: jsonHeaders(),
         }
       );
-    } catch (error) {
+    } catch (
+      error
+    ) {
       /*
        * The email column is unique in Prisma.
        *
        * If two signup requests race, the
        * database unique constraint wins.
        */
+
       if (
         typeof error ===
           "object" &&
@@ -315,15 +302,16 @@ export async function POST(
           },
           {
             status: 409,
-            headers:
-              jsonHeaders(),
+            headers: jsonHeaders(),
           }
         );
       }
 
       throw error;
     }
-  } catch (error) {
+  } catch (
+    error
+  ) {
     console.error(
       "Seller signup error:",
       error
@@ -336,8 +324,7 @@ export async function POST(
       },
       {
         status: 500,
-        headers:
-          jsonHeaders(),
+        headers: jsonHeaders(),
       }
     );
   }

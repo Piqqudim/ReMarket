@@ -107,6 +107,11 @@ const ADMIN_NAV = [
     icon: ClipboardList,
   },
   {
+    label: "Claims",
+    href: "/admin/claims",
+    icon: UserRound,
+  },
+  {
     label: "Deletion requests",
     href: "/admin/business-deletion-requests",
     icon: Trash2,
@@ -694,6 +699,7 @@ export default function AdminPage() {
                       icon={
                         AlertCircle
                       }
+                      href="/admin/claims"
                       attention={
                         data
                           .operations

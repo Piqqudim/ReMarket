@@ -1,12 +1,16 @@
 "use client";
 
 import React, {
+  Suspense,
   useEffect,
   useRef,
   useState,
 } from "react";
 
-import { useRouter } from "next/navigation";
+import {
+  useRouter,
+  useSearchParams,
+} from "next/navigation";
 
 import {
   Store,
@@ -21,39 +25,113 @@ import {
   CheckCircle2,
 } from "lucide-react";
 
-export default function SellerSignup() {
-  const [name, setName] = useState("");
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
-  const [confirmPassword, setConfirmPassword] =
-    useState("");
+function getSafeCallbackUrl(
+  value: string | null
+): string {
+  /*
+   * Only allow internal ReMarket paths.
+   *
+   * This prevents an external URL from being
+   * used as a redirect destination.
+   */
+  if (
+    !value ||
+    !value.startsWith("/") ||
+    value.startsWith("//")
+  ) {
+    return "/seller";
+  }
 
-  const [error, setError] =
-    useState("");
+  return value;
+}
 
-  const [success, setSuccess] =
-    useState("");
+function SellerSignupContent() {
+  const [
+    name,
+    setName,
+  ] = useState("");
 
-  const [loading, setLoading] =
-    useState(false);
+  const [
+    email,
+    setEmail,
+  ] = useState("");
 
-  const [showPassword, setShowPassword] =
-    useState(false);
+  const [
+    password,
+    setPassword,
+  ] = useState("");
+
+  const [
+    confirmPassword,
+    setConfirmPassword,
+  ] = useState("");
+
+  const [
+    error,
+    setError,
+  ] = useState("");
+
+  const [
+    success,
+    setSuccess,
+  ] = useState("");
+
+  const [
+    loading,
+    setLoading,
+  ] = useState(false);
+
+  const [
+    showPassword,
+    setShowPassword,
+  ] = useState(false);
 
   const [
     showConfirmPassword,
     setShowConfirmPassword,
   ] = useState(false);
 
-  const router = useRouter();
+  const router =
+    useRouter();
+
+  const searchParams =
+    useSearchParams();
+
+  /*
+   * Preserve the exact business page that
+   * started the seller claim flow.
+   *
+   * Example:
+   *
+   * /seller/signup?callbackUrl=/seller/abc123
+   */
+  const callbackUrl =
+    getSafeCallbackUrl(
+      searchParams.get(
+        "callbackUrl"
+      )
+    );
+
+  /*
+   * After account creation, send the seller
+   * to login while preserving the same
+   * callback URL.
+   */
+  const loginUrl =
+    `/seller/login?callbackUrl=${encodeURIComponent(
+      callbackUrl
+    )}`;
 
   const redirectTimer =
-    useRef<number | null>(null);
+    useRef<number | null>(
+      null
+    );
 
   useEffect(() => {
     return () => {
       if (
-        redirectTimer.current !== null
+        redirectTimer.current !==
+        null
       ) {
         window.clearTimeout(
           redirectTimer.current
@@ -73,7 +151,7 @@ export default function SellerSignup() {
   }
 
   async function submit(
-    event: React.SubmitEvent<HTMLFormElement>
+    event: React.FormEvent<HTMLFormElement>
   ) {
     event.preventDefault();
 
@@ -88,12 +166,15 @@ export default function SellerSignup() {
       name.trim();
 
     const cleanEmail =
-      email.trim().toLowerCase();
+      email
+        .trim()
+        .toLowerCase();
 
     if (!cleanName) {
       setError(
         "Name is required"
       );
+
       return;
     }
 
@@ -101,13 +182,18 @@ export default function SellerSignup() {
       setError(
         "Email is required"
       );
+
       return;
     }
 
-    if (password.length < 8) {
+    if (
+      password.length <
+      8
+    ) {
       setError(
         "Password must be at least 8 characters"
       );
+
       return;
     }
 
@@ -118,6 +204,7 @@ export default function SellerSignup() {
       setError(
         "Passwords do not match"
       );
+
       return;
     }
 
@@ -134,8 +221,12 @@ export default function SellerSignup() {
                 "application/json",
             },
             body: JSON.stringify({
-              name: cleanName,
-              email: cleanEmail,
+              name:
+                cleanName,
+
+              email:
+                cleanEmail,
+
               password,
             }),
           }
@@ -172,10 +263,12 @@ export default function SellerSignup() {
       redirectTimer.current =
         window.setTimeout(() => {
           router.push(
-            "/seller/login"
+            loginUrl
           );
         }, 800);
-    } catch (signupError) {
+    } catch (
+      signupError
+    ) {
       console.error(
         "Seller signup error:",
         signupError
@@ -203,7 +296,9 @@ export default function SellerSignup() {
         }).map(
           (_, index) => (
             <span
-              key={index}
+              key={
+                index
+              }
               className="h-2 w-2 rounded-full bg-[#F89B68]"
             />
           )
@@ -218,7 +313,9 @@ export default function SellerSignup() {
         }).map(
           (_, index) => (
             <span
-              key={index}
+              key={
+                index
+              }
               className="h-2 w-2 rounded-full bg-[#F89B68]"
             />
           )
@@ -272,7 +369,9 @@ export default function SellerSignup() {
           {/* Form */}
 
           <form
-            onSubmit={submit}
+            onSubmit={
+              submit
+            }
             className="space-y-6 sm:space-y-7"
           >
             {/* Name */}
@@ -296,8 +395,12 @@ export default function SellerSignup() {
                   name="name"
                   type="text"
                   placeholder="Your full name"
-                  value={name}
-                  onChange={(event) => {
+                  value={
+                    name
+                  }
+                  onChange={(
+                    event
+                  ) => {
                     setName(
                       event.target
                         .value
@@ -307,7 +410,9 @@ export default function SellerSignup() {
                   }}
                   autoComplete="name"
                   required
-                  disabled={loading}
+                  disabled={
+                    loading
+                  }
                   className="h-[64px] w-full rounded-[14px] border border-[#D9DEE5] bg-white pl-14 pr-5 text-[17px] text-[#111C27] outline-none transition-all placeholder:text-[#8491A3] focus:border-[#FF694F] focus:ring-4 focus:ring-[#FF694F]/10 disabled:cursor-not-allowed disabled:bg-[#F8F8F7]"
                 />
               </div>
@@ -334,8 +439,12 @@ export default function SellerSignup() {
                   name="email"
                   type="email"
                   placeholder="you@business.com"
-                  value={email}
-                  onChange={(event) => {
+                  value={
+                    email
+                  }
+                  onChange={(
+                    event
+                  ) => {
                     setEmail(
                       event.target
                         .value
@@ -347,7 +456,9 @@ export default function SellerSignup() {
                   autoCapitalize="none"
                   spellCheck={false}
                   required
-                  disabled={loading}
+                  disabled={
+                    loading
+                  }
                   className="h-[64px] w-full rounded-[14px] border border-[#D9DEE5] bg-white pl-14 pr-5 text-[17px] text-[#111C27] outline-none transition-all placeholder:text-[#8491A3] focus:border-[#FF694F] focus:ring-4 focus:ring-[#FF694F]/10 disabled:cursor-not-allowed disabled:bg-[#F8F8F7]"
                 />
               </div>
@@ -378,14 +489,20 @@ export default function SellerSignup() {
                       : "password"
                   }
                   placeholder="Create a password"
-                  value={password}
-                  onChange={(event) => {
+                  value={
+                    password
+                  }
+                  onChange={(
+                    event
+                  ) => {
                     setPassword(
                       event.target
                         .value
                     );
 
-                    if (error) {
+                    if (
+                      error
+                    ) {
                       setError(
                         ""
                       );
@@ -393,8 +510,12 @@ export default function SellerSignup() {
                   }}
                   autoComplete="new-password"
                   required
-                  minLength={8}
-                  disabled={loading}
+                  minLength={
+                    8
+                  }
+                  disabled={
+                    loading
+                  }
                   className="h-[64px] w-full rounded-[14px] border border-[#D9DEE5] bg-white pl-14 pr-14 text-[17px] text-[#111C27] outline-none transition-all placeholder:text-[#8491A3] focus:border-[#FF694F] focus:ring-4 focus:ring-[#FF694F]/10 disabled:cursor-not-allowed disabled:bg-[#F8F8F7]"
                 />
 
@@ -402,11 +523,15 @@ export default function SellerSignup() {
                   type="button"
                   onClick={() =>
                     setShowPassword(
-                      (current) =>
+                      (
+                        current
+                      ) =>
                         !current
                     )
                   }
-                  disabled={loading}
+                  disabled={
+                    loading
+                  }
                   aria-label={
                     showPassword
                       ? "Hide password"
@@ -417,12 +542,16 @@ export default function SellerSignup() {
                   {showPassword ? (
                     <EyeOff
                       className="h-5 w-5"
-                      strokeWidth={2}
+                      strokeWidth={
+                        2
+                      }
                     />
                   ) : (
                     <Eye
                       className="h-5 w-5"
-                      strokeWidth={2}
+                      strokeWidth={
+                        2
+                      }
                     />
                   )}
                 </button>
@@ -457,13 +586,17 @@ export default function SellerSignup() {
                   value={
                     confirmPassword
                   }
-                  onChange={(event) => {
+                  onChange={(
+                    event
+                  ) => {
                     setConfirmPassword(
                       event.target
                         .value
                     );
 
-                    if (error) {
+                    if (
+                      error
+                    ) {
                       setError(
                         ""
                       );
@@ -471,8 +604,12 @@ export default function SellerSignup() {
                   }}
                   autoComplete="new-password"
                   required
-                  minLength={8}
-                  disabled={loading}
+                  minLength={
+                    8
+                  }
+                  disabled={
+                    loading
+                  }
                   className="h-[64px] w-full rounded-[14px] border border-[#D9DEE5] bg-white pl-14 pr-14 text-[17px] text-[#111C27] outline-none transition-all placeholder:text-[#8491A3] focus:border-[#FF694F] focus:ring-4 focus:ring-[#FF694F]/10 disabled:cursor-not-allowed disabled:bg-[#F8F8F7]"
                 />
 
@@ -480,11 +617,15 @@ export default function SellerSignup() {
                   type="button"
                   onClick={() =>
                     setShowConfirmPassword(
-                      (current) =>
+                      (
+                        current
+                      ) =>
                         !current
                     )
                   }
-                  disabled={loading}
+                  disabled={
+                    loading
+                  }
                   aria-label={
                     showConfirmPassword
                       ? "Hide confirm password"
@@ -495,12 +636,16 @@ export default function SellerSignup() {
                   {showConfirmPassword ? (
                     <EyeOff
                       className="h-5 w-5"
-                      strokeWidth={2}
+                      strokeWidth={
+                        2
+                      }
                     />
                   ) : (
                     <Eye
                       className="h-5 w-5"
-                      strokeWidth={2}
+                      strokeWidth={
+                        2
+                      }
                     />
                   )}
                 </button>
@@ -518,12 +663,16 @@ export default function SellerSignup() {
                 <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[#EF3F3F] text-white">
                   <CircleAlert
                     className="h-4 w-4"
-                    strokeWidth={2.3}
+                    strokeWidth={
+                      2.3
+                    }
                   />
                 </div>
 
                 <p className="text-[15px] text-[#E33B22] sm:text-[16px]">
-                  {error}
+                  {
+                    error
+                  }
                 </p>
               </div>
             )}
@@ -539,12 +688,16 @@ export default function SellerSignup() {
                 <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[#21A366] text-white">
                   <CheckCircle2
                     className="h-4 w-4"
-                    strokeWidth={2.3}
+                    strokeWidth={
+                      2.3
+                    }
                   />
                 </div>
 
                 <p className="text-[15px] text-[#137A59] sm:text-[16px]">
-                  {success}
+                  {
+                    success
+                  }
                 </p>
               </div>
             )}
@@ -553,7 +706,9 @@ export default function SellerSignup() {
 
             <button
               type="submit"
-              disabled={loading}
+              disabled={
+                loading
+              }
               className="flex h-[66px] w-full items-center justify-center gap-3 rounded-[14px] bg-[#FF563F] text-[18px] font-semibold text-white shadow-[0_10px_25px_rgba(255,86,63,0.22)] transition-all hover:bg-[#F44D37] hover:shadow-[0_14px_30px_rgba(255,86,63,0.28)] active:scale-[0.99] disabled:cursor-not-allowed disabled:opacity-60 sm:text-[19px]"
             >
               {loading ? (
@@ -587,11 +742,13 @@ export default function SellerSignup() {
                 type="button"
                 onClick={() =>
                   router.push(
-                    "/seller/login"
+                    loginUrl
                   )
                 }
                 className="font-semibold text-[#FF563F] hover:underline"
-                disabled={loading}
+                disabled={
+                  loading
+                }
               >
                 Log in
               </button>
@@ -608,10 +765,30 @@ export default function SellerSignup() {
             </p>
 
             <div className="h-px flex-1 bg-[#D9DEE5]" />
-
           </div>
         </div>
       </section>
     </main>
+  );
+}
+
+export default function SellerSignup() {
+  return (
+    <Suspense
+      fallback={
+        <main className="flex min-h-screen items-center justify-center bg-[#FFF0DC] px-4">
+          <div className="flex items-center gap-3 text-[13px] font-semibold text-[#718096]">
+            <LoaderCircle
+              className="h-5 w-5 animate-spin text-[#FF563F]"
+              strokeWidth={2}
+            />
+
+            Loading seller signup...
+          </div>
+        </main>
+      }
+    >
+      <SellerSignupContent />
+    </Suspense>
   );
 }

@@ -1262,8 +1262,7 @@ export async function GET(
      * a buyer street.
      *
      * Whole Area can still operate if only an
-     * area is returned, but the current GPS
-     * request is primarily a street-first flow.
+     * area is returned.
      */
     if (!userStreet) {
       if (!userArea) {
@@ -1719,6 +1718,20 @@ export async function GET(
                 userStreet
               );
 
+            /*
+             * Determine whether the business
+             * belongs to the buyer's current area.
+             *
+             * This is now required for Adjacent
+             * Street and Nearby Street.
+             */
+            const sameArea =
+              userArea !== null &&
+              areasMatch(
+                location.area,
+                userArea
+              );
+
             let distanceKm:
               | number
               | null =
@@ -1727,6 +1740,16 @@ export async function GET(
             /*
              * Calculate distance whenever
              * coordinates are available.
+             *
+             * Distance is still useful for:
+             *
+             * - Adjacent Street
+             * - Nearby Street
+             * - ordering businesses within
+             *   the same ranking
+             *
+             * But distance no longer controls
+             * Same Street membership.
              */
             if (
               isValidLatitude(
@@ -1749,14 +1772,25 @@ export async function GET(
              * -------------------------------------
              * 1. SAME STREET
              * -------------------------------------
+             *
+             * IMPORTANT:
+             *
+             * Same Street is determined by the
+             * street name only.
+             *
+             * We deliberately DO NOT check:
+             *
+             * distanceKm <= radiusKm
+             *
+             * here.
+             *
+             * This means an incorrectly captured
+             * business GPS coordinate cannot remove
+             * a business from the Same Street level.
              */
 
             if (
-              sameStreet &&
-              distanceKm !==
-                null &&
-              distanceKm <=
-                radiusKm
+              sameStreet
             ) {
               return {
                 id:
@@ -1811,9 +1845,12 @@ export async function GET(
                   business.socialLinks,
 
                 distanceKm:
-                  formatDistance(
-                    distanceKm
-                  ),
+                  distanceKm !==
+                  null
+                    ? formatDistance(
+                        distanceKm
+                      )
+                    : null,
 
                 ranking:
                   1,
@@ -1831,13 +1868,22 @@ export async function GET(
              * 2. ADJACENT STREET
              * -------------------------------------
              *
-             * The business must be on a different
-             * street and within the adjacent-street
-             * distance band.
+             * Requirements:
+             *
+             * - Different street
+             * - Same area
+             * - Within the adjacent street
+             *   distance threshold
+             *
+             * This prevents a business in another
+             * area from being called Adjacent Street
+             * merely because its stored GPS point is
+             * physically close.
              */
 
             if (
               !sameStreet &&
+              sameArea &&
               distanceKm !==
                 null &&
               distanceKm <=
@@ -1916,16 +1962,17 @@ export async function GET(
              * 3. NEARBY STREET
              * -------------------------------------
              *
-             * A different street farther away than
-             * the Adjacent Street band but still
-             * inside the Near Me radius.
+             * Requirements:
              *
-             * This remains a different street from
-             * the buyer's street.
+             * - Different street
+             * - Same area
+             * - Beyond Adjacent Street distance
+             * - Still inside Near Me radius
              */
 
             if (
               !sameStreet &&
+              sameArea &&
               distanceKm !==
                 null &&
               distanceKm >
@@ -2009,11 +2056,8 @@ export async function GET(
              * Whole Area is the fallback.
              *
              * It is intentionally based on area
-             * membership, not on the 10 km radius.
-             *
-             * This allows a business elsewhere in
-             * the buyer's recognized area to appear
-             * as a true area-level fallback.
+             * membership rather than the 10 km
+             * radius.
              */
 
             if (

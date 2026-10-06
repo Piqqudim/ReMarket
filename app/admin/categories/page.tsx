@@ -65,6 +65,13 @@ type IconDefinition = {
   icon: LucideIcon;
 };
 
+type IconColorDefinition = {
+  background: string;
+  text: string;
+  selectedBackground: string;
+  selectedText: string;
+};
+
 const ICONS: IconDefinition[] = [
   {
     key: "Store",
@@ -173,10 +180,182 @@ const ICONS: IconDefinition[] = [
   },
 ];
 
+const ICON_COLORS: Record<
+  string,
+  IconColorDefinition
+> = {
+  Store: {
+    background: "bg-[#FFE0D6]",
+    text: "text-[#9F2D18]",
+    selectedBackground: "bg-[#FFE0D6]",
+    selectedText: "text-[#9F2D18]",
+  },
+
+  Shirt: {
+    background: "bg-[#FCE7F3]",
+    text: "text-[#BE185D]",
+    selectedBackground: "bg-[#FBCFE8]",
+    selectedText: "text-[#9D174D]",
+  },
+
+  Smartphone: {
+    background: "bg-[#E0F2FE]",
+    text: "text-[#0369A1]",
+    selectedBackground: "bg-[#BAE6FD]",
+    selectedText: "text-[#075985]",
+  },
+
+  Laptop: {
+    background: "bg-[#EDE9FE]",
+    text: "text-[#6D28D9]",
+    selectedBackground: "bg-[#DDD6FE]",
+    selectedText: "text-[#5B21B6]",
+  },
+
+  Cpu: {
+    background: "bg-[#CFFAFE]",
+    text: "text-[#0E7490]",
+    selectedBackground: "bg-[#A5F3FC]",
+    selectedText: "text-[#155E75]",
+  },
+
+  Utensils: {
+    background: "bg-[#FFEDD5]",
+    text: "text-[#C2410C]",
+    selectedBackground: "bg-[#FED7AA]",
+    selectedText: "text-[#9A3412]",
+  },
+
+  Coffee: {
+    background: "bg-[#FEF3C7]",
+    text: "text-[#B45309]",
+    selectedBackground: "bg-[#FDE68A]",
+    selectedText: "text-[#92400E]",
+  },
+
+  Sparkles: {
+    background: "bg-[#F3E8FF]",
+    text: "text-[#7E22CE]",
+    selectedBackground: "bg-[#E9D5FF]",
+    selectedText: "text-[#6B21A8]",
+  },
+
+  Scissors: {
+    background: "bg-[#FFE4E6]",
+    text: "text-[#BE123C]",
+    selectedBackground: "bg-[#FECDD3]",
+    selectedText: "text-[#9F1239]",
+  },
+
+  Layers3: {
+    background: "bg-[#CCFBF1]",
+    text: "text-[#0F766E]",
+    selectedBackground: "bg-[#99F6E4]",
+    selectedText: "text-[#115E59]",
+  },
+
+  Wrench: {
+    background: "bg-[#F1F5F9]",
+    text: "text-[#475569]",
+    selectedBackground: "bg-[#E2E8F0]",
+    selectedText: "text-[#334155]",
+  },
+
+  Briefcase: {
+    background: "bg-[#DBEAFE]",
+    text: "text-[#1D4ED8]",
+    selectedBackground: "bg-[#BFDBFE]",
+    selectedText: "text-[#1E40AF]",
+  },
+
+  Building2: {
+    background: "bg-[#F5F5F4]",
+    text: "text-[#57534E]",
+    selectedBackground: "bg-[#E7E5E4]",
+    selectedText: "text-[#44403C]",
+  },
+
+  Home: {
+    background: "bg-[#D1FAE5]",
+    text: "text-[#047857]",
+    selectedBackground: "bg-[#A7F3D0]",
+    selectedText: "text-[#065F46]",
+  },
+
+  Car: {
+    background: "bg-[#FEE2E2]",
+    text: "text-[#B91C1C]",
+    selectedBackground: "bg-[#FECACA]",
+    selectedText: "text-[#991B1B]",
+  },
+
+  MapPin: {
+    background: "bg-[#E0F2FE]",
+    text: "text-[#0284C7]",
+    selectedBackground: "bg-[#BAE6FD]",
+    selectedText: "text-[#0369A1]",
+  },
+
+  Package: {
+    background: "bg-[#EDE9FE]",
+    text: "text-[#7C3AED]",
+    selectedBackground: "bg-[#DDD6FE]",
+    selectedText: "text-[#6D28D9]",
+  },
+
+  Gift: {
+    background: "bg-[#FCE7F3]",
+    text: "text-[#DB2777]",
+    selectedBackground: "bg-[#FBCFE8]",
+    selectedText: "text-[#BE185D]",
+  },
+
+  Dumbbell: {
+    background: "bg-[#ECFCCB]",
+    text: "text-[#4D7C0F]",
+    selectedBackground: "bg-[#D9F99D]",
+    selectedText: "text-[#3F6212]",
+  },
+
+  Camera: {
+    background: "bg-[#E2E8F0]",
+    text: "text-[#475569]",
+    selectedBackground: "bg-[#CBD5E1]",
+    selectedText: "text-[#334155]",
+  },
+
+  Heart: {
+    background: "bg-[#FCE7F3]",
+    text: "text-[#BE185D]",
+    selectedBackground: "bg-[#FBCFE8]",
+    selectedText: "text-[#9D174D]",
+  },
+};
+
+const DEFAULT_ICON_COLORS: IconColorDefinition = {
+  background: "bg-[#FFE0D6]",
+  text: "text-[#9F2D18]",
+  selectedBackground: "bg-[#FFE0D6]",
+  selectedText: "text-[#9F2D18]",
+};
+
 function getIcon(
   iconKey?: string | null
 ): LucideIcon {
   return getCategoryIcon(iconKey);
+}
+
+function getIconColors(
+  iconKey?: string | null
+): IconColorDefinition {
+  if (!iconKey) {
+    return DEFAULT_ICON_COLORS;
+  }
+
+  return (
+    ICON_COLORS[iconKey] ??
+    DEFAULT_ICON_COLORS
+  );
 }
 
 function createFallbackAdminCategories(): Category[] {
@@ -554,6 +733,9 @@ export default function AdminCategoriesPage() {
   const SelectedIcon =
     getIcon(iconKey);
 
+  const selectedIconColors =
+    getIconColors(iconKey);
+
   return (
     <main className="min-h-screen bg-[#FFF7ED] p-4 sm:p-6">
       <div className="mx-auto max-w-[1200px]">
@@ -703,7 +885,11 @@ export default function AdminCategoriesPage() {
                   className="mt-2 flex h-11 w-full items-center justify-between rounded-xl border border-[#E8E4DE] bg-white px-3 text-sm text-[#17202A] hover:border-[#FFB49F] disabled:cursor-not-allowed disabled:bg-[#F3F0EB]"
                 >
                   <span className="flex items-center gap-2">
-                    <SelectedIcon className="h-5 w-5 text-[#9F2D18]" />
+                    <span
+                      className={`flex h-7 w-7 items-center justify-center rounded-lg ${selectedIconColors.background} ${selectedIconColors.text}`}
+                    >
+                      <SelectedIcon className="h-4 w-4" />
+                    </span>
 
                     {
                       ICONS.find(
@@ -733,6 +919,11 @@ export default function AdminCategoriesPage() {
                             item.key ===
                             iconKey;
 
+                          const colors =
+                            getIconColors(
+                              item.key
+                            );
+
                           return (
                             <button
                               key={
@@ -752,11 +943,25 @@ export default function AdminCategoriesPage() {
                               }
                               className={`flex flex-col items-center justify-center gap-1 rounded-lg px-2 py-2 transition ${
                                 selected
-                                  ? "bg-[#FFE0D6] text-[#9F2D18]"
+                                  ? `${colors.selectedBackground} ${colors.selectedText}`
                                   : "text-gray-600 hover:bg-[#FFF7ED]"
                               }`}
                             >
-                              <Icon className="h-5 w-5" />
+                              <span
+                                className={`flex h-8 w-8 items-center justify-center rounded-lg ${
+                                  selected
+                                    ? "bg-white/70"
+                                    : colors.background
+                                }`}
+                              >
+                                <Icon
+                                  className={`h-5 w-5 ${
+                                    selected
+                                      ? colors.selectedText
+                                      : colors.text
+                                  }`}
+                                />
+                              </span>
 
                               <span className="w-full truncate text-[10px] font-medium">
                                 {
@@ -899,6 +1104,11 @@ export default function AdminCategoriesPage() {
                       category.iconKey
                     );
 
+                  const colors =
+                    getIconColors(
+                      category.iconKey
+                    );
+
                   return (
                     <div
                       key={
@@ -907,7 +1117,9 @@ export default function AdminCategoriesPage() {
                       className="flex flex-col gap-4 px-5 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-6"
                     >
                       <div className="flex min-w-0 items-center gap-3">
-                        <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-[#FFE0D6] text-[#9F2D18]">
+                        <div
+                          className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-xl ${colors.background} ${colors.text}`}
+                        >
                           <Icon className="h-5 w-5" />
                         </div>
 

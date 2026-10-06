@@ -1,4 +1,3 @@
-
 "use client";
 
 import {
@@ -32,6 +31,9 @@ import {
   Pencil,
   Trash2,
   LoaderCircle,
+  ShieldCheck,
+  Clock3,
+  X,
 } from "lucide-react";
 
 import { trackContactEvent } from "@/lib/contact-event";
@@ -154,6 +156,15 @@ type Seller = {
   ownerName: string | null;
   description: string | null;
 
+  /*
+   * Safe public flag returned by
+   * /api/businesses/[id].
+   *
+   * This is true only when the business
+   * currently has no owner.
+   */
+  claimable: boolean;
+
   location: SellerLocation;
 
   availability: Availability;
@@ -185,9 +196,7 @@ function getInitials(name: string) {
   }
 
   if (words.length === 1) {
-    return words[0]
-      .slice(0, 2)
-      .toUpperCase();
+    return words[0].slice(0, 2).toUpperCase();
   }
 
   return (
@@ -196,9 +205,7 @@ function getInitials(name: string) {
   ).toUpperCase();
 }
 
-function getCategoryColor(
-  category?: string | null
-) {
+function getCategoryColor(category?: string | null) {
   if (!category) {
     return "#E4E9EF";
   }
@@ -209,9 +216,7 @@ function getCategoryColor(
   );
 }
 
-function formatPrice(
-  product: Product
-) {
+function formatPrice(product: Product) {
   if (
     product.priceMin != null &&
     product.priceMax != null
@@ -241,32 +246,33 @@ function formatPrice(
   return "Ask seller";
 }
 
-function getProductImages(
-  product: Product
-): ProductImage[] {
-  const images = Array.isArray(
-    product.images
-  )
-    ? product.images
-        .filter(
-          (image) =>
-            image &&
-            typeof image.url === "string" &&
-            image.url.trim()
-        )
-        .sort(
-          (a, b) =>
-            (a.sortOrder ?? 0) -
-            (b.sortOrder ?? 0)
-        )
-    : [];
+function getProductImages(product: Product): ProductImage[] {
+  const images =
+    Array.isArray(product.images)
+      ? product.images
+          .filter(
+            (image) =>
+              image &&
+              typeof image.url === "string" &&
+              image.url.trim()
+          )
+          .sort(
+            (a, b) =>
+              (a.sortOrder ?? 0) -
+              (b.sortOrder ?? 0)
+          )
+      : [];
 
   if (images.length > 0) {
     return images;
   }
 
   return product.imageUrl
-    ? [{ url: product.imageUrl }]
+    ? [
+        {
+          url: product.imageUrl,
+        },
+      ]
     : [];
 }
 
@@ -372,6 +378,7 @@ function hasValidCoordinates(
  * fallback remains available when location access
  * is denied or unavailable.
  */
+
 function buildDirectionsUrl(
   address: string | null | undefined,
   latitude?: number | null,
@@ -399,13 +406,9 @@ function buildDirectionsUrl(
     return "#";
   }
 
-  const params =
-    new URLSearchParams();
+  const params = new URLSearchParams();
 
-  params.set(
-    "api",
-    "1"
-  );
+  params.set("api", "1");
 
   params.set(
     "destination",
@@ -614,17 +617,10 @@ function getSavedBusinessesSnapshot(
   return isBusinessSaved(id);
 }
 
-function formatReviewDate(
-  value: string
-) {
-  const date =
-    new Date(value);
+function formatReviewDate(value: string) {
+  const date = new Date(value);
 
-  if (
-    Number.isNaN(
-      date.getTime()
-    )
-  ) {
+  if (Number.isNaN(date.getTime())) {
     return "";
   }
 
@@ -666,9 +662,7 @@ function ReviewStars({
   );
 }
 
-function getRatingLabel(
-  rating: number
-) {
+function getRatingLabel(rating: number) {
   switch (rating) {
     case 1:
       return "Poor";
@@ -695,50 +689,38 @@ function SellerPageContent({
 }: {
   id: string;
 }) {
-  const [
-    seller,
-    setSeller,
-  ] = useState<Seller | null>(null);
+  const [seller, setSeller] =
+    useState<Seller | null>(null);
 
-  const [
-    loading,
-    setLoading,
-  ] = useState(true);
+  const [loading, setLoading] =
+    useState(true);
 
-  const [
-    error,
-    setError,
-  ] = useState("");
+  const [error, setError] =
+    useState("");
 
   const [
     directionsLoading,
     setDirectionsLoading,
   ] = useState(false);
 
-  const [
-    reviews,
-    setReviews,
-  ] = useState<Review[]>([]);
+  const [reviews, setReviews] =
+    useState<Review[]>([]);
 
   const [
     reviewsLoading,
     setReviewsLoading,
   ] = useState(true);
 
-  const [
-    reviewError,
-    setReviewError,
-  ] = useState("");
+  const [reviewError, setReviewError] =
+    useState("");
 
   const [
     reviewSuccess,
     setReviewSuccess,
   ] = useState("");
 
-  const [
-    reviewRating,
-    setReviewRating,
-  ] = useState(0);
+  const [reviewRating, setReviewRating] =
+    useState(0);
 
   const [
     reviewComment,
@@ -753,16 +735,15 @@ function SellerPageContent({
   const [
     currentUserId,
     setCurrentUserId,
-  ] = useState<string | null>(
-    null
-  );
+  ] = useState<string | null>(null);
 
   const [
     currentUserRole,
     setCurrentUserRole,
-  ] = useState<
-    ReMarketRole | null
-  >(null);
+  ] =
+    useState<ReMarketRole | null>(
+      null
+    );
 
   const [
     currentUserLoading,
@@ -772,9 +753,7 @@ function SellerPageContent({
   const [
     editingReviewId,
     setEditingReviewId,
-  ] = useState<string | null>(
-    null
-  );
+  ] = useState<string | null>(null);
 
   const [
     editingRating,
@@ -789,69 +768,88 @@ function SellerPageContent({
   const [
     reviewUpdatingId,
     setReviewUpdatingId,
-  ] = useState<string | null>(
-    null
-  );
+  ] = useState<string | null>(null);
 
   const [
     reviewDeletingId,
     setReviewDeletingId,
-  ] = useState<string | null>(
-    null
-  );
+  ] = useState<string | null>(null);
 
   const [
     ratingBreakdown,
     setRatingBreakdown,
-  ] = useState<RatingBreakdown>(
-    {
+  ] =
+    useState<RatingBreakdown>({
       1: 0,
       2: 0,
       3: 0,
       4: 0,
       5: 0,
-    }
-  );
+    });
+
+  /*
+   * -----------------------------------------
+   * CLAIM STATE
+   * -----------------------------------------
+   */
+
+  const [
+    claimModalOpen,
+    setClaimModalOpen,
+  ] = useState(false);
+
+  const [
+    claimReason,
+    setClaimReason,
+  ] = useState("");
+
+  const [
+    claimSubmitting,
+    setClaimSubmitting,
+  ] = useState(false);
+
+  const [
+    claimPending,
+    setClaimPending,
+  ] = useState(false);
+
+  const [
+    claimChecking,
+    setClaimChecking,
+  ] = useState(false);
+
+  const [claimError, setClaimError] =
+    useState("");
+
+  const [
+    claimSuccess,
+    setClaimSuccess,
+  ] = useState("");
 
   const getSavedSnapshot =
     useCallback(
       () =>
-        getSavedBusinessesSnapshot(
-          id
-        ),
+        getSavedBusinessesSnapshot(id),
       [id]
     );
 
-  const saved =
-    useSyncExternalStore(
-      subscribeSavedBusinesses,
-      getSavedSnapshot,
-      () => false
-    );
+  const saved = useSyncExternalStore(
+    subscribeSavedBusinesses,
+    getSavedSnapshot,
+    () => false
+  );
 
   /*
    * -----------------------------------------
    * LOAD CURRENT SESSION USER
    * -----------------------------------------
-   *
-   * Used to determine:
-   *
-   * - whether the visitor is signed in
-   * - the user's role
-   * - whether edit/delete controls should
-   *   appear for their own review
-   *
-   * The API remains the final authorization
-   * layer.
    */
   useEffect(() => {
     let cancelled = false;
 
     async function loadCurrentUser() {
       try {
-        setCurrentUserLoading(
-          true
-        );
+        setCurrentUserLoading(true);
 
         const session =
           await getSession();
@@ -882,24 +880,19 @@ function SellerPageContent({
             sessionUser.role
           );
         } else {
-          setCurrentUserRole(
-            null
-          );
+          setCurrentUserRole(null);
         }
-      } catch (sessionError) {
+      } catch (
+        sessionError
+      ) {
         console.error(
           "Review session lookup error:",
           sessionError
         );
 
         if (!cancelled) {
-          setCurrentUserId(
-            null
-          );
-
-          setCurrentUserRole(
-            null
-          );
+          setCurrentUserId(null);
+          setCurrentUserRole(null);
         }
       } finally {
         if (!cancelled) {
@@ -922,7 +915,6 @@ function SellerPageContent({
    * LOAD SELLER
    * -----------------------------------------
    */
-
   useEffect(() => {
     const controller =
       new AbortController();
@@ -932,17 +924,15 @@ function SellerPageContent({
         setLoading(true);
         setError("");
 
-        const response =
-          await fetch(
-            `/api/businesses/${encodeURIComponent(
-              id
-            )}`,
-            {
-              cache: "no-store",
-              signal:
-                controller.signal,
-            }
-          );
+        const response = await fetch(
+          `/api/businesses/${encodeURIComponent(
+            id
+          )}`,
+          {
+            cache: "no-store",
+            signal: controller.signal,
+          }
+        );
 
         let data:
           | {
@@ -952,8 +942,7 @@ function SellerPageContent({
           | unknown = null;
 
         try {
-          data =
-            await response.json();
+          data = await response.json();
         } catch {
           throw new Error(
             "Unable to read seller information."
@@ -1042,8 +1031,7 @@ function SellerPageContent({
                         null &&
                       "name" in
                         item.category &&
-                      typeof item
-                        .category
+                      typeof item.category
                         .name ===
                         "string"
                     ) {
@@ -1222,25 +1210,31 @@ function SellerPageContent({
 
                     category:
                       typeof product.category ===
-                        "object" &&
-                      product.category !== null &&
+                          "object" &&
+                      product.category !==
+                        null &&
                       "name" in
                         product.category &&
-                      typeof product.category.name ===
+                      typeof product
+                        .category
+                        .name ===
                         "string"
                         ? {
                             id:
                               "id" in
                                 product.category &&
-                              typeof product.category
+                              typeof product
+                                .category
                                 .id ===
                                 "string"
-                                ? product.category
+                                ? product
+                                    .category
                                     .id
                                 : undefined,
 
                             name:
-                              product.category
+                              product
+                                .category
                                 .name,
                           }
                         : null,
@@ -1268,7 +1262,8 @@ function SellerPageContent({
                     : "",
 
                 street:
-                  "street" in rawLocation &&
+                  "street" in
+                    rawLocation &&
                   typeof rawLocation.street ===
                     "string"
                     ? rawLocation.street
@@ -1322,8 +1317,7 @@ function SellerPageContent({
           typeof rawBusiness.category ===
             "string"
             ? rawBusiness.category
-            : categories[0] ??
-              null;
+            : categories[0] ?? null;
 
         const rawProductCount =
           rawBusiness.productCount;
@@ -1382,6 +1376,10 @@ function SellerPageContent({
               ? rawBusiness.description
               : null,
 
+          claimable:
+            rawBusiness.claimable ===
+            true,
+
           location,
 
           availability,
@@ -1416,15 +1414,19 @@ function SellerPageContent({
                       "id" in link &&
                       typeof link.id ===
                         "string" &&
-                      "platform" in link &&
+                      "platform" in
+                        link &&
                       typeof link.platform ===
                         "string" &&
-                      "handle" in link &&
+                      "handle" in
+                        link &&
                       typeof link.handle ===
                         "string"
                   )
                   .map(
-                    (link) => ({
+                    (
+                      link
+                    ) => ({
                       id:
                         link.id as string,
 
@@ -1488,6 +1490,123 @@ function SellerPageContent({
 
   /*
    * -----------------------------------------
+   * CHECK SELLER CLAIM STATUS
+   * -----------------------------------------
+   */
+
+  useEffect(() => {
+    if (
+      currentUserRole !== "SELLER" ||
+      !id
+    ) {
+      setClaimPending(false);
+      setClaimChecking(false);
+
+      return;
+    }
+
+    let cancelled = false;
+
+    async function checkClaimStatus() {
+      try {
+        setClaimChecking(true);
+
+        const response =
+          await fetch(
+            "/api/seller/business-claim-requests",
+            {
+              cache: "no-store",
+            }
+          );
+
+        if (
+          response.status === 401 ||
+          response.status === 403
+        ) {
+          if (!cancelled) {
+            setClaimPending(false);
+          }
+
+          return;
+        }
+
+        if (!response.ok) {
+          return;
+        }
+
+        const data =
+          (await response.json()) as {
+            requests?: unknown;
+            claims?: unknown;
+            claimRequests?: unknown;
+          };
+
+        const requests =
+          data.requests ??
+          data.claims ??
+          data.claimRequests ??
+          [];
+
+        if (!Array.isArray(requests)) {
+          return;
+        }
+
+        const pending =
+          requests.some(
+            (item) => {
+              if (
+                typeof item !==
+                  "object" ||
+                item === null
+              ) {
+                return false;
+              }
+
+              const record =
+                item as Record<
+                  string,
+                  unknown
+                >;
+
+              return (
+                record.businessId === id &&
+                record.status ===
+                  "PENDING"
+              );
+            }
+          );
+
+        if (!cancelled) {
+          setClaimPending(
+            pending
+          );
+        }
+      } catch (
+        claimStatusError
+      ) {
+        console.error(
+          "Claim status lookup error:",
+          claimStatusError
+        );
+      } finally {
+        if (!cancelled) {
+          setClaimChecking(false);
+        }
+      }
+    }
+
+    void checkClaimStatus();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    currentUserRole,
+    id,
+  ]);
+
+  /*
+   * -----------------------------------------
    * LOAD REVIEWS
    * -----------------------------------------
    */
@@ -1500,10 +1619,7 @@ function SellerPageContent({
         }
 
         try {
-          setReviewsLoading(
-            true
-          );
-
+          setReviewsLoading(true);
           setReviewError("");
 
           const response =
@@ -1575,7 +1691,8 @@ function SellerPageContent({
                   "user" in review &&
                   typeof review.user ===
                     "object" &&
-                  review.user !== null
+                  review.user !==
+                    null
               )
               .map(
                 (
@@ -1631,8 +1748,9 @@ function SellerPageContent({
 
                       name:
                         typeof rawUser.name ===
-                          "string" &&
-                        rawUser.name.trim()
+                            "string" &&
+                        rawUser.name
+                          .trim()
                           ? rawUser.name
                           : "ReMarket user",
                     },
@@ -1689,7 +1807,7 @@ function SellerPageContent({
 
           if (
             typeof rawBreakdown ===
-              "object" &&
+                "object" &&
             rawBreakdown !== null
           ) {
             const source =
@@ -1704,11 +1822,13 @@ function SellerPageContent({
               rating += 1
             ) {
               const value =
-                source[String(rating)];
+                source[
+                  String(rating)
+                ];
 
               if (
                 typeof value ===
-                  "number" &&
+                    "number" &&
                 Number.isInteger(
                   value
                 ) &&
@@ -1745,7 +1865,9 @@ function SellerPageContent({
           );
 
           setSeller(
-            (currentSeller) =>
+            (
+              currentSeller
+            ) =>
               currentSeller
                 ? {
                     ...currentSeller,
@@ -1780,6 +1902,231 @@ function SellerPageContent({
   useEffect(() => {
     void loadReviews();
   }, [loadReviews]);
+
+  /*
+   * -----------------------------------------
+   * CLAIM LOGIN / CLAIM ACTION
+   * -----------------------------------------
+   */
+
+  function getClaimCallbackUrl() {
+    if (
+      typeof window ===
+      "undefined"
+    ) {
+      return `/seller/${id}`;
+    }
+
+    return `${window.location.pathname}${window.location.search}`;
+  }
+
+  function handleClaimAction() {
+    if (
+      !seller ||
+      !seller.claimable ||
+      claimSubmitting
+    ) {
+      return;
+    }
+
+    setClaimError("");
+    setClaimSuccess("");
+
+    /*
+     * Authenticated sellers can claim
+     * directly from this business page.
+     */
+    if (
+      currentUserRole ===
+      "SELLER"
+    ) {
+      setClaimReason("");
+      setClaimModalOpen(
+        true
+      );
+
+      return;
+    }
+
+    /*
+     * Guests and buyers must authenticate
+     * as sellers before submitting a claim.
+     *
+     * The callback keeps them on this exact
+     * business page after seller login.
+     */
+    const callbackUrl =
+      getClaimCallbackUrl();
+
+    const loginUrl =
+      `/seller/login?callbackUrl=${encodeURIComponent(
+        callbackUrl
+      )}`;
+
+    window.location.assign(
+      loginUrl
+    );
+  }
+
+  /*
+   * -----------------------------------------
+   * CLAIM SUBMISSION
+   * -----------------------------------------
+   */
+
+  async function submitBusinessClaim() {
+    if (
+      claimSubmitting ||
+      !seller
+    ) {
+      return;
+    }
+
+    setClaimError("");
+    setClaimSuccess("");
+
+    if (
+      currentUserRole !==
+      "SELLER"
+    ) {
+      setClaimError(
+        "You must be signed in as a seller to claim a business."
+      );
+
+      return;
+    }
+
+    if (
+      !seller.claimable
+    ) {
+      setClaimError(
+        "This business has already been claimed."
+      );
+
+      return;
+    }
+
+    if (
+      claimPending
+    ) {
+      setClaimError(
+        "You already have a pending claim request for this business."
+      );
+
+      return;
+    }
+
+    const cleanReason =
+      claimReason.trim();
+
+    if (
+      cleanReason.length >
+      1000
+    ) {
+      setClaimError(
+        "Your claim reason is too long. Please keep it under 1000 characters."
+      );
+
+      return;
+    }
+
+    setClaimSubmitting(
+      true
+    );
+
+    try {
+      const response =
+        await fetch(
+          "/api/seller/business-claim-requests",
+          {
+            method: "POST",
+            headers: {
+              "Content-Type":
+                "application/json",
+            },
+            body: JSON.stringify({
+              businessId:
+                seller.id,
+
+              reason:
+                cleanReason ||
+                null,
+            }),
+          }
+        );
+
+      let data:
+        | {
+            error?: unknown;
+          }
+        | null = null;
+
+      try {
+        data =
+          await response.json();
+      } catch {
+        data = null;
+      }
+
+      if (
+        response.status ===
+          401 ||
+        response.status ===
+          403
+      ) {
+        const callbackUrl =
+          getClaimCallbackUrl();
+
+        window.location.assign(
+          `/seller/login?callbackUrl=${encodeURIComponent(
+            callbackUrl
+          )}`
+        );
+
+        return;
+      }
+
+      if (!response.ok) {
+        setClaimError(
+          typeof data?.error ===
+            "string"
+            ? data.error
+            : "Unable to submit your claim request."
+        );
+
+        return;
+      }
+
+      setClaimPending(
+        true
+      );
+
+      setClaimReason("");
+
+      setClaimModalOpen(
+        false
+      );
+
+      setClaimSuccess(
+        `Your claim request for "${seller.name}" has been submitted for admin review.`
+      );
+    } catch (
+      claimSubmitError
+    ) {
+      console.error(
+        "Business claim submission error:",
+        claimSubmitError
+      );
+
+      setClaimError(
+        "Something went wrong while submitting your claim. Please try again."
+      );
+    } finally {
+      setClaimSubmitting(
+        false
+      );
+    }
+  }
 
   /*
    * -----------------------------------------
@@ -1830,7 +2177,8 @@ function SellerPageContent({
         seller.availability,
 
       imageUrl:
-        seller.imageUrl ?? null,
+        seller.imageUrl ??
+        null,
     });
   }
 
@@ -1901,7 +2249,10 @@ function SellerPageContent({
     const fallbackUrl =
       getDirectionsUrl();
 
-    if (fallbackUrl === "#") {
+    if (
+      fallbackUrl ===
+      "#"
+    ) {
       return;
     }
 
@@ -1919,12 +2270,16 @@ function SellerPageContent({
         "_blank"
       );
 
-    if (!navigator.geolocation) {
+    if (
+      !navigator.geolocation
+    ) {
       setDirectionsLoading(
         false
       );
 
-      if (!navigationWindow) {
+      if (
+        !navigationWindow
+      ) {
         window.location.assign(
           fallbackUrl
         );
@@ -1937,9 +2292,12 @@ function SellerPageContent({
       (position) => {
         const exactUrl =
           buildDirectionsUrl(
-            seller.location?.address,
-            seller.location?.lat,
-            seller.location?.long,
+            seller.location
+              ?.address,
+            seller.location
+              ?.lat,
+            seller.location
+              ?.long,
             position.coords
               .latitude,
             position.coords
@@ -1963,14 +2321,17 @@ function SellerPageContent({
           false
         );
 
-        if (!navigationWindow) {
+        if (
+          !navigationWindow
+        ) {
           window.location.assign(
             fallbackUrl
           );
         }
       },
       {
-        enableHighAccuracy: true,
+        enableHighAccuracy:
+          true,
         timeout: 10000,
         maximumAge: 60000,
       }
@@ -2119,10 +2480,7 @@ function SellerPageContent({
         return;
       }
 
-      setReviewRating(
-        0
-      );
-
+      setReviewRating(0);
       setReviewComment("");
 
       setReviewSuccess(
@@ -2130,7 +2488,9 @@ function SellerPageContent({
       );
 
       await loadReviews();
-    } catch (submitError) {
+    } catch (
+      submitError
+    ) {
       console.error(
         "Review submission error:",
         submitError
@@ -2347,7 +2707,9 @@ function SellerPageContent({
       );
 
       await loadReviews();
-    } catch (updateError) {
+    } catch (
+      updateError
+    ) {
       console.error(
         "Review update error:",
         updateError
@@ -2492,7 +2854,9 @@ function SellerPageContent({
       );
 
       await loadReviews();
-    } catch (deleteError) {
+    } catch (
+      deleteError
+    ) {
       console.error(
         "Review deletion error:",
         deleteError
@@ -2522,7 +2886,8 @@ function SellerPageContent({
             </h1>
 
             <p className="mt-2 text-[13px] leading-6 text-[#77716C]">
-              We couldn&apos;t find the seller you&apos;re looking for.
+              We couldn&apos;t find the seller
+              you&apos;re looking for.
             </p>
 
             <Link
@@ -2625,9 +2990,7 @@ function SellerPageContent({
                       hover:text-[#FF5A36]
                     "
                   >
-                    <Icon
-                      size={17}
-                    />
+                    <Icon size={17} />
 
                     {item.label}
                   </Link>
@@ -2705,9 +3068,7 @@ function SellerPageContent({
                         hover:text-[#FF5A36]
                       "
                     >
-                      <Icon
-                        size={17}
-                      />
+                      <Icon size={17} />
 
                       {item.label}
                     </Link>
@@ -2733,9 +3094,7 @@ function SellerPageContent({
                 text-[#FF5A36]
               "
             >
-              <ShoppingBag
-                size={17}
-              />
+              <ShoppingBag size={17} />
 
               Browse sellers
             </Link>
@@ -2768,9 +3127,7 @@ function SellerPageContent({
                 hover:text-[#FF5A36]
               "
             >
-              <ArrowLeft
-                size={15}
-              />
+              <ArrowLeft size={15} />
 
               Back to Shop
             </Link>
@@ -2823,7 +3180,7 @@ function SellerPageContent({
                   </h1>
 
                   <p className="mt-2 text-[13px] leading-6 text-[#77716C]">
-                    We couldn&apos;t find the seller you&apos;re looking for.
+                    {"We couldn't find the seller you're looking for."}
                   </p>
 
                   <Link
@@ -2844,9 +3201,7 @@ function SellerPageContent({
                       hover:bg-[#E94E2C]
                     "
                   >
-                    <ShoppingBag
-                      size={15}
-                    />
+                    <ShoppingBag size={15} />
 
                     Browse sellers
                   </Link>
@@ -2980,9 +3335,11 @@ function SellerPageContent({
                                   )}
                                 `}
                               >
-                                {getAvailabilityLabel(
-                                  seller.availability
-                                )}
+                                {
+                                  getAvailabilityLabel(
+                                    seller.availability
+                                  )
+                                }
                               </span>
 
                               {seller.verification ===
@@ -3001,9 +3358,7 @@ function SellerPageContent({
                                     rating={
                                       seller.averageRating
                                     }
-                                    size={
-                                      15
-                                    }
+                                    size={15}
                                   />
 
                                   <span className="text-[12px] font-black text-[#17202A]">
@@ -3013,11 +3368,16 @@ function SellerPageContent({
                                   </span>
 
                                   <span className="text-[11px] text-[#8B847E]">
-                                    ({seller.reviewCount}{" "}
-                                    {seller.reviewCount ===
-                                    1
-                                      ? "review"
-                                      : "reviews"}
+                                    (
+                                    {
+                                      seller.reviewCount
+                                    }{" "}
+                                    {
+                                      seller.reviewCount ===
+                                      1
+                                        ? "review"
+                                        : "reviews"
+                                    }
                                     )
                                   </span>
                                 </>
@@ -3087,8 +3447,7 @@ function SellerPageContent({
                         </div>
                       )}
 
-                      {seller.location
-                        ?.address && (
+                      {seller.location?.address && (
                         <div className="mt-2 flex items-start gap-2 rounded-xl bg-[#FCFAF6] px-3 py-2 text-[11px] leading-5 text-[#68615C]">
                           <MapPin
                             size={14}
@@ -3124,6 +3483,99 @@ function SellerPageContent({
                               : "Directions"}
                           </span>
                         </button>
+                      )}
+
+                      {/* Direct seller claim action */}
+
+                      {seller.claimable &&
+                        currentUserRole !==
+                          "ADMIN" && (
+                          <div className="mt-3">
+                            {currentUserLoading ? (
+                              <div className="inline-flex w-full items-center justify-center gap-2 rounded-xl border border-[#E8E4DE] bg-[#FCFAF6] px-4 py-2.5 text-[11px] font-bold text-[#746D67] sm:w-auto">
+                                <LoaderCircle className="h-4 w-4 animate-spin" />
+
+                                Checking account...
+                              </div>
+                            ) : currentUserRole ===
+                                "SELLER" &&
+                              claimChecking ? (
+                              <div className="inline-flex w-full items-center justify-center gap-2 rounded-xl border border-[#F0D7B3] bg-[#FFF8EC] px-4 py-2.5 text-[11px] font-bold text-[#9F5A18] sm:w-auto">
+                                <LoaderCircle className="h-4 w-4 animate-spin" />
+
+                                Checking claim status...
+                              </div>
+                            ) : currentUserRole ===
+                                "SELLER" &&
+                              claimPending ? (
+                              <div className="inline-flex w-full items-center gap-2 rounded-xl border border-[#F0D7B3] bg-[#FFF8EC] px-4 py-2.5 text-[11px] font-bold text-[#9F5A18] sm:w-auto">
+                                <Clock3 className="h-4 w-4 shrink-0" />
+
+                                <span>
+                                  Claim request pending
+                                </span>
+                              </div>
+                            ) : (
+                              <button
+                                type="button"
+                                onClick={
+                                  handleClaimAction
+                                }
+                                disabled={
+                                  claimSubmitting
+                                }
+                                className="
+                                  inline-flex
+                                  w-full
+                                  items-center
+                                  justify-center
+                                  gap-2
+                                  rounded-xl
+                                  border
+                                  border-[#FFB39F]
+                                  bg-white
+                                  px-4
+                                  py-2.5
+                                  text-[11px]
+                                  font-bold
+                                  text-[#9F2D18]
+                                  transition
+                                  hover:bg-[#FFF0E9]
+                                  disabled:cursor-not-allowed
+                                  disabled:opacity-60
+                                  sm:w-auto
+                                "
+                              >
+                                <ShieldCheck className="h-4 w-4" />
+
+                                Claim this business
+                              </button>
+                            )}
+                          </div>
+                        )}
+
+                      {claimSuccess && (
+                        <div
+                          role="status"
+                          aria-live="polite"
+                          className="mt-3 rounded-xl border border-[#BDE8D8] bg-[#EFFBF6] px-3 py-2.5 text-[11px] font-semibold leading-5 text-[#137A59]"
+                        >
+                          {
+                            claimSuccess
+                          }
+                        </div>
+                      )}
+
+                      {claimError && (
+                        <div
+                          role="alert"
+                          aria-live="polite"
+                          className="mt-3 rounded-xl border border-[#F0C9BF] bg-[#FFF1ED] px-3 py-2.5 text-[11px] font-semibold leading-5 text-[#9F2D18]"
+                        >
+                          {
+                            claimError
+                          }
+                        </div>
                       )}
 
                       {seller.description && (
@@ -3189,13 +3641,17 @@ function SellerPageContent({
                                   hover:shadow-sm
                                 "
                               >
-                                {getProductImages(product).length > 0 ? (
+                                {getProductImages(
+                                  product
+                                ).length >
+                                0 ? (
                                   <div>
                                     <img
                                       src={
                                         getProductImages(
                                           product
-                                        )[0]?.url ??
+                                        )[0]
+                                          ?.url ??
                                         ""
                                       }
                                       alt={
@@ -3204,7 +3660,9 @@ function SellerPageContent({
                                       className="h-40 w-full object-cover"
                                     />
 
-                                    {getProductImages(product).length >
+                                    {getProductImages(
+                                      product
+                                    ).length >
                                       1 && (
                                       <div className="flex gap-2 overflow-x-auto border-t border-[#E8E4DE] bg-white p-2">
                                         {getProductImages(
@@ -3264,7 +3722,8 @@ function SellerPageContent({
                                       {product.category?.name && (
                                         <p className="mt-1 text-[10px] font-semibold text-[#8B847E]">
                                           {
-                                            product.category
+                                            product
+                                              .category
                                               .name
                                           }
                                         </p>
@@ -3284,9 +3743,11 @@ function SellerPageContent({
                                         )}
                                       `}
                                     >
-                                      {getAvailabilityLabel(
-                                        product.availability
-                                      )}
+                                      {
+                                        getAvailabilityLabel(
+                                          product.availability
+                                        )
+                                      }
                                     </span>
                                   </div>
 
@@ -3403,7 +3864,9 @@ function SellerPageContent({
                                     >
                                       <span className="flex items-center gap-2">
                                         <MapPin
-                                          size={16}
+                                          size={
+                                            16
+                                          }
                                         />
 
                                         {directionsLoading
@@ -3412,7 +3875,9 @@ function SellerPageContent({
                                       </span>
 
                                       <ExternalLink
-                                        size={13}
+                                        size={
+                                          13
+                                        }
                                       />
                                     </button>
                                   );
@@ -3511,9 +3976,7 @@ function SellerPageContent({
                                     </span>
 
                                     <ExternalLink
-                                      size={
-                                        13
-                                      }
+                                      size={13}
                                     />
                                   </a>
                                 );
@@ -3560,6 +4023,8 @@ function SellerPageContent({
                                   transition
                                   hover:border-[#FFB39F]
                                   hover:text-[#FF5A36]
+                                  disabled:cursor-wait
+                                  disabled:opacity-70
                                 "
                               >
                                 <span className="flex items-center gap-2">
@@ -3696,9 +4161,7 @@ function SellerPageContent({
                                 rating={
                                   seller.averageRating
                                 }
-                                size={
-                                  14
-                                }
+                                size={14}
                               />
 
                               <span className="text-[11px] font-black text-[#17202A]">
@@ -3708,11 +4171,15 @@ function SellerPageContent({
                               </span>
 
                               <span className="text-[10px] text-[#8B847E]">
-                                {seller.reviewCount}{" "}
-                                {seller.reviewCount ===
-                                1
-                                  ? "review"
-                                  : "reviews"}
+                                {
+                                  seller.reviewCount
+                                }{" "}
+                                {
+                                  seller.reviewCount ===
+                                  1
+                                    ? "review"
+                                    : "reviews"
+                                }
                               </span>
                             </div>
                           )}
@@ -3759,18 +4226,20 @@ function SellerPageContent({
                               rating={
                                 seller.averageRating
                               }
-                              size={
-                                18
-                              }
+                              size={18}
                             />
                           </div>
 
                           <p className="mt-2 text-[10px] font-semibold text-[#8B847E]">
-                            {seller.reviewCount}{" "}
-                            {seller.reviewCount ===
-                            1
-                              ? "customer review"
-                              : "customer reviews"}
+                            {
+                              seller.reviewCount
+                            }{" "}
+                            {
+                              seller.reviewCount ===
+                              1
+                                ? "customer review"
+                                : "customer reviews"
+                            }
                           </p>
                         </div>
 
@@ -3813,9 +4282,7 @@ function SellerPageContent({
                                   </span>
 
                                   <Star
-                                    size={
-                                      12
-                                    }
+                                    size={12}
                                     className="fill-[#FFB300] text-[#FFB300]"
                                   />
 
@@ -3847,9 +4314,7 @@ function SellerPageContent({
                           <div className="flex min-h-[180px] items-center justify-center">
                             <div className="flex items-center gap-2 text-[11px] font-semibold text-[#817970]">
                               <LoaderCircle
-                                size={
-                                  15
-                                }
+                                size={15}
                                 className="animate-spin text-[#FF5A36]"
                               />
 
@@ -3862,9 +4327,7 @@ function SellerPageContent({
                             <div className="flex items-start gap-3">
                               <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-[#FFF0E9] text-[#FF5A36]">
                                 <Star
-                                  size={
-                                    18
-                                  }
+                                  size={18}
                                   className="fill-current"
                                 />
                               </div>
@@ -3893,13 +4356,7 @@ function SellerPageContent({
 
                                 <div className="mt-2 flex flex-wrap items-center gap-2">
                                   <div className="flex items-center gap-1">
-                                    {[
-                                      1,
-                                      2,
-                                      3,
-                                      4,
-                                      5,
-                                    ].map(
+                                    {[1, 2, 3, 4, 5].map(
                                       (
                                         rating
                                       ) => (
@@ -3921,9 +4378,7 @@ function SellerPageContent({
                                           className="rounded-lg p-1 transition hover:bg-[#FFF0E9]"
                                         >
                                           <Star
-                                            size={
-                                              22
-                                            }
+                                            size={22}
                                             className={
                                               rating <=
                                               reviewRating
@@ -3966,12 +4421,8 @@ function SellerPageContent({
                                         .value
                                     )
                                   }
-                                  rows={
-                                    4
-                                  }
-                                  maxLength={
-                                    2000
-                                  }
+                                  rows={4}
+                                  maxLength={2000}
                                   placeholder="What was your experience with this business?"
                                   className="
                                     mt-2
@@ -4052,9 +4503,7 @@ function SellerPageContent({
                           <div className="flex min-h-[180px] flex-col items-center justify-center text-center">
                             <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-[#FFF0E9] text-[#FF5A36]">
                               <Star
-                                size={
-                                  20
-                                }
+                                size={20}
                                 className="fill-current"
                               />
                             </div>
@@ -4086,11 +4535,7 @@ function SellerPageContent({
                         ) : (
                           <div className="flex min-h-[180px] flex-col items-center justify-center text-center">
                             <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-[#F3ECEA] text-[#8B6960]">
-                              <Star
-                                size={
-                                  20
-                                }
-                              />
+                              <Star size={20} />
                             </div>
 
                             <h3 className="mt-3 text-[13px] font-black text-[#17202A]">
@@ -4133,9 +4578,7 @@ function SellerPageContent({
                         <div className="mt-4 flex items-center justify-center rounded-xl border border-dashed border-[#DDD6CE] bg-[#FCFAF6] px-5 py-8">
                           <div className="flex items-center gap-2 text-[11px] font-semibold text-[#817970]">
                             <LoaderCircle
-                              size={
-                                15
-                              }
+                              size={15}
                               className="animate-spin text-[#FF5A36]"
                             />
 
@@ -4146,9 +4589,7 @@ function SellerPageContent({
                         0 ? (
                         <div className="mt-4 rounded-xl border border-dashed border-[#DDD6CE] bg-[#FCFAF6] px-5 py-8 text-center">
                           <Star
-                            size={
-                              24
-                            }
+                            size={24}
                             className="mx-auto text-[#B7AFA7]"
                           />
 
@@ -4171,7 +4612,8 @@ function SellerPageContent({
                                   "BUYER" &&
                                 Boolean(
                                   currentUserId &&
-                                  review.user
+                                  review
+                                    .user
                                     .id ===
                                     currentUserId
                                 );
@@ -4225,9 +4667,7 @@ function SellerPageContent({
                                               rating={
                                                 review.rating
                                               }
-                                              size={
-                                                15
-                                              }
+                                              size={15}
                                             />
                                           </div>
 
@@ -4243,13 +4683,7 @@ function SellerPageContent({
                                         <div className="mt-3">
                                           <div className="flex flex-wrap items-center gap-2">
                                             <div className="flex items-center gap-1">
-                                              {[
-                                                1,
-                                                2,
-                                                3,
-                                                4,
-                                                5,
-                                              ].map(
+                                              {[1, 2, 3, 4, 5].map(
                                                 (
                                                   rating
                                                 ) => (
@@ -4392,9 +4826,7 @@ function SellerPageContent({
                                             className="inline-flex items-center gap-1 rounded-lg px-2 py-1.5 text-[9px] font-bold text-[#746D67] transition hover:bg-[#FFF0E9] hover:text-[#FF5A36]"
                                           >
                                             <Pencil
-                                              size={
-                                                12
-                                              }
+                                              size={12}
                                             />
 
                                             Edit
@@ -4416,16 +4848,12 @@ function SellerPageContent({
                                             {reviewDeletingId ===
                                             review.id ? (
                                               <LoaderCircle
-                                                size={
-                                                  12
-                                                }
+                                                size={12}
                                                 className="animate-spin"
                                               />
                                             ) : (
                                               <Trash2
-                                                size={
-                                                  12
-                                                }
+                                                size={12}
                                               />
                                             )}
 
@@ -4493,9 +4921,7 @@ function SellerPageContent({
                       hover:text-[#FF5A36]
                     "
                   >
-                    <Icon
-                      size={18}
-                    />
+                    <Icon size={18} />
 
                     {item.label}
                   </Link>
@@ -4505,6 +4931,305 @@ function SellerPageContent({
           </div>
         </nav>
       </div>
+
+      {/* =====================================================
+          MOBILE / DESKTOP CLAIM MODAL
+          ===================================================== */}
+
+      {claimModalOpen &&
+        seller && (
+          <div
+            className="
+              fixed
+              inset-0
+              z-[100]
+              flex
+              items-end
+              bg-black/30
+              p-0
+              sm:items-center
+              sm:justify-center
+              sm:p-5
+            "
+            role="presentation"
+            onMouseDown={(
+              event
+            ) => {
+              if (
+                event.target ===
+                  event.currentTarget &&
+                !claimSubmitting
+              ) {
+                setClaimModalOpen(
+                  false
+                );
+              }
+            }}
+          >
+            <div
+              className="
+                w-full
+                max-h-[90vh]
+                overflow-y-auto
+                rounded-t-[24px]
+                border
+                border-[#E8E4DE]
+                bg-[#FFFDFC]
+                shadow-[0_-18px_45px_rgba(44,32,24,0.16)]
+                sm:max-w-[520px]
+                sm:rounded-[22px]
+                sm:shadow-[0_18px_50px_rgba(44,32,24,0.16)]
+              "
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="claim-business-title"
+            >
+              <div className="flex justify-center pt-2.5 sm:hidden">
+                <span className="h-1 w-10 rounded-full bg-[#D8D1CA]" />
+              </div>
+
+              <div className="border-b border-[#EAE6DF] px-5 py-5 sm:px-6">
+                <div className="flex items-start justify-between gap-4">
+                  <div className="flex min-w-0 items-start gap-3">
+                    <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-[#FFF0EB] text-[#FF5A36]">
+                      <ShieldCheck className="h-5 w-5" />
+                    </div>
+
+                    <div className="min-w-0">
+                      <h2
+                        id="claim-business-title"
+                        className="text-[16px] font-black text-[#17202A]"
+                      >
+                        Claim this business
+                      </h2>
+
+                      <p className="mt-1 text-[11px] leading-5 text-[#8B847E]">
+                        Request ownership of{" "}
+                        <span className="font-bold text-[#5E554E]">
+                          {seller.name}
+                        </span>
+                        .
+                      </p>
+                    </div>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setClaimModalOpen(
+                        false
+                      )
+                    }
+                    disabled={
+                      claimSubmitting
+                    }
+                    className="
+                      flex
+                      h-9
+                      w-9
+                      shrink-0
+                      items-center
+                      justify-center
+                      rounded-xl
+                      border
+                      border-[#E8E4DE]
+                      bg-white
+                      text-[#746D67]
+                      transition
+                      hover:bg-[#FCFAF6]
+                      disabled:cursor-not-allowed
+                      disabled:opacity-50
+                    "
+                    aria-label="Close claim form"
+                  >
+                    <X className="h-4 w-4" />
+                  </button>
+                </div>
+              </div>
+
+              <div className="px-5 py-5 sm:px-6">
+                {claimError && (
+                  <div
+                    role="alert"
+                    aria-live="polite"
+                    className="
+                      mb-4
+                      rounded-xl
+                      border
+                      border-[#F0C9BF]
+                      bg-[#FFF1ED]
+                      px-3
+                      py-2.5
+                      text-[11px]
+                      font-semibold
+                      leading-5
+                      text-[#9F2D18]
+                    "
+                  >
+                    {claimError}
+                  </div>
+                )}
+
+                <div className="rounded-xl bg-[#FCFAF6] px-3 py-3">
+                  <p className="text-[10px] font-bold uppercase tracking-[0.1em] text-[#A29B94]">
+                    Business
+                  </p>
+
+                  <p className="mt-1 text-[13px] font-bold text-[#17202A]">
+                    {seller.name}
+                  </p>
+
+                  {seller.location?.area && (
+                    <p className="mt-1 text-[10px] text-[#8B847E]">
+                      {
+                        seller.location
+                          .area
+                      }
+                    </p>
+                  )}
+                </div>
+
+                <div className="mt-4">
+                  <label
+                    htmlFor="business-claim-reason"
+                    className="text-[10px] font-bold uppercase tracking-[0.1em] text-[#8C8580]"
+                  >
+                    Reason
+                  </label>
+
+                  <textarea
+                    id="business-claim-reason"
+                    value={
+                      claimReason
+                    }
+                    onChange={(
+                      event
+                    ) => {
+                      setClaimReason(
+                        event.target
+                          .value
+                      );
+
+                      setClaimError(
+                        ""
+                      );
+                    }}
+                    rows={5}
+                    maxLength={1000}
+                    disabled={
+                      claimSubmitting
+                    }
+                    placeholder="Tell the admin why you are the owner of this business."
+                    className="
+                      mt-2
+                      w-full
+                      resize-none
+                      rounded-xl
+                      border
+                      border-[#E8E4DE]
+                      bg-white
+                      px-3
+                      py-3
+                      text-[11px]
+                      leading-5
+                      text-[#35302C]
+                      outline-none
+                      transition
+                      focus:border-[#FF9B86]
+                      focus:ring-4
+                      focus:ring-[#FF5A36]/10
+                      disabled:bg-[#FAF6EF]
+                    "
+                  />
+
+                  <div className="mt-1 flex justify-end">
+                    <span className="text-[9px] text-[#A29B94]">
+                      {
+                        claimReason.length
+                      }
+                      /1000
+                    </span>
+                  </div>
+                </div>
+
+                <div className="mt-5 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setClaimModalOpen(
+                        false
+                      )
+                    }
+                    disabled={
+                      claimSubmitting
+                    }
+                    className="
+                      inline-flex
+                      h-11
+                      items-center
+                      justify-center
+                      rounded-xl
+                      border
+                      border-[#E8E4DE]
+                      bg-white
+                      px-5
+                      text-[11px]
+                      font-bold
+                      text-[#746D67]
+                      transition
+                      hover:bg-[#FCFAF6]
+                      disabled:cursor-not-allowed
+                      disabled:opacity-50
+                    "
+                  >
+                    Cancel
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() =>
+                      void submitBusinessClaim()
+                    }
+                    disabled={
+                      claimSubmitting
+                    }
+                    className="
+                      inline-flex
+                      h-11
+                      items-center
+                      justify-center
+                      gap-2
+                      rounded-xl
+                      bg-[#FF5A36]
+                      px-5
+                      text-[11px]
+                      font-bold
+                      text-white
+                      transition
+                      hover:bg-[#E94E2C]
+                      disabled:cursor-not-allowed
+                      disabled:opacity-60
+                    "
+                  >
+                    {claimSubmitting ? (
+                      <>
+                        <LoaderCircle className="h-4 w-4 animate-spin" />
+
+                        Submitting...
+                      </>
+                    ) : (
+                      <>
+                        <ShieldCheck className="h-4 w-4" />
+
+                        Submit claim
+                      </>
+                    )}
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
     </main>
   );
 }

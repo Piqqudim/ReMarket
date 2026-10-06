@@ -1,8 +1,15 @@
 "use client";
 
-import React, { useState } from "react";
+import React, {
+  Suspense,
+  useState,
+} from "react";
+
 import { signIn } from "next-auth/react";
-import { useRouter } from "next/navigation";
+import {
+  useRouter,
+  useSearchParams,
+} from "next/navigation";
 import Link from "next/link";
 
 import {
@@ -16,18 +23,83 @@ import {
   CircleAlert,
 } from "lucide-react";
 
-export default function SellerLogin() {
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
-  const [error, setError] = useState("");
-  const [loading, setLoading] = useState(false);
-  const [showPassword, setShowPassword] =
-    useState(false);
+function getSafeCallbackUrl(
+  value: string | null
+): string {
+  /*
+   * Only allow internal ReMarket paths.
+   *
+   * This prevents an external URL from being
+   * used as a redirect destination.
+   */
+  if (
+    !value ||
+    !value.startsWith("/") ||
+    value.startsWith("//")
+  ) {
+    return "/seller";
+  }
 
-  const router = useRouter();
+  return value;
+}
+
+function SellerLoginContent() {
+  const [
+    email,
+    setEmail,
+  ] = useState("");
+
+  const [
+    password,
+    setPassword,
+  ] = useState("");
+
+  const [
+    error,
+    setError,
+  ] = useState("");
+
+  const [
+    loading,
+    setLoading,
+  ] = useState(false);
+
+  const [
+    showPassword,
+    setShowPassword,
+  ] = useState(false);
+
+  const router =
+    useRouter();
+
+  const searchParams =
+    useSearchParams();
+
+  /*
+   * The business page sends:
+   *
+   * /seller/login?callbackUrl=/seller/[businessId]
+   *
+   * Preserve that exact path through login.
+   */
+  const callbackUrl =
+    getSafeCallbackUrl(
+      searchParams.get(
+        "callbackUrl"
+      )
+    );
+
+  /*
+   * Preserve callbackUrl when the seller
+   * chooses to create a new seller account.
+   */
+  const signupUrl =
+    `/seller/signup?callbackUrl=${encodeURIComponent(
+      callbackUrl
+    )}`;
 
   async function submit(
-    event: React.SubmitEvent<HTMLFormElement>
+    event: React.FormEvent<HTMLFormElement>
   ) {
     event.preventDefault();
 
@@ -35,29 +107,48 @@ export default function SellerLogin() {
       return;
     }
 
-    const trimmedEmail = email.trim();
+    const trimmedEmail =
+      email.trim();
 
     setError("");
 
     if (!trimmedEmail) {
-      setError("Email address is required.");
+      setError(
+        "Email address is required."
+      );
+
       return;
     }
 
     if (!password) {
-      setError("Password is required.");
+      setError(
+        "Password is required."
+      );
+
       return;
     }
 
     setLoading(true);
 
     try {
-      const result = await signIn("credentials", {
-        email: trimmedEmail,
-        password,
-        redirect: false,
-        callbackUrl: "/seller",
-      });
+      const result =
+        await signIn(
+          "credentials",
+          {
+            email:
+              trimmedEmail,
+
+            password,
+
+            redirect: false,
+
+            /*
+             * Return to the exact page the
+             * seller originally came from.
+             */
+            callbackUrl,
+          }
+        );
 
       if (
         !result ||
@@ -67,12 +158,23 @@ export default function SellerLogin() {
         setError(
           "Invalid email or password"
         );
+
         return;
       }
 
-      router.push("/seller");
+      /*
+       * Return directly to the original
+       * business page instead of always using
+       * /seller.
+       */
+      router.push(
+        callbackUrl
+      );
+
       router.refresh();
-    } catch (loginError) {
+    } catch (
+      loginError
+    ) {
       console.error(
         "Seller login error:",
         loginError
@@ -95,10 +197,14 @@ export default function SellerLogin() {
       {/* Top-right dots */}
 
       <div className="absolute right-6 top-16 grid grid-cols-4 gap-2.5 opacity-50 sm:right-16 sm:top-24 sm:gap-3">
-        {Array.from({ length: 16 }).map(
+        {Array.from({
+          length: 16,
+        }).map(
           (_, index) => (
             <span
-              key={index}
+              key={
+                index
+              }
               className="h-2 w-2 rounded-full bg-[#F89B68]"
             />
           )
@@ -108,10 +214,14 @@ export default function SellerLogin() {
       {/* Bottom-left dots */}
 
       <div className="absolute bottom-16 left-6 grid grid-cols-4 gap-2.5 opacity-50 sm:bottom-24 sm:left-16 sm:gap-3">
-        {Array.from({ length: 16 }).map(
+        {Array.from({
+          length: 16,
+        }).map(
           (_, index) => (
             <span
-              key={index}
+              key={
+                index
+              }
               className="h-2 w-2 rounded-full bg-[#F89B68]"
             />
           )
@@ -165,7 +275,9 @@ export default function SellerLogin() {
           {/* Form */}
 
           <form
-            onSubmit={submit}
+            onSubmit={
+              submit
+            }
             className="space-y-6 sm:space-y-7"
           >
             {/* Email */}
@@ -189,21 +301,32 @@ export default function SellerLogin() {
                   name="email"
                   type="email"
                   placeholder="you@business.com"
-                  value={email}
-                  onChange={(event) => {
+                  value={
+                    email
+                  }
+                  onChange={(
+                    event
+                  ) => {
                     setEmail(
-                      event.target.value
+                      event.target
+                        .value
                     );
 
-                    if (error) {
-                      setError("");
+                    if (
+                      error
+                    ) {
+                      setError(
+                        ""
+                      );
                     }
                   }}
                   autoComplete="email"
                   autoCapitalize="none"
                   spellCheck={false}
                   required
-                  disabled={loading}
+                  disabled={
+                    loading
+                  }
                   className="h-[64px] w-full rounded-[14px] border border-[#D9DEE5] bg-white pl-14 pr-5 text-[17px] text-[#111C27] outline-none transition-all placeholder:text-[#8491A3] focus:border-[#FF694F] focus:ring-4 focus:ring-[#FF694F]/10 disabled:cursor-not-allowed disabled:bg-[#F8F8F7]"
                 />
               </div>
@@ -234,19 +357,30 @@ export default function SellerLogin() {
                       : "password"
                   }
                   placeholder="Enter your password"
-                  value={password}
-                  onChange={(event) => {
+                  value={
+                    password
+                  }
+                  onChange={(
+                    event
+                  ) => {
                     setPassword(
-                      event.target.value
+                      event.target
+                        .value
                     );
 
-                    if (error) {
-                      setError("");
+                    if (
+                      error
+                    ) {
+                      setError(
+                        ""
+                      );
                     }
                   }}
                   autoComplete="current-password"
                   required
-                  disabled={loading}
+                  disabled={
+                    loading
+                  }
                   className="h-[64px] w-full rounded-[14px] border border-[#D9DEE5] bg-white pl-14 pr-14 text-[17px] text-[#111C27] outline-none transition-all placeholder:text-[#8491A3] focus:border-[#FF694F] focus:ring-4 focus:ring-[#FF694F]/10 disabled:cursor-not-allowed disabled:bg-[#F8F8F7]"
                 />
 
@@ -254,11 +388,15 @@ export default function SellerLogin() {
                   type="button"
                   onClick={() =>
                     setShowPassword(
-                      (current) =>
+                      (
+                        current
+                      ) =>
                         !current
                     )
                   }
-                  disabled={loading}
+                  disabled={
+                    loading
+                  }
                   aria-label={
                     showPassword
                       ? "Hide password"
@@ -269,12 +407,16 @@ export default function SellerLogin() {
                   {showPassword ? (
                     <EyeOff
                       className="h-5 w-5"
-                      strokeWidth={2}
+                      strokeWidth={
+                        2
+                      }
                     />
                   ) : (
                     <Eye
                       className="h-5 w-5"
-                      strokeWidth={2}
+                      strokeWidth={
+                        2
+                      }
                     />
                   )}
                 </button>
@@ -292,12 +434,16 @@ export default function SellerLogin() {
                 <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[#EF3F3F] text-white">
                   <CircleAlert
                     className="h-4 w-4"
-                    strokeWidth={2.3}
+                    strokeWidth={
+                      2.3
+                    }
                   />
                 </div>
 
                 <p className="text-[15px] text-[#E33B22] sm:text-[16px]">
-                  {error}
+                  {
+                    error
+                  }
                 </p>
               </div>
             )}
@@ -306,7 +452,9 @@ export default function SellerLogin() {
 
             <button
               type="submit"
-              disabled={loading}
+              disabled={
+                loading
+              }
               className="flex h-[66px] w-full items-center justify-center gap-3 rounded-[14px] bg-[#FF563F] text-[18px] font-semibold text-white shadow-[0_10px_25px_rgba(255,86,63,0.22)] transition-all hover:bg-[#F44D37] hover:shadow-[0_14px_30px_rgba(255,86,63,0.28)] active:scale-[0.99] disabled:cursor-not-allowed disabled:opacity-60 sm:text-[19px]"
             >
               {loading ? (
@@ -337,7 +485,9 @@ export default function SellerLogin() {
             <p className="text-[14px] text-[#718096] sm:text-[15px]">
               Don&apos;t have a seller account?{" "}
               <Link
-                href="/seller/signup"
+                href={
+                  signupUrl
+                }
                 className="font-semibold text-[#FF563F] transition-colors hover:text-[#F44D37]"
               >
                 Create one
@@ -355,9 +505,31 @@ export default function SellerLogin() {
             </p>
 
             <div className="h-px flex-1 bg-[#D9DEE5]" />
+
           </div>
         </div>
       </section>
     </main>
+  );
+}
+
+export default function SellerLogin() {
+  return (
+    <Suspense
+      fallback={
+        <main className="flex min-h-screen items-center justify-center bg-[#FFF0DC] px-4">
+          <div className="flex items-center gap-3 text-[13px] font-semibold text-[#718096]">
+            <LoaderCircle
+              className="h-5 w-5 animate-spin text-[#FF563F]"
+              strokeWidth={2}
+            />
+
+            Loading seller login...
+          </div>
+        </main>
+      }
+    >
+      <SellerLoginContent />
+    </Suspense>
   );
 }

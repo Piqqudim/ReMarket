@@ -18,7 +18,43 @@ function jsonHeaders() {
   return {
     "Content-Type": "application/json",
     "Cache-Control": "no-store",
+    Pragma: "no-cache",
   };
+}
+
+/*
+ * ---------------------------------------------------------
+ * HELPERS
+ * ---------------------------------------------------------
+ */
+
+function cleanString(
+  value: unknown
+): string {
+  return typeof value === "string"
+    ? value.trim()
+    : "";
+}
+
+function parsePositiveInteger(
+  value: string | null,
+  fallback: number,
+  maximum: number
+): number {
+  const parsed =
+    Number(value);
+
+  if (
+    !Number.isInteger(parsed) ||
+    parsed < 1
+  ) {
+    return fallback;
+  }
+
+  return Math.min(
+    parsed,
+    maximum
+  );
 }
 
 /*
@@ -31,6 +67,264 @@ type PatchNotificationBody = {
   notificationId?: unknown;
   action?: unknown;
 };
+
+/*
+ * ---------------------------------------------------------
+ * GET
+ * ---------------------------------------------------------
+ *
+ * Returns notifications belonging only to the
+ * authenticated user.
+ *
+ * Supported query parameters:
+ *
+ * ?page=1
+ * ?limit=20
+ * ?unread=true
+ *
+ * unreadCount always represents the user's total
+ * unread notifications, regardless of the current
+ * list filter.
+ * ---------------------------------------------------------
+ */
+
+export async function GET(
+  request: NextRequest
+) {
+  try {
+    /*
+     * -----------------------------------------------------
+     * AUTHENTICATION
+     * -----------------------------------------------------
+     */
+
+    const session =
+      await getServerSession(
+        authOptions
+      );
+
+    if (!session?.user?.id) {
+      return NextResponse.json(
+        {
+          error:
+            "You must be logged in to view notifications.",
+        },
+        {
+          status: 401,
+          headers: jsonHeaders(),
+        }
+      );
+    }
+
+    const userId =
+      session.user.id;
+
+    /*
+     * -----------------------------------------------------
+     * QUERY PARAMETERS
+     * -----------------------------------------------------
+     */
+
+    const { searchParams } =
+      new URL(request.url);
+
+    const page =
+      parsePositiveInteger(
+        searchParams.get("page"),
+        1,
+        10_000
+      );
+
+    const limit =
+      parsePositiveInteger(
+        searchParams.get("limit"),
+        20,
+        50
+      );
+
+    const unreadParameter =
+      cleanString(
+        searchParams.get("unread")
+      ).toLowerCase();
+
+    let unreadFilter:
+      | boolean
+      | undefined;
+
+    if (
+      unreadParameter ===
+      "true"
+    ) {
+      unreadFilter = true;
+    } else if (
+      unreadParameter ===
+      "false"
+    ) {
+      unreadFilter = false;
+    }
+
+    /*
+     * -----------------------------------------------------
+     * WHERE CLAUSE
+     * -----------------------------------------------------
+     *
+     * userId is always required.
+     *
+     * A client therefore cannot request another
+     * user's notification records.
+     * -----------------------------------------------------
+     */
+
+    const where = {
+      userId,
+
+      ...(unreadFilter ===
+      true
+        ? {
+            readAt: null,
+          }
+        : unreadFilter ===
+          false
+        ? {
+            readAt: {
+              not: null,
+            },
+          }
+        : {}),
+    };
+
+    /*
+     * -----------------------------------------------------
+     * TOTAL
+     * -----------------------------------------------------
+     */
+
+    const total =
+      await prisma.notification.count({
+        where,
+      });
+
+    const totalPages =
+      total === 0
+        ? 0
+        : Math.ceil(
+            total / limit
+          );
+
+    /*
+     * If a requested page is beyond the available
+     * pages, return an empty list rather than exposing
+     * records outside the requested page.
+     */
+    const safePage =
+      totalPages > 0
+        ? Math.min(
+            page,
+            totalPages
+          )
+        : 1;
+
+    const skip =
+      (safePage - 1) *
+      limit;
+
+    /*
+     * -----------------------------------------------------
+     * NOTIFICATIONS
+     * -----------------------------------------------------
+     */
+
+    const notifications =
+      await prisma.notification.findMany(
+        {
+          where,
+
+          orderBy: {
+            createdAt: "desc",
+          },
+
+          skip,
+
+          take: limit,
+
+          select: {
+            id: true,
+            type: true,
+            title: true,
+            message: true,
+            priority: true,
+            data: true,
+            readAt: true,
+            announcementId: true,
+            createdAt: true,
+          },
+        }
+      );
+
+    /*
+     * -----------------------------------------------------
+     * UNREAD COUNT
+     * -----------------------------------------------------
+     *
+     * This deliberately does not use the current
+     * unreadFilter.
+     *
+     * It represents the total unread count for the
+     * authenticated user, which is what the bell badge
+     * needs.
+     * -----------------------------------------------------
+     */
+
+    const unreadCount =
+      await prisma.notification.count({
+        where: {
+          userId,
+          readAt: null,
+        },
+      });
+
+    return NextResponse.json(
+      {
+        notifications,
+
+        unreadCount,
+
+        pagination: {
+          page: safePage,
+          limit,
+          total,
+          totalPages,
+          hasNextPage:
+            totalPages > 0 &&
+            safePage <
+              totalPages,
+          hasPreviousPage:
+            safePage > 1,
+        },
+      },
+      {
+        status: 200,
+        headers: jsonHeaders(),
+      }
+    );
+  } catch (error) {
+    console.error(
+      "Notifications GET error:",
+      error
+    );
+
+    return NextResponse.json(
+      {
+        error:
+          "Unable to load notifications.",
+      },
+      {
+        status: 500,
+        headers: jsonHeaders(),
+      }
+    );
+  }
+}
 
 /*
  * ---------------------------------------------------------
@@ -56,6 +350,7 @@ type PatchNotificationBody = {
  * the server-side session.
  *
  * A client cannot choose another user's notifications.
+ * ---------------------------------------------------------
  */
 
 export async function PATCH(
@@ -103,7 +398,8 @@ export async function PATCH(
 
       if (
         !parsed ||
-        typeof parsed !== "object" ||
+        typeof parsed !==
+          "object" ||
         Array.isArray(parsed)
       ) {
         return NextResponse.json(
@@ -140,8 +436,11 @@ export async function PATCH(
      */
 
     const action =
-      typeof body.action === "string"
-        ? body.action.trim().toUpperCase()
+      typeof body.action ===
+      "string"
+        ? body.action
+            .trim()
+            .toUpperCase()
         : "";
 
     /*
@@ -150,14 +449,19 @@ export async function PATCH(
      * -----------------------------------------------------
      */
 
-    if (action === "MARK_ONE") {
+    if (
+      action ===
+      "MARK_ONE"
+    ) {
       const notificationId =
         typeof body.notificationId ===
         "string"
           ? body.notificationId.trim()
           : "";
 
-      if (!notificationId) {
+      if (
+        !notificationId
+      ) {
         return NextResponse.json(
           {
             error:
@@ -186,7 +490,8 @@ export async function PATCH(
             },
 
             data: {
-              readAt: new Date(),
+              readAt:
+                new Date(),
             },
           }
         );
@@ -198,7 +503,10 @@ export async function PATCH(
        * - it belongs to another user,
        * - or it was already read.
        */
-      if (result.count === 0) {
+      if (
+        result.count ===
+        0
+      ) {
         const existing =
           await prisma.notification.findFirst(
             {
@@ -206,6 +514,7 @@ export async function PATCH(
                 id: notificationId,
                 userId,
               },
+
               select: {
                 id: true,
                 readAt: true,
@@ -221,7 +530,8 @@ export async function PATCH(
             },
             {
               status: 404,
-              headers: jsonHeaders(),
+              headers:
+                jsonHeaders(),
             }
           );
         }
@@ -230,12 +540,16 @@ export async function PATCH(
           {
             message:
               "Notification was already marked as read.",
-            notification: existing,
+
+            notification:
+              existing,
+
             updated: false,
           },
           {
             status: 200,
-            headers: jsonHeaders(),
+            headers:
+              jsonHeaders(),
           }
         );
       }
@@ -247,6 +561,7 @@ export async function PATCH(
               id: notificationId,
               userId,
             },
+
             select: {
               id: true,
               type: true,
@@ -265,12 +580,15 @@ export async function PATCH(
         {
           message:
             "Notification marked as read.",
+
           notification,
+
           updated: true,
         },
         {
           status: 200,
-          headers: jsonHeaders(),
+          headers:
+            jsonHeaders(),
         }
       );
     }
@@ -281,7 +599,10 @@ export async function PATCH(
      * -----------------------------------------------------
      */
 
-    if (action === "MARK_ALL") {
+    if (
+      action ===
+      "MARK_ALL"
+    ) {
       const now =
         new Date();
 
@@ -303,12 +624,14 @@ export async function PATCH(
         {
           message:
             "All unread notifications have been marked as read.",
+
           updatedCount:
             result.count,
         },
         {
           status: 200,
-          headers: jsonHeaders(),
+          headers:
+            jsonHeaders(),
         }
       );
     }

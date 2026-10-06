@@ -33,19 +33,27 @@ function normalizeNigerianPhone(
     return "";
   }
 
-  if (clean.startsWith("00")) {
+  if (
+    clean.startsWith("00")
+  ) {
     clean = clean.slice(2);
   }
 
-  if (clean.startsWith("+")) {
+  if (
+    clean.startsWith("+")
+  ) {
     clean = clean.slice(1);
   }
 
-  if (clean.startsWith("234")) {
+  if (
+    clean.startsWith("234")
+  ) {
     return `+${clean}`;
   }
 
-  if (clean.startsWith("0")) {
+  if (
+    clean.startsWith("0")
+  ) {
     return `+234${clean.slice(1)}`;
   }
 
@@ -56,7 +64,8 @@ function normalizeSocialHandle(
   platform: string,
   handle: string
 ): string {
-  const clean = handle.trim();
+  const clean =
+    handle.trim();
 
   if (!clean) {
     return "";
@@ -110,15 +119,17 @@ export async function GET(
       },
       {
         status: 429,
-        headers: getResponseHeaders(
-          rateLimit.headers
-        ),
+        headers:
+          getResponseHeaders(
+            rateLimit.headers
+          ),
       }
     );
   }
 
   try {
-    const { id } = await params;
+    const { id } =
+      await params;
 
     if (!id) {
       return NextResponse.json(
@@ -128,9 +139,10 @@ export async function GET(
         },
         {
           status: 400,
-          headers: getResponseHeaders(
-            rateLimit.headers
-          ),
+          headers:
+            getResponseHeaders(
+              rateLimit.headers
+            ),
         }
       );
     }
@@ -146,9 +158,10 @@ export async function GET(
         },
         {
           status: 400,
-          headers: getResponseHeaders(
-            rateLimit.headers
-          ),
+          headers:
+            getResponseHeaders(
+              rateLimit.headers
+            ),
         }
       );
     }
@@ -173,6 +186,16 @@ export async function GET(
         select: {
           id: true,
           name: true,
+
+          /*
+           * ownerId is used only on the server
+           * to determine whether this business
+           * is currently unowned.
+           *
+           * It is NOT exposed to the client.
+           */
+          ownerId: true,
+
           ownerName: true,
           description: true,
           imageUrl: true,
@@ -262,10 +285,12 @@ export async function GET(
 
                 orderBy: [
                   {
-                    sortOrder: "asc",
+                    sortOrder:
+                      "asc",
                   },
                   {
-                    createdAt: "asc",
+                    createdAt:
+                      "asc",
                   },
                 ],
               },
@@ -319,9 +344,10 @@ export async function GET(
         },
         {
           status: 404,
-          headers: getResponseHeaders(
-            rateLimit.headers
-          ),
+          headers:
+            getResponseHeaders(
+              rateLimit.headers
+            ),
         }
       );
     }
@@ -448,7 +474,8 @@ export async function GET(
     const formattedBusiness = {
       id: business.id,
 
-      name: business.name,
+      name:
+        business.name,
 
       ownerName:
         business.ownerName,
@@ -458,6 +485,18 @@ export async function GET(
 
       imageUrl:
         business.imageUrl,
+
+      /*
+       * Safe public flag.
+       *
+       * This tells the client whether the
+       * business currently has no owner.
+       *
+       * The actual ownerId is never exposed.
+       */
+      claimable:
+        business.ownerId ===
+        null,
 
       /*
        * Business verification and location
@@ -493,7 +532,8 @@ export async function GET(
           null,
 
         verification:
-          business.location?.verification ??
+          business.location
+            ?.verification ??
           "UNVERIFIED",
       },
 
@@ -534,9 +574,11 @@ export async function GET(
       products:
         business.products.map(
           (product) => ({
-            id: product.id,
+            id:
+              product.id,
 
-            name: product.name,
+            name:
+              product.name,
 
             description:
               product.description,
@@ -562,9 +604,11 @@ export async function GET(
             images:
               product.images.map(
                 (image) => ({
-                  id: image.id,
+                  id:
+                    image.id,
 
-                  url: image.url,
+                  url:
+                    image.url,
 
                   publicId:
                     image.publicId,
@@ -590,9 +634,10 @@ export async function GET(
           formattedBusiness,
       },
       {
-        headers: getResponseHeaders(
-          rateLimit.headers
-        ),
+        headers:
+          getResponseHeaders(
+            rateLimit.headers
+          ),
       }
     );
   } catch (error) {
@@ -608,9 +653,10 @@ export async function GET(
       },
       {
         status: 500,
-        headers: getResponseHeaders(
-          rateLimit.headers
-        ),
+        headers:
+          getResponseHeaders(
+            rateLimit.headers
+          ),
       }
     );
   }
