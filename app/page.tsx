@@ -30,6 +30,8 @@ import {
 
 import Link from "next/link";
 
+import NotificationBell from "@/components/NotificationBell";
+
 import {
   getSavedBusinesses,
   saveBusiness,
@@ -691,7 +693,7 @@ export default function HomePage() {
 
             {/* Right Action */}
 
-            <div className="flex items-center gap-2 sm:gap-3">
+            <div className="flex items-center gap-1.5 sm:gap-3">
               <button
                 type="button"
                 onClick={() => {
@@ -721,6 +723,10 @@ export default function HomePage() {
                 <Heart className="h-[19px] w-[19px] text-gray-700" />
               </button>
 
+              {/* Notifications */}
+
+              <NotificationBell />
+
               <button
                 type="button"
                 className="hidden h-9 w-9 items-center justify-center rounded-full bg-gray-100 sm:flex"
@@ -736,7 +742,7 @@ export default function HomePage() {
                     "/request"
                   )
                 }
-                className="rounded-xl bg-[#FF5A36] px-3.5 py-2.5 text-[11px] font-bold text-white shadow-sm transition hover:opacity-90 sm:px-4 sm:text-xs"
+                className="rounded-xl bg-[#FF5A36] px-3 py-2.5 text-[11px] font-bold text-white shadow-sm transition hover:opacity-90 sm:px-4 sm:text-xs"
               >
                 Request something
               </button>

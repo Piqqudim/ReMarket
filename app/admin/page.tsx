@@ -21,6 +21,8 @@ import {
 import { useEffect, useState } from "react";
 import { usePathname } from "next/navigation";
 
+import NotificationBell from "@/components/NotificationBell";
+
 type ContactActivity = {
   WHATSAPP: number;
   PHONE: number;
@@ -112,11 +114,14 @@ const ADMIN_NAV = [
 ];
 
 function formatDate(value: string) {
-  return new Date(value).toLocaleDateString("en-NG", {
-    day: "numeric",
-    month: "short",
-    year: "numeric",
-  });
+  return new Date(value).toLocaleDateString(
+    "en-NG",
+    {
+      day: "numeric",
+      month: "short",
+      year: "numeric",
+    }
+  );
 }
 
 function statusClass(status: string) {
@@ -138,7 +143,9 @@ function statusClass(status: string) {
   }
 }
 
-function verificationClass(verification: string) {
+function verificationClass(
+  verification: string
+) {
   switch (verification) {
     case "VERIFIED":
       return "bg-[#E7F7EF] text-[#287A4B]";
@@ -299,15 +306,27 @@ function OperationCard({
 export default function AdminPage() {
   const pathname = usePathname();
 
-  const [data, setData] = useState<Overview | null>(null);
-
-  const [contactActivity, setContactActivity] =
-    useState<ContactActivity>(
-      DEFAULT_CONTACT_ACTIVITY,
+  const [data, setData] =
+    useState<Overview | null>(
+      null
     );
 
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState("");
+  const [
+    contactActivity,
+    setContactActivity,
+  ] = useState<ContactActivity>(
+    DEFAULT_CONTACT_ACTIVITY
+  );
+
+  const [
+    loading,
+    setLoading,
+  ] = useState(true);
+
+  const [
+    error,
+    setError,
+  ] = useState("");
 
   useEffect(() => {
     async function loadOverview() {
@@ -315,24 +334,26 @@ export default function AdminPage() {
         setLoading(true);
         setError("");
 
-        const response = await fetch(
-          "/api/admin/overview",
-          {
-            cache: "no-store",
-          },
-        );
+        const response =
+          await fetch(
+            "/api/admin/overview",
+            {
+              cache: "no-store",
+            }
+          );
 
         if (!response.ok) {
-          const body = await response.text();
+          const body =
+            await response.text();
 
           console.error(
             "Admin overview request failed:",
             response.status,
-            body,
+            body
           );
 
           throw new Error(
-            `Admin overview failed (${response.status}): ${body}`,
+            `Admin overview failed (${response.status}): ${body}`
           );
         }
 
@@ -343,20 +364,20 @@ export default function AdminPage() {
 
         setContactActivity(
           result.contactActivity ??
-            DEFAULT_CONTACT_ACTIVITY,
+            DEFAULT_CONTACT_ACTIVITY
         );
       } catch (error) {
         console.error(error);
 
         setError(
-          "We couldn't load the admin dashboard.",
+          "We couldn't load the admin dashboard."
         );
       } finally {
         setLoading(false);
       }
     }
 
-    loadOverview();
+    void loadOverview();
   }, []);
 
   return (
@@ -393,33 +414,47 @@ export default function AdminPage() {
               </p>
 
               <div className="space-y-1">
-                {ADMIN_NAV.map((item) => {
-                  const Icon = item.icon;
+                {ADMIN_NAV.map(
+                  (item) => {
+                    const Icon =
+                      item.icon;
 
-                  const active =
-                    item.href === "/admin"
-                      ? pathname === "/admin"
-                      : pathname === item.href ||
-                        pathname.startsWith(
-                          `${item.href}/`,
-                        );
+                    const active =
+                      item.href ===
+                      "/admin"
+                        ? pathname ===
+                          "/admin"
+                        : pathname ===
+                            item.href ||
+                          pathname.startsWith(
+                            `${item.href}/`
+                          );
 
-                  return (
-                    <Link
-                      key={item.href}
-                      href={item.href}
-                      className={`flex items-center gap-3 rounded-xl px-3 py-3 text-sm font-medium transition ${
-                        active
-                          ? "bg-[#FFF0E8] text-[#9F2D18]"
-                          : "text-[#6F675F] hover:bg-[#F7F1EB] hover:text-[#2E241F]"
-                      }`}
-                    >
-                      <Icon className="h-4 w-4" />
+                    return (
+                      <Link
+                        key={
+                          item.href
+                        }
+                        href={
+                          item.href
+                        }
+                        className={`flex items-center gap-3 rounded-xl px-3 py-3 text-sm font-medium transition ${
+                          active
+                            ? "bg-[#FFF0E8] text-[#9F2D18]"
+                            : "text-[#6F675F] hover:bg-[#F7F1EB] hover:text-[#2E241F]"
+                        }`}
+                      >
+                        <Icon className="h-4 w-4" />
 
-                      <span>{item.label}</span>
-                    </Link>
-                  );
-                })}
+                        <span>
+                          {
+                            item.label
+                          }
+                        </span>
+                      </Link>
+                    );
+                  }
+                )}
               </div>
             </nav>
 
@@ -453,11 +488,20 @@ export default function AdminPage() {
                   </h1>
 
                   <p className="mt-2 max-w-2xl text-sm leading-6 text-[#766C63]">
-                    Monitor businesses, products,
-                    buyer requests, matches, seller
-                    contacts, and the operational
-                    activity across ReMarket.
+                    Monitor businesses,
+                    products,
+                    buyer requests,
+                    matches, seller
+                    contacts, and the
+                    operational activity
+                    across ReMarket.
                   </p>
+                </div>
+
+                {/* Notifications */}
+
+                <div className="flex items-center justify-end">
+                  <NotificationBell />
                 </div>
               </div>
             </div>
@@ -479,12 +523,19 @@ export default function AdminPage() {
                 <div className="grid grid-cols-2 gap-4 xl:grid-cols-6">
                   {Array.from({
                     length: 6,
-                  }).map((_, index) => (
-                    <div
-                      key={index}
-                      className="h-32 animate-pulse rounded-2xl border border-[#E8DED3] bg-white"
-                    />
-                  ))}
+                  }).map(
+                    (
+                      _,
+                      index
+                    ) => (
+                      <div
+                        key={
+                          index
+                        }
+                        className="h-32 animate-pulse rounded-2xl border border-[#E8DED3] bg-white"
+                      />
+                    )
+                  )}
                 </div>
 
                 <div>
@@ -493,12 +544,19 @@ export default function AdminPage() {
                   <div className="mt-4 grid grid-cols-2 gap-4 md:grid-cols-3 xl:grid-cols-5">
                     {Array.from({
                       length: 5,
-                    }).map((_, index) => (
-                      <div
-                        key={index}
-                        className="h-36 animate-pulse rounded-2xl border border-[#E8DED3] bg-white"
-                      />
-                    ))}
+                    }).map(
+                      (
+                        _,
+                        index
+                      ) => (
+                        <div
+                          key={
+                            index
+                          }
+                          className="h-36 animate-pulse rounded-2xl border border-[#E8DED3] bg-white"
+                        />
+                      )
+                    )}
                   </div>
                 </div>
 
@@ -518,40 +576,60 @@ export default function AdminPage() {
                   <div className="grid grid-cols-2 gap-4 xl:grid-cols-6">
                     <StatCard
                       label="Businesses"
-                      value={data.stats.businesses}
+                      value={
+                        data.stats
+                          .businesses
+                      }
                       icon={Store}
                       href="/admin/businesses"
                     />
 
                     <StatCard
                       label="Products"
-                      value={data.stats.products}
+                      value={
+                        data.stats
+                          .products
+                      }
                       icon={Package}
                       href="/admin/products"
                     />
 
                     <StatCard
                       label="Requests"
-                      value={data.stats.requests}
-                      icon={ClipboardList}
+                      value={
+                        data.stats
+                          .requests
+                      }
+                      icon={
+                        ClipboardList
+                      }
                       href="/admin/requests"
                     />
 
                     <StatCard
                       label="Matches"
-                      value={data.stats.matches}
+                      value={
+                        data.stats
+                          .matches
+                      }
                       icon={Users}
                     />
 
                     <StatCard
                       label="Seller contacts"
-                      value={data.stats.contacts}
+                      value={
+                        data.stats
+                          .contacts
+                      }
                       icon={Contact}
                     />
 
                     <StatCard
                       label="Business views"
-                      value={data.stats.businessViews}
+                      value={
+                        data.stats
+                          .businessViews
+                      }
                       icon={Eye}
                     />
                   </div>
@@ -566,8 +644,10 @@ export default function AdminPage() {
                     </h2>
 
                     <p className="text-sm text-[#766C63]">
-                      Current seller, moderation, and
-                      catalog activity that may need
+                      Current seller,
+                      moderation, and
+                      catalog activity
+                      that may need
                       attention.
                     </p>
                   </div>
@@ -576,23 +656,28 @@ export default function AdminPage() {
                     <OperationCard
                       label="Seller accounts"
                       value={
-                        data.operations.sellerAccounts
+                        data.operations
+                          .sellerAccounts
                       }
                       description="Registered seller accounts"
-                      icon={UserRound}
+                      icon={
+                        UserRound
+                      }
                     />
 
                     <OperationCard
                       label="Pending deletions"
                       value={
-                        data.operations
+                        data
+                          .operations
                           .pendingDeletionRequests
                       }
                       description="Business deletion requests awaiting review"
                       icon={Trash2}
                       href="/admin/business-deletion-requests"
                       attention={
-                        data.operations
+                        data
+                          .operations
                           .pendingDeletionRequests >
                         0
                       }
@@ -601,13 +686,17 @@ export default function AdminPage() {
                     <OperationCard
                       label="Pending claims"
                       value={
-                        data.operations
+                        data
+                          .operations
                           .pendingClaimRequests
                       }
                       description="Business ownership claims awaiting review"
-                      icon={AlertCircle}
+                      icon={
+                        AlertCircle
+                      }
                       attention={
-                        data.operations
+                        data
+                          .operations
                           .pendingClaimRequests >
                         0
                       }
@@ -616,7 +705,9 @@ export default function AdminPage() {
                     <OperationCard
                       label="Categories"
                       value={
-                        data.operations.categories
+                        data
+                          .operations
+                          .categories
                       }
                       description={`${data.operations.activeCategories} active categories`}
                       icon={Tags}
@@ -626,7 +717,8 @@ export default function AdminPage() {
                     <OperationCard
                       label="Active categories"
                       value={
-                        data.operations
+                        data
+                          .operations
                           .activeCategories
                       }
                       description="Categories currently available to the platform"
@@ -646,7 +738,8 @@ export default function AdminPage() {
                       </h2>
 
                       <p className="text-sm text-[#766C63]">
-                        How buyers are contacting sellers.
+                        How buyers are
+                        contacting sellers.
                       </p>
                     </div>
                   </div>
@@ -655,7 +748,8 @@ export default function AdminPage() {
                     <ContactActivityCard
                       label="WhatsApp"
                       value={
-                        contactActivity.WHATSAPP
+                        contactActivity
+                          .WHATSAPP
                       }
                       icon={Contact}
                     />
@@ -663,7 +757,8 @@ export default function AdminPage() {
                     <ContactActivityCard
                       label="Phone"
                       value={
-                        contactActivity.PHONE
+                        contactActivity
+                          .PHONE
                       }
                       icon={Phone}
                     />
@@ -671,15 +766,19 @@ export default function AdminPage() {
                     <ContactActivityCard
                       label="Instagram"
                       value={
-                        contactActivity.INSTAGRAM
+                        contactActivity
+                          .INSTAGRAM
                       }
-                      icon={ExternalLink}
+                      icon={
+                        ExternalLink
+                      }
                     />
 
                     <ContactActivityCard
                       label="TikTok"
                       value={
-                        contactActivity.TIKTOK
+                        contactActivity
+                          .TIKTOK
                       }
                       icon={Contact}
                     />
@@ -687,15 +786,19 @@ export default function AdminPage() {
                     <ContactActivityCard
                       label="Facebook"
                       value={
-                        contactActivity.FACEBOOK
+                        contactActivity
+                          .FACEBOOK
                       }
-                      icon={ExternalLink}
+                      icon={
+                        ExternalLink
+                      }
                     />
 
                     <ContactActivityCard
                       label="Directions"
                       value={
-                        contactActivity.DIRECTIONS
+                        contactActivity
+                          .DIRECTIONS
                       }
                       icon={MapPin}
                     />
@@ -715,7 +818,8 @@ export default function AdminPage() {
                         </h2>
 
                         <p className="mt-1 text-xs text-[#8B8178]">
-                          Latest buyer requests
+                          Latest buyer
+                          requests
                         </p>
                       </div>
 
@@ -729,7 +833,9 @@ export default function AdminPage() {
                     </div>
 
                     <div className="divide-y divide-[#E8DED3]">
-                      {data.recentRequests.length ===
+                      {data
+                        .recentRequests
+                        .length ===
                       0 ? (
                         <div className="px-5 py-10 text-center">
                           <ClipboardList className="mx-auto h-8 w-8 text-[#B8AEA5]" />
@@ -740,15 +846,21 @@ export default function AdminPage() {
                         </div>
                       ) : (
                         data.recentRequests.map(
-                          (request) => (
+                          (
+                            request
+                          ) => (
                             <div
-                              key={request.id}
+                              key={
+                                request.id
+                              }
                               className="px-5 py-4"
                             >
                               <div className="flex items-start justify-between gap-4">
                                 <div className="min-w-0">
                                   <p className="truncate text-sm font-semibold text-[#2E241F]">
-                                    {request.query}
+                                    {
+                                      request.query
+                                    }
                                   </p>
 
                                   <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-[#8B8178]">
@@ -758,7 +870,8 @@ export default function AdminPage() {
                                       }
                                     </span>
 
-                                    {request.category
+                                    {request
+                                      .category
                                       ?.name && (
                                       <>
                                         <span>
@@ -793,20 +906,22 @@ export default function AdminPage() {
 
                                 <span
                                   className={`shrink-0 rounded-full px-2.5 py-1 text-[11px] font-semibold ${statusClass(
-                                    request.status,
+                                    request.status
                                   )}`}
                                 >
-                                  {request.status}
+                                  {
+                                    request.status
+                                  }
                                 </span>
                               </div>
 
                               <p className="mt-2 text-xs text-[#9A9087]">
                                 {formatDate(
-                                  request.createdAt,
+                                  request.createdAt
                                 )}
                               </p>
                             </div>
-                          ),
+                          )
                         )
                       )}
                     </div>
@@ -822,7 +937,8 @@ export default function AdminPage() {
                         </h2>
 
                         <p className="mt-1 text-xs text-[#8B8178]">
-                          Latest onboarded sellers
+                          Latest onboarded
+                          sellers
                         </p>
                       </div>
 
@@ -836,38 +952,49 @@ export default function AdminPage() {
                     </div>
 
                     <div className="divide-y divide-[#E8DED3]">
-                      {data.recentBusinesses.length ===
+                      {data
+                        .recentBusinesses
+                        .length ===
                       0 ? (
                         <div className="px-5 py-10 text-center">
                           <Store className="mx-auto h-8 w-8 text-[#B8AEA5]" />
 
                           <p className="mt-3 text-sm font-medium text-[#6F675F]">
-                            No businesses yet
+                            No businesses
+                            yet
                           </p>
                         </div>
                       ) : (
                         data.recentBusinesses.map(
-                          (business) => (
+                          (
+                            business
+                          ) => (
                             <div
-                              key={business.id}
+                              key={
+                                business.id
+                              }
                               className="px-5 py-4"
                             >
                               <div className="flex items-start justify-between gap-4">
                                 <div className="min-w-0">
                                   <p className="truncate text-sm font-semibold text-[#2E241F]">
-                                    {business.name}
+                                    {
+                                      business.name
+                                    }
                                   </p>
 
                                   <p className="mt-1 text-xs text-[#8B8178]">
-                                    {business.area ??
-                                      "Area not provided"}
+                                    {
+                                      business.area ??
+                                      "Area not provided"
+                                    }
                                   </p>
                                 </div>
 
                                 <div className="flex shrink-0 flex-col items-end gap-1.5">
                                   <span
                                     className={`rounded-full px-2.5 py-1 text-[11px] font-semibold ${verificationClass(
-                                      business.verification,
+                                      business.verification
                                     )}`}
                                   >
                                     {
@@ -877,10 +1004,12 @@ export default function AdminPage() {
 
                                   <span
                                     className={`rounded-full px-2.5 py-1 text-[11px] font-semibold ${statusClass(
-                                      business.status,
+                                      business.status
                                     )}`}
                                   >
-                                    {business.status}
+                                    {
+                                      business.status
+                                    }
                                   </span>
                                 </div>
                               </div>
@@ -888,11 +1017,11 @@ export default function AdminPage() {
                               <p className="mt-2 text-xs text-[#9A9087]">
                                 Onboarded{" "}
                                 {formatDate(
-                                  business.onboardedAt,
+                                  business.onboardedAt
                                 )}
                               </p>
                             </div>
-                          ),
+                          )
                         )
                       )}
                     </div>

@@ -1,4 +1,5 @@
 "use client";
+
 import {
   useEffect,
   useState,
@@ -8,18 +9,47 @@ import Link from "next/link";
 import { signOut } from "next-auth/react";
 import { useRouter } from "next/navigation";
 import ProductImageUpload from "@/components/ProductImageUpload";
-import {Store,MapPin,Phone,Package,LogOut,ExternalLink,LoaderCircle,Plus,CheckCircle2,AlertCircle,Pencil,X,Trash2,AlertTriangle,UserRound,ShieldCheck} from "lucide-react";
+import NotificationBell from "@/components/NotificationBell";
+import {
+  Store,
+  MapPin,
+  Phone,
+  Package,
+  LogOut,
+  ExternalLink,
+  LoaderCircle,
+  Plus,
+  CheckCircle2,
+  AlertCircle,
+  Pencil,
+  X,
+  Trash2,
+  AlertTriangle,
+  UserRound,
+  ShieldCheck,
+} from "lucide-react";
+
 const MAX_ACTIVE_PRODUCTS = 10;
+
 type SellerCategory = {
   id: string;
   name: string;
 };
-type SocialPlatform = | "WHATSAPP"| "INSTAGRAM"| "TIKTOK"| "FACEBOOK"| "PHONE"| "DIRECTIONS";
+
+type SocialPlatform =
+  | "WHATSAPP"
+  | "INSTAGRAM"
+  | "TIKTOK"
+  | "FACEBOOK"
+  | "PHONE"
+  | "DIRECTIONS";
+
 type SellerSocialLink = {
   id: string;
   platform: SocialPlatform;
   handle: string;
 };
+
 const SOCIAL_PLATFORMS: {
   value: SocialPlatform;
   label: string;
@@ -49,7 +79,11 @@ const SOCIAL_PLATFORMS: {
     label: "Directions",
   },
 ];
-function getSocialValue(links: SellerSocialLink[] | undefined,platform: SocialPlatform): string {
+
+function getSocialValue(
+  links: SellerSocialLink[] | undefined,
+  platform: SocialPlatform
+): string {
   return (
     links?.find(
       (link) =>
@@ -57,24 +91,55 @@ function getSocialValue(links: SellerSocialLink[] | undefined,platform: SocialPl
     )?.handle ?? ""
   );
 }
-function getSocialValues(links: SellerSocialLink[] | undefined,fallbackPhone?: string | null): Record<SocialPlatform, string> {
+
+function getSocialValues(
+  links: SellerSocialLink[] | undefined,
+  fallbackPhone?: string | null
+): Record<SocialPlatform, string> {
   return {
-    WHATSAPP: getSocialValue(links,"WHATSAPP"),
-    INSTAGRAM: getSocialValue(links,"INSTAGRAM"),
-    TIKTOK: getSocialValue(links,"TIKTOK"),
-    FACEBOOK: getSocialValue(links,"FACEBOOK"),
-    PHONE:getSocialValue(links,"PHONE") ||fallbackPhone?.trim() ||"",
-    DIRECTIONS: getSocialValue(links,"DIRECTIONS"),
+    WHATSAPP: getSocialValue(
+      links,
+      "WHATSAPP"
+    ),
+    INSTAGRAM: getSocialValue(
+      links,
+      "INSTAGRAM"
+    ),
+    TIKTOK: getSocialValue(
+      links,
+      "TIKTOK"
+    ),
+    FACEBOOK: getSocialValue(
+      links,
+      "FACEBOOK"
+    ),
+    PHONE:
+      getSocialValue(
+        links,
+        "PHONE"
+      ) ||
+      fallbackPhone?.trim() ||
+      "",
+    DIRECTIONS: getSocialValue(
+      links,
+      "DIRECTIONS"
+    ),
   };
 }
-function buildSocialLinks(values: Record<SocialPlatform, string>) {
+
+function buildSocialLinks(
+  values: Record<SocialPlatform, string>
+) {
   return SOCIAL_PLATFORMS
     .map(({ value }) => ({
       platform: value,
       handle: values[value].trim(),
     }))
-    .filter((item) => item.handle);
+    .filter(
+      (item) => item.handle
+    );
 }
+
 const LAGOS_AREA_GROUPS = [
   {
     lga: "Agege",
@@ -341,12 +406,19 @@ const LAGOS_AREA_GROUPS = [
     ],
   },
 ] as const;
+
 const DEFAULT_COUNTRY = "Nigeria";
-function isKnownLagosArea(area: string): boolean {
-  const normalized = area.trim().toLowerCase();
+
+function isKnownLagosArea(
+  area: string
+): boolean {
+  const normalized =
+    area.trim().toLowerCase();
+
   if (!normalized) {
     return false;
   }
+
   return LAGOS_AREA_GROUPS.some(
     (group) =>
       group.areas.some(
@@ -356,58 +428,173 @@ function isKnownLagosArea(area: string): boolean {
       )
   );
 }
-function looksLikeHouseNumber(value: string): boolean {
-  const normalized = value.trim().toLowerCase();
+
+function looksLikeHouseNumber(
+  value: string
+): boolean {
+  const normalized =
+    value.trim().toLowerCase();
+
   if (!normalized) {
     return false;
   }
-  return (/^\d+[a-z]?\b/.test(normalized) ||/^(shop|house|building|block|plot|suite|unit|flat)\b/.test(normalized));
+
+  return (
+    /^\d+[a-z]?\b/.test(
+      normalized
+    ) ||
+    /^(shop|house|building|block|plot|suite|unit|flat)\b/.test(
+      normalized
+    )
+  );
 }
-function parseLocationAddress(address: string | null | undefined,area: string): {houseNumber: string;street: string;city: string;} {
-  const fallback = {houseNumber: "",street: "",city: "",};
+
+function parseLocationAddress(
+  address: string | null | undefined,
+  area: string
+): {
+  houseNumber: string;
+  street: string;
+  city: string;
+} {
+  const fallback = {
+    houseNumber: "",
+    street: "",
+    city: "",
+  };
+
   const trimmedAddress =
-    typeof address === "string"? address.trim(): "";
+    typeof address === "string"
+      ? address.trim()
+      : "";
+
   if (!trimmedAddress) {
     return fallback;
   }
-  const parts = trimmedAddress.split(",").map((part) => part.trim()).filter(Boolean);
+
+  const parts = trimmedAddress
+    .split(",")
+    .map((part) => part.trim())
+    .filter(Boolean);
+
   if (parts.length === 0) {
     return fallback;
   }
-  const withoutCountry = parts[parts.length - 1].toLowerCase() === DEFAULT_COUNTRY.toLowerCase() ? parts.slice(0, -1) : parts;
-  const normalizedArea = area.trim().toLowerCase();
-  const areaIndex = normalizedArea ? withoutCountry.findLastIndex(
-        (part) => part.toLowerCase() === normalizedArea) : -1;
+
+  const withoutCountry =
+    parts[
+      parts.length - 1
+    ].toLowerCase() ===
+    DEFAULT_COUNTRY.toLowerCase()
+      ? parts.slice(0, -1)
+      : parts;
+
+  const normalizedArea =
+    area.trim().toLowerCase();
+
+  const areaIndex =
+    normalizedArea
+      ? withoutCountry.findLastIndex(
+          (part) =>
+            part.toLowerCase() ===
+            normalizedArea
+        )
+      : -1;
+
   if (areaIndex < 0) {
-    return { houseNumber: "", street: withoutCountry.join(", "), city: "",};}
-  const beforeArea = withoutCountry.slice(0,areaIndex);
-  const afterArea = withoutCountry.slice(areaIndex + 1);
+    return {
+      houseNumber: "",
+      street:
+        withoutCountry.join(", "),
+      city: "",
+    };
+  }
+
+  const beforeArea =
+    withoutCountry.slice(
+      0,
+      areaIndex
+    );
+
+  const afterArea =
+    withoutCountry.slice(
+      areaIndex + 1
+    );
+
   if (afterArea.length > 0) {
-    return { houseNumber: "", street: beforeArea.join(", "),  city: afterArea[0] ?? "",  };}
+    return {
+      houseNumber: "",
+      street:
+        beforeArea.join(", "),
+      city:
+        afterArea[0] ?? "",
+    };
+  }
+
   if (beforeArea.length === 0) {
     return fallback;
   }
+
   if (beforeArea.length === 1) {
-    return {  houseNumber: "",  street: beforeArea[0],  city: "",   };
+    return {
+      houseNumber: "",
+      street: beforeArea[0],
+      city: "",
+    };
   }
+
   if (beforeArea.length === 2) {
-    const [first, second] = beforeArea;
-    if (looksLikeHouseNumber(first)) {
-      return {  houseNumber: first,    street: second,    city: "",  };
+    const [first, second] =
+      beforeArea;
+
+    if (
+      looksLikeHouseNumber(first)
+    ) {
+      return {
+        houseNumber: first,
+        street: second,
+        city: "",
+      };
     }
-    return { houseNumber: "", street: first, city: second, };}
-  return {houseNumber: beforeArea.slice(0, -2).join(", "),street:  beforeArea[beforeArea.length - 2],city:
-      beforeArea[beforeArea.length - 1],
+
+    return {
+      houseNumber: "",
+      street: first,
+      city: second,
+    };
+  }
+
+  return {
+    houseNumber:
+      beforeArea
+        .slice(0, -2)
+        .join(", "),
+    street:
+      beforeArea[
+        beforeArea.length - 2
+      ],
+    city:
+      beforeArea[
+        beforeArea.length - 1
+      ],
   };
 }
-function buildLocationAddressPreview(area: string,houseNumber: string, street: string,city: string): string {
+
+function buildLocationAddressPreview(
+  area: string,
+  houseNumber: string,
+  street: string,
+  city: string
+): string {
   return [
     houseNumber.trim(),
     street.trim(),
     area.trim(),
     city.trim(),
     DEFAULT_COUNTRY,
-  ].filter(Boolean).join(", ");
+  ]
+    .filter(Boolean)
+    .join(", ");
 }
 
 type SellerProductImage = {
@@ -435,8 +622,11 @@ type SellerProduct = {
     | "INACTIVE"
     | "PENDING";
   deletedAt: string | null;
-  category: SellerCategory | null;
+  category:
+    | SellerCategory
+    | null;
 };
+
 type SellerBusiness = {
   id: string;
   name: string;
@@ -474,6 +664,7 @@ type SellerBusiness = {
   }[];
   products: SellerProduct[];
 };
+
 type DeletionRequest = {
   id: string;
   businessId: string;
@@ -486,6 +677,7 @@ type DeletionRequest = {
   createdAt: string;
   updatedAt: string;
 };
+
 type BusinessForm = {
   name: string;
   ownerName: string;
@@ -502,6 +694,7 @@ type BusinessForm = {
   priceMin: string;
   priceMax: string;
 };
+
 type ProductForm = {
   name: string;
   description: string;
@@ -515,6 +708,7 @@ type ProductForm = {
     | "UNAVAILABLE";
   images: string[];
 };
+
 const INITIAL_BUSINESS_FORM: BusinessForm = {
   name: "",
   ownerName: "",
@@ -528,6 +722,7 @@ const INITIAL_BUSINESS_FORM: BusinessForm = {
   priceMin: "",
   priceMax: "",
 };
+
 const INITIAL_PRODUCT_FORM: ProductForm = {
   name: "",
   description: "",
@@ -538,86 +733,301 @@ const INITIAL_PRODUCT_FORM: ProductForm = {
   availability: "ASK_SELLER",
   images: [],
 };
+
 export default function SellerDashboard() {
   const router = useRouter();
-  const [business, setBusiness] = useState<SellerBusiness | null>(null);
-  const [categories, setCategories] = useState<SellerCategory[]>([]);
-  const [deletionRequest, setDeletionRequest] = useState<DeletionRequest | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [savingBusiness, setSavingBusiness] = useState(false);
-  const [creatingProduct, setCreatingProduct] =  useState(false);
-  const [updatingProduct, setUpdatingProduct] =  useState(false);
-  const [  deletingProductId,  setDeletingProductId,] = useState<string | null>(null);
-  const [submittingDeletionRequest,setSubmittingDeletionRequest,] = useState(false);
-  const [editingBusiness, setEditingBusiness] = useState(false);
-  const [showProductForm, setShowProductForm] =useState(false);
-  const [editingProductId, setEditingProductId] =useState<string | null>(null);
-  const [showDeletionForm, setShowDeletionForm] = useState(false);
-  const [deletionReason, setDeletionReason] = useState("");
-  const [categoryChanged, setCategoryChanged] = useState(false);
-  const [socialValues, setSocialValues] = useState<Record<SocialPlatform, string>>({ WHATSAPP: "", INSTAGRAM: "",TIKTOK: "",  FACEBOOK: "", PHONE: "", DIRECTIONS: "",});
-  const [businessLatitude, setBusinessLatitude] =useState<string>("");
-  const [businessLongitude, setBusinessLongitude] = useState<string>("");
-  const [capturingLocation, setCapturingLocation] = useState(false);
-  const [locationStatus, setLocationStatus] =useState("");
-  const [locationError, setLocationError] =useState("");
-  const [error, setError] = useState("");
-  const [success, setSuccess] =useState("");
-  const [businessForm, setBusinessForm] =useState<BusinessForm>(INITIAL_BUSINESS_FORM);
-  const [productForm, setProductForm] = useState<ProductForm>(INITIAL_PRODUCT_FORM);
-  const activeProductCount = business?.products.filter(
-      (product) => product.status === "ACTIVE").length ?? 0;
-  const reachedProductLimit =activeProductCount >= MAX_ACTIVE_PRODUCTS;
-  const remainingProductSlots =Math.max( 0, MAX_ACTIVE_PRODUCTS - activeProductCount);
+
+  const [business, setBusiness] =
+    useState<SellerBusiness | null>(
+      null
+    );
+
+  const [categories, setCategories] =
+    useState<SellerCategory[]>([]);
+
+  const [
+    deletionRequest,
+    setDeletionRequest,
+  ] =
+    useState<DeletionRequest | null>(
+      null
+    );
+
+  const [loading, setLoading] =
+    useState(true);
+
+  const [
+    savingBusiness,
+    setSavingBusiness,
+  ] = useState(false);
+
+  const [
+    creatingProduct,
+    setCreatingProduct,
+  ] = useState(false);
+
+  const [
+    updatingProduct,
+    setUpdatingProduct,
+  ] = useState(false);
+
+  const [
+    deletingProductId,
+    setDeletingProductId,
+  ] = useState<string | null>(null);
+
+  const [
+    submittingDeletionRequest,
+    setSubmittingDeletionRequest,
+  ] = useState(false);
+
+  const [
+    editingBusiness,
+    setEditingBusiness,
+  ] = useState(false);
+
+  const [
+    showProductForm,
+    setShowProductForm,
+  ] = useState(false);
+
+  const [
+    editingProductId,
+    setEditingProductId,
+  ] = useState<string | null>(null);
+
+  const [
+    showDeletionForm,
+    setShowDeletionForm,
+  ] = useState(false);
+
+  const [
+    deletionReason,
+    setDeletionReason,
+  ] = useState("");
+
+  const [
+    categoryChanged,
+    setCategoryChanged,
+  ] = useState(false);
+
+  const [
+    socialValues,
+    setSocialValues,
+  ] = useState<
+    Record<SocialPlatform, string>
+  >({
+    WHATSAPP: "",
+    INSTAGRAM: "",
+    TIKTOK: "",
+    FACEBOOK: "",
+    PHONE: "",
+    DIRECTIONS: "",
+  });
+
+  const [
+    businessLatitude,
+    setBusinessLatitude,
+  ] = useState<string>("");
+
+  const [
+    businessLongitude,
+    setBusinessLongitude,
+  ] = useState<string>("");
+
+  const [
+    capturingLocation,
+    setCapturingLocation,
+  ] = useState(false);
+
+  const [
+    locationStatus,
+    setLocationStatus,
+  ] = useState("");
+
+  const [
+    locationError,
+    setLocationError,
+  ] = useState("");
+
+  const [error, setError] =
+    useState("");
+
+  const [success, setSuccess] =
+    useState("");
+
+  const [
+    businessForm,
+    setBusinessForm,
+  ] = useState<BusinessForm>(
+    INITIAL_BUSINESS_FORM
+  );
+
+  const [
+    productForm,
+    setProductForm,
+  ] = useState<ProductForm>(
+    INITIAL_PRODUCT_FORM
+  );
+
+  const activeProductCount =
+    business?.products.filter(
+      (product) =>
+        product.status === "ACTIVE"
+    ).length ?? 0;
+
+  const reachedProductLimit =
+    activeProductCount >=
+    MAX_ACTIVE_PRODUCTS;
+
+  const remainingProductSlots =
+    Math.max(
+      0,
+      MAX_ACTIVE_PRODUCTS -
+        activeProductCount
+    );
+
   useEffect(() => {
     let cancelled = false;
+
     async function loadDashboard() {
       try {
-        const [businessResponse, categoriesResponse, deletionRequestResponse] = await Promise.all([
-          fetch( "/api/seller/business",
-            { cache: "no-store",}
+        const [
+          businessResponse,
+          categoriesResponse,
+          deletionRequestResponse,
+        ] = await Promise.all([
+          fetch(
+            "/api/seller/business",
+            {
+              cache: "no-store",
+            }
           ),
-          fetch("/api/categories",
-            { cache: "no-store",}
+          fetch(
+            "/api/categories",
+            {
+              cache: "no-store",
+            }
           ),
-          fetch( "/api/seller/business/deletion-request",
-            {   cache: "no-store", }),
+          fetch(
+            "/api/seller/business/deletion-request",
+            {
+              cache: "no-store",
+            }
+          ),
         ]);
-        if (businessResponse.status === 401 || businessResponse.status === 403) {
-          router.replace("/seller/login");
+
+        if (
+          businessResponse.status ===
+            401 ||
+          businessResponse.status ===
+            403
+        ) {
+          router.replace(
+            "/seller/login"
+          );
           return;
         }
+
         if (!businessResponse.ok) {
-          throw new Error("Unable to load seller business.");
+          throw new Error(
+            "Unable to load seller business."
+          );
         }
-        const businessData =await businessResponse.json();
-        let categoryData: | {
+
+        const businessData =
+          await businessResponse.json();
+
+        let categoryData:
+          | {
               categories?: SellerCategory[];
             }
           | null = null;
+
         if (
           categoriesResponse.ok
         ) {
           categoryData =
             await categoriesResponse.json();
         }
-        let deletionData:| {  request?: | DeletionRequest
+
+        let deletionData:
+          | {
+              request?:
+                | DeletionRequest
                 | null;
             }
           | null = null;
-        if (deletionRequestResponse.ok) {
-          deletionData =await deletionRequestResponse.json();}
+
+        if (
+          deletionRequestResponse.ok
+        ) {
+          deletionData =
+            await deletionRequestResponse.json();
+        }
+
         if (cancelled) {
           return;
         }
-        const loadedBusiness = businessData.business ??null;
-        setBusiness(loadedBusiness);
-        setCategories(Array.isArray( categoryData?.categories)? categoryData.categories : [] );
-        setDeletionRequest( deletionData?.request ?? null );
+
+        const loadedBusiness =
+          businessData.business ??
+          null;
+
+        setBusiness(
+          loadedBusiness
+        );
+
+        setCategories(
+          Array.isArray(
+            categoryData?.categories
+          )
+            ? categoryData.categories
+            : []
+        );
+
+        setDeletionRequest(
+          deletionData?.request ??
+            null
+        );
+
         if (loadedBusiness) {
-          const parsedLocation = parseLocationAddress( loadedBusiness.location?.address, loadedBusiness.location?.area ?? "");
-          setSocialValues( getSocialValues(loadedBusiness.socialLinks, loadedBusiness.phone));
-          setBusinessForm({ name: loadedBusiness.name ?? "", ownerName: loadedBusiness.ownerName ?? "", description: loadedBusiness.description ??"", area: loadedBusiness.location   ?.area ?? "", houseNumber: parsedLocation.houseNumber, street: parsedLocation.street, city:parsedLocation.city,categoryId: loadedBusiness
+          const parsedLocation =
+            parseLocationAddress(
+              loadedBusiness.location
+                ?.address,
+              loadedBusiness.location
+                ?.area ?? ""
+            );
+
+          setSocialValues(
+            getSocialValues(
+              loadedBusiness.socialLinks,
+              loadedBusiness.phone
+            )
+          );
+
+          setBusinessForm({
+            name:
+              loadedBusiness.name ??
+              "",
+            ownerName:
+              loadedBusiness.ownerName ??
+              "",
+            description:
+              loadedBusiness.description ??
+              "",
+            area:
+              loadedBusiness.location
+                ?.area ?? "",
+            houseNumber:
+              parsedLocation.houseNumber,
+            street:
+              parsedLocation.street,
+            city:
+              parsedLocation.city,
+            categoryId:
+              loadedBusiness
                 .categories?.[0]
                 ?.category?.id ?? "",
             availability:
@@ -638,8 +1048,18 @@ export default function SellerDashboard() {
                   )
                 : "",
           });
-        setBusinessLatitude( loadedBusiness.location?.lat != null? String( loadedBusiness.location.lat) : "");
-          setBusinessLongitude(loadedBusiness.location
+
+          setBusinessLatitude(
+            loadedBusiness.location
+              ?.lat != null
+              ? String(
+                  loadedBusiness.location.lat
+                )
+              : ""
+          );
+
+          setBusinessLongitude(
+            loadedBusiness.location
               ?.long != null
               ? String(
                   loadedBusiness.location
@@ -679,10 +1099,12 @@ export default function SellerDashboard() {
     field: K,
     value: BusinessForm[K]
   ) {
-    setBusinessForm((current) => ({
-      ...current,
-      [field]: value,
-    }));
+    setBusinessForm(
+      (current) => ({
+        ...current,
+        [field]: value,
+      })
+    );
 
     if (error) {
       setError("");
@@ -709,10 +1131,12 @@ export default function SellerDashboard() {
     field: K,
     value: ProductForm[K]
   ) {
-    setProductForm((current) => ({
-      ...current,
-      [field]: value,
-    }));
+    setProductForm(
+      (current) => ({
+        ...current,
+        [field]: value,
+      })
+    );
 
     if (error) {
       setError("");
@@ -727,10 +1151,12 @@ export default function SellerDashboard() {
     platform: SocialPlatform,
     value: string
   ) {
-    setSocialValues((current) => ({
-      ...current,
-      [platform]: value,
-    }));
+    setSocialValues(
+      (current) => ({
+        ...current,
+        [platform]: value,
+      })
+    );
 
     if (error) {
       setError("");
@@ -743,14 +1169,16 @@ export default function SellerDashboard() {
 
   function getBusinessFormValues() {
     const priceMin =
-      businessForm.priceMin.trim() === ""
+      businessForm.priceMin.trim() ===
+      ""
         ? null
         : Number(
             businessForm.priceMin
           );
 
     const priceMax =
-      businessForm.priceMax.trim() === ""
+      businessForm.priceMax.trim() ===
+      ""
         ? null
         : Number(
             businessForm.priceMax
@@ -761,81 +1189,206 @@ export default function SellerDashboard() {
       priceMax,
     };
   }
+
   function validateBusinessPrices() {
-    const {priceMin,priceMax} =getBusinessFormValues();
-    if (priceMin !== null &&(!Number.isInteger(priceMin) ||priceMin < 0)) {
-      setError( "Minimum price must be a valid whole number.");
-      return false;
-    }
-    if (priceMax !== null &&(!Number.isInteger(priceMax) ||  priceMax < 0)) {
-      setError( "Maximum price must be a valid whole number.");
-      return false;
-    }
-    if (priceMin !== null &&priceMax !== null &&priceMin > priceMax) {
-      setError("Minimum price cannot be greater than maximum price.");
-      return false;
-    }
-    return true;
-  }
-  function validateBusinessLocation() {
-    const area =businessForm.area.trim();
-    const street =businessForm.street.trim();
-    if (!area) {
-      setError("Business area is required.");
-      return false;
-    }
-    if (!isKnownLagosArea(area)) {
-      setError("Select a business area from the Lagos area list."
+    const {
+      priceMin,
+      priceMax,
+    } =
+      getBusinessFormValues();
+
+    if (
+      priceMin !== null &&
+      (!Number.isInteger(priceMin) ||
+        priceMin < 0)
+    ) {
+      setError(
+        "Minimum price must be a valid whole number."
       );
       return false;
     }
-    if (!street) {
-      setError("Street, road, or close is required.");
+
+    if (
+      priceMax !== null &&
+      (!Number.isInteger(priceMax) ||
+        priceMax < 0)
+    ) {
+      setError(
+        "Maximum price must be a valid whole number."
+      );
       return false;
     }
-    const hasLatitude = businessLatitude.trim() !== "";
-    const hasLongitude = businessLongitude.trim() !== "";
-    if (hasLatitude !==hasLongitude) {
-      setError( "Business coordinates must be captured as a complete location pair.");
+
+    if (
+      priceMin !== null &&
+      priceMax !== null &&
+      priceMin > priceMax
+    ) {
+      setError(
+        "Minimum price cannot be greater than maximum price."
+      );
       return false;
     }
-    if (hasLatitude) {
-      const parsedLatitude =Number(businessLatitude);
-      const parsedLongitude =Number(businessLongitude);
-      if (!Number.isFinite( parsedLatitude) ||parsedLatitude < -90 ||parsedLatitude > 90) {
-        setError("The captured business latitude is invalid.");
-        return false;
-      }
-      if (!Number.isFinite(parsedLongitude) || parsedLongitude < -180 ||parsedLongitude > 180) {
-        setError("The captured business longitude is invalid.");
-        return false;
-      }
-    }
+
     return true;
   }
+
+  function validateBusinessLocation() {
+    const area =
+      businessForm.area.trim();
+
+    const street =
+      businessForm.street.trim();
+
+    if (!area) {
+      setError(
+        "Business area is required."
+      );
+      return false;
+    }
+
+    if (
+      !isKnownLagosArea(area)
+    ) {
+      setError(
+        "Select a business area from the Lagos area list."
+      );
+      return false;
+    }
+
+    if (!street) {
+      setError(
+        "Street, road, or close is required."
+      );
+      return false;
+    }
+
+    const hasLatitude =
+      businessLatitude.trim() !==
+      "";
+
+    const hasLongitude =
+      businessLongitude.trim() !==
+      "";
+
+    if (
+      hasLatitude !==
+      hasLongitude
+    ) {
+      setError(
+        "Business coordinates must be captured as a complete location pair."
+      );
+      return false;
+    }
+
+    if (
+      hasLatitude
+    ) {
+      const parsedLatitude =
+        Number(
+          businessLatitude
+        );
+
+      const parsedLongitude =
+        Number(
+          businessLongitude
+        );
+
+      if (
+        !Number.isFinite(
+          parsedLatitude
+        ) ||
+        parsedLatitude < -90 ||
+        parsedLatitude > 90
+      ) {
+        setError(
+          "The captured business latitude is invalid."
+        );
+        return false;
+      }
+
+      if (
+        !Number.isFinite(
+          parsedLongitude
+        ) ||
+        parsedLongitude < -180 ||
+        parsedLongitude > 180
+      ) {
+        setError(
+          "The captured business longitude is invalid."
+        );
+        return false;
+      }
+    }
+
+    return true;
+  }
+
   function startEditingBusiness() {
     if (!business) {
       return;
     }
+
     setError("");
     setSuccess("");
     setLocationError("");
     setLocationStatus("");
-    const parsedLocation =parseLocationAddress(business.location?.address,business.location?.area ?? "");
-    setSocialValues(getSocialValues(business.socialLinks,business.phone));
+
+    const parsedLocation =
+      parseLocationAddress(
+        business.location?.address,
+        business.location?.area ?? ""
+      );
+
+    setSocialValues(
+      getSocialValues(
+        business.socialLinks,
+        business.phone
+      )
+    );
+
     setBusinessForm({
       name: business.name ?? "",
-      ownerName: business.ownerName ?? "",
-      description:  business.description ?? "",
-      area: business.location?.area ?? "",
-      houseNumber: parsedLocation.houseNumber,
-      street: parsedLocation.street,
-      city:parsedLocation.city,
-      categoryId:business.categories?.[0] ?.category?.id ?? "",
-      availability: business.availability ?? "ASK_SELLER",
-      priceMin:business.priceMin !==null? String( business.priceMin): "",
-      priceMax:  business.priceMax !==  null? String(   business.priceMax ): "",});
-    setBusinessLatitude(  business.location?.lat != null ? String(  business.location.lat ): "");
+      ownerName:
+        business.ownerName ?? "",
+      description:
+        business.description ?? "",
+      area:
+        business.location?.area ?? "",
+      houseNumber:
+        parsedLocation.houseNumber,
+      street:
+        parsedLocation.street,
+      city:
+        parsedLocation.city,
+      categoryId:
+        business.categories?.[0]
+          ?.category?.id ?? "",
+      availability:
+        business.availability ??
+        "ASK_SELLER",
+      priceMin:
+        business.priceMin !== null
+          ? String(
+              business.priceMin
+            )
+          : "",
+      priceMax:
+        business.priceMax !== null
+          ? String(
+              business.priceMax
+            )
+          : "",
+    });
+
+    setBusinessLatitude(
+      business.location?.lat != null
+        ? String(
+            business.location.lat
+          )
+        : ""
+    );
+
     setBusinessLongitude(
       business.location?.long != null
         ? String(
@@ -843,122 +1396,235 @@ export default function SellerDashboard() {
           )
         : ""
     );
+
     setCategoryChanged(false);
     setEditingBusiness(true);
   }
+
   function cancelEditingBusiness() {
     if (!business) {
       return;
     }
-    const parsedLocation = parseLocationAddress( business.location?.address, business.location?.area ?? "");
+
+    const parsedLocation =
+      parseLocationAddress(
+        business.location?.address,
+        business.location?.area ?? ""
+      );
+
     setError("");
     setSuccess("");
     setLocationError("");
     setLocationStatus("");
-    setSocialValues( getSocialValues(business.socialLinks, business.phone));
-   setBusinessForm({
-  name:business.name ?? "",
-  ownerName: business.ownerName ?? "",
-  description: business.description ?? "",
-  area: business.location?.area ?? "",
-  houseNumber: parsedLocation.houseNumber,
-  street: parsedLocation.street,
-  city: parsedLocation.city,
-  categoryId: business.categories?.[0]  ?.category?.id ?? "",
-  availability:  business.availability ??"ASK_SELLER",
-  priceMin: business.priceMin !== null ? String( business.priceMin): "",
-  priceMax: business.priceMax !==null? String(business.priceMax): "",});
-    setBusinessLatitude(business.location?.lat != null ? String( business.location.lat): "");
-    setBusinessLongitude( business.location?.long != null ? String( business.location.long) : "");
+
+    setSocialValues(
+      getSocialValues(
+        business.socialLinks,
+        business.phone
+      )
+    );
+
+    setBusinessForm({
+      name:
+        business.name ?? "",
+      ownerName:
+        business.ownerName ?? "",
+      description:
+        business.description ?? "",
+      area:
+        business.location?.area ?? "",
+      houseNumber:
+        parsedLocation.houseNumber,
+      street:
+        parsedLocation.street,
+      city:
+        parsedLocation.city,
+      categoryId:
+        business.categories?.[0]
+          ?.category?.id ?? "",
+      availability:
+        business.availability ??
+        "ASK_SELLER",
+      priceMin:
+        business.priceMin !== null
+          ? String(
+              business.priceMin
+            )
+          : "",
+      priceMax:
+        business.priceMax !== null
+          ? String(
+              business.priceMax
+            )
+          : "",
+    });
+
+    setBusinessLatitude(
+      business.location?.lat != null
+        ? String(
+            business.location.lat
+          )
+        : ""
+    );
+
+    setBusinessLongitude(
+      business.location?.long != null
+        ? String(
+            business.location.long
+          )
+        : ""
+    );
+
     setCategoryChanged(false);
     setEditingBusiness(false);
   }
+
   function captureCurrentLocation() {
     if (capturingLocation) {
       return;
     }
+
     setError("");
     setSuccess("");
     setLocationError("");
     setLocationStatus("");
-    if (typeof window ===  "undefined" || !navigator.geolocation) {
-      setLocationError( "This device does not support location capture.");
+
+    if (
+      typeof window ===
+        "undefined" ||
+      !navigator.geolocation
+    ) {
+      setLocationError(
+        "This device does not support location capture."
+      );
       return;
     }
+
     setCapturingLocation(true);
+
     navigator.geolocation.getCurrentPosition(
       (position) => {
-        const latitude = position.coords.latitude;
-        const longitude = position.coords.longitude;
-        if (!Number.isFinite(latitude) ||
+        const latitude =
+          position.coords.latitude;
+
+        const longitude =
+          position.coords.longitude;
+
+        if (
+          !Number.isFinite(
+            latitude
+          ) ||
           latitude < -90 ||
           latitude > 90
-        ) {setLocationError( "The device returned an invalid latitude.");
-          setCapturingLocation(false);
+        ) {
+          setLocationError(
+            "The device returned an invalid latitude."
+          );
+          setCapturingLocation(
+            false
+          );
           return;
         }
-        if (!Number.isFinite(longitude) ||
+
+        if (
+          !Number.isFinite(
+            longitude
+          ) ||
           longitude < -180 ||
           longitude > 180
         ) {
-          setLocationError("The device returned an invalid longitude.");
-          setCapturingLocation(false);
+          setLocationError(
+            "The device returned an invalid longitude."
+          );
+          setCapturingLocation(
+            false
+          );
           return;
         }
-        setBusinessLatitude( String(latitude));
-        setBusinessLongitude(String(longitude));
-        setLocationStatus("Business location captured from this device.");
-        setCapturingLocation(false);
+
+        setBusinessLatitude(
+          String(latitude)
+        );
+
+        setBusinessLongitude(
+          String(longitude)
+        );
+
+        setLocationStatus(
+          "Business location captured from this device."
+        );
+
+        setCapturingLocation(
+          false
+        );
       },
       (geolocationError) => {
-        console.error("Seller business location capture error:",geolocationError);
-        let message ="Unable to capture the business location.";
-        switch ( geolocationError.code) {
+        console.error(
+          "Seller business location capture error:",
+          geolocationError
+        );
+
+        let message =
+          "Unable to capture the business location.";
+
+        switch (
+          geolocationError.code
+        ) {
           case 1:
-            message = "Location permission was denied. Allow location access and try again.";
+            message =
+              "Location permission was denied. Allow location access and try again.";
             break;
+
           case 2:
-            message = "The device could not determine its location. Try again from the business location.";
+            message =
+              "The device could not determine its location. Try again from the business location.";
             break;
+
           case 3:
-            message ="Location capture timed out. Please try again.";
+            message =
+              "Location capture timed out. Please try again.";
             break;
         }
-        setLocationError( message);
-        setCapturingLocation(false);
+
+        setLocationError(message);
+        setCapturingLocation(
+          false
+        );
       },
       {
-        enableHighAccuracy:true,
+        enableHighAccuracy: true,
         timeout: 15000,
         maximumAge: 0,
       }
     );
   }
+
   function buildBusinessLocationPayload() {
-    const latitude = businessLatitude.trim() ? Number( businessLatitude)
+    const latitude =
+      businessLatitude.trim()
+        ? Number(
+            businessLatitude
+          )
         : null;
+
     const longitude =
       businessLongitude.trim()
         ? Number(
             businessLongitude
           )
         : null;
+
     return {
-      area: businessForm.area.trim(),
+      area:
+        businessForm.area.trim(),
       houseNumber:
         businessForm.houseNumber.trim(),
-
       street:
         businessForm.street.trim(),
-
       city:
         businessForm.city.trim(),
-
-      lat:
-        latitude,
-
-      long:
-        longitude,
+      lat: latitude,
+      long: longitude,
     };
   }
 
@@ -966,22 +1632,41 @@ export default function SellerDashboard() {
     event: FormEvent<HTMLFormElement>
   ) {
     event.preventDefault();
+
     if (savingBusiness) {
       return;
     }
+
     setError("");
     setSuccess("");
-    if (!validateBusinessLocation()) {
+
+    if (
+      !validateBusinessLocation()
+    ) {
       return;
     }
-    if (!validateBusinessPrices()) {
-     return;
+
+    if (
+      !validateBusinessPrices()
+    ) {
+      return;
     }
-    const {priceMin,priceMax} =getBusinessFormValues();
-    const locationPayload = buildBusinessLocationPayload();
+
+    const {
+      priceMin,
+      priceMax,
+    } =
+      getBusinessFormValues();
+
+    const locationPayload =
+      buildBusinessLocationPayload();
+
     setSavingBusiness(true);
+
     try {
-      const response =await fetch( "/api/seller/business",
+      const response =
+        await fetch(
+          "/api/seller/business",
           {
             method: "POST",
             headers: {
@@ -990,36 +1675,70 @@ export default function SellerDashboard() {
             },
             body: JSON.stringify({
               name: businessForm.name,
-              ownerName: businessForm.ownerName,
-              description: businessForm.description,
+              ownerName:
+                businessForm.ownerName,
+              description:
+                businessForm.description,
               ...locationPayload,
-              socialLinks: buildSocialLinks( socialValues),
-              categoryIds: businessForm.categoryId
+              socialLinks:
+                buildSocialLinks(
+                  socialValues
+                ),
+              categoryIds:
+                businessForm.categoryId
                   ? [
                       businessForm.categoryId,
                     ]
                   : [],
-              availability: businessForm.availability,
+              availability:
+                businessForm.availability,
               priceMin,
               priceMax,
             }),
           }
         );
-      const data = await response.json();
-      if ( response.status === 401 || response.status === 403
+
+      const data =
+        await response.json();
+
+      if (
+        response.status ===
+          401 ||
+        response.status ===
+          403
       ) {
-        router.replace( "/seller/login" );
+        router.replace(
+          "/seller/login"
+        );
         return;
       }
+
       if (!response.ok) {
-        setError( data?.error ??"Unable to create your business.");
+        setError(
+          data?.error ??
+            "Unable to create your business."
+        );
         return;
       }
-      const createdBusiness = data.business ?? null;
-      setBusiness( createdBusiness );
+
+      const createdBusiness =
+        data.business ?? null;
+
+      setBusiness(
+        createdBusiness
+      );
+
       if (createdBusiness) {
-        const parsedLocation = parseLocationAddress( createdBusiness.location?.address, createdBusiness.location?.area ?? "");
-        setBusinessLatitude( createdBusiness.location
+        const parsedLocation =
+          parseLocationAddress(
+            createdBusiness.location
+              ?.address,
+            createdBusiness.location
+              ?.area ?? ""
+          );
+
+        setBusinessLatitude(
+          createdBusiness.location
             ?.lat != null
             ? String(
                 createdBusiness
@@ -1027,7 +1746,9 @@ export default function SellerDashboard() {
               )
             : ""
         );
-        setBusinessLongitude(createdBusiness.location
+
+        setBusinessLongitude(
+          createdBusiness.location
             ?.long != null
             ? String(
                 createdBusiness
@@ -1035,17 +1756,36 @@ export default function SellerDashboard() {
               )
             : ""
         );
+
         setBusinessForm({
-          name: createdBusiness.name ?? "",
-          ownerName: createdBusiness.ownerName ?? "",
-          description: createdBusiness.description ?? "",
-          area: createdBusiness.location ?.area ?? "",
-          houseNumber: parsedLocation.houseNumber,
-          street: parsedLocation.street,
-          city: parsedLocation.city,
-          categoryId: createdBusiness.categories?.[0] ?.category?.id ?? "",
-          availability: createdBusiness.availability ?? "ASK_SELLER",
-          priceMin: createdBusiness.priceMin !==null
+          name:
+            createdBusiness.name ??
+            "",
+          ownerName:
+            createdBusiness.ownerName ??
+            "",
+          description:
+            createdBusiness.description ??
+            "",
+          area:
+            createdBusiness.location
+              ?.area ?? "",
+          houseNumber:
+            parsedLocation.houseNumber,
+          street:
+            parsedLocation.street,
+          city:
+            parsedLocation.city,
+          categoryId:
+            createdBusiness
+              .categories?.[0]
+              ?.category?.id ?? "",
+          availability:
+            createdBusiness.availability ??
+            "ASK_SELLER",
+          priceMin:
+            createdBusiness.priceMin !==
+            null
               ? String(
                   createdBusiness.priceMin
                 )
@@ -1059,54 +1799,89 @@ export default function SellerDashboard() {
               : "",
         });
       }
-      setSocialValues(getSocialValues( createdBusiness?.socialLinks));
+
+      setSocialValues(
+        getSocialValues(
+          createdBusiness?.socialLinks
+        )
+      );
+
       setLocationError("");
       setLocationStatus("");
-      setSuccess("Your business has been created successfully.");
+
+      setSuccess(
+        "Your business has been created successfully."
+      );
     } catch (createError) {
-      console.error("Seller business creation error:",createError);
-      setError("Something went wrong. Please try again.");
+      console.error(
+        "Seller business creation error:",
+        createError
+      );
+
+      setError(
+        "Something went wrong. Please try again."
+      );
     } finally {
       setSavingBusiness(false);
     }
   }
+
   async function updateBusiness(
     event: React.SubmitEvent<HTMLFormElement>
   ) {
     event.preventDefault();
-    if (savingBusiness ||!business) {
+
+    if (
+      savingBusiness ||
+      !business
+    ) {
       return;
     }
+
     setError("");
     setSuccess("");
-    if (!validateBusinessLocation()) {
+
+    if (
+      !validateBusinessLocation()
+    ) {
       return;
     }
-    if (!validateBusinessPrices()) {
+
+    if (
+      !validateBusinessPrices()
+    ) {
       return;
     }
-    const {priceMin,priceMax,} =getBusinessFormValues();
-    const locationPayload = buildBusinessLocationPayload();
+
+    const {
+      priceMin,
+      priceMax,
+    } =
+      getBusinessFormValues();
+
+    const locationPayload =
+      buildBusinessLocationPayload();
+
     setSavingBusiness(true);
+
     try {
-      const body: Record<string, unknown> = {
+      const body: Record<
+        string,
+        unknown
+      > = {
         name:
           businessForm.name,
         ownerName:
           businessForm.ownerName,
         description:
           businessForm.description,
-
         ...locationPayload,
-
         socialLinks:
           buildSocialLinks(
             socialValues
           ),
-
         availability:
           businessForm.availability,
-
         priceMin,
         priceMax,
       };
@@ -1159,8 +1934,7 @@ export default function SellerDashboard() {
       }
 
       const updatedBusiness =
-        data.business ??
-        null;
+        data.business ?? null;
 
       setBusiness(
         updatedBusiness
@@ -1169,21 +1943,27 @@ export default function SellerDashboard() {
       if (updatedBusiness) {
         const parsedLocation =
           parseLocationAddress(
-            updatedBusiness.location?.address,
-            updatedBusiness.location?.area ?? ""
+            updatedBusiness.location
+              ?.address,
+            updatedBusiness.location
+              ?.area ?? ""
           );
 
-        setBusinessForm((current) => ({
-          ...current,
-          area:
-            updatedBusiness.location?.area ?? "",
-          houseNumber:
-            parsedLocation.houseNumber,
-          street:
-            parsedLocation.street,
-          city:
-            parsedLocation.city,
-        }));
+        setBusinessForm(
+          (current) => ({
+            ...current,
+            area:
+              updatedBusiness
+                .location?.area ??
+              "",
+            houseNumber:
+              parsedLocation.houseNumber,
+            street:
+              parsedLocation.street,
+            city:
+              parsedLocation.city,
+          })
+        );
 
         setSocialValues(
           getSocialValues(
@@ -1319,7 +2099,9 @@ export default function SellerDashboard() {
         product.availability ??
         "ASK_SELLER",
       images:
-        Array.isArray(product.images)
+        Array.isArray(
+          product.images
+        )
           ? product.images
               .slice()
               .sort(
@@ -1345,21 +2127,24 @@ export default function SellerDashboard() {
 
   function validateProductPrices() {
     const price =
-      productForm.price.trim() === ""
+      productForm.price.trim() ===
+      ""
         ? null
         : Number(
             productForm.price
           );
 
     const priceMin =
-      productForm.priceMin.trim() === ""
+      productForm.priceMin.trim() ===
+      ""
         ? null
         : Number(
             productForm.priceMin
           );
 
     const priceMax =
-      productForm.priceMax.trim() === ""
+      productForm.priceMax.trim() ===
+      ""
         ? null
         : Number(
             productForm.priceMax
@@ -1418,21 +2203,24 @@ export default function SellerDashboard() {
 
   function getProductFormValues() {
     const price =
-      productForm.price.trim() === ""
+      productForm.price.trim() ===
+      ""
         ? null
         : Number(
             productForm.price
           );
 
     const priceMin =
-      productForm.priceMin.trim() === ""
+      productForm.priceMin.trim() ===
+      ""
         ? null
         : Number(
             productForm.priceMin
           );
 
     const priceMax =
-      productForm.priceMax.trim() === ""
+      productForm.priceMax.trim() ===
+      ""
         ? null
         : Number(
             productForm.priceMax
@@ -1469,7 +2257,9 @@ export default function SellerDashboard() {
       return;
     }
 
-    if (!validateProductPrices()) {
+    if (
+      !validateProductPrices()
+    ) {
       return;
     }
 
@@ -1580,7 +2370,9 @@ export default function SellerDashboard() {
       return;
     }
 
-    if (!validateProductPrices()) {
+    if (
+      !validateProductPrices()
+    ) {
       return;
     }
 
@@ -1644,11 +2436,20 @@ export default function SellerDashboard() {
         );
         return;
       }
+
       await reloadBusiness();
+
       resetProductForm();
-      setEditingProductId(null);
+
+      setEditingProductId(
+        null
+      );
+
       setShowProductForm(false);
-      setSuccess("Product updated successfully.");
+
+      setSuccess(
+        "Product updated successfully."
+      );
     } catch (productError) {
       console.error(
         "Seller product update error:",
@@ -1934,7 +2735,6 @@ export default function SellerDashboard() {
     <main className="min-h-screen bg-[#FFF7ED]">
       <div className="mx-auto min-h-screen w-full max-w-[1500px] px-3 py-3 sm:px-5 sm:py-5">
         <div className="min-h-[calc(100vh-24px)] overflow-hidden rounded-[18px] border border-[#FF5A36] bg-[#FFFDFC] shadow-sm sm:rounded-[22px] lg:min-h-[calc(100vh-40px)]">
-
           {/* Header */}
 
           <header className="flex min-h-[66px] items-center justify-between border-b border-[#EAE6DF] bg-white px-4 sm:px-6">
@@ -2007,6 +2807,8 @@ export default function SellerDashboard() {
                 </Link>
               </div>
 
+              <NotificationBell />
+
               <button
                 type="button"
                 onClick={logout}
@@ -2025,7 +2827,6 @@ export default function SellerDashboard() {
 
           <div className="px-4 py-6 sm:px-6 sm:py-8 lg:px-8">
             <div className="mx-auto max-w-[1100px]">
-
               {/* Heading */}
 
               <div className="mb-7">
@@ -2244,29 +3045,36 @@ export default function SellerDashboard() {
 
                         {business.socialLinks.length > 0 ? (
                           <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-                            {business.socialLinks.map((link) => {
-                              const label =
-                                SOCIAL_PLATFORMS.find(
-                                  (platform) =>
-                                    platform.value ===
-                                    link.platform
-                                )?.label ?? link.platform;
+                            {business.socialLinks.map(
+                              (link) => {
+                                const label =
+                                  SOCIAL_PLATFORMS.find(
+                                    (platform) =>
+                                      platform.value ===
+                                      link.platform
+                                  )?.label ??
+                                  link.platform;
 
-                              return (
-                                <div
-                                  key={link.id}
-                                  className="rounded-2xl bg-[#FCFAF6] p-4"
-                                >
-                                  <p className="text-[10px] font-semibold uppercase tracking-wide text-gray-400">
-                                    {label}
-                                  </p>
+                                return (
+                                  <div
+                                    key={
+                                      link.id
+                                    }
+                                    className="rounded-2xl bg-[#FCFAF6] p-4"
+                                  >
+                                    <p className="text-[10px] font-semibold uppercase tracking-wide text-gray-400">
+                                      {label}
+                                    </p>
 
-                                  <p className="mt-2 truncate text-sm font-semibold text-gray-800">
-                                    {link.handle}
-                                  </p>
-                                </div>
-                              );
-                            })}
+                                    <p className="mt-2 truncate text-sm font-semibold text-gray-800">
+                                      {
+                                        link.handle
+                                      }
+                                    </p>
+                                  </div>
+                                );
+                              }
+                            )}
                           </div>
                         ) : (
                           <p className="mt-2 text-xs text-gray-500">
@@ -2377,7 +3185,8 @@ export default function SellerDashboard() {
                                   event
                                 ) =>
                                   setDeletionReason(
-                                    event.target
+                                    event
+                                      .target
                                       .value
                                   )
                                 }
@@ -2581,43 +3390,75 @@ export default function SellerDashboard() {
 
                           <select
                             id="edit-area"
-                            value={businessForm.area}
-                            onChange={(event) =>
+                            value={
+                              businessForm.area
+                            }
+                            onChange={(
+                              event
+                            ) =>
                               updateBusinessField(
                                 "area",
-                                event.target.value
+                                event.target
+                                  .value
                               )
                             }
                             required
-                            disabled={savingBusiness}
+                            disabled={
+                              savingBusiness
+                            }
                             className="h-12 w-full rounded-xl border border-[#D9DEE5] bg-white px-4 text-sm text-[#17202A] outline-none transition focus:border-[#FF694F] focus:ring-4 focus:ring-[#FF5A36]/10 disabled:bg-gray-50"
                           >
                             <option value="">
                               Select area
                             </option>
 
-                            {!isKnownLagosArea(businessForm.area) &&
+                            {!isKnownLagosArea(
+                              businessForm.area
+                            ) &&
                               businessForm.area && (
-                                <option value={businessForm.area}>
-                                  {businessForm.area} (saved area)
+                                <option
+                                  value={
+                                    businessForm.area
+                                  }
+                                >
+                                  {
+                                    businessForm.area
+                                  }{" "}
+                                  (saved area)
                                 </option>
                               )}
 
-                            {LAGOS_AREA_GROUPS.map((group) => (
-                              <optgroup
-                                key={group.lga}
-                                label={group.lga}
-                              >
-                                {group.areas.map((item) => (
-                                  <option
-                                    key={item}
-                                    value={item}
-                                  >
-                                    {item}
-                                  </option>
-                                ))}
-                              </optgroup>
-                            ))}
+                            {LAGOS_AREA_GROUPS.map(
+                              (group) => (
+                                <optgroup
+                                  key={
+                                    group.lga
+                                  }
+                                  label={
+                                    group.lga
+                                  }
+                                >
+                                  {group.areas.map(
+                                    (
+                                      item
+                                    ) => (
+                                      <option
+                                        key={
+                                          item
+                                        }
+                                        value={
+                                          item
+                                        }
+                                      >
+                                        {
+                                          item
+                                        }
+                                      </option>
+                                    )
+                                  )}
+                                </optgroup>
+                              )
+                            )}
                           </select>
                         </div>
 
@@ -2632,15 +3473,22 @@ export default function SellerDashboard() {
                           <input
                             id="edit-city"
                             type="text"
-                            value={businessForm.city}
-                            onChange={(event) =>
+                            value={
+                              businessForm.city
+                            }
+                            onChange={(
+                              event
+                            ) =>
                               updateBusinessField(
                                 "city",
-                                event.target.value
+                                event.target
+                                  .value
                               )
                             }
                             placeholder="Lagos"
-                            disabled={savingBusiness}
+                            disabled={
+                              savingBusiness
+                            }
                             className="h-12 w-full rounded-xl border border-[#D9DEE5] bg-white px-4 text-sm text-[#17202A] outline-none transition focus:border-[#FF694F] focus:ring-4 focus:ring-[#FF5A36]/10 disabled:bg-gray-50"
                           />
                         </div>
@@ -2658,15 +3506,22 @@ export default function SellerDashboard() {
                           <input
                             id="edit-house-number"
                             type="text"
-                            value={businessForm.houseNumber}
-                            onChange={(event) =>
+                            value={
+                              businessForm.houseNumber
+                            }
+                            onChange={(
+                              event
+                            ) =>
                               updateBusinessField(
                                 "houseNumber",
-                                event.target.value
+                                event.target
+                                  .value
                               )
                             }
                             placeholder="e.g. 12 or Shop 4"
-                            disabled={savingBusiness}
+                            disabled={
+                              savingBusiness
+                            }
                             className="h-12 w-full rounded-xl border border-[#D9DEE5] bg-white px-4 text-sm text-[#17202A] outline-none transition focus:border-[#FF694F] focus:ring-4 focus:ring-[#FF5A36]/10 disabled:bg-gray-50"
                           />
                         </div>
@@ -2682,16 +3537,23 @@ export default function SellerDashboard() {
                           <input
                             id="edit-street"
                             type="text"
-                            value={businessForm.street}
-                            onChange={(event) =>
+                            value={
+                              businessForm.street
+                            }
+                            onChange={(
+                              event
+                            ) =>
                               updateBusinessField(
                                 "street",
-                                event.target.value
+                                event.target
+                                  .value
                               )
                             }
                             placeholder="e.g. Agidingbi Road"
                             required
-                            disabled={savingBusiness}
+                            disabled={
+                              savingBusiness
+                            }
                             className="h-12 w-full rounded-xl border border-[#D9DEE5] bg-white px-4 text-sm text-[#17202A] outline-none transition focus:border-[#FF694F] focus:ring-4 focus:ring-[#FF5A36]/10 disabled:bg-gray-50"
                           />
                         </div>
@@ -2714,7 +3576,8 @@ export default function SellerDashboard() {
                                 businessForm.houseNumber,
                                 businessForm.street,
                                 businessForm.city
-                              ) || "Complete the location fields above."}
+                              ) ||
+                                "Complete the location fields above."}
                             </p>
 
                             <p className="mt-2 text-[10px] leading-5 text-gray-400">
@@ -2794,7 +3657,6 @@ export default function SellerDashboard() {
                           )}
                       </div>
 
-
                       <div className="rounded-2xl border border-[#E8E4DE] bg-[#FCFAF6] p-4">
                         <div>
                           <p className="text-xs font-bold text-[#17202A]">
@@ -2808,8 +3670,15 @@ export default function SellerDashboard() {
 
                         <div className="mt-4 grid gap-4 sm:grid-cols-2">
                           {SOCIAL_PLATFORMS.map(
-                            ({ value, label }) => (
-                              <div key={value}>
+                            ({
+                              value,
+                              label,
+                            }) => (
+                              <div
+                                key={
+                                  value
+                                }
+                              >
                                 <label
                                   htmlFor={`edit-social-${value.toLowerCase()}`}
                                   className="mb-2 block text-xs font-bold text-gray-700"
@@ -2820,24 +3689,34 @@ export default function SellerDashboard() {
                                 <input
                                   id={`edit-social-${value.toLowerCase()}`}
                                   type={
-                                    value === "PHONE"
+                                    value ===
+                                    "PHONE"
                                       ? "tel"
                                       : "text"
                                   }
                                   value={
-                                    socialValues[value]
+                                    socialValues[
+                                      value
+                                    ]
                                   }
-                                  onChange={(event) =>
+                                  onChange={(
+                                    event
+                                  ) =>
                                     updateSocial(
                                       value,
-                                      event.target.value
+                                      event
+                                        .target
+                                        .value
                                     )
                                   }
                                   placeholder={
-                                    value === "PHONE" ||
-                                    value === "WHATSAPP"
+                                    value ===
+                                      "PHONE" ||
+                                    value ===
+                                      "WHATSAPP"
                                       ? "080..."
-                                      : value === "DIRECTIONS"
+                                      : value ===
+                                          "DIRECTIONS"
                                         ? "https://maps.google.com/..."
                                         : "@username or URL"
                                   }
@@ -3050,7 +3929,6 @@ export default function SellerDashboard() {
                 !editingBusiness && (
                   <section className="mt-5">
                     <div className="rounded-[22px] border border-[#E8E4DE] bg-white shadow-sm">
-
                       {/* Products header */}
 
                       <div className="flex flex-col gap-4 border-b border-[#EAE6DF] px-5 py-5 sm:px-6">
@@ -3102,35 +3980,46 @@ export default function SellerDashboard() {
                             )}
                           </button>
                         </div>
+
                         {/* Product limit */}
+
                         <div className="rounded-2xl border border-[#E8E4DE] bg-[#FCFAF6] p-4">
                           <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                             <div>
                               <div className="flex items-center gap-2">
                                 <Package className="h-4 w-4 text-[#FF5A36]" />
+
                                 <p className="text-xs font-bold text-[#17202A]">
                                   Product slots
                                 </p>
                               </div>
+
                               <p className="mt-1 text-[11px] text-gray-500">
                                 {reachedProductLimit
                                   ? "You have reached your active product limit."
                                   : `${remainingProductSlots} active product ${
-                                      remainingProductSlots === 1
+                                      remainingProductSlots ===
+                                      1
                                         ? "slot"
                                         : "slots"
                                     } remaining.`}
                               </p>
                             </div>
+
                             <p
                               className={`text-sm font-bold ${
                                 reachedProductLimit
                                   ? "text-[#C5402D]"
                                   : "text-[#9F2D18]"
                               }`}
-                            >{activeProductCount}/ {MAX_ACTIVE_PRODUCTS}
+                            >
+                              {activeProductCount}/{" "}
+                              {
+                                MAX_ACTIVE_PRODUCTS
+                              }
                             </p>
                           </div>
+
                           <div className="mt-3 h-2 overflow-hidden rounded-full bg-[#EAE6DF]">
                             <div
                               className={`h-full rounded-full transition-all ${
@@ -3150,11 +4039,16 @@ export default function SellerDashboard() {
                           </div>
                         </div>
                       </div>
+
                       {/* Add/Edit product form */}
+
                       {showProductForm && (
                         <form
                           onSubmit={
-                            editingProductId ? updateProduct : createProduct }
+                            editingProductId
+                              ? updateProduct
+                              : createProduct
+                          }
                           className="space-y-5 border-b border-[#EAE6DF] bg-[#FCFAF6] px-5 py-6 sm:px-6"
                         >
                           <div className="flex items-start justify-between gap-4">
@@ -3166,12 +4060,14 @@ export default function SellerDashboard() {
                                   <Plus className="h-5 w-5" />
                                 )}
                               </div>
+
                               <div>
                                 <h3 className="text-sm font-bold text-[#17202A]">
                                   {editingProductId
                                     ? "Edit product"
                                     : "Add a product"}
                                 </h3>
+
                                 <p className="mt-1 text-xs text-gray-500">
                                   {editingProductId
                                     ? "Update the information customers see for this product."
@@ -3179,16 +4075,23 @@ export default function SellerDashboard() {
                                 </p>
                               </div>
                             </div>
+
                             <button
                               type="button"
-                              onClick={  closeProductForm }
-                              disabled={ creatingProduct || updatingProduct }
+                              onClick={
+                                closeProductForm
+                              }
+                              disabled={
+                                creatingProduct ||
+                                updatingProduct
+                              }
                               className="flex h-9 w-9 items-center justify-center rounded-full border border-[#E8E4DE] bg-white text-gray-500 transition hover:text-[#9F2D18] disabled:cursor-not-allowed disabled:opacity-50"
                               aria-label="Close product form"
                             >
                               <X className="h-4 w-4" />
                             </button>
                           </div>
+
                           <div className="grid gap-5 sm:grid-cols-2">
                             <div>
                               <label
@@ -3197,11 +4100,21 @@ export default function SellerDashboard() {
                               >
                                 Product name
                               </label>
-                              <input id="product-name"  type="text" value={   productForm.name }
-                                onChange={( event  ) =>
+
+                              <input
+                                id="product-name"
+                                type="text"
+                                value={
+                                  productForm.name
+                                }
+                                onChange={(
+                                  event
+                                ) =>
                                   updateProductField(
-                                    "name",  event.target
-                                      .value )
+                                    "name",
+                                    event.target
+                                      .value
+                                  )
                                 }
                                 placeholder="e.g. Native fabric"
                                 required
@@ -3454,22 +4367,35 @@ export default function SellerDashboard() {
                                   <p className="text-xs font-bold text-[#17202A]">
                                     Product images
                                   </p>
+
                                   <p className="mt-1 text-[10px] leading-4 text-gray-400">
                                     The first image is the product cover.
                                   </p>
                                 </div>
                               </div>
+
                               <div className="mt-3">
                                 <ProductImageUpload
-                                  value={ productForm.images}
-                                  onChange={(images) => updateProductField("images",images )
+                                  value={
+                                    productForm.images
                                   }
-                                  disabled={ creatingProduct || updatingProduct
+                                  onChange={(
+                                    images
+                                  ) =>
+                                    updateProductField(
+                                      "images",
+                                      images
+                                    )
+                                  }
+                                  disabled={
+                                    creatingProduct ||
+                                    updatingProduct
                                   }
                                 />
                               </div>
                             </div>
                           </div>
+
                           <div className="flex flex-col gap-3 border-t border-[#E5E0D8] pt-5 sm:flex-row sm:items-center sm:justify-between">
                             <p className="text-xs leading-5 text-gray-500">
                               {editingProductId
@@ -3481,6 +4407,7 @@ export default function SellerDashboard() {
                                       : "slots"
                                   } remaining.`}
                             </p>
+
                             <button
                               type="submit"
                               disabled={
@@ -3515,7 +4442,9 @@ export default function SellerDashboard() {
                           </div>
                         </form>
                       )}
+
                       {/* Product list */}
+
                       <div className="p-5 sm:p-6">
                         {business.products
                           .length ===
@@ -3561,15 +4490,22 @@ export default function SellerDashboard() {
                                   className="overflow-hidden rounded-2xl border border-[#E8E4DE] bg-white"
                                 >
                                   <div className="h-[150px] overflow-hidden bg-[#FCFAF6]">
-                                    {(product.images?.[0]?.url ??
-                                      product.imageUrl) ? (
+                                    {(
+                                      product.images?.[0]
+                                        ?.url ??
+                                      product.imageUrl
+                                    ) ? (
                                       <img
                                         src={
-                                          product.images?.[0]?.url ??
+                                          product
+                                            .images?.[0]
+                                            ?.url ??
                                           product.imageUrl ??
                                           ""
                                         }
-                                        alt={  product.name}
+                                        alt={
+                                          product.name
+                                        }
                                         className="h-full w-full object-cover"
                                       />
                                     ) : (
@@ -3578,25 +4514,37 @@ export default function SellerDashboard() {
                                       </div>
                                     )}
                                   </div>
+
                                   <div className="p-4">
                                     <div className="flex items-start justify-between gap-3">
                                       <div className="min-w-0">
                                         <h3 className="truncate text-sm font-bold text-[#17202A]">
-                                          { product.name}
+                                          {
+                                            product.name
+                                          }
                                         </h3>
+
                                         <p className="mt-1 text-[11px] text-gray-500">
-                                          {product.category?.name ||
-                                            "Uncategorized"}
+                                          {
+                                            product
+                                              .category
+                                              ?.name
+                                          }
                                         </p>
                                       </div>
+
                                       <span className="shrink-0 rounded-full bg-[#DDF5EA] px-2 py-1 text-[9px] font-bold text-[#137A59]">
-                                        {product.status}
+                                        {
+                                          product.status
+                                        }
                                       </span>
                                     </div>
+
                                     <p className="mt-3 line-clamp-2 min-h-[34px] text-xs leading-5 text-gray-500">
                                       {product.description ||
                                         "No description added."}
                                     </p>
+
                                     <div className="mt-3 flex items-center justify-between gap-3">
                                       <div className="text-sm font-bold text-[#9F2D18]">
                                         {product.price !==
@@ -3609,6 +4557,7 @@ export default function SellerDashboard() {
                                           ? `₦${product.priceMin.toLocaleString()} - ₦${product.priceMax.toLocaleString()}`
                                           : "Ask seller"}
                                       </div>
+
                                       <span className="text-right text-[10px] font-medium text-gray-400">
                                         {product.availability.replace(
                                           "_",
@@ -3616,15 +4565,33 @@ export default function SellerDashboard() {
                                         )}
                                       </span>
                                     </div>
+
                                     <div className="mt-4 flex gap-2">
-                                      <button type="button" onClick={() => startEditingProduct( product)   }
-                                        disabled={ deletingProductId === product.id }
+                                      <button
+                                        type="button"
+                                        onClick={() =>
+                                          startEditingProduct(
+                                            product
+                                          )
+                                        }
+                                        disabled={
+                                          deletingProductId ===
+                                          product.id
+                                        }
                                         className="flex flex-1 items-center justify-center gap-2 rounded-xl border border-[#E8E4DE] px-3 py-2.5 text-xs font-semibold text-gray-700 transition hover:bg-[#FFF7ED] hover:text-[#9F2D18] disabled:cursor-not-allowed disabled:opacity-50"
                                       >
                                         <Pencil className="h-3.5 w-3.5" />
+
                                         Edit
                                       </button>
-                                      <button  type="button"  onClick={() =>  deleteProduct(    product) }
+
+                                      <button
+                                        type="button"
+                                        onClick={() =>
+                                          deleteProduct(
+                                            product
+                                          )
+                                        }
                                         disabled={
                                           deletingProductId ===
                                           product.id
@@ -3650,7 +4617,9 @@ export default function SellerDashboard() {
                     </div>
                   </section>
                 )}
+
               {/* Create business */}
+
               {!business && (
                 <section className="rounded-[22px] border border-[#E8E4DE] bg-white shadow-sm">
                   <div className="border-b border-[#EAE6DF] px-5 py-5 sm:px-6">
@@ -3658,18 +4627,23 @@ export default function SellerDashboard() {
                       <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-[#FFF0EB] text-[#FF5A36]">
                         <Plus className="h-5 w-5" />
                       </div>
+
                       <div>
                         <h2 className="text-lg font-bold text-[#17202A]">
                           Add your business
                         </h2>
+
                         <p className="mt-1 text-xs text-gray-500">
                           Create your ReMarket business profile.
                         </p>
                       </div>
                     </div>
                   </div>
+
                   <form
-                    onSubmit={createBusiness}
+                    onSubmit={
+                      createBusiness
+                    }
                     className="space-y-5 px-5 py-6 sm:px-6"
                   >
                     <div className="grid gap-5 sm:grid-cols-2">
@@ -3677,12 +4651,16 @@ export default function SellerDashboard() {
                         <label
                           htmlFor="create-business-name"
                           className="mb-2 block text-xs font-bold text-gray-700"
-                        > Business name
+                        >
+                          Business name
                         </label>
+
                         <input
                           id="create-business-name"
                           type="text"
-                          value={ businessForm.name}
+                          value={
+                            businessForm.name
+                          }
                           onChange={(
                             event
                           ) =>
@@ -3700,16 +4678,24 @@ export default function SellerDashboard() {
                           className="h-12 w-full rounded-xl border border-[#D9DEE5] bg-white px-4 text-sm text-[#17202A] outline-none transition focus:border-[#FF694F] focus:ring-4 focus:ring-[#FF694F]/10 disabled:bg-gray-50"
                         />
                       </div>
+
                       <div>
                         <label
                           htmlFor="create-owner-name"
                           className="mb-2 block text-xs font-bold text-gray-700"
-                        >Owner name
+                        >
+                          Owner name
                         </label>
+
                         <input
-                          id="create-owner-name" type="text"
-                          value={ businessForm.ownerName }
-                          onChange={( event ) =>
+                          id="create-owner-name"
+                          type="text"
+                          value={
+                            businessForm.ownerName
+                          }
+                          onChange={(
+                            event
+                          ) =>
                             updateBusinessField(
                               "ownerName",
                               event.target
@@ -3724,6 +4710,7 @@ export default function SellerDashboard() {
                         />
                       </div>
                     </div>
+
                     <div>
                       <label
                         htmlFor="create-description"
@@ -3755,152 +4742,197 @@ export default function SellerDashboard() {
                       />
                     </div>
 
-                      <div className="grid gap-5 sm:grid-cols-2">
-                        <div>
-                          <label
-                            htmlFor="create-area"
-                            className="mb-2 block text-xs font-bold text-gray-700"
-                          >
-                            Business area
-                          </label>
+                    <div className="grid gap-5 sm:grid-cols-2">
+                      <div>
+                        <label
+                          htmlFor="create-area"
+                          className="mb-2 block text-xs font-bold text-gray-700"
+                        >
+                          Business area
+                        </label>
 
-                          <select
-                            id="create-area"
-                            value={businessForm.area}
-                            onChange={(event) =>
-                              updateBusinessField(
-                                "area",
-                                event.target.value
-                              )
-                            }
-                            required
-                            disabled={savingBusiness}
-                            className="h-12 w-full rounded-xl border border-[#D9DEE5] bg-white px-4 text-sm text-[#17202A] outline-none transition focus:border-[#FF694F] focus:ring-4 focus:ring-[#FF5A36]/10 disabled:bg-gray-50"
-                          >
-                            <option value="">
-                              Select area
-                            </option>
+                        <select
+                          id="create-area"
+                          value={
+                            businessForm.area
+                          }
+                          onChange={(
+                            event
+                          ) =>
+                            updateBusinessField(
+                              "area",
+                              event.target
+                                .value
+                            )
+                          }
+                          required
+                          disabled={
+                            savingBusiness
+                          }
+                          className="h-12 w-full rounded-xl border border-[#D9DEE5] bg-white px-4 text-sm text-[#17202A] outline-none transition focus:border-[#FF694F] focus:ring-4 focus:ring-[#FF5A36]/10 disabled:bg-gray-50"
+                        >
+                          <option value="">
+                            Select area
+                          </option>
 
-                            {LAGOS_AREA_GROUPS.map((group) => (
+                          {LAGOS_AREA_GROUPS.map(
+                            (group) => (
                               <optgroup
-                                key={group.lga}
-                                label={group.lga}
+                                key={
+                                  group.lga
+                                }
+                                label={
+                                  group.lga
+                                }
                               >
-                                {group.areas.map((item) => (
-                                  <option
-                                    key={item}
-                                    value={item}
-                                  >
-                                    {item}
-                                  </option>
-                                ))}
+                                {group.areas.map(
+                                  (
+                                    item
+                                  ) => (
+                                    <option
+                                      key={
+                                        item
+                                      }
+                                      value={
+                                        item
+                                      }
+                                    >
+                                      {
+                                        item
+                                      }
+                                    </option>
+                                  )
+                                )}
                               </optgroup>
-                            ))}
-                          </select>
-                        </div>
-
-                        <div>
-                          <label
-                            htmlFor="create-city"
-                            className="mb-2 block text-xs font-bold text-gray-700"
-                          >
-                            City
-                          </label>
-
-                          <input
-                            id="create-city"
-                            type="text"
-                            value={businessForm.city}
-                            onChange={(event) =>
-                              updateBusinessField(
-                                "city",
-                                event.target.value
-                              )
-                            }
-                            placeholder="Lagos"
-                            disabled={savingBusiness}
-                            className="h-12 w-full rounded-xl border border-[#D9DEE5] bg-white px-4 text-sm text-[#17202A] outline-none transition focus:border-[#FF694F] focus:ring-4 focus:ring-[#FF5A36]/10 disabled:bg-gray-50"
-                          />
-                        </div>
+                            )
+                          )}
+                        </select>
                       </div>
 
-                      <div className="grid gap-5 sm:grid-cols-2">
-                        <div>
-                          <label
-                            htmlFor="create-house-number"
-                            className="mb-2 block text-xs font-bold text-gray-700"
-                          >
-                            House / Shop / Building number
-                          </label>
+                      <div>
+                        <label
+                          htmlFor="create-city"
+                          className="mb-2 block text-xs font-bold text-gray-700"
+                        >
+                          City
+                        </label>
 
-                          <input
-                            id="create-house-number"
-                            type="text"
-                            value={businessForm.houseNumber}
-                            onChange={(event) =>
-                              updateBusinessField(
-                                "houseNumber",
-                                event.target.value
-                              )
-                            }
-                            placeholder="e.g. 12 or Shop 4"
-                            disabled={savingBusiness}
-                            className="h-12 w-full rounded-xl border border-[#D9DEE5] bg-white px-4 text-sm text-[#17202A] outline-none transition focus:border-[#FF694F] focus:ring-4 focus:ring-[#FF5A36]/10 disabled:bg-gray-50"
-                          />
-                        </div>
+                        <input
+                          id="create-city"
+                          type="text"
+                          value={
+                            businessForm.city
+                          }
+                          onChange={(
+                            event
+                          ) =>
+                            updateBusinessField(
+                              "city",
+                              event.target
+                                .value
+                            )
+                          }
+                          placeholder="Lagos"
+                          disabled={
+                            savingBusiness
+                          }
+                          className="h-12 w-full rounded-xl border border-[#D9DEE5] bg-white px-4 text-sm text-[#17202A] outline-none transition focus:border-[#FF694F] focus:ring-4 focus:ring-[#FF5A36]/10 disabled:bg-gray-50"
+                        />
+                      </div>
+                    </div>
 
-                        <div>
-                          <label
-                            htmlFor="create-street"
-                            className="mb-2 block text-xs font-bold text-gray-700"
-                          >
-                            Street / Road / Close
-                          </label>
+                    <div className="grid gap-5 sm:grid-cols-2">
+                      <div>
+                        <label
+                          htmlFor="create-house-number"
+                          className="mb-2 block text-xs font-bold text-gray-700"
+                        >
+                          House / Shop / Building number
+                        </label>
 
-                          <input
-                            id="create-street"
-                            type="text"
-                            value={businessForm.street}
-                            onChange={(event) =>
-                              updateBusinessField(
-                                "street",
-                                event.target.value
-                              )
-                            }
-                            placeholder="e.g. Agidingbi Road"
-                            required
-                            disabled={savingBusiness}
-                            className="h-12 w-full rounded-xl border border-[#D9DEE5] bg-white px-4 py-3 text-sm text-[#17202A] outline-none transition focus:border-[#FF694F] focus:ring-4 focus:ring-[#FF5A36]/10 disabled:bg-gray-50"
-                          />
-                        </div>
+                        <input
+                          id="create-house-number"
+                          type="text"
+                          value={
+                            businessForm.houseNumber
+                          }
+                          onChange={(
+                            event
+                          ) =>
+                            updateBusinessField(
+                              "houseNumber",
+                              event.target
+                                .value
+                            )
+                          }
+                          placeholder="e.g. 12 or Shop 4"
+                          disabled={
+                            savingBusiness
+                          }
+                          className="h-12 w-full rounded-xl border border-[#D9DEE5] bg-white px-4 text-sm text-[#17202A] outline-none transition focus:border-[#FF694F] focus:ring-4 focus:ring-[#FF5A36]/10 disabled:bg-gray-50"
+                        />
                       </div>
 
-                      <div className="rounded-2xl border border-[#E8E4DE] bg-[#FCFAF6] p-4">
-                        <div className="flex items-start gap-3">
-                          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-[#FFF0EB] text-[#FF5A36]">
-                            <MapPin className="h-5 w-5" />
-                          </div>
+                      <div>
+                        <label
+                          htmlFor="create-street"
+                          className="mb-2 block text-xs font-bold text-gray-700"
+                        >
+                          Street / Road / Close
+                        </label>
 
-                          <div className="min-w-0">
-                            <p className="text-xs font-bold text-[#17202A]">
-                              Address preview
-                            </p>
+                        <input
+                          id="create-street"
+                          type="text"
+                          value={
+                            businessForm.street
+                          }
+                          onChange={(
+                            event
+                          ) =>
+                            updateBusinessField(
+                              "street",
+                              event.target
+                                .value
+                            )
+                          }
+                          placeholder="e.g. Agidingbi Road"
+                          required
+                          disabled={
+                            savingBusiness
+                          }
+                          className="h-12 w-full rounded-xl border border-[#D9DEE5] bg-white px-4 py-3 text-sm text-[#17202A] outline-none transition focus:border-[#FF694F] focus:ring-4 focus:ring-[#FF5A36]/10 disabled:bg-gray-50"
+                        />
+                      </div>
+                    </div>
 
-                            <p className="mt-2 text-[11px] leading-5 text-gray-600">
-                              {buildLocationAddressPreview(
-                                businessForm.area,
-                                businessForm.houseNumber,
-                                businessForm.street,
-                                businessForm.city
-                              ) || "Complete the location fields above."}
-                            </p>
+                    <div className="rounded-2xl border border-[#E8E4DE] bg-[#FCFAF6] p-4">
+                      <div className="flex items-start gap-3">
+                        <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-[#FFF0EB] text-[#FF5A36]">
+                          <MapPin className="h-5 w-5" />
+                        </div>
 
-                            <p className="mt-2 text-[10px] leading-5 text-gray-400">
-                              Country: Nigeria
-                            </p>
-                          </div>
+                        <div className="min-w-0">
+                          <p className="text-xs font-bold text-[#17202A]">
+                            Address preview
+                          </p>
+
+                          <p className="mt-2 text-[11px] leading-5 text-gray-600">
+                            {buildLocationAddressPreview(
+                              businessForm.area,
+                              businessForm.houseNumber,
+                              businessForm.street,
+                              businessForm.city
+                            ) ||
+                              "Complete the location fields above."}
+                          </p>
+
+                          <p className="mt-2 text-[10px] leading-5 text-gray-400">
+                            Country: Nigeria
+                          </p>
                         </div>
                       </div>
+                    </div>
 
                     <div className="rounded-2xl border border-[#E8E4DE] bg-[#FCFAF6] p-4">
                       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
@@ -3972,63 +5004,79 @@ export default function SellerDashboard() {
                         )}
                     </div>
 
+                    <div className="rounded-2xl border border-[#E8E4DE] bg-[#FCFAF6] p-4">
+                      <div>
+                        <p className="text-xs font-bold text-[#17202A]">
+                          Contact & social links
+                        </p>
 
-                      <div className="rounded-2xl border border-[#E8E4DE] bg-[#FCFAF6] p-4">
-                        <div>
-                          <p className="text-xs font-bold text-[#17202A]">
-                            Contact & social links
-                          </p>
-
-                          <p className="mt-1 text-[10px] leading-5 text-gray-500">
-                            Add the contact methods customers can use to reach your business. Phone is managed here as the Phone social link.
-                          </p>
-                        </div>
-
-                        <div className="mt-4 grid gap-4 sm:grid-cols-2">
-                          {SOCIAL_PLATFORMS.map(
-                            ({ value, label }) => (
-                              <div key={value}>
-                                <label
-                                  htmlFor={`create-social-${value.toLowerCase()}`}
-                                  className="mb-2 block text-xs font-bold text-gray-700"
-                                >
-                                  {label}
-                                </label>
-
-                                <input
-                                  id={`create-social-${value.toLowerCase()}`}
-                                  type={
-                                    value === "PHONE"
-                                      ? "tel"
-                                      : "text"
-                                  }
-                                  value={
-                                    socialValues[value]
-                                  }
-                                  onChange={(event) =>
-                                    updateSocial(
-                                      value,
-                                      event.target.value
-                                    )
-                                  }
-                                  placeholder={
-                                    value === "PHONE" ||
-                                    value === "WHATSAPP"
-                                      ? "080..."
-                                      : value === "DIRECTIONS"
-                                        ? "https://maps.google.com/..."
-                                        : "@username or URL"
-                                  }
-                                  disabled={
-                                    savingBusiness
-                                  }
-                                  className="h-12 w-full rounded-xl border border-[#D9DEE5] bg-white px-4 text-sm text-[#17202A] outline-none transition focus:border-[#FF694F] focus:ring-4 focus:ring-[#FF694F]/10 disabled:bg-gray-50"
-                                />
-                              </div>
-                            )
-                          )}
-                        </div>
+                        <p className="mt-1 text-[10px] leading-5 text-gray-500">
+                          Add the contact methods customers can use to reach your business. Phone is managed here as the Phone social link.
+                        </p>
                       </div>
+
+                      <div className="mt-4 grid gap-4 sm:grid-cols-2">
+                        {SOCIAL_PLATFORMS.map(
+                          ({
+                            value,
+                            label,
+                          }) => (
+                            <div
+                              key={
+                                value
+                              }
+                            >
+                              <label
+                                htmlFor={`create-social-${value.toLowerCase()}`}
+                                className="mb-2 block text-xs font-bold text-gray-700"
+                              >
+                                {label}
+                              </label>
+
+                              <input
+                                id={`create-social-${value.toLowerCase()}`}
+                                type={
+                                  value ===
+                                  "PHONE"
+                                    ? "tel"
+                                    : "text"
+                                }
+                                value={
+                                  socialValues[
+                                    value
+                                  ]
+                                }
+                                onChange={(
+                                  event
+                                ) =>
+                                  updateSocial(
+                                    value,
+                                    event
+                                      .target
+                                      .value
+                                  )
+                                }
+                                placeholder={
+                                  value ===
+                                    "PHONE" ||
+                                  value ===
+                                    "WHATSAPP"
+                                    ? "080..."
+                                    : value ===
+                                        "DIRECTIONS"
+                                      ? "https://maps.google.com/..."
+                                      : "@username or URL"
+                                }
+                                disabled={
+                                  savingBusiness
+                                }
+                                className="h-12 w-full rounded-xl border border-[#D9DEE5] bg-white px-4 text-sm text-[#17202A] outline-none transition focus:border-[#FF694F] focus:ring-4 focus:ring-[#FF694F]/10 disabled:bg-gray-50"
+                              />
+                            </div>
+                          )
+                        )}
+                      </div>
+                    </div>
 
                     <div className="grid gap-5 sm:grid-cols-3">
                       <div>
@@ -4154,7 +5202,7 @@ export default function SellerDashboard() {
                             disabled={
                               savingBusiness
                             }
-                            className="h-12 w-full rounded-xl border border-[#D9DEE5] bg-white px-3 text-sm text-[#17202A] outline-none transition focus:border-[#FF694F] focus:ring-4 focus:ring-[#FF694F]/10 disabled:bg-gray-50"
+                            className="h-12 w-full rounded-xl border border-[#D9DEE5] bg-white px-3 text-sm text-[#17202A] outline-none transition focus:border-[#FF694F] focus:ring-4 focus:ring-[#FF5A36]/10 disabled:bg-gray-50"
                           />
                         </div>
 

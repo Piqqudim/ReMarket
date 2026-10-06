@@ -1,8 +1,14 @@
+import {
+  NotificationPriority,
+  NotificationType,
+} from "@prisma/client";
+
 import { NextResponse } from "next/server";
 
 import { prisma } from "@/lib/prisma";
 import { requireSeller } from "@/lib/seller-auth";
 import { geocodeBusinessLocation } from "@/lib/geocoding";
+import { createNotification } from "@/lib/notifications";
 
 const ALLOWED_AVAILABILITY = [
   "AVAILABLE",
@@ -665,6 +671,95 @@ async function loadSellerBusiness(
       },
     },
   });
+}
+
+/*
+ * ------------------------------------------------
+ * NOTIFY ADMINS OF BUSINESS UPDATE
+ * ------------------------------------------------
+ *
+ * The seller is the person performing the
+ * update, so the seller does not need an
+ * in-app notification about their own action.
+ *
+ * Every ADMIN is notified because the business
+ * information visible to ReMarket has changed.
+ *
+ * Notification failure must never undo a
+ * successful business update.
+ */
+
+async function notifyAdminsOfBusinessUpdate(
+  businessId: string,
+  businessName: string
+) {
+  try {
+    const admins =
+      await prisma.user.findMany({
+        where: {
+          role: "ADMIN",
+        },
+
+        select: {
+          id: true,
+        },
+      });
+
+    for (
+      const admin of admins
+    ) {
+      try {
+        await createNotification({
+          userId:
+            admin.id,
+
+          type:
+            NotificationType.BUSINESS_UPDATED,
+
+          title:
+            "Business updated",
+
+          message:
+            `${businessName} was updated by its seller.`,
+
+          priority:
+            NotificationPriority.NORMAL,
+
+          data: {
+            businessId,
+
+            href:
+              `/admin/businesses/${businessId}`,
+          },
+
+          /*
+           * No permanent dedupe key here.
+           *
+           * A seller can update the same business
+           * multiple times, and each successful
+           * update should be capable of producing
+           * its own notification.
+           */
+          dedupeKey:
+            null,
+        });
+      } catch (
+        notificationError
+      ) {
+        console.error(
+          "Seller business admin notification error:",
+          notificationError
+        );
+      }
+    }
+  } catch (
+    adminLookupError
+  ) {
+    console.error(
+      "Seller business admin lookup error:",
+      adminLookupError
+    );
+  }
 }
 
 /*
@@ -1702,6 +1797,7 @@ export async function PATCH(
           select: {
             id: true,
             ownerId: true,
+            name: true,
             deletedAt: true,
 
             priceMin: true,
@@ -2929,6 +3025,21 @@ export async function PATCH(
       await loadSellerBusiness(
         auth.user.id
       );
+
+    /*
+     * -----------------------------------------
+     * NOTIFY ADMINS
+     * -----------------------------------------
+     *
+     * Send only after the transaction and
+     * business reload have succeeded.
+     */
+    await notifyAdminsOfBusinessUpdate(
+      existingBusiness.id,
+      business?.name ??
+        name ??
+        existingBusiness.name
+    );
 
     return NextResponse.json(
       {

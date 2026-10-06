@@ -1,7 +1,12 @@
+import {
+  NotificationPriority,
+  NotificationType,
+} from "@prisma/client";
 import { NextResponse } from "next/server";
 
 import { prisma } from "@/lib/prisma";
 import { requireSeller } from "@/lib/seller-auth";
+import { createNotification } from "@/lib/notifications";
 
 const ALLOWED_AVAILABILITY = [
   "AVAILABLE",
@@ -194,7 +199,8 @@ function parseProductImages(
     };
   }
 
-  const images: ParsedProductImage[] = [];
+  const images:
+    ParsedProductImage[] = [];
 
   for (
     let index = 0;
@@ -423,6 +429,99 @@ function getCompatibilityImageUrl(
     images[0]?.url ??
     null
   );
+}
+
+/*
+ * --------------------------------------------------
+ * NOTIFICATION HELPERS
+ * --------------------------------------------------
+ */
+
+async function notifyAdminsOfProductEvent(
+  input: {
+    type: NotificationType;
+    title: string;
+    message: string;
+    productId: string;
+    businessId: string;
+    businessName: string;
+    dedupePrefix?: string;
+  }
+) {
+  try {
+    const admins =
+      await prisma.user.findMany({
+        where: {
+          role: "ADMIN",
+        },
+
+        select: {
+          id: true,
+        },
+      });
+
+    for (
+      const admin of admins
+    ) {
+      try {
+        await createNotification({
+          userId:
+            admin.id,
+
+          type:
+            input.type,
+
+          title:
+            input.title,
+
+          message:
+            input.message,
+
+          priority:
+            NotificationPriority.NORMAL,
+
+          data: {
+            productId:
+              input.productId,
+
+            businessId:
+              input.businessId,
+
+            href:
+              "/admin/products",
+          },
+
+          /*
+           * Dedupe is only used for events that
+           * represent one permanent action, such
+           * as product removal.
+           *
+           * Product updates intentionally do not
+           * use a fixed dedupe key because the same
+           * product can be updated many times.
+           */
+          dedupeKey:
+            input.dedupePrefix
+              ? `${input.dedupePrefix}:${input.productId}:admin:${admin.id}`
+              : null,
+        });
+      } catch (
+        notificationError
+      ) {
+        console.error(
+          "Seller product admin notification error:",
+          notificationError
+        );
+      }
+    }
+  } catch (
+    adminLookupError
+  ) {
+    console.error(
+      "Seller product admin lookup error:",
+      adminLookupError
+    );
+  }
 }
 
 /*
@@ -1199,6 +1298,25 @@ export async function PATCH(
     }
 
     /*
+     * Determine the notification event before
+     * changing the database.
+     */
+    const availabilityChanged =
+      hasOwn(
+        body,
+        "availability"
+      ) &&
+      data.availability !==
+        undefined &&
+      data.availability !==
+        existing.availability;
+
+    const hasProductChanges =
+      Object.keys(data).length >
+        0 ||
+      imagesProvided;
+
+    /*
      * -----------------------------------------
      * TRANSACTION
      * -----------------------------------------
@@ -1308,6 +1426,56 @@ export async function PATCH(
         }
       );
 
+    /*
+     * -----------------------------------------
+     * NOTIFY ADMINS
+     * -----------------------------------------
+     */
+
+    if (hasProductChanges) {
+      if (availabilityChanged) {
+        await notifyAdminsOfProductEvent({
+          type:
+            NotificationType.PRODUCT_AVAILABILITY_CHANGED,
+
+          title:
+            "Product availability changed",
+
+          message:
+            `The availability of "${product.name}" from ${product.business.name} has changed to ${product.availability}.`,
+
+          productId:
+            product.id,
+
+          businessId:
+            product.business.id,
+
+          businessName:
+            product.business.name,
+        });
+      } else {
+        await notifyAdminsOfProductEvent({
+          type:
+            NotificationType.PRODUCT_UPDATED,
+
+          title:
+            "Product updated",
+
+          message:
+            `"${product.name}" from ${product.business.name} was updated by the seller.`,
+
+          productId:
+            product.id,
+
+          businessId:
+            product.business.id,
+
+          businessName:
+            product.business.name,
+        });
+      }
+    }
+
     return NextResponse.json(
       {
         message:
@@ -1356,8 +1524,8 @@ export async function PATCH(
         status: 500,
         headers:
           jsonHeaders(),
-      }
-    );
+        }
+      );
   }
 }
 
@@ -1469,6 +1637,36 @@ export async function DELETE(
         }
       );
     }
+
+    /*
+     * Notify every admin after the soft delete
+     * succeeds.
+     *
+     * The notification uses a dedupe key because
+     * product removal is a single terminal event.
+     */
+    await notifyAdminsOfProductEvent({
+      type:
+        NotificationType.PRODUCT_REMOVED,
+
+      title:
+        "Product removed",
+
+      message:
+        `"${product.business.name}" has removed the product "${product.name}".`,
+
+      productId:
+        product.id,
+
+      businessId:
+        product.business.id,
+
+      businessName:
+        product.business.name,
+
+      dedupePrefix:
+        "product-removed",
+    });
 
     return NextResponse.json(
       {

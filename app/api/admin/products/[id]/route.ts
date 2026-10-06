@@ -1,15 +1,17 @@
 import {
+  Availability,
+  BusinessStatus,
+  NotificationPriority,
+  NotificationType,
+} from "@prisma/client";
+import {
   NextRequest,
   NextResponse,
 } from "next/server";
 
-import {
-  Availability,
-  BusinessStatus,
-} from "@prisma/client";
-
 import { prisma } from "@/lib/prisma";
 import { requireAdmin } from "@/lib/admin-auth";
+import { createNotification } from "@/lib/notifications";
 
 type RouteContext = {
   params: Promise<{
@@ -65,10 +67,16 @@ function parseOptionalInt(
     typeof value === "number"
       ? value
       : typeof value === "string"
-        ? Number(value.trim())
+        ? Number(
+            value.trim()
+          )
         : Number.NaN;
 
-  if (!Number.isInteger(parsed)) {
+  if (
+    !Number.isInteger(
+      parsed
+    )
+  ) {
     return undefined;
   }
 
@@ -79,7 +87,8 @@ function isAvailability(
   value: unknown
 ): value is Availability {
   return (
-    value === Availability.AVAILABLE ||
+    value ===
+      Availability.AVAILABLE ||
     value ===
       Availability.ASK_SELLER ||
     value ===
@@ -91,16 +100,21 @@ function isBusinessStatus(
   value: unknown
 ): value is BusinessStatus {
   return (
-    value === BusinessStatus.ACTIVE ||
-    value === BusinessStatus.INACTIVE ||
-    value === BusinessStatus.PENDING
+    value ===
+      BusinessStatus.ACTIVE ||
+    value ===
+      BusinessStatus.INACTIVE ||
+    value ===
+      BusinessStatus.PENDING
   );
 }
 
 function parseKeywords(
   value: unknown
 ): string[] | null {
-  if (!Array.isArray(value)) {
+  if (
+    !Array.isArray(value)
+  ) {
     return null;
   }
 
@@ -108,11 +122,16 @@ function parseKeywords(
     new Set(
       value
         .filter(
-          (item): item is string =>
-            typeof item === "string"
+          (
+            item
+          ): item is string =>
+            typeof item ===
+            "string"
         )
         .map((item) =>
-          item.trim().toLowerCase()
+          item
+            .trim()
+            .toLowerCase()
         )
         .filter(Boolean)
     )
@@ -122,17 +141,25 @@ function parseKeywords(
 function parseImages(
   value: unknown
 ): ProductImageInput[] | null {
-  if (!Array.isArray(value)) {
+  if (
+    !Array.isArray(value)
+  ) {
     return null;
   }
 
-  const images: ProductImageInput[] = [];
+  const images:
+    ProductImageInput[] =
+    [];
 
   for (
-    const [index, item] of value.entries()
+    const [
+      index,
+      item,
+    ] of value.entries()
   ) {
     if (
-      typeof item === "string"
+      typeof item ===
+      "string"
     ) {
       const url =
         item.trim();
@@ -140,8 +167,12 @@ function parseImages(
       if (url) {
         images.push({
           url,
-          publicId: null,
-          sortOrder: index,
+
+          publicId:
+            null,
+
+          sortOrder:
+            index,
         });
       }
 
@@ -150,7 +181,8 @@ function parseImages(
 
     if (
       !item ||
-      typeof item !== "object" ||
+      typeof item !==
+        "object" ||
       Array.isArray(item)
     ) {
       continue;
@@ -163,7 +195,9 @@ function parseImages(
       >;
 
     const url =
-      cleanString(image.url);
+      cleanString(
+        image.url
+      );
 
     if (!url) {
       continue;
@@ -183,7 +217,9 @@ function parseImages(
 
     images.push({
       url,
+
       publicId,
+
       sortOrder,
     });
   }
@@ -196,14 +232,17 @@ async function getProduct(
 ) {
   return prisma.product.findUnique({
     where: {
-      id: productId,
+      id:
+        productId,
     },
 
     include: {
       business: {
         select: {
           id: true,
+
           name: true,
+
           deletedAt: true,
 
           location: {
@@ -219,10 +258,12 @@ async function getProduct(
       images: {
         orderBy: [
           {
-            sortOrder: "asc",
+            sortOrder:
+              "asc",
           },
           {
-            createdAt: "asc",
+            createdAt:
+              "asc",
           },
         ],
       },
@@ -230,9 +271,78 @@ async function getProduct(
   });
 }
 
+/*
+ * ------------------------------------------------
+ * PRODUCT OWNER NOTIFICATION
+ * ------------------------------------------------
+ *
+ * Notification failure must never cause a
+ * successful admin product operation to fail.
+ */
+async function notifyProductOwner(
+  input: {
+    ownerId: string | null;
+    productId: string;
+    businessId: string;
+    productName: string;
+    type: NotificationType;
+    title: string;
+    message: string;
+  }
+): Promise<void> {
+  const ownerId =
+    cleanString(
+      input.ownerId
+    );
+
+  if (!ownerId) {
+    return;
+  }
+
+  try {
+    await createNotification({
+      userId:
+        ownerId,
+
+      type:
+        input.type,
+
+      title:
+        input.title,
+
+      message:
+        input.message,
+
+      priority:
+        NotificationPriority.NORMAL,
+
+      data: {
+        productId:
+          input.productId,
+
+        businessId:
+          input.businessId,
+
+        href:
+          `/seller/${input.businessId}`,
+      },
+
+      dedupeKey:
+        `product:${input.productId}:${input.type}:${ownerId}`,
+    });
+  } catch (error) {
+    console.error(
+      "Product owner notification error:",
+      error
+    );
+  }
+}
+
 export async function GET(
   _request: NextRequest,
-  { params }: RouteContext
+  {
+    params,
+  }: RouteContext
 ) {
   const auth =
     await requireAdmin();
@@ -241,8 +351,9 @@ export async function GET(
     return auth.response;
   }
 
-  const { id: productId } =
-    await params;
+  const {
+    id: productId,
+  } = await params;
 
   if (!productId) {
     return NextResponse.json(
@@ -297,7 +408,9 @@ export async function GET(
 
 export async function PATCH(
   request: NextRequest,
-  { params }: RouteContext
+  {
+    params,
+  }: RouteContext
 ) {
   const auth =
     await requireAdmin();
@@ -306,8 +419,9 @@ export async function PATCH(
     return auth.response;
   }
 
-  const { id: productId } =
-    await params;
+  const {
+    id: productId,
+  } = await params;
 
   if (!productId) {
     return NextResponse.json(
@@ -325,14 +439,24 @@ export async function PATCH(
     const existing =
       await prisma.product.findUnique({
         where: {
-          id: productId,
+          id:
+            productId,
         },
 
         include: {
           business: {
             select: {
-              id: true,
-              deletedAt: true,
+              id:
+                true,
+
+              name:
+                true,
+
+              ownerId:
+                true,
+
+              deletedAt:
+                true,
             },
           },
         },
@@ -362,7 +486,9 @@ export async function PATCH(
       );
     }
 
-    if (existing.business.deletedAt) {
+    if (
+      existing.business.deletedAt
+    ) {
       return NextResponse.json(
         {
           error:
@@ -379,7 +505,8 @@ export async function PATCH(
 
     if (
       !rawBody ||
-      typeof rawBody !== "object" ||
+      typeof rawBody !==
+        "object" ||
       Array.isArray(rawBody)
     ) {
       return NextResponse.json(
@@ -412,9 +539,14 @@ export async function PATCH(
       status?: BusinessStatus;
     } = {};
 
-    if ("name" in body) {
+    if (
+      "name" in
+      body
+    ) {
       const name =
-        cleanString(body.name);
+        cleanString(
+          body.name
+        );
 
       if (!name) {
         return NextResponse.json(
@@ -428,17 +560,24 @@ export async function PATCH(
         );
       }
 
-      data.name = name;
+      data.name =
+        name;
     }
 
-    if ("description" in body) {
+    if (
+      "description" in
+      body
+    ) {
       data.description =
         nullableString(
           body.description
         );
     }
 
-    if ("categoryId" in body) {
+    if (
+      "categoryId" in
+      body
+    ) {
       const categoryId =
         nullableString(
           body.categoryId
@@ -449,10 +588,13 @@ export async function PATCH(
           await prisma.category.findUnique(
             {
               where: {
-                id: categoryId,
+                id:
+                  categoryId,
               },
+
               select: {
-                id: true,
+                id:
+                  true,
               },
             }
           );
@@ -474,13 +616,19 @@ export async function PATCH(
         categoryId;
     }
 
-    if ("price" in body) {
+    if (
+      "price" in
+      body
+    ) {
       const price =
         parseOptionalInt(
           body.price
         );
 
-      if (price === undefined) {
+      if (
+        price ===
+        undefined
+      ) {
         return NextResponse.json(
           {
             error:
@@ -493,7 +641,8 @@ export async function PATCH(
       }
 
       if (
-        price !== null &&
+        price !==
+          null &&
         price < 0
       ) {
         return NextResponse.json(
@@ -507,17 +656,22 @@ export async function PATCH(
         );
       }
 
-      data.price = price;
+      data.price =
+        price;
     }
 
-    if ("priceMin" in body) {
+    if (
+      "priceMin" in
+      body
+    ) {
       const priceMin =
         parseOptionalInt(
           body.priceMin
         );
 
       if (
-        priceMin === undefined
+        priceMin ===
+        undefined
       ) {
         return NextResponse.json(
           {
@@ -531,7 +685,8 @@ export async function PATCH(
       }
 
       if (
-        priceMin !== null &&
+        priceMin !==
+          null &&
         priceMin < 0
       ) {
         return NextResponse.json(
@@ -549,14 +704,18 @@ export async function PATCH(
         priceMin;
     }
 
-    if ("priceMax" in body) {
+    if (
+      "priceMax" in
+      body
+    ) {
       const priceMax =
         parseOptionalInt(
           body.priceMax
         );
 
       if (
-        priceMax === undefined
+        priceMax ===
+        undefined
       ) {
         return NextResponse.json(
           {
@@ -570,7 +729,8 @@ export async function PATCH(
       }
 
       if (
-        priceMax !== null &&
+        priceMax !==
+          null &&
         priceMax < 0
       ) {
         return NextResponse.json(
@@ -603,10 +763,14 @@ export async function PATCH(
         : existing.priceMax;
 
     if (
-      finalPriceMin !== null &&
-      finalPriceMin !== undefined &&
-      finalPriceMax !== null &&
-      finalPriceMax !== undefined &&
+      finalPriceMin !==
+        null &&
+      finalPriceMin !==
+        undefined &&
+      finalPriceMax !==
+        null &&
+      finalPriceMax !==
+        undefined &&
       finalPriceMin >
         finalPriceMax
     ) {
@@ -622,7 +786,8 @@ export async function PATCH(
     }
 
     if (
-      "availability" in body
+      "availability" in
+      body
     ) {
       if (
         !isAvailability(
@@ -644,7 +809,10 @@ export async function PATCH(
         body.availability;
     }
 
-    if ("status" in body) {
+    if (
+      "status" in
+      body
+    ) {
       if (
         !isBusinessStatus(
           body.status
@@ -665,7 +833,10 @@ export async function PATCH(
         body.status;
     }
 
-    if ("keywords" in body) {
+    if (
+      "keywords" in
+      body
+    ) {
       const keywords =
         parseKeywords(
           body.keywords
@@ -689,9 +860,13 @@ export async function PATCH(
 
     let imageInputs:
       | ProductImageInput[]
-      | null = null;
+      | null =
+      null;
 
-    if ("images" in body) {
+    if (
+      "images" in
+      body
+    ) {
       imageInputs =
         parseImages(
           body.images
@@ -717,7 +892,8 @@ export async function PATCH(
     if (
       Object.keys(data)
         .length === 0 &&
-      imageInputs === null
+      imageInputs ===
+        null
     ) {
       return NextResponse.json(
         {
@@ -730,6 +906,17 @@ export async function PATCH(
       );
     }
 
+    const availabilityChanged =
+      "availability" in
+        data &&
+      data.availability !==
+        existing.availability;
+
+    const productDataChanged =
+      Object.keys(data)
+        .length > 0 ||
+      imageInputs !== null;
+
     await prisma.$transaction(
       async (tx) => {
         if (
@@ -738,14 +925,17 @@ export async function PATCH(
         ) {
           await tx.product.update({
             where: {
-              id: productId,
+              id:
+                productId,
             },
+
             data,
           });
         }
 
         if (
-          imageInputs !== null
+          imageInputs !==
+          null
         ) {
           await tx.productImage.deleteMany(
             {
@@ -756,7 +946,8 @@ export async function PATCH(
           );
 
           if (
-            imageInputs.length > 0
+            imageInputs.length >
+            0
           ) {
             await tx.productImage.createMany(
               {
@@ -767,9 +958,13 @@ export async function PATCH(
                       index
                     ) => ({
                       productId,
-                      url: image.url,
+
+                      url:
+                        image.url,
+
                       publicId:
                         image.publicId,
+
                       sortOrder:
                         image.sortOrder ??
                         index,
@@ -787,9 +982,92 @@ export async function PATCH(
         productId
       );
 
+    /*
+     * -----------------------------------------
+     * NOTIFY SELLER
+     * -----------------------------------------
+     *
+     * Use a specific availability notification
+     * when availability changed.
+     *
+     * Otherwise use the general product update
+     * notification.
+     *
+     * This avoids sending two notifications for
+     * one admin edit.
+     */
+    if (
+      refreshed
+    ) {
+      if (
+        availabilityChanged
+      ) {
+        await notifyProductOwner({
+          ownerId:
+            existing
+              .business
+              .ownerId,
+
+          productId:
+            existing.id,
+
+          businessId:
+            existing
+              .business
+              .id,
+
+          productName:
+            refreshed.name,
+
+          type:
+            NotificationType.PRODUCT_AVAILABILITY_CHANGED,
+
+          title:
+            "Product availability changed",
+
+          message:
+            `The availability of "${refreshed.name}" has been changed by a ReMarket admin.`,
+
+        });
+      } else if (
+        productDataChanged
+      ) {
+        await notifyProductOwner({
+          ownerId:
+            existing
+              .business
+              .ownerId,
+
+          productId:
+            existing.id,
+
+          businessId:
+            existing
+              .business
+              .id,
+
+          productName:
+            refreshed.name,
+
+          type:
+            NotificationType.PRODUCT_UPDATED,
+
+          title:
+            "Product updated",
+
+          message:
+            `"${refreshed.name}" has been updated by a ReMarket admin.`,
+
+        });
+      }
+    }
+
     return NextResponse.json({
-      success: true,
-      product: refreshed,
+      success:
+        true,
+
+      product:
+        refreshed,
     });
   } catch (error) {
     console.error(
@@ -811,7 +1089,9 @@ export async function PATCH(
 
 export async function DELETE(
   _request: NextRequest,
-  { params }: RouteContext
+  {
+    params,
+  }: RouteContext
 ) {
   const auth =
     await requireAdmin();
@@ -820,8 +1100,9 @@ export async function DELETE(
     return auth.response;
   }
 
-  const { id: productId } =
-    await params;
+  const {
+    id: productId,
+  } = await params;
 
   if (!productId) {
     return NextResponse.json(
@@ -839,11 +1120,35 @@ export async function DELETE(
     const existing =
       await prisma.product.findUnique({
         where: {
-          id: productId,
+          id:
+            productId,
         },
+
         select: {
-          id: true,
-          deletedAt: true,
+          id:
+            true,
+
+          name:
+            true,
+
+          deletedAt:
+            true,
+
+          business: {
+            select: {
+              id:
+                true,
+
+              name:
+                true,
+
+              ownerId:
+                true,
+
+              deletedAt:
+                true,
+            },
+          },
         },
       });
 
@@ -859,23 +1164,61 @@ export async function DELETE(
       );
     }
 
-    if (existing.deletedAt) {
+    if (
+      existing.deletedAt
+    ) {
       return NextResponse.json({
-        success: true,
+        success:
+          true,
       });
     }
 
     await prisma.product.update({
       where: {
-        id: productId,
+        id:
+          productId,
       },
+
       data: {
-        deletedAt: new Date(),
+        deletedAt:
+          new Date(),
       },
     });
 
+    /*
+     * Notify the seller only after the product
+     * has actually been soft-deleted.
+     */
+    await notifyProductOwner({
+      ownerId:
+        existing
+          .business
+          .ownerId,
+
+      productId:
+        existing.id,
+
+      businessId:
+        existing
+          .business
+          .id,
+
+      productName:
+        existing.name,
+
+      type:
+        NotificationType.PRODUCT_REMOVED,
+
+      title:
+        "Product removed",
+
+      message:
+        `"${existing.name}" has been removed from your ReMarket business by an admin.`,
+    });
+
     return NextResponse.json({
-      success: true,
+      success:
+        true,
     });
   } catch (error) {
     console.error(

@@ -66,6 +66,97 @@ enum ClaimRequestStatus {
   REJECTED
 }
 
+/**
+ * Notification priority.
+ */
+enum NotificationPriority {
+  LOW
+  NORMAL
+  HIGH
+  CRITICAL
+}
+
+/**
+ * Notification delivery channels.
+ * IN_APP is the first channel we will implement.
+ * PUSH, EMAIL, WHATSAPP and SMS can be added later.
+ */
+enum NotificationChannel {
+  IN_APP
+  PUSH
+  EMAIL
+  WHATSAPP
+  SMS
+}
+
+/**
+ * Delivery status for a notification channel.
+ */
+enum NotificationDeliveryStatus {
+  PENDING
+  SENT
+  DELIVERED
+  FAILED
+}
+
+/**
+ * ReMarket notification event types.
+ */
+enum NotificationType {
+  REQUEST_CREATED
+  REQUEST_MATCHED
+  REQUEST_RESPONDED
+  REQUEST_UPDATED
+  REQUEST_FULFILLED
+  REQUEST_CLOSED
+  REQUEST_UNFULFILLED
+
+  BUSINESS_APPROVED
+  BUSINESS_REJECTED
+  BUSINESS_UPDATED
+  BUSINESS_VERIFIED
+  BUSINESS_DEACTIVATED
+  BUSINESS_DELETION_REQUESTED
+  BUSINESS_DELETION_APPROVED
+  BUSINESS_DELETION_REJECTED
+  BUSINESS_REPORTED
+
+  CLAIM_SUBMITTED
+  CLAIM_APPROVED
+  CLAIM_REJECTED
+
+  PRODUCT_ADDED
+  PRODUCT_UPDATED
+  PRODUCT_REMOVED
+  PRODUCT_AVAILABILITY_CHANGED
+
+  REVIEW_RECEIVED
+  REVIEW_REPLIED
+  REVIEW_REPORTED
+  REVIEW_REMOVED
+
+  PAYMENT_SUCCESS
+  PAYMENT_FAILED
+  PREMIUM_ACTIVATED
+  PREMIUM_EXPIRING
+  PREMIUM_EXPIRED
+
+  SECURITY_ALERT
+
+  SYSTEM_ANNOUNCEMENT
+}
+
+/**
+ * Audience for admin-created announcements.
+ */
+enum NotificationAudience {
+  EVERYONE
+  BUYERS
+  SELLERS
+  ADMINS
+  SELECTED_USERS
+}
+
 model User {
   id        String   @id @default(cuid())
   email     String   @unique
@@ -95,6 +186,15 @@ model User {
 
   // Reviews written by this buyer.
   reviews BusinessReview[]
+
+  // Notifications belonging to this user.
+  notifications Notification[]
+
+  // Per-notification-type delivery preferences.
+  notificationPreferences NotificationPreference[]
+
+  // Admin-created notification announcements.
+  notificationAnnouncements NotificationAnnouncement[] @relation("NotificationAnnouncementCreatedBy")
 }
 
 model Location {
@@ -134,7 +234,8 @@ model BusinessSocialLink {
   id String @id @default(cuid())
 
   businessId String
-  business   Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+
+  business Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
 
   platform SocialPlatform
   handle   String
@@ -144,7 +245,8 @@ model BusinessSocialLink {
 }
 
 model Category {
-  id   String @id @default(cuid())
+  id String @id @default(cuid())
+
   name String @unique
 
   // Lucide icon key, e.g. "Shirt", "Utensils", "Briefcase".
@@ -169,6 +271,7 @@ model BusinessCategory {
   categoryId String
 
   business Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+
   category Category @relation(fields: [categoryId], references: [id], onDelete: Cascade)
 
   @@id([businessId, categoryId])
@@ -176,7 +279,8 @@ model BusinessCategory {
 }
 
 model Business {
-  id   String @id @default(cuid())
+  id String @id @default(cuid())
+
   name String
 
   ownerName String?
@@ -185,12 +289,14 @@ model Business {
   // Optional because existing manually onboarded businesses
   // may not yet belong to a seller account.
   ownerId String? @unique
-  owner   User?   @relation(fields: [ownerId], references: [id], onDelete: SetNull)
+
+  owner User? @relation(fields: [ownerId], references: [id], onDelete: SetNull)
 
   description String?
 
   locationId String?
-  location   Location? @relation(fields: [locationId], references: [id], onDelete: SetNull)
+
+  location Location? @relation(fields: [locationId], references: [id], onDelete: SetNull)
 
   priceMin Int?
   priceMax Int?
@@ -221,9 +327,7 @@ model Business {
   deletionRequests BusinessDeletionRequest[]
   claimRequests    BusinessClaimRequest[]
   viewEvents       BusinessViewEvent[]
-
-  // Ratings and reviews submitted by buyers.
-  reviews BusinessReview[]
+  reviews          BusinessReview[]
 
   @@index([status])
   @@index([verification])
@@ -237,10 +341,12 @@ model BusinessReview {
   id String @id @default(cuid())
 
   businessId String
-  business   Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+
+  business Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
 
   userId String
-  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   // Whole-number rating from 1 to 5.
   // API validation will enforce the allowed range.
@@ -261,7 +367,8 @@ model BusinessReview {
 }
 
 model Product {
-  id         String @id @default(cuid())
+  id String @id @default(cuid())
+
   businessId String
 
   business Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
@@ -270,7 +377,8 @@ model Product {
   description String?
 
   categoryId String?
-  category   Category? @relation(fields: [categoryId], references: [id])
+
+  category Category? @relation(fields: [categoryId], references: [id])
 
   price    Int?
   priceMin Int?
@@ -281,7 +389,8 @@ model Product {
   keywords String[] @default([])
 
   imageUrl String?
-  images   ProductImage[]
+
+  images ProductImage[]
 
   // Existing product status preserved.
   status BusinessStatus @default(ACTIVE)
@@ -291,7 +400,8 @@ model Product {
 
   // Audit: which authenticated user deleted this product?
   deletedById String?
-  deletedBy   User?   @relation("ProductDeletedBy", fields: [deletedById], references: [id], onDelete: SetNull)
+
+  deletedBy User? @relation("ProductDeletedBy", fields: [deletedById], references: [id], onDelete: SetNull)
 
   updatedAt DateTime @updatedAt
 
@@ -302,14 +412,17 @@ model Product {
 }
 
 model ProductImage {
-  id        String @id @default(cuid())
+  id String @id @default(cuid())
+
   productId String
 
   product Product @relation(fields: [productId], references: [id], onDelete: Cascade)
 
-  url       String
-  publicId  String?
-  sortOrder Int      @default(0)
+  url      String
+  publicId String?
+
+  sortOrder Int @default(0)
+
   createdAt DateTime @default(now())
 
   @@index([productId])
@@ -323,9 +436,10 @@ model BuyerRequest {
   requestCode String @unique
 
   categoryId String?
+
   // A category can be deactivated/deleted without destroying
   // historical buyer requests.
-  category   Category? @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+  category Category? @relation(fields: [categoryId], references: [id], onDelete: SetNull)
 
   budget       Int?
   locationArea String?
@@ -350,14 +464,17 @@ model Match {
   id String @id @default(cuid())
 
   requestId String
-  request   BuyerRequest @relation(fields: [requestId], references: [id], onDelete: Cascade)
+
+  request BuyerRequest @relation(fields: [requestId], references: [id], onDelete: Cascade)
 
   businessId String
-  business   Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
 
-  score         Int      @default(0)
-  addedManually Boolean  @default(false)
-  createdAt     DateTime @default(now())
+  business Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+
+  score         Int     @default(0)
+  addedManually Boolean @default(false)
+
+  createdAt DateTime @default(now())
 
   @@unique([requestId, businessId])
   @@index([businessId])
@@ -367,7 +484,8 @@ model ContactEvent {
   id String @id @default(cuid())
 
   businessId String
-  business   Business @relation(fields: [businessId], references: [id])
+
+  business Business @relation(fields: [businessId], references: [id])
 
   // Existing request reference preserved as a scalar.
   requestId String?
@@ -401,7 +519,8 @@ model BusinessViewEvent {
   id String @id @default(cuid())
 
   businessId String
-  business   Business @relation(fields: [businessId], references: [id])
+
+  business Business @relation(fields: [businessId], references: [id])
 
   // Anonymous stable visitor identifier generated by the application.
   // This is not the user's email or phone number.
@@ -420,8 +539,8 @@ model AdminNote {
 
   businessId String?
   requestId  String?
-  content    String
 
+  content   String
   createdAt DateTime @default(now())
 
   @@index([businessId])
@@ -439,7 +558,8 @@ model BusinessDeletionRequest {
 
   // Seller/admin account that submitted the request.
   requestedById String
-  requestedBy   User   @relation("BusinessDeletionRequestedBy", fields: [requestedById], references: [id], onDelete: Restrict)
+
+  requestedBy User @relation("BusinessDeletionRequestedBy", fields: [requestedById], references: [id], onDelete: Restrict)
 
   reason String?
 
@@ -447,7 +567,8 @@ model BusinessDeletionRequest {
 
   // Admin who reviewed the request.
   reviewedById String?
-  reviewedBy   User?   @relation("BusinessDeletionReviewedBy", fields: [reviewedById], references: [id], onDelete: SetNull)
+
+  reviewedBy User? @relation("BusinessDeletionReviewedBy", fields: [reviewedById], references: [id], onDelete: SetNull)
 
   reviewedAt DateTime?
 
@@ -464,11 +585,13 @@ model BusinessClaimRequest {
   id String @id @default(cuid())
 
   businessId String
-  business   Business @relation(fields: [businessId], references: [id], onDelete: Restrict)
+
+  business Business @relation(fields: [businessId], references: [id], onDelete: Restrict)
 
   // Seller account requesting ownership.
   requestedById String
-  requestedBy   User   @relation("BusinessClaimRequestedBy", fields: [requestedById], references: [id], onDelete: Restrict)
+
+  requestedBy User @relation("BusinessClaimRequestedBy", fields: [requestedById], references: [id], onDelete: Restrict)
 
   reason String?
 
@@ -476,7 +599,8 @@ model BusinessClaimRequest {
 
   // Admin who reviewed the claim.
   reviewedById String?
-  reviewedBy   User?   @relation("BusinessClaimReviewedBy", fields: [reviewedById], references: [id], onDelete: SetNull)
+
+  reviewedBy User? @relation("BusinessClaimReviewedBy", fields: [reviewedById], references: [id], onDelete: SetNull)
 
   reviewedAt DateTime?
 
@@ -488,4 +612,182 @@ model BusinessClaimRequest {
   @@index([requestedById])
   @@index([reviewedById])
   @@index([status])
+}
+
+/**
+ * ============================================================
+ * RE-MARKET NOTIFICATION SYSTEM
+ * ============================================================
+ */
+
+/**
+ * Stores one notification for one recipient.
+ * Example:
+ * User A receives notification X
+ * User B receives notification X
+ * These are stored as separate Notification records so each
+ * user has independent read/unread state.
+ */
+model Notification {
+  id String @id @default(cuid())
+
+  userId String
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  type     NotificationType
+  title    String
+  message  String
+  priority NotificationPriority @default(NORMAL)
+
+  /**
+   * Structured contextual information.
+   * Example:
+   * {
+   * "businessId": "...",
+   * "reviewId": "...",
+   * "requestId": "..."
+   * }
+   */
+  data Json?
+
+  /**
+   * Null = unread.
+   * Set = read.
+   */
+  readAt DateTime?
+
+  /**
+   * Prevents accidental duplicate notifications.
+   * Example:
+   * REQUEST_MATCHED:request_123:user_456
+   */
+  dedupeKey String? @unique
+
+  /**
+   * Optional reference to an admin-created announcement.
+   */
+  announcementId String?
+
+  announcement NotificationAnnouncement? @relation(fields: [announcementId], references: [id], onDelete: SetNull)
+
+  deliveries NotificationDelivery[]
+
+  createdAt DateTime @default(now())
+
+  @@index([userId, createdAt])
+  @@index([userId, readAt])
+  @@index([userId, type])
+  @@index([type])
+  @@index([announcementId])
+}
+
+/**
+ * Tracks delivery of a notification through a specific channel.
+ */
+model NotificationDelivery {
+  id String @id @default(cuid())
+
+  notificationId String
+
+  notification Notification @relation(fields: [notificationId], references: [id], onDelete: Cascade)
+
+  channel NotificationChannel
+
+  status NotificationDeliveryStatus @default(PENDING)
+
+  sentAt      DateTime?
+  deliveredAt DateTime?
+  failedAt    DateTime?
+
+  /**
+   * Provider-specific message/reference ID.
+   * Useful later for email, push, WhatsApp and SMS.
+   */
+  providerMessageId String?
+
+  /**
+   * Provider error information.
+   */
+  error String?
+
+  createdAt DateTime @default(now())
+
+  /**
+   * One notification can only have one delivery
+   * record for each channel.
+   */
+  @@unique([notificationId, channel])
+  @@index([notificationId])
+  @@index([channel, status])
+  @@index([status])
+}
+
+/**
+ * Per-user notification preferences.
+ * A missing preference row means the application
+ * default applies.
+ */
+model NotificationPreference {
+  id String @id @default(cuid())
+
+  userId String
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  notificationType NotificationType
+
+  inApp    Boolean @default(true)
+  push     Boolean @default(false)
+  email    Boolean @default(false)
+  whatsapp Boolean @default(false)
+  sms      Boolean @default(false)
+
+  updatedAt DateTime @updatedAt
+
+  /**
+   * One preference record per user and notification type.
+   */
+  @@unique([userId, notificationType])
+  @@index([userId])
+  @@index([notificationType])
+}
+
+/**
+ * Admin-created announcement.
+ * The announcement defines the audience.
+ * Individual Notification rows are then created
+ * for the users who should receive it.
+ */
+model NotificationAnnouncement {
+  id String @id @default(cuid())
+
+  title   String
+  message String
+
+  audience NotificationAudience
+
+  priority NotificationPriority @default(NORMAL)
+
+  createdById String
+
+  createdBy User @relation("NotificationAnnouncementCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+
+  /**
+   * Optional structured metadata.
+   * Example:
+   * {
+   * "action": "OPEN_BUSINESS",
+   * "businessId": "..."
+   * }
+   */
+  data Json?
+
+  notifications Notification[]
+
+  createdAt DateTime @default(now())
+
+  @@index([audience])
+  @@index([createdById])
+  @@index([createdAt])
 }

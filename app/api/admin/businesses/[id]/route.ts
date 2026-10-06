@@ -7,6 +7,7 @@ import {
   Availability,
   BusinessStatus,
   LocationVerificationStatus,
+  NotificationType,
   SocialPlatform,
   VerificationStatus,
 } from "@prisma/client";
@@ -14,6 +15,7 @@ import {
 import { prisma } from "@/lib/prisma";
 import { requireAdmin } from "@/lib/admin-auth";
 import { geocodeBusinessLocation } from "@/lib/geocoding";
+import { createNotification } from "@/lib/notifications";
 
 type RouteContext = {
   params: Promise<{
@@ -446,7 +448,7 @@ function parseCategoryIds(
  *
  * Canonical ReMarket address:
  *
- * House Number, Street,Area, City, Nigeria
+ * House Number, Street, Area, City, Nigeria
  */
 
 function composeLocationAddress(
@@ -465,6 +467,7 @@ function composeLocationAddress(
     .filter(Boolean)
     .join(", ");
 }
+
 function parseStoredLocationAddress(
   address: string | null,
   area: string
@@ -716,6 +719,67 @@ function bodyTooLarge(
     contentLength >
       MAX_REQUEST_BODY_SIZE
   );
+}
+
+/*
+ * ------------------------------------------------
+ * NOTIFICATIONS
+ * ------------------------------------------------
+ *
+ * Notification failures must never cause a
+ * successful business update to become a failed
+ * request.
+ *
+ * Notifications are therefore sent only after
+ * the database operation has completed.
+ */
+
+async function notifyBusinessOwner(
+  input: {
+    ownerId: string | null;
+    businessId: string;
+    type: NotificationType;
+    title: string;
+    message: string;
+  }
+): Promise<void> {
+  const ownerId =
+    cleanString(
+      input.ownerId
+    );
+
+  if (!ownerId) {
+    return;
+  }
+
+  try {
+    await createNotification({
+      userId:
+        ownerId,
+
+      type:
+        input.type,
+
+      title:
+        input.title,
+
+      message:
+        input.message,
+
+      data: {
+        businessId:
+          input.businessId,
+
+        href:
+          `/seller/${input.businessId}`,
+      },
+    });
+  } catch (error) {
+    console.error(
+      "Business owner notification error:",
+      error
+    );
+  }
 }
 
 /*
@@ -2037,7 +2101,6 @@ export async function PATCH(
             resultingStreet,
             requestedArea,
             resultingCity,
-           
           );
       } else {
         /*
@@ -2667,6 +2730,144 @@ export async function PATCH(
       );
     }
 
+    /*
+     * -----------------------------------------
+     * BUSINESS STATUS NOTIFICATIONS
+     * -----------------------------------------
+     *
+     * Only notify when an actual lifecycle
+     * transition happened.
+     */
+
+    const resultingStatus =
+      data.status ??
+      existing.status;
+
+    const resultingVerification =
+      data.verification ??
+      existing.verification;
+
+    /*
+     * PENDING -> ACTIVE
+     *
+     * Business approved.
+     */
+    if (
+      existing.status ===
+        BusinessStatus.PENDING &&
+      resultingStatus ===
+        BusinessStatus.ACTIVE
+    ) {
+      await notifyBusinessOwner({
+        ownerId:
+          existing.ownerId,
+
+        businessId:
+          existing.id,
+
+        type:
+          NotificationType.BUSINESS_APPROVED,
+
+        title:
+          "Business approved",
+
+        message:
+          `"${existing.name}" has been approved and is now active on ReMarket.`,
+      });
+    }
+
+    /*
+     * PENDING -> INACTIVE
+     *
+     * Business not approved.
+     */
+    if (
+      existing.status ===
+        BusinessStatus.PENDING &&
+      resultingStatus ===
+        BusinessStatus.INACTIVE
+    ) {
+      await notifyBusinessOwner({
+        ownerId:
+          existing.ownerId,
+
+        businessId:
+          existing.id,
+
+        type:
+          NotificationType.BUSINESS_REJECTED,
+
+        title:
+          "Business not approved",
+
+        message:
+          `"${existing.name}" was not approved and is currently inactive on ReMarket.`,
+      });
+    }
+
+    /*
+     * ACTIVE -> INACTIVE
+     *
+     * Existing active business was
+     * deactivated by an admin.
+     */
+    if (
+      existing.status ===
+        BusinessStatus.ACTIVE &&
+      resultingStatus ===
+        BusinessStatus.INACTIVE
+    ) {
+      await notifyBusinessOwner({
+        ownerId:
+          existing.ownerId,
+
+        businessId:
+          existing.id,
+
+        type:
+          NotificationType.BUSINESS_DEACTIVATED,
+
+        title:
+          "Business deactivated",
+
+        message:
+          `"${existing.name}" has been deactivated by a ReMarket admin.`,
+      });
+    }
+
+    /*
+     * UNVERIFIED -> VERIFIED
+     *
+     * This refers specifically to
+     * Business.verification.
+     *
+     * Location.verification remains
+     * a separate concept.
+     */
+    if (
+      existing.verification ===
+        VerificationStatus.UNVERIFIED &&
+      resultingVerification ===
+        VerificationStatus.VERIFIED
+    ) {
+      await notifyBusinessOwner({
+        ownerId:
+          existing.ownerId,
+
+        businessId:
+          existing.id,
+
+        type:
+          NotificationType.BUSINESS_VERIFIED,
+
+        title:
+          "Business verified",
+
+        message:
+          `"${existing.name}" has been verified by ReMarket.`,
+      });
+    }
+
     return NextResponse.json(
       {
         success:
@@ -2771,6 +2972,9 @@ export async function DELETE(
             name:
               true,
 
+            ownerId:
+              true,
+
             deletedAt:
               true,
           },
@@ -2831,6 +3035,27 @@ export async function DELETE(
         }
       );
 
+    /*
+     * Notify the seller after the soft delete
+     * succeeds.
+     */
+    await notifyBusinessOwner({
+      ownerId:
+        existing.ownerId,
+
+      businessId:
+        existing.id,
+
+      type:
+        NotificationType.BUSINESS_DEACTIVATED,
+
+      title:
+        "Business deactivated",
+
+      message:
+        `"${existing.name}" has been deactivated on ReMarket.`,
+    });
+
     return NextResponse.json(
       {
         success:
@@ -2862,7 +3087,8 @@ export async function DELETE(
         status: 500,
         headers:
           getNoStoreHeaders(),
-      }
+        }
+      
     );
   }
 }

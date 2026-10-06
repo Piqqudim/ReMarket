@@ -1,4 +1,9 @@
 import {
+  NotificationPriority,
+  NotificationType,
+} from "@prisma/client";
+
+import {
   NextRequest,
   NextResponse,
 } from "next/server";
@@ -12,6 +17,7 @@ import {
 } from "@/lib/auth";
 
 import { prisma } from "@/lib/prisma";
+import { createNotification } from "@/lib/notifications";
 
 type RouteContext = {
   params: Promise<{
@@ -341,6 +347,10 @@ function validateRouteIds(
  * PATCH /api/businesses/[id]/reviews/[reviewId]
  *
  * A buyer can update only their own review.
+ *
+ * No notification is sent here because the
+ * current notification schema does not contain
+ * REVIEW_UPDATED.
  */
 
 export async function PATCH(
@@ -527,9 +537,6 @@ export async function PATCH(
      *
      * - this business
      * - this authenticated buyer
-     *
-     * This prevents a buyer from editing
-     * another buyer's review.
      */
 
     const existingReview =
@@ -770,6 +777,45 @@ export async function DELETE(
 
     /*
      * -----------------------------------------
+     * VERIFY BUSINESS OWNER
+     * -----------------------------------------
+     *
+     * The business owner is the affected
+     * recipient when their business review
+     * is removed.
+     */
+
+    const business =
+      await prisma.business.findUnique(
+        {
+          where: {
+            id,
+          },
+
+          select: {
+            id: true,
+            name: true,
+            ownerId: true,
+          },
+        }
+      );
+
+    if (!business) {
+      return NextResponse.json(
+        {
+          error:
+            "Business not found.",
+        },
+        {
+          status: 404,
+          headers:
+            getNoStoreHeaders(),
+        }
+      );
+    }
+
+    /*
+     * -----------------------------------------
      * DELETE REVIEW
      * -----------------------------------------
      */
@@ -782,6 +828,62 @@ export async function DELETE(
         },
       }
     );
+
+    /*
+     * -----------------------------------------
+     * NOTIFY BUSINESS OWNER
+     * -----------------------------------------
+     *
+     * The buyer who deleted the review should
+     * not receive a notification about their
+     * own deletion.
+     *
+     * Notification failure must not change
+     * the successful deletion response.
+     */
+
+    if (
+      business.ownerId
+    ) {
+      try {
+        await createNotification({
+          userId:
+            business.ownerId,
+
+          type:
+            NotificationType.REVIEW_REMOVED,
+
+          title:
+            "Review removed",
+
+          message:
+            `A review for ${business.name} was removed by the reviewer.`,
+
+          priority:
+            NotificationPriority.NORMAL,
+
+          data: {
+            reviewId,
+
+            businessId:
+              business.id,
+
+            href:
+              `/seller/${business.id}`,
+          },
+
+          dedupeKey:
+            `review:${reviewId}:removed`,
+        });
+      } catch (
+        notificationError
+      ) {
+        console.error(
+          "Business review removal notification error:",
+          notificationError
+        );
+      }
+    }
 
     return NextResponse.json(
       {
@@ -819,8 +921,8 @@ export async function DELETE(
           status: 404,
           headers:
             getNoStoreHeaders(),
-        }
-      );
+          }
+        );
     }
 
     return NextResponse.json(
@@ -832,8 +934,7 @@ export async function DELETE(
         status: 500,
         headers:
           getNoStoreHeaders(),
-        }
-      
+      }
     );
   }
 }

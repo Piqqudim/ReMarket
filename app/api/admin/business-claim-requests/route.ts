@@ -1,8 +1,13 @@
-import { Prisma } from "@prisma/client";
+import {
+  NotificationPriority,
+  NotificationType,
+  Prisma,
+} from "@prisma/client";
 import { NextResponse } from "next/server";
 
 import { prisma } from "@/lib/prisma";
 import { requireAdmin } from "@/lib/admin-auth";
+import { createNotification } from "@/lib/notifications";
 
 const CLAIM_STATUSES = [
   "PENDING",
@@ -61,6 +66,73 @@ class ClaimNotFoundError extends Error {
 
     this.name =
       "ClaimNotFoundError";
+  }
+}
+
+/*
+ * ------------------------------------------------
+ * NOTIFY CLAIMANT
+ * ------------------------------------------------
+ *
+ * Notification failure must never turn a
+ * successful claim review into a failed request.
+ */
+
+async function notifyClaimant(
+  input: {
+    userId: string | null;
+    claimId: string;
+    businessId: string;
+    businessName: string;
+    type: NotificationType;
+    title: string;
+    message: string;
+  }
+): Promise<void> {
+  const userId =
+    cleanString(
+      input.userId
+    );
+
+  if (!userId) {
+    return;
+  }
+
+  try {
+    await createNotification({
+      userId,
+
+      type:
+        input.type,
+
+      title:
+        input.title,
+
+      message:
+        input.message,
+
+      priority:
+        NotificationPriority.HIGH,
+
+      data: {
+        claimId:
+          input.claimId,
+
+        businessId:
+          input.businessId,
+
+        href:
+          `/seller/${input.businessId}`,
+      },
+
+      dedupeKey:
+        `claim:${input.claimId}:${input.type}:seller:${userId}`,
+    });
+  } catch (error) {
+    console.error(
+      "Claimant notification error:",
+      error
+    );
   }
 }
 
@@ -360,6 +432,31 @@ export async function PATCH(
           },
         });
 
+      if (claim) {
+        await notifyClaimant({
+          userId:
+            claim.requestedBy.id,
+
+          claimId:
+            claim.id,
+
+          businessId:
+            claim.business.id,
+
+          businessName:
+            claim.business.name,
+
+          type:
+            NotificationType.CLAIM_REJECTED,
+
+          title:
+            "Business claim rejected",
+
+          message:
+            `Your claim for "${claim.business.name}" has been rejected by a ReMarket admin.`,
+        });
+      }
+
       return NextResponse.json(
         {
           message:
@@ -586,6 +683,42 @@ export async function PATCH(
                 Prisma.TransactionIsolationLevel.Serializable,
             }
           );
+
+        /*
+         * -----------------------------------------
+         * NOTIFY SELLER AFTER APPROVAL
+         * -----------------------------------------
+         *
+         * The ownership transaction has already
+         * succeeded at this point.
+         */
+
+        if (
+          result
+        ) {
+          await notifyClaimant({
+            userId:
+              result.requestedBy.id,
+
+            claimId:
+              result.id,
+
+            businessId:
+              result.business.id,
+
+            businessName:
+              result.business.name,
+
+            type:
+              NotificationType.CLAIM_APPROVED,
+
+            title:
+              "Business claim approved",
+
+            message:
+              `Your claim for "${result.business.name}" has been approved. You are now the owner of this ReMarket business.`,
+          });
+        }
 
         return NextResponse.json(
           {

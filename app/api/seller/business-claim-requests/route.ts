@@ -1,8 +1,9 @@
-import { Prisma } from "@prisma/client";
+import { Prisma, NotificationPriority, NotificationType } from "@prisma/client";
 import { NextResponse } from "next/server";
 
 import { prisma } from "@/lib/prisma";
 import { requireSeller } from "@/lib/seller-auth";
+import { createNotification } from "@/lib/notifications";
 
 const CLAIM_STATUSES = [
   "PENDING",
@@ -362,6 +363,81 @@ export async function POST(
           },
         },
       });
+
+    /*
+     * ------------------------------------------------
+     * NOTIFY ADMINS
+     * ------------------------------------------------
+     *
+     * The claim has now been successfully created.
+     *
+     * Every admin receives a separate notification.
+     *
+     * Notification failure must never cause the
+     * successful claim submission to fail.
+     * ------------------------------------------------
+     */
+
+    try {
+      const admins =
+        await prisma.user.findMany({
+          where: {
+            role: "ADMIN",
+          },
+
+          select: {
+            id: true,
+          },
+        });
+
+      for (
+        const admin of admins
+      ) {
+        try {
+          await createNotification({
+            userId:
+              admin.id,
+
+            type:
+              NotificationType.CLAIM_SUBMITTED,
+
+            title:
+              "New business claim request",
+
+            message:
+              `${auth.user.name ?? "A seller"} has requested ownership of "${claim.business.name}".`,
+
+            priority:
+              NotificationPriority.HIGH,
+
+            data: {
+              claimId:
+                claim.id,
+
+              businessId:
+                claim.business.id,
+            },
+
+            dedupeKey:
+              `claim:${claim.id}:submitted:admin:${admin.id}`,
+          });
+        } catch (
+          notificationError
+        ) {
+          console.error(
+            "Claim admin notification error:",
+            notificationError
+          );
+        }
+      }
+    } catch (
+      adminLookupError
+    ) {
+      console.error(
+        "Claim admin lookup error:",
+        adminLookupError
+      );
+    }
 
     return NextResponse.json(
       {

@@ -1,4 +1,9 @@
 import {
+  NotificationPriority,
+  NotificationType,
+} from "@prisma/client";
+
+import {
   NextRequest,
   NextResponse,
 } from "next/server";
@@ -12,6 +17,7 @@ import {
 } from "@/lib/auth";
 
 import { prisma } from "@/lib/prisma";
+import { createNotification } from "@/lib/notifications";
 
 type RouteContext = {
   params: Promise<{
@@ -622,6 +628,7 @@ export async function POST(
           select: {
             id: true,
             name: true,
+            ownerId: true,
           },
         }
       );
@@ -687,6 +694,67 @@ export async function POST(
           },
         }
       );
+
+    /*
+     * -----------------------------------------
+     * NOTIFY BUSINESS OWNER
+     * -----------------------------------------
+     *
+     * The reviewer is the buyer who just
+     * submitted the review, so they should
+     * not receive a notification about their
+     * own action.
+     *
+     * The affected recipient is the owner
+     * of the reviewed business.
+     *
+     * Notification failure must not undo
+     * successful review creation.
+     */
+
+    if (
+      business.ownerId
+    ) {
+      try {
+        await createNotification({
+          userId:
+            business.ownerId,
+
+          type:
+            NotificationType.REVIEW_RECEIVED,
+
+          title:
+            "New business review",
+
+          message:
+            `Your business, ${business.name}, received a ${review.rating}-star review.`,
+
+          priority:
+            NotificationPriority.NORMAL,
+
+          data: {
+            reviewId:
+              review.id,
+
+            businessId:
+              business.id,
+
+            href:
+              `/seller/${business.id}`,
+          },
+
+          dedupeKey:
+            `review:${review.id}:received`,
+        });
+      } catch (
+        notificationError
+      ) {
+        console.error(
+          "Business review notification error:",
+          notificationError
+        );
+      }
+    }
 
     return NextResponse.json(
       {

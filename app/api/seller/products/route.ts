@@ -1,8 +1,14 @@
 import { Prisma } from "@prisma/client";
 import { NextResponse } from "next/server";
 
+import {
+  NotificationPriority,
+  NotificationType,
+} from "@prisma/client";
+
 import { prisma } from "@/lib/prisma";
 import { requireSeller } from "@/lib/seller-auth";
+import { createNotification } from "@/lib/notifications";
 
 const MAX_ACTIVE_PRODUCTS = 10;
 
@@ -999,6 +1005,7 @@ export async function POST(
 
         select: {
           id: true,
+          name: true,
           deletedAt: true,
         },
       });
@@ -1167,6 +1174,86 @@ export async function POST(
             "ACTIVE",
         }
       );
+
+    /*
+     * -----------------------------------------
+     * NOTIFY ADMINS
+     * -----------------------------------------
+     *
+     * The seller should not receive a notification
+     * for their own product creation.
+     *
+     * Every admin is affected because the product
+     * was added to ReMarket by a seller.
+     *
+     * Notification failure must not undo the
+     * successful product creation.
+     * -----------------------------------------
+     */
+
+    try {
+      const admins =
+        await prisma.user.findMany({
+          where: {
+            role: "ADMIN",
+          },
+
+          select: {
+            id: true,
+          },
+        });
+
+      for (
+        const admin of admins
+      ) {
+        try {
+          await createNotification({
+            userId:
+              admin.id,
+
+            type:
+              NotificationType.PRODUCT_ADDED,
+
+            title:
+              "New product added",
+
+            message:
+              `A new product, "${product.name}", was added to ${business.name}.`,
+
+            priority:
+              NotificationPriority.NORMAL,
+
+            data: {
+              productId:
+                product.id,
+
+              businessId:
+                business.id,
+
+              href:
+                `/admin/products`,
+            },
+
+            dedupeKey:
+              `product:${product.id}:added:admin:${admin.id}`,
+          });
+        } catch (
+          notificationError
+        ) {
+          console.error(
+            "Seller product admin notification error:",
+            notificationError
+          );
+        }
+      }
+    } catch (
+      notificationLookupError
+    ) {
+      console.error(
+        "Seller product admin lookup error:",
+        notificationLookupError
+      );
+    }
 
     const activeCount =
       await prisma.product.count({

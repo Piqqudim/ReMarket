@@ -8,6 +8,8 @@ import React, {
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 
+import NotificationBell from "@/components/NotificationBell";
+
 import {
   Store,
   UserRound,
@@ -309,15 +311,20 @@ export default function SellerProfilePage() {
               </div>
             </Link>
 
-            <Link
-              href="/seller"
-              className="inline-flex items-center gap-2 rounded-xl border border-[#E8E4DE] bg-white px-3.5 py-2.5 text-xs font-semibold text-gray-700 transition hover:bg-[#FFF7ED] hover:text-[#9F2D18]"
-            >
-              <ArrowLeft className="h-4 w-4" />
-              <span className="hidden sm:inline">
-                Dashboard
-              </span>
-            </Link>
+            <div className="flex items-center gap-2">
+              <NotificationBell />
+
+              <Link
+                href="/seller"
+                className="inline-flex items-center gap-2 rounded-xl border border-[#E8E4DE] bg-white px-3.5 py-2.5 text-xs font-semibold text-gray-700 transition hover:bg-[#FFF7ED] hover:text-[#9F2D18]"
+              >
+                <ArrowLeft className="h-4 w-4" />
+
+                <span className="hidden sm:inline">
+                  Dashboard
+                </span>
+              </Link>
+            </div>
           </header>
 
           {/* Content */}

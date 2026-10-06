@@ -1,9 +1,14 @@
-import { NextResponse } from "next/server";
+import {
+  NotificationPriority,
+  NotificationType,
+  Prisma,
+} from "@prisma/client";
 
-import { Prisma } from "@prisma/client";
+import { NextResponse } from "next/server";
 
 import { prisma } from "@/lib/prisma";
 import { requireSeller } from "@/lib/seller-auth";
+import { createNotification } from "@/lib/notifications";
 
 function cleanString(value: unknown): string {
   return typeof value === "string"
@@ -73,6 +78,80 @@ async function readRequestBody(
     return {
       success: false,
     };
+  }
+}
+
+/*
+ * ----------------------------------------------------
+ * NOTIFY ADMINS
+ * ----------------------------------------------------
+ *
+ * A notification failure must never cause a successfully
+ * created deletion request to fail.
+ */
+async function notifyAdmins(
+  input: {
+    deletionRequestId: string;
+    businessId: string;
+    businessName: string;
+    sellerName: string;
+  }
+): Promise<void> {
+  try {
+    const admins =
+      await prisma.user.findMany({
+        where: {
+          role: "ADMIN",
+        },
+
+        select: {
+          id: true,
+        },
+      });
+
+    for (
+      const admin of admins
+    ) {
+      try {
+        await createNotification({
+          userId:
+            admin.id,
+
+          type:
+            NotificationType.BUSINESS_DELETION_REQUESTED,
+
+          title:
+            "New business deletion request",
+
+          message:
+            `${input.sellerName} has requested deletion of "${input.businessName}".`,
+
+          priority:
+            NotificationPriority.HIGH,
+
+          data: {
+            deletionRequestId:
+              input.deletionRequestId,
+
+            businessId:
+              input.businessId,
+          },
+
+          dedupeKey:
+            `business-deletion:${input.deletionRequestId}:requested:admin:${admin.id}`,
+        });
+      } catch (notificationError) {
+        console.error(
+          "Admin deletion notification error:",
+          notificationError
+        );
+      }
+    }
+  } catch (adminLookupError) {
+    console.error(
+      "Admin lookup for deletion notification error:",
+      adminLookupError
+    );
   }
 }
 
@@ -410,6 +489,33 @@ export async function POST(
             updatedAt: true,
           },
         });
+
+      /*
+       * ------------------------------------------------
+       * NOTIFY ADMINS
+       * ------------------------------------------------
+       *
+       * The deletion request has already been created
+       * successfully.
+       *
+       * The notification is deliberately outside the
+       * creation operation so notification failure does
+       * not turn a successful request into an error.
+       */
+      await notifyAdmins({
+        deletionRequestId:
+          deletionRequest.id,
+
+        businessId:
+          business.id,
+
+        businessName:
+          business.name,
+
+        sellerName:
+          auth.user.name ??
+          "A seller",
+      });
 
       return NextResponse.json(
         {

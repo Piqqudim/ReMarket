@@ -1,6 +1,13 @@
 import { NextResponse } from "next/server";
+
+import {
+  NotificationPriority,
+  NotificationType,
+} from "@prisma/client";
+
 import { prisma } from "@/lib/prisma";
 import { requireAdmin } from "@/lib/admin-auth";
+import { createNotification } from "@/lib/notifications";
 
 const AVAILABILITIES = [
   "AVAILABLE",
@@ -44,7 +51,10 @@ function cleanKeywords(value: unknown): string[] {
   return Array.from(
     new Set(
       value
-        .filter((item): item is string => typeof item === "string")
+        .filter(
+          (item): item is string =>
+            typeof item === "string",
+        )
         .map((item) => item.trim().toLowerCase())
         .filter(Boolean),
     ),
@@ -110,7 +120,10 @@ export async function GET(
       products,
     });
   } catch (error) {
-    console.error("Admin business products GET error:", error);
+    console.error(
+      "Admin business products GET error:",
+      error,
+    );
 
     return NextResponse.json(
       { error: "Unable to load business products" },
@@ -157,6 +170,7 @@ export async function POST(
       select: {
         id: true,
         name: true,
+        ownerId: true,
       },
     });
 
@@ -197,7 +211,10 @@ export async function POST(
       !isNonNegativeInteger(price)
     ) {
       return NextResponse.json(
-        { error: "Price must be a non-negative whole number" },
+        {
+          error:
+            "Price must be a non-negative whole number",
+        },
         { status: 400 },
       );
     }
@@ -207,7 +224,10 @@ export async function POST(
       !isNonNegativeInteger(priceMin)
     ) {
       return NextResponse.json(
-        { error: "Minimum price must be a non-negative whole number" },
+        {
+          error:
+            "Minimum price must be a non-negative whole number",
+        },
         { status: 400 },
       );
     }
@@ -217,7 +237,10 @@ export async function POST(
       !isNonNegativeInteger(priceMax)
     ) {
       return NextResponse.json(
-        { error: "Maximum price must be a non-negative whole number" },
+        {
+          error:
+            "Maximum price must be a non-negative whole number",
+        },
         { status: 400 },
       );
     }
@@ -228,32 +251,40 @@ export async function POST(
       priceMin > priceMax
     ) {
       return NextResponse.json(
-        { error: "Minimum price cannot be greater than maximum price" },
+        {
+          error:
+            "Minimum price cannot be greater than maximum price",
+        },
         { status: 400 },
       );
     }
 
     const availability =
       typeof body.availability === "string" &&
-      AVAILABILITIES.includes(body.availability as any)
+      AVAILABILITIES.includes(
+        body.availability as any,
+      )
         ? body.availability
         : "ASK_SELLER";
 
     const status =
       typeof body.status === "string" &&
-      BUSINESS_STATUSES.includes(body.status as any)
+      BUSINESS_STATUSES.includes(
+        body.status as any,
+      )
         ? body.status
         : "ACTIVE";
 
     if (categoryId) {
-      const category = await prisma.category.findUnique({
-        where: {
-          id: categoryId,
-        },
-        select: {
-          id: true,
-        },
-      });
+      const category =
+        await prisma.category.findUnique({
+          where: {
+            id: categoryId,
+          },
+          select: {
+            id: true,
+          },
+        });
 
       if (!category) {
         return NextResponse.json(
@@ -263,35 +294,80 @@ export async function POST(
       }
     }
 
-    const product = await prisma.product.create({
-      data: {
-        businessId,
-        name,
-        description,
-        categoryId,
-        price,
-        priceMin,
-        priceMax,
-        availability,
-        keywords: cleanKeywords(body.keywords),
-        imageUrl,
-        status,
-      },
-      include: {
-        category: {
-          select: {
-            id: true,
-            name: true,
+    const product =
+      await prisma.product.create({
+        data: {
+          businessId,
+          name,
+          description,
+          categoryId,
+          price,
+          priceMin,
+          priceMax,
+          availability,
+          keywords:
+            cleanKeywords(
+              body.keywords,
+            ),
+          imageUrl,
+          status,
+        },
+        include: {
+          category: {
+            select: {
+              id: true,
+              name: true,
+            },
+          },
+          business: {
+            select: {
+              id: true,
+              name: true,
+            },
           },
         },
-        business: {
-          select: {
-            id: true,
-            name: true,
+      });
+
+    /*
+     * Notify the business owner when an admin
+     * adds a product to their business.
+     *
+     * Notification failure must not undo the
+     * successful product creation.
+     */
+    if (business.ownerId) {
+      try {
+        await createNotification({
+          userId: business.ownerId,
+
+          type:
+            NotificationType.PRODUCT_ADDED,
+
+          title:
+            "New product added",
+
+          message:
+            `A new product, "${product.name}", has been added to ${business.name}.`,
+
+          priority:
+            NotificationPriority.NORMAL,
+
+          data: {
+            productId: product.id,
+            businessId: business.id,
+            href: `/seller/${business.id}`,
           },
-        },
-      },
-    });
+
+          dedupeKey:
+            `product:${product.id}:added`,
+        });
+      } catch (notificationError) {
+        console.error(
+          "Admin business product notification error:",
+          notificationError,
+        );
+      }
+    }
 
     return NextResponse.json(
       {
@@ -300,7 +376,10 @@ export async function POST(
       { status: 201 },
     );
   } catch (error) {
-    console.error("Admin business product POST error:", error);
+    console.error(
+      "Admin business product POST error:",
+      error,
+    );
 
     return NextResponse.json(
       { error: "Unable to create product" },

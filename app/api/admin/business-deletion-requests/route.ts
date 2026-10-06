@@ -1,7 +1,13 @@
+import {
+  NotificationPriority,
+  NotificationType,
+  Prisma,
+} from "@prisma/client";
 import { NextResponse } from "next/server";
 
 import { prisma } from "@/lib/prisma";
 import { requireAdmin } from "@/lib/admin-auth";
+import { createNotification } from "@/lib/notifications";
 
 const ALLOWED_STATUSES = [
   "PENDING",
@@ -22,6 +28,72 @@ function jsonHeaders() {
   return {
     "Content-Type": "application/json",
   };
+}
+
+/*
+ * ----------------------------------------------------
+ * NOTIFY SELLER
+ * ----------------------------------------------------
+ *
+ * Notifications are sent only after the underlying
+ * deletion-review operation succeeds.
+ *
+ * Notification failures must never turn a successful
+ * deletion review into a failed request.
+ */
+async function notifyDeletionRequester(
+  input: {
+    userId: string | null;
+    deletionRequestId: string;
+    businessId: string;
+    businessName: string;
+    type: NotificationType;
+    title: string;
+    message: string;
+  }
+): Promise<void> {
+  const userId =
+    cleanString(
+      input.userId
+    );
+
+  if (!userId) {
+    return;
+  }
+
+  try {
+    await createNotification({
+      userId,
+
+      type:
+        input.type,
+
+      title:
+        input.title,
+
+      message:
+        input.message,
+
+      priority:
+        NotificationPriority.HIGH,
+
+      data: {
+        deletionRequestId:
+          input.deletionRequestId,
+
+        businessId:
+          input.businessId,
+      },
+
+      dedupeKey:
+        `business-deletion:${input.deletionRequestId}:${input.type}:seller:${userId}`,
+    });
+  } catch (error) {
+    console.error(
+      "Business deletion notification error:",
+      error
+    );
+  }
 }
 
 /*
@@ -546,6 +618,75 @@ export async function PATCH(
           return updatedRequest;
         }
       );
+
+    /*
+     * ------------------------------------------------
+     * SELLER NOTIFICATION
+     * ------------------------------------------------
+     *
+     * The review operation and, when approved,
+     * business soft-delete have already succeeded.
+     *
+     * The notification is intentionally outside the
+     * transaction so notification errors cannot undo
+     * the successful review.
+     */
+
+    if (
+      result.requestedBy &&
+      result.business
+    ) {
+      if (
+        newStatus ===
+        "APPROVED"
+      ) {
+        await notifyDeletionRequester({
+          userId:
+            result.requestedBy.id,
+
+          deletionRequestId:
+            result.id,
+
+          businessId:
+            result.business.id,
+
+          businessName:
+            result.business.name,
+
+          type:
+            NotificationType.BUSINESS_DELETION_APPROVED,
+
+          title:
+            "Business deletion approved",
+
+          message:
+            `Your request to delete "${result.business.name}" has been approved. The business has been removed from ReMarket.`,
+        });
+      } else {
+        await notifyDeletionRequester({
+          userId:
+            result.requestedBy.id,
+
+          deletionRequestId:
+            result.id,
+
+          businessId:
+            result.business.id,
+
+          businessName:
+            result.business.name,
+
+          type:
+            NotificationType.BUSINESS_DELETION_REJECTED,
+
+          title:
+            "Business deletion rejected",
+
+          message:
+            `Your request to delete "${result.business.name}" has been rejected by a ReMarket admin.`,
+        });
+      }
+    }
 
     return NextResponse.json(
       {
