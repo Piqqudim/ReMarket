@@ -350,7 +350,7 @@ export default function AdminClaimsPage() {
     try {
       const response =
         await fetch(
-          "/api/admin/claims",
+          "/api/admin/business-claim-requests",
           {
             method: "PATCH",
             headers: {
