@@ -20,6 +20,21 @@ type RouteContext = {
   }>;
 };
 
+const MAX_BUSINESS_ID_LENGTH = 100;
+const MAX_REVIEW_ID_LENGTH = 100;
+const MAX_COMMENT_LENGTH = 2000;
+
+function getNoStoreHeaders(): Headers {
+  const headers = new Headers();
+
+  headers.set(
+    "Cache-Control",
+    "no-store"
+  );
+
+  return headers;
+}
+
 function cleanString(
   value: unknown
 ): string {
@@ -75,6 +90,7 @@ async function getBuyerSession() {
   if (!session?.user) {
     return {
       authorized: false as const,
+
       response:
         NextResponse.json(
           {
@@ -83,6 +99,8 @@ async function getBuyerSession() {
           },
           {
             status: 401,
+            headers:
+              getNoStoreHeaders(),
           }
         ),
     };
@@ -97,10 +115,10 @@ async function getBuyerSession() {
   const userId =
     typeof sessionUser.id ===
     "string"
-      ? sessionUser.id
+      ? sessionUser.id.trim()
       : "";
 
-  const role =
+  const sessionRole =
     typeof sessionUser.role ===
     "string"
       ? sessionUser.role
@@ -109,6 +127,7 @@ async function getBuyerSession() {
   if (!userId) {
     return {
       authorized: false as const,
+
       response:
         NextResponse.json(
           {
@@ -117,14 +136,22 @@ async function getBuyerSession() {
           },
           {
             status: 401,
+            headers:
+              getNoStoreHeaders(),
           }
         ),
     };
   }
 
-  if (role !== "BUYER") {
+  /*
+   * Only BUYER accounts may manage reviews.
+   */
+  if (
+    sessionRole !== "BUYER"
+  ) {
     return {
       authorized: false as const,
+
       response:
         NextResponse.json(
           {
@@ -133,6 +160,64 @@ async function getBuyerSession() {
           },
           {
             status: 403,
+            headers:
+              getNoStoreHeaders(),
+          }
+        ),
+    };
+  }
+
+  /*
+   * Verify the current role in the database
+   * instead of relying only on the JWT role.
+   */
+  const currentUser =
+    await prisma.user.findUnique({
+      where: {
+        id: userId,
+      },
+
+      select: {
+        role: true,
+      },
+    });
+
+  if (!currentUser) {
+    return {
+      authorized: false as const,
+
+      response:
+        NextResponse.json(
+          {
+            error:
+              "Your account could not be found.",
+          },
+          {
+            status: 401,
+            headers:
+              getNoStoreHeaders(),
+          }
+        ),
+    };
+  }
+
+  if (
+    currentUser.role !==
+    "BUYER"
+  ) {
+    return {
+      authorized: false as const,
+
+      response:
+        NextResponse.json(
+          {
+            error:
+              "Only buyers can manage business reviews.",
+          },
+          {
+            status: 403,
+            headers:
+              getNoStoreHeaders(),
           }
         ),
     };
@@ -141,6 +226,110 @@ async function getBuyerSession() {
   return {
     authorized: true as const,
     userId,
+  };
+}
+
+/*
+ * ------------------------------------------------
+ * VALIDATE ROUTE IDS
+ * ------------------------------------------------
+ */
+
+function validateRouteIds(
+  id: string,
+  reviewId: string
+):
+  | {
+      valid: true;
+    }
+  | {
+      valid: false;
+      response: NextResponse;
+    } {
+  if (!id) {
+    return {
+      valid: false,
+
+      response:
+        NextResponse.json(
+          {
+            error:
+              "Business ID is required.",
+          },
+          {
+            status: 400,
+            headers:
+              getNoStoreHeaders(),
+          }
+        ),
+    };
+  }
+
+  if (
+    id.length >
+    MAX_BUSINESS_ID_LENGTH
+  ) {
+    return {
+      valid: false,
+
+      response:
+        NextResponse.json(
+          {
+            error:
+              "Invalid business ID.",
+          },
+          {
+            status: 400,
+            headers:
+              getNoStoreHeaders(),
+          }
+        ),
+    };
+  }
+
+  if (!reviewId) {
+    return {
+      valid: false,
+
+      response:
+        NextResponse.json(
+          {
+            error:
+              "Review ID is required.",
+          },
+          {
+            status: 400,
+            headers:
+              getNoStoreHeaders(),
+          }
+        ),
+    };
+  }
+
+  if (
+    reviewId.length >
+    MAX_REVIEW_ID_LENGTH
+  ) {
+    return {
+      valid: false,
+
+      response:
+        NextResponse.json(
+          {
+            error:
+              "Invalid review ID.",
+          },
+          {
+            status: 400,
+            headers:
+              getNoStoreHeaders(),
+          }
+        ),
+    };
+  }
+
+  return {
+    valid: true,
   };
 }
 
@@ -158,43 +347,55 @@ export async function PATCH(
   request: NextRequest,
   context: RouteContext
 ) {
-  const auth =
-    await getBuyerSession();
-
-  if (!auth.authorized) {
-    return auth.response;
-  }
-
-  const { id, reviewId } =
-    await context.params;
-
-  if (!id) {
-    return NextResponse.json(
-      {
-        error:
-          "Business ID is required.",
-      },
-      {
-        status: 400,
-      }
-    );
-  }
-
-  if (!reviewId) {
-    return NextResponse.json(
-      {
-        error:
-          "Review ID is required.",
-      },
-      {
-        status: 400,
-      }
-    );
-  }
-
   try {
-    const body: unknown =
-      await request.json();
+    const auth =
+      await getBuyerSession();
+
+    if (!auth.authorized) {
+      return auth.response;
+    }
+
+    const {
+      id,
+      reviewId,
+    } = await context.params;
+
+    const routeValidation =
+      validateRouteIds(
+        id,
+        reviewId
+      );
+
+    if (
+      !routeValidation.valid
+    ) {
+      return routeValidation.response;
+    }
+
+    /*
+     * -----------------------------------------
+     * PARSE REQUEST BODY
+     * -----------------------------------------
+     */
+
+    let body: unknown;
+
+    try {
+      body =
+        await request.json();
+    } catch {
+      return NextResponse.json(
+        {
+          error:
+            "Invalid JSON body.",
+        },
+        {
+          status: 400,
+          headers:
+            getNoStoreHeaders(),
+        }
+      );
+    }
 
     if (
       !body ||
@@ -209,6 +410,8 @@ export async function PATCH(
         },
         {
           status: 400,
+          headers:
+            getNoStoreHeaders(),
         }
       );
     }
@@ -218,6 +421,12 @@ export async function PATCH(
         string,
         unknown
       >;
+
+    /*
+     * -----------------------------------------
+     * VALIDATE RATING
+     * -----------------------------------------
+     */
 
     const rating =
       parseRating(
@@ -232,9 +441,17 @@ export async function PATCH(
         },
         {
           status: 400,
+          headers:
+            getNoStoreHeaders(),
         }
       );
     }
+
+    /*
+     * -----------------------------------------
+     * VALIDATE COMMENT
+     * -----------------------------------------
+     */
 
     const comment =
       parseComment(
@@ -243,7 +460,8 @@ export async function PATCH(
 
     if (
       comment &&
-      comment.length > 2000
+      comment.length >
+        MAX_COMMENT_LENGTH
     ) {
       return NextResponse.json(
         {
@@ -252,14 +470,21 @@ export async function PATCH(
         },
         {
           status: 400,
+          headers:
+            getNoStoreHeaders(),
         }
       );
     }
 
     /*
-     * The business must still be active and
-     * non-deleted for a review to be edited.
+     * -----------------------------------------
+     * VERIFY BUSINESS
+     * -----------------------------------------
+     *
+     * A review can only be edited while the
+     * business remains publicly active.
      */
+
     const business =
       await prisma.business.findFirst(
         {
@@ -287,21 +512,26 @@ export async function PATCH(
         },
         {
           status: 404,
+          headers:
+            getNoStoreHeaders(),
         }
       );
     }
 
     /*
-     * Ownership is checked through both:
+     * -----------------------------------------
+     * VERIFY REVIEW OWNERSHIP
+     * -----------------------------------------
      *
-     * - review ID
-     * - business ID
-     * - authenticated user ID
+     * The review must belong to:
+     *
+     * - this business
+     * - this authenticated buyer
      *
      * This prevents a buyer from editing
-     * another review or a review belonging
-     * to another business.
+     * another buyer's review.
      */
+
     const existingReview =
       await prisma.businessReview.findFirst(
         {
@@ -330,9 +560,17 @@ export async function PATCH(
         },
         {
           status: 404,
+          headers:
+            getNoStoreHeaders(),
         }
       );
     }
+
+    /*
+     * -----------------------------------------
+     * UPDATE REVIEW
+     * -----------------------------------------
+     */
 
     const review =
       await prisma.businessReview.update(
@@ -394,6 +632,10 @@ export async function PATCH(
               "ReMarket user",
           },
         },
+      },
+      {
+        headers:
+          getNoStoreHeaders(),
       }
     );
   } catch (error) {
@@ -402,12 +644,19 @@ export async function PATCH(
       error
     );
 
+    /*
+     * Prisma P2025 means the review could not
+     * be found at update time.
+     */
     if (
-      typeof error ===
-        "object" &&
-      error !== null &&
+      error instanceof
+        Error &&
       "code" in error &&
-      error.code ===
+      (
+        error as {
+          code?: unknown;
+        }
+      ).code ===
         "P2025"
     ) {
       return NextResponse.json(
@@ -417,6 +666,8 @@ export async function PATCH(
         },
         {
           status: 404,
+          headers:
+            getNoStoreHeaders(),
         }
       );
     }
@@ -428,6 +679,8 @@ export async function PATCH(
       },
       {
         status: 500,
+        headers:
+          getNoStoreHeaders(),
       }
     );
   }
@@ -447,41 +700,40 @@ export async function DELETE(
   _request: NextRequest,
   context: RouteContext
 ) {
-  const auth =
-    await getBuyerSession();
-
-  if (!auth.authorized) {
-    return auth.response;
-  }
-
-  const { id, reviewId } =
-    await context.params;
-
-  if (!id) {
-    return NextResponse.json(
-      {
-        error:
-          "Business ID is required.",
-      },
-      {
-        status: 400,
-      }
-    );
-  }
-
-  if (!reviewId) {
-    return NextResponse.json(
-      {
-        error:
-          "Review ID is required.",
-      },
-      {
-        status: 400,
-      }
-    );
-  }
-
   try {
+    const auth =
+      await getBuyerSession();
+
+    if (!auth.authorized) {
+      return auth.response;
+    }
+
+    const {
+      id,
+      reviewId,
+    } = await context.params;
+
+    const routeValidation =
+      validateRouteIds(
+        id,
+        reviewId
+      );
+
+    if (
+      !routeValidation.valid
+    ) {
+      return routeValidation.response;
+    }
+
+    /*
+     * -----------------------------------------
+     * VERIFY REVIEW OWNERSHIP
+     * -----------------------------------------
+     *
+     * A buyer can delete only a review that
+     * belongs to that buyer and this business.
+     */
+
     const existingReview =
       await prisma.businessReview.findFirst(
         {
@@ -510,9 +762,17 @@ export async function DELETE(
         },
         {
           status: 404,
+          headers:
+            getNoStoreHeaders(),
         }
       );
     }
+
+    /*
+     * -----------------------------------------
+     * DELETE REVIEW
+     * -----------------------------------------
+     */
 
     await prisma.businessReview.delete(
       {
@@ -527,6 +787,10 @@ export async function DELETE(
       {
         message:
           "Review deleted successfully.",
+      },
+      {
+        headers:
+          getNoStoreHeaders(),
       }
     );
   } catch (error) {
@@ -536,11 +800,14 @@ export async function DELETE(
     );
 
     if (
-      typeof error ===
-        "object" &&
-      error !== null &&
+      error instanceof
+        Error &&
       "code" in error &&
-      error.code ===
+      (
+        error as {
+          code?: unknown;
+        }
+      ).code ===
         "P2025"
     ) {
       return NextResponse.json(
@@ -550,6 +817,8 @@ export async function DELETE(
         },
         {
           status: 404,
+          headers:
+            getNoStoreHeaders(),
         }
       );
     }
@@ -561,7 +830,10 @@ export async function DELETE(
       },
       {
         status: 500,
-      }
+        headers:
+          getNoStoreHeaders(),
+        }
+      
     );
   }
 }

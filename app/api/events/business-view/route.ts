@@ -1,12 +1,49 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 
 import { prisma } from "@/lib/prisma";
+import { checkPublicRateLimit } from "@/lib/rate-limit";
 
 const MAX_VISITOR_ID_LENGTH = 100;
+const MAX_BUSINESS_ID_LENGTH = 100;
+
+function getResponseHeaders(
+  rateLimitHeaders: Headers
+): Headers {
+  const headers =
+    new Headers(rateLimitHeaders);
+
+  headers.set(
+    "Cache-Control",
+    "no-store"
+  );
+
+  return headers;
+}
 
 export async function POST(
-  request: Request
+  request: NextRequest
 ) {
+  const rateLimit =
+    checkPublicRateLimit(
+      request,
+      "business-view-event"
+    );
+
+  if (!rateLimit.allowed) {
+    return NextResponse.json(
+      {
+        error:
+          "Too many view events. Please try again shortly.",
+      },
+      {
+        status: 429,
+        headers: getResponseHeaders(
+          rateLimit.headers
+        ),
+      }
+    );
+  }
+
   try {
     let body: unknown;
 
@@ -25,6 +62,9 @@ export async function POST(
         },
         {
           status: 400,
+          headers: getResponseHeaders(
+            rateLimit.headers
+          ),
         }
       );
     }
@@ -46,6 +86,9 @@ export async function POST(
         },
         {
           status: 400,
+          headers: getResponseHeaders(
+            rateLimit.headers
+          ),
         }
       );
     }
@@ -82,6 +125,26 @@ export async function POST(
         },
         {
           status: 400,
+          headers: getResponseHeaders(
+            rateLimit.headers
+          ),
+        }
+      );
+    }
+
+    if (
+      businessId.length >
+      MAX_BUSINESS_ID_LENGTH
+    ) {
+      return NextResponse.json(
+        {
+          error: "Invalid business ID",
+        },
+        {
+          status: 400,
+          headers: getResponseHeaders(
+            rateLimit.headers
+          ),
         }
       );
     }
@@ -90,6 +153,10 @@ export async function POST(
      * -----------------------------------------
      * VALIDATE VISITOR ID
      * -----------------------------------------
+     *
+     * The visitor ID remains client-generated
+     * for compatibility with the existing
+     * analytics implementation.
      */
 
     if (!visitorId) {
@@ -99,6 +166,9 @@ export async function POST(
         },
         {
           status: 400,
+          headers: getResponseHeaders(
+            rateLimit.headers
+          ),
         }
       );
     }
@@ -113,6 +183,9 @@ export async function POST(
         },
         {
           status: 400,
+          headers: getResponseHeaders(
+            rateLimit.headers
+          ),
         }
       );
     }
@@ -133,6 +206,7 @@ export async function POST(
           status: "ACTIVE",
           deletedAt: null,
         },
+
         select: {
           id: true,
         },
@@ -145,6 +219,9 @@ export async function POST(
         },
         {
           status: 404,
+          headers: getResponseHeaders(
+            rateLimit.headers
+          ),
         }
       );
     }
@@ -161,6 +238,7 @@ export async function POST(
           businessId,
           visitorId,
         },
+
         select: {
           id: true,
           businessId: true,
@@ -183,6 +261,9 @@ export async function POST(
       },
       {
         status: 201,
+        headers: getResponseHeaders(
+          rateLimit.headers
+        ),
       }
     );
   } catch (error) {
@@ -198,6 +279,9 @@ export async function POST(
       },
       {
         status: 500,
+        headers: getResponseHeaders(
+          rateLimit.headers
+        ),
       }
     );
   }

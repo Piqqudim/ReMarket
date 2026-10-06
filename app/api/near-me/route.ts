@@ -4,12 +4,18 @@ import {
 } from "next/server";
 
 import { prisma } from "@/lib/prisma";
+
 import {
   haversineDistance,
 } from "@/lib/distance";
+
 import {
   reverseGeocodeLocation,
 } from "@/lib/geocoding";
+
+import {
+  checkPublicRateLimit,
+} from "@/lib/rate-limit";
 
 /**
  * ------------------------------------------------
@@ -45,6 +51,14 @@ const DEFAULT_NEAR_ME_RADIUS_KM = 10;
  * REMARKET_ADJACENT_STREET_MAX_KM=1
  */
 const DEFAULT_ADJACENT_STREET_MAX_KM = 1;
+
+/**
+ * Maximum user-supplied area length.
+ *
+ * This prevents unnecessarily large values
+ * from reaching the database query.
+ */
+const MAX_AREA_LENGTH = 100;
 
 type ParsedCoordinate =
   | number
@@ -197,6 +211,22 @@ function formatDistance(
   return Number(
     distanceKm.toFixed(1)
   );
+}
+
+function noStoreHeaders(
+  rateLimitHeaders?: Headers
+): Headers {
+  const headers =
+    new Headers(
+      rateLimitHeaders
+    );
+
+  headers.set(
+    "Cache-Control",
+    "no-store"
+  );
+
+  return headers;
 }
 
 /**
@@ -557,6 +587,47 @@ function serializeLocation(
 export async function GET(
   request: NextRequest
 ) {
+  /*
+   * ------------------------------------------------
+   * PUBLIC RATE LIMIT
+   * ------------------------------------------------
+   *
+   * Near Me is public and can trigger an external
+   * reverse-geocoding request plus database work.
+   */
+
+  const rateLimit =
+    checkPublicRateLimit(
+      request,
+      "near-me"
+    );
+
+  if (
+    !rateLimit.allowed
+  ) {
+    const headers =
+      noStoreHeaders(
+        rateLimit.headers
+      );
+
+    return NextResponse.json(
+      {
+        businesses: [],
+        total: 0,
+        mode:
+          "none",
+        location:
+          null,
+        error:
+          "Too many location searches. Please try again shortly.",
+      },
+      {
+        status: 429,
+        headers,
+      }
+    );
+  }
+
   try {
     const {
       searchParams,
@@ -582,13 +653,87 @@ export async function GET(
         "lat"
       );
 
-    const longitudeRaw =
+    const lngRaw =
       searchParams.get(
         "lng"
-      ) ??
+      );
+
+    const longRaw =
       searchParams.get(
         "long"
       );
+
+    /*
+     * -----------------------------------------
+     * AREA INPUT LIMIT
+     * -----------------------------------------
+     */
+
+    if (
+      area.length >
+      MAX_AREA_LENGTH
+    ) {
+      return NextResponse.json(
+        {
+          businesses: [],
+          total: 0,
+          mode:
+            "none",
+          location:
+            null,
+          error:
+            "Area is too long.",
+        },
+        {
+          status: 400,
+          headers:
+            noStoreHeaders(
+              rateLimit.headers
+            ),
+        }
+      );
+    }
+
+    /*
+     * -----------------------------------------
+     * LONGITUDE ALIAS VALIDATION
+     * -----------------------------------------
+     *
+     * The API supports both "lng" and "long"
+     * for backwards compatibility, but a caller
+     * must not submit both in the same request.
+     */
+
+    if (
+      lngRaw !== null &&
+      longRaw !== null &&
+      lngRaw.trim() !== "" &&
+      longRaw.trim() !== ""
+    ) {
+      return NextResponse.json(
+        {
+          businesses: [],
+          total: 0,
+          mode:
+            "none",
+          location:
+            null,
+          error:
+            "Provide longitude using either 'lng' or 'long', not both.",
+        },
+        {
+          status: 400,
+          headers:
+            noStoreHeaders(
+              rateLimit.headers
+            ),
+        }
+      );
+    }
+
+    const longitudeRaw =
+      lngRaw ??
+      longRaw;
 
     const parsedLatitude =
       parseCoordinate(
@@ -643,10 +788,10 @@ export async function GET(
         },
         {
           status: 400,
-          headers: {
-            "Cache-Control":
-              "no-store",
-          },
+          headers:
+            noStoreHeaders(
+              rateLimit.headers
+            ),
         }
       );
     }
@@ -701,10 +846,10 @@ export async function GET(
         },
         {
           status: 400,
-          headers: {
-            "Cache-Control":
-              "no-store",
-          },
+          headers:
+            noStoreHeaders(
+              rateLimit.headers
+            ),
         }
       );
     }
@@ -742,10 +887,10 @@ export async function GET(
         },
         {
           status: 400,
-          headers: {
-            "Cache-Control":
-              "no-store",
-          },
+          headers:
+            noStoreHeaders(
+              rateLimit.headers
+            ),
         }
       );
     }
@@ -785,10 +930,10 @@ export async function GET(
             null,
         },
         {
-          headers: {
-            "Cache-Control":
-              "no-store",
-          },
+          headers:
+            noStoreHeaders(
+              rateLimit.headers
+            ),
         }
       );
     }
@@ -1014,10 +1159,10 @@ export async function GET(
             area,
         },
         {
-          headers: {
-            "Cache-Control":
-              "no-store",
-          },
+          headers:
+            noStoreHeaders(
+              rateLimit.headers
+            ),
         }
       );
     }
@@ -1094,10 +1239,10 @@ export async function GET(
         },
         {
           status: 503,
-          headers: {
-            "Cache-Control":
-              "no-store",
-          },
+          headers:
+            noStoreHeaders(
+              rateLimit.headers
+            ),
         }
       );
     }
@@ -1151,10 +1296,10 @@ export async function GET(
               "street-and-area-not-found",
           },
           {
-            headers: {
-              "Cache-Control":
-                "no-store",
-            },
+            headers:
+              noStoreHeaders(
+                rateLimit.headers
+              ),
           }
         );
       }
@@ -1391,10 +1536,10 @@ export async function GET(
             "street-not-found",
         },
         {
-          headers: {
-            "Cache-Control":
-              "no-store",
-          },
+          headers:
+            noStoreHeaders(
+              rateLimit.headers
+            ),
         }
       );
     }
@@ -2066,10 +2211,10 @@ export async function GET(
         adjacentStreetMaxKm,
       },
       {
-        headers: {
-          "Cache-Control":
-            "no-store",
-        },
+        headers:
+          noStoreHeaders(
+            rateLimit.headers
+          ),
       }
     );
   } catch (error) {
@@ -2091,10 +2236,10 @@ export async function GET(
       },
       {
         status: 500,
-        headers: {
-          "Cache-Control":
-            "no-store",
-        },
+        headers:
+          noStoreHeaders(
+            rateLimit.headers
+          ),
       }
     );
   }

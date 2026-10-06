@@ -14,6 +14,40 @@ import { prisma } from "@/lib/prisma";
 import { requireAdmin } from "@/lib/admin-auth";
 import { geocodeBusinessLocation } from "@/lib/geocoding";
 
+const MAX_PRISMA_INT = 2_147_483_647;
+
+const MAX_NAME_LENGTH = 200;
+const MAX_OWNER_NAME_LENGTH = 200;
+const MAX_DESCRIPTION_LENGTH = 5000;
+const MAX_AREA_LENGTH = 200;
+const MAX_STREET_LENGTH = 300;
+const MAX_HOUSE_NUMBER_LENGTH = 100;
+const MAX_CITY_LENGTH = 100;
+const MAX_ADDRESS_LENGTH = 2000;
+const MAX_PHONE_LENGTH = 32;
+const MAX_IMAGE_URL_LENGTH = 2000;
+const MAX_CATEGORY_IDS = 50;
+const MAX_CATEGORY_ID_LENGTH = 100;
+const MAX_SOCIAL_LINKS = 6;
+const MAX_SOCIAL_HANDLE_LENGTH = 2000;
+const MAX_QUERY_LENGTH = 100;
+
+function noStoreHeaders(): Headers {
+  const headers = new Headers();
+
+  headers.set(
+    "Cache-Control",
+    "no-store"
+  );
+
+  headers.set(
+    "Pragma",
+    "no-cache"
+  );
+
+  return headers;
+}
+
 function cleanString(
   value: unknown
 ): string {
@@ -49,6 +83,13 @@ function parseOptionalInt(
     !Number.isInteger(
       parsed
     )
+  ) {
+    return undefined;
+  }
+
+  if (
+    parsed < 0 ||
+    parsed > MAX_PRISMA_INT
   ) {
     return undefined;
   }
@@ -133,6 +174,20 @@ function normalizeWhatsApp(
     return "";
   }
 
+  /*
+   * Allow WhatsApp URLs to pass through.
+   */
+  if (
+    trimmed.startsWith(
+      "http://"
+    ) ||
+    trimmed.startsWith(
+      "https://"
+    )
+  ) {
+    return trimmed;
+  }
+
   const digits =
     trimmed.replace(
       /\D/g,
@@ -143,12 +198,18 @@ function normalizeWhatsApp(
     return "";
   }
 
+  /*
+   * +2348012345678
+   */
   if (
     digits.startsWith("234")
   ) {
     return `+${digits}`;
   }
 
+  /*
+   * 08012345678
+   */
   if (
     digits.startsWith("0")
   ) {
@@ -157,6 +218,10 @@ function normalizeWhatsApp(
     )}`;
   }
 
+  /*
+   * Preserve compatibility with
+   * existing stored values.
+   */
   return trimmed;
 }
 
@@ -178,7 +243,9 @@ function parseSocialLinks(
   const seen =
     new Set<SocialPlatform>();
 
-  for (const item of value) {
+  for (
+    const item of value
+  ) {
     if (
       !item ||
       typeof item !==
@@ -208,6 +275,13 @@ function parseSocialLinks(
       );
 
     if (
+      handle.length >
+      MAX_SOCIAL_HANDLE_LENGTH
+    ) {
+      continue;
+    }
+
+    if (
       record.platform ===
       SocialPlatform.WHATSAPP
     ) {
@@ -235,6 +309,13 @@ function parseSocialLinks(
         record.platform,
       handle,
     });
+
+    if (
+      result.length >=
+      MAX_SOCIAL_LINKS
+    ) {
+      break;
+    }
   }
 
   return result;
@@ -247,22 +328,30 @@ function parseCategoryIds(
     return [];
   }
 
-  return Array.from(
-    new Set(
-      value
-        .filter(
-          (
-            item
-          ): item is string =>
-            typeof item ===
-            "string"
-        )
-        .map(
-          (item) =>
-            item.trim()
-        )
-        .filter(Boolean)
+  const cleaned = value
+    .filter(
+      (
+        item
+      ): item is string =>
+        typeof item ===
+        "string"
     )
+    .map(
+      (item) =>
+        item.trim()
+    )
+    .filter(Boolean)
+    .filter(
+      (item) =>
+        item.length <=
+        MAX_CATEGORY_ID_LENGTH
+    );
+
+  return Array.from(
+    new Set(cleaned)
+  ).slice(
+    0,
+    MAX_CATEGORY_IDS
   );
 }
 
@@ -278,22 +367,6 @@ function isDeletionFilter(
     value === "DELETED"
   );
 }
-
-/*
- * ------------------------------------------------
- * LOCATION HELPERS
- * ------------------------------------------------
- *
- * Admin location input now supports:
- *
- * area
- * address
- * street
- * houseNumber
- * city
- *
- * Existing address-only callers remain valid.
- */
 
 function composeLocationAddress(
   houseNumber: string,
@@ -370,6 +443,26 @@ function getLocationInput(
   };
 }
 
+function invalidBodyResponse(): NextResponse {
+  return NextResponse.json(
+    {
+      error:
+        "Invalid request body.",
+    },
+    {
+      status: 400,
+      headers:
+        noStoreHeaders(),
+    }
+  );
+}
+
+/*
+ * ------------------------------------------------
+ * GET BUSINESSES
+ * ------------------------------------------------
+ */
+
 export async function GET(
   request: NextRequest
 ) {
@@ -401,6 +494,82 @@ export async function GET(
       searchParams.get(
         "deleted"
       );
+
+    if (
+      q.length >
+      MAX_QUERY_LENGTH
+    ) {
+      return NextResponse.json(
+        {
+          error:
+            "Search query is too long.",
+        },
+        {
+          status: 400,
+          headers:
+            noStoreHeaders(),
+        }
+      );
+    }
+
+    if (
+      status !== null &&
+      !isBusinessStatus(
+        status
+      )
+    ) {
+      return NextResponse.json(
+        {
+          error:
+            "Invalid business status.",
+        },
+        {
+          status: 400,
+          headers:
+            noStoreHeaders(),
+        }
+      );
+    }
+
+    if (
+      verification !==
+        null &&
+      !isVerificationStatus(
+        verification
+      )
+    ) {
+      return NextResponse.json(
+        {
+          error:
+            "Invalid verification status.",
+        },
+        {
+          status: 400,
+          headers:
+            noStoreHeaders(),
+        }
+      );
+    }
+
+    if (
+      requestedDeletionFilter !==
+        null &&
+      !isDeletionFilter(
+        requestedDeletionFilter
+      )
+    ) {
+      return NextResponse.json(
+        {
+          error:
+            "Invalid deletion filter.",
+        },
+        {
+          status: 400,
+          headers:
+            noStoreHeaders(),
+        }
+      );
+    }
 
     const deletionFilter =
       isDeletionFilter(
@@ -444,19 +613,13 @@ export async function GET(
                 }
               : {}),
 
-            ...(status &&
-            isBusinessStatus(
-              status
-            )
+            ...(status
               ? {
                   status,
                 }
               : {}),
 
-            ...(verification &&
-            isVerificationStatus(
-              verification
-            )
+            ...(verification
               ? {
                   verification,
                 }
@@ -514,73 +677,77 @@ export async function GET(
         }
       );
 
-    return NextResponse.json({
-      businesses:
-        businesses.map(
-          (business) => ({
-            id:
-              business.id,
+    return NextResponse.json(
+      {
+        businesses:
+          businesses.map(
+            (business) => ({
+              id:
+                business.id,
 
-            name:
-              business.name,
+              name:
+                business.name,
 
-            ownerName:
-              business.ownerName,
+              ownerName:
+                business.ownerName,
 
-            description:
-              business.description,
+              description:
+                business.description,
 
-            area:
-              business.location
-                ?.area ??
-              "",
+              area:
+                business.location
+                  ?.area ??
+                "",
 
-            /*
-             * Expose the stored street to the
-             * admin UI so administrators can
-             * inspect the canonical Near Me
-             * street value.
-             */
-            street:
-              business.location
-                ?.street ??
-              "",
+              /*
+               * Canonical street used by
+               * the Near Me ranking system.
+               */
+              street:
+                business.location
+                  ?.street ??
+                "",
 
-            address:
-              business.location
-                ?.address ??
-              null,
+              address:
+                business.location
+                  ?.address ??
+                null,
 
-            status:
-              business.status,
+              status:
+                business.status,
 
-            verification:
-              business.verification,
+              verification:
+                business.verification,
 
-            availability:
-              business.availability,
+              availability:
+                business.availability,
 
-            phone:
-              business.phone,
+              phone:
+                business.phone,
 
-            categories:
-              business.categories.map(
-                (item) =>
-                  item.category
-              ),
+              categories:
+                business.categories.map(
+                  (item) =>
+                    item.category
+                ),
 
-            productCount:
-              business._count
-                .products,
+              productCount:
+                business._count
+                  .products,
 
-            onboardedAt:
-              business.onboardedAt,
+              onboardedAt:
+                business.onboardedAt,
 
-            deletedAt:
-              business.deletedAt,
-          })
-        ),
-    });
+              deletedAt:
+                business.deletedAt,
+            })
+          ),
+      },
+      {
+        headers:
+          noStoreHeaders(),
+      }
+    );
   } catch (error) {
     console.error(
       "Admin businesses GET error:",
@@ -594,10 +761,18 @@ export async function GET(
       },
       {
         status: 500,
+        headers:
+          noStoreHeaders(),
       }
     );
   }
 }
+
+/*
+ * ------------------------------------------------
+ * POST BUSINESS
+ * ------------------------------------------------
+ */
 
 export async function POST(
   request: NextRequest
@@ -610,8 +785,50 @@ export async function POST(
   }
 
   try {
-    const body: unknown =
-      await request.json();
+    /*
+     * Reject clearly oversized JSON
+     * bodies before parsing.
+     */
+    const contentLengthHeader =
+      request.headers.get(
+        "content-length"
+      );
+
+    if (contentLengthHeader) {
+      const contentLength =
+        Number(
+          contentLengthHeader
+        );
+
+      if (
+        Number.isFinite(
+          contentLength
+        ) &&
+        contentLength >
+          100_000
+      ) {
+        return NextResponse.json(
+          {
+            error:
+              "Request body is too large.",
+          },
+          {
+            status: 413,
+            headers:
+              noStoreHeaders(),
+          }
+        );
+      }
+    }
+
+    let body: unknown;
+
+    try {
+      body =
+        await request.json();
+    } catch {
+      return invalidBodyResponse();
+    }
 
     if (
       !body ||
@@ -619,15 +836,7 @@ export async function POST(
         "object" ||
       Array.isArray(body)
     ) {
-      return NextResponse.json(
-        {
-          error:
-            "Invalid request body.",
-        },
-        {
-          status: 400,
-        }
-      );
+      return invalidBodyResponse();
     }
 
     const payload =
@@ -635,6 +844,12 @@ export async function POST(
         string,
         unknown
       >;
+
+    /*
+     * -----------------------------------------
+     * BASIC BUSINESS FIELDS
+     * -----------------------------------------
+     */
 
     const name =
       cleanString(
@@ -649,13 +864,15 @@ export async function POST(
         },
         {
           status: 400,
+          headers:
+            noStoreHeaders(),
         }
       );
     }
 
     if (
       name.length >
-      200
+      MAX_NAME_LENGTH
     ) {
       return NextResponse.json(
         {
@@ -664,6 +881,8 @@ export async function POST(
         },
         {
           status: 400,
+          headers:
+            noStoreHeaders(),
         }
       );
     }
@@ -673,10 +892,52 @@ export async function POST(
         payload.ownerName
       );
 
+    if (
+      ownerName &&
+      ownerName.length >
+        MAX_OWNER_NAME_LENGTH
+    ) {
+      return NextResponse.json(
+        {
+          error:
+            "Owner name is too long.",
+        },
+        {
+          status: 400,
+          headers:
+            noStoreHeaders(),
+        }
+      );
+    }
+
     const description =
       nullableString(
         payload.description
       );
+
+    if (
+      description &&
+      description.length >
+        MAX_DESCRIPTION_LENGTH
+    ) {
+      return NextResponse.json(
+        {
+          error:
+            "Business description is too long.",
+        },
+        {
+          status: 400,
+          headers:
+            noStoreHeaders(),
+        }
+      );
+    }
+
+    /*
+     * -----------------------------------------
+     * LOCATION
+     * -----------------------------------------
+     */
 
     const locationInput =
       getLocationInput(
@@ -695,6 +956,9 @@ export async function POST(
     const city =
       locationInput.city;
 
+    const houseNumber =
+      locationInput.houseNumber;
+
     if (!area) {
       return NextResponse.json(
         {
@@ -703,13 +967,15 @@ export async function POST(
         },
         {
           status: 400,
+          headers:
+            noStoreHeaders(),
         }
       );
     }
 
     if (
       area.length >
-      200
+      MAX_AREA_LENGTH
     ) {
       return NextResponse.json(
         {
@@ -718,6 +984,60 @@ export async function POST(
         },
         {
           status: 400,
+          headers:
+            noStoreHeaders(),
+        }
+      );
+    }
+
+    if (
+      street &&
+      street.length >
+        MAX_STREET_LENGTH
+    ) {
+      return NextResponse.json(
+        {
+          error:
+            "Business street is too long.",
+        },
+        {
+          status: 400,
+          headers:
+            noStoreHeaders(),
+        }
+      );
+    }
+
+    if (
+      houseNumber.length >
+      MAX_HOUSE_NUMBER_LENGTH
+    ) {
+      return NextResponse.json(
+        {
+          error:
+            "House or shop number is too long.",
+        },
+        {
+          status: 400,
+          headers:
+            noStoreHeaders(),
+        }
+      );
+    }
+
+    if (
+      city.length >
+      MAX_CITY_LENGTH
+    ) {
+      return NextResponse.json(
+        {
+          error:
+            "City is too long.",
+        },
+        {
+          status: 400,
+          headers:
+            noStoreHeaders(),
         }
       );
     }
@@ -733,6 +1053,8 @@ export async function POST(
         },
         {
           status: 400,
+          headers:
+            noStoreHeaders(),
         }
       );
     }
@@ -740,7 +1062,7 @@ export async function POST(
     if (
       address !== null &&
       address.length >
-        2000
+        MAX_ADDRESS_LENGTH
     ) {
       return NextResponse.json(
         {
@@ -749,9 +1071,17 @@ export async function POST(
         },
         {
           status: 400,
+          headers:
+            noStoreHeaders(),
         }
       );
     }
+
+    /*
+     * -----------------------------------------
+     * COORDINATES
+     * -----------------------------------------
+     */
 
     const lat =
       parseOptionalFloat(
@@ -775,6 +1105,8 @@ export async function POST(
         },
         {
           status: 400,
+          headers:
+            noStoreHeaders(),
         }
       );
     }
@@ -802,6 +1134,8 @@ export async function POST(
         },
         {
           status: 400,
+          headers:
+            noStoreHeaders(),
         }
       );
     }
@@ -830,6 +1164,8 @@ export async function POST(
         },
         {
           status: 400,
+          headers:
+            noStoreHeaders(),
         }
       );
     }
@@ -855,26 +1191,22 @@ export async function POST(
         },
         {
           status: 400,
+          headers:
+            noStoreHeaders(),
         }
       );
     }
 
     /*
-     * ------------------------------------------------
+     * -----------------------------------------
      * LOCATION RESOLUTION
-     * ------------------------------------------------
+     * -----------------------------------------
      *
-     * Coordinates, when explicitly supplied by an
-     * API caller, are used directly.
+     * Coordinates, when explicitly supplied,
+     * are used directly.
      *
-     * When coordinates are absent, use the business
-     * address through the shared geocoder.
-     *
-     * The geocoder can provide a canonical road
-     * through its `street` result.
-     *
-     * If geocoding fails, the manually supplied
-     * structured street is preserved.
+     * When coordinates are absent, resolve the
+     * business address through the shared geocoder.
      */
 
     let resolvedLat =
@@ -927,12 +1259,14 @@ export async function POST(
 
     /*
      * If coordinates are supplied without a
-     * structured street, we intentionally leave
-     * street null rather than inventing one from
-     * coordinates.
-     *
-     * A later location update can populate the
-     * canonical street through address geocoding.
+     * structured street, leave street null
+     * rather than inventing one from coordinates.
+     */
+
+    /*
+     * -----------------------------------------
+     * PRODUCT-LEVEL PRICE SETTINGS
+     * -----------------------------------------
      */
 
     const priceMin =
@@ -947,10 +1281,12 @@ export async function POST(
       return NextResponse.json(
         {
           error:
-            "Minimum price must be a valid integer.",
+            "Minimum price must be a valid integer between 0 and 2147483647.",
         },
         {
           status: 400,
+          headers:
+            noStoreHeaders(),
         }
       );
     }
@@ -967,10 +1303,12 @@ export async function POST(
       return NextResponse.json(
         {
           error:
-            "Maximum price must be a valid integer.",
+            "Maximum price must be a valid integer between 0 and 2147483647.",
         },
         {
           status: 400,
+          headers:
+            noStoreHeaders(),
         }
       );
     }
@@ -988,9 +1326,17 @@ export async function POST(
         },
         {
           status: 400,
+          headers:
+            noStoreHeaders(),
         }
       );
     }
+
+    /*
+     * -----------------------------------------
+     * ENUM FIELDS
+     * -----------------------------------------
+     */
 
     const availability =
       isAvailability(
@@ -1014,15 +1360,9 @@ export async function POST(
         : VerificationStatus.UNVERIFIED;
 
     /*
-     * ------------------------------------------------
-     * PHONE / SOCIAL LINKS
-     * ------------------------------------------------
-     *
-     * The PHONE social link is the canonical contact
-     * value when it is supplied.
-     *
-     * The legacy Business.phone field is kept in sync
-     * for compatibility with existing consumers.
+     * -----------------------------------------
+     * PHONE / IMAGE
+     * -----------------------------------------
      */
 
     const legacyPhone =
@@ -1030,15 +1370,115 @@ export async function POST(
         payload.phone
       );
 
+    if (
+      legacyPhone &&
+      legacyPhone.length >
+        MAX_PHONE_LENGTH
+    ) {
+      return NextResponse.json(
+        {
+          error:
+            "Phone number is too long.",
+        },
+        {
+          status: 400,
+          headers:
+            noStoreHeaders(),
+        }
+      );
+    }
+
     const imageUrl =
       nullableString(
         payload.imageUrl
       );
 
+    if (
+      imageUrl &&
+      imageUrl.length >
+        MAX_IMAGE_URL_LENGTH
+    ) {
+      return NextResponse.json(
+        {
+          error:
+            "Image URL is too long.",
+        },
+        {
+          status: 400,
+          headers:
+            noStoreHeaders(),
+        }
+      );
+    }
+
+    if (imageUrl) {
+      try {
+        const parsedImageUrl =
+          new URL(imageUrl);
+
+        if (
+          parsedImageUrl.protocol !==
+            "http:" &&
+          parsedImageUrl.protocol !==
+            "https:"
+        ) {
+          return NextResponse.json(
+            {
+              error:
+                "Image URL must use HTTP or HTTPS.",
+            },
+            {
+              status: 400,
+              headers:
+                noStoreHeaders(),
+            }
+          );
+        }
+      } catch {
+        return NextResponse.json(
+          {
+            error:
+              "Invalid image URL.",
+          },
+          {
+            status: 400,
+            headers:
+              noStoreHeaders(),
+          }
+        );
+      }
+    }
+
+    /*
+     * -----------------------------------------
+     * CATEGORIES
+     * -----------------------------------------
+     */
+
     const categoryIds =
       parseCategoryIds(
         payload.categoryIds
       );
+
+    if (
+      Array.isArray(
+        payload.categoryIds
+      ) &&
+      payload.categoryIds.length >
+        MAX_CATEGORY_IDS
+    ) {
+      return NextResponse.json(
+        {
+          error:
+            "Too many categories were selected.",
+        },
+        {
+          status: 400,
+          headers:
+            noStoreHeaders(),
+        }
+      );
+    }
 
     if (
       categoryIds.length >
@@ -1070,15 +1510,43 @@ export async function POST(
           },
           {
             status: 400,
+            headers:
+              noStoreHeaders(),
           }
         );
       }
     }
 
+    /*
+     * -----------------------------------------
+     * SOCIAL LINKS
+     * -----------------------------------------
+     */
+
     const socialLinks =
       parseSocialLinks(
         payload.socialLinks
       );
+
+    if (
+      Array.isArray(
+        payload.socialLinks
+      ) &&
+      payload.socialLinks.length >
+        MAX_SOCIAL_LINKS
+    ) {
+      return NextResponse.json(
+        {
+          error:
+            "Too many social links were supplied.",
+        },
+        {
+          status: 400,
+          headers:
+            noStoreHeaders(),
+        }
+      );
+    }
 
     const phoneFromSocial =
       socialLinks.find(
@@ -1108,21 +1576,18 @@ export async function POST(
       });
     }
 
+    /*
+     * -----------------------------------------
+     * CREATE BUSINESS
+     * -----------------------------------------
+     *
+     * Every newly created business gets its own
+     * Location record.
+     */
+
     const business =
       await prisma.$transaction(
         async (tx) => {
-          /*
-           * -----------------------------------------
-           * BUSINESS-SPECIFIC LOCATION
-           * -----------------------------------------
-           *
-           * Every newly created business receives
-           * its own Location record.
-           *
-           * We NEVER search for or reuse a Location
-           * by area.
-           */
-
           const location =
             await tx.location.create(
               {
@@ -1147,9 +1612,6 @@ export async function POST(
                   /*
                    * Location verification is separate
                    * from Business verification.
-                   *
-                   * A new location is unverified until
-                   * its physical position is confirmed.
                    */
                   verification:
                     "UNVERIFIED",
@@ -1304,6 +1766,8 @@ export async function POST(
       },
       {
         status: 201,
+        headers:
+          noStoreHeaders(),
       }
     );
   } catch (error) {
@@ -1319,6 +1783,8 @@ export async function POST(
       },
       {
         status: 500,
+        headers:
+          noStoreHeaders(),
       }
     );
   }

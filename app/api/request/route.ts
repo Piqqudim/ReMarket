@@ -3,11 +3,43 @@ import { NextRequest, NextResponse } from "next/server";
 import { randomInt } from "crypto";
 
 import { prisma } from "@/lib/prisma";
+import { checkPublicRateLimit } from "@/lib/rate-limit";
 
 import {
   findMatches,
   parseQuery,
 } from "@/lib/matching";
+
+/*
+ * -----------------------------------------
+ * CONSTANTS
+ * -----------------------------------------
+ */
+
+const MAX_QUERY_LENGTH = 200;
+const MAX_CATEGORY_LENGTH = 100;
+const MAX_LOCATION_LENGTH = 100;
+const MAX_DESCRIPTION_LENGTH = 2000;
+const MAX_IMAGE_URL_LENGTH = 2000;
+const MAX_CONTACT_LENGTH = 32;
+const MAX_CODE_LENGTH = 20;
+
+const MAX_PRISMA_INT = 2_147_483_647;
+
+/*
+ * New request codes use 8 characters.
+ *
+ * Existing RM-XXXX codes are still accepted
+ * during lookup so previously-created requests
+ * continue to work.
+ */
+const REQUEST_CODE_LENGTH = 8;
+
+const REQUEST_CODE_CHARACTERS =
+  "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+
+const REQUEST_CODE_PATTERN =
+  /^RM-[ABCDEFGHJKLMNPQRSTUVWXYZ23456789]{4}(?:[ABCDEFGHJKLMNPQRSTUVWXYZ23456789]{4})?$/;
 
 /*
  * -----------------------------------------
@@ -53,7 +85,29 @@ function optionalInt(
     return undefined;
   }
 
+  if (
+    numberValue < -MAX_PRISMA_INT ||
+    numberValue > MAX_PRISMA_INT
+  ) {
+    return undefined;
+  }
+
   return numberValue;
+}
+
+function getRateLimitHeaders(
+  rateLimitHeaders: Headers,
+  extraHeaders: Record<string, string> = {}
+): Headers {
+  const headers = new Headers(rateLimitHeaders);
+
+  for (const [key, value] of Object.entries(
+    extraHeaders
+  )) {
+    headers.set(key, value);
+  }
+
+  return headers;
 }
 
 /*
@@ -238,18 +292,21 @@ function getContactLookupVariants(
  * REQUEST CODE
  * -----------------------------------------
  *
- * Example:
+ * New example:
  *
- * RM-7K4P
+ * RM-7K4P9X2M
+ *
+ * Older RM-XXXX codes remain valid for lookup.
  */
-
-const REQUEST_CODE_CHARACTERS =
-  "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
 
 function generateRequestCode(): string {
   let code = "RM-";
 
-  for (let i = 0; i < 4; i++) {
+  for (
+    let i = 0;
+    i < REQUEST_CODE_LENGTH;
+    i++
+  ) {
     const index = randomInt(
       REQUEST_CODE_CHARACTERS.length
     );
@@ -275,6 +332,11 @@ async function createUniqueRequest(
   /*
    * The database unique constraint is the
    * final protection against collisions.
+   *
+   * We intentionally do not perform a
+   * findUnique() before every create because
+   * the create itself is enough to detect
+   * collisions and saves a database round trip.
    */
   for (
     let attempt = 0;
@@ -283,20 +345,6 @@ async function createUniqueRequest(
   ) {
     const requestCode =
       generateRequestCode();
-
-    const existing =
-      await prisma.buyerRequest.findUnique({
-        where: {
-          requestCode,
-        },
-        select: {
-          id: true,
-        },
-      });
-
-    if (existing) {
-      continue;
-    }
 
     try {
       return await prisma.buyerRequest.create({
@@ -422,12 +470,14 @@ function formatRequest(
       request.matches.map((match) => ({
         id: match.id,
 
-        score: match.score,
+        score:
+          match.score,
 
         business: {
           id: match.business.id,
 
-          name: match.business.name,
+          name:
+            match.business.name,
 
           area:
             match.business.location?.area ??
@@ -445,7 +495,7 @@ function formatRequest(
  * -----------------------------------------
  * GET
  *
- * /api/request?code=RM-7K4P
+ * /api/request?code=RM-7K4P9X2M
  *
  * or
  *
@@ -456,6 +506,32 @@ function formatRequest(
 export async function GET(
   request: NextRequest
 ) {
+  const rateLimit =
+    checkPublicRateLimit(
+      request,
+      "request-read"
+    );
+
+  if (!rateLimit.allowed) {
+    return NextResponse.json(
+      {
+        requests: [],
+        total: 0,
+        error:
+          "Too many request lookups. Please try again shortly.",
+      },
+      {
+        status: 429,
+        headers: getRateLimitHeaders(
+          rateLimit.headers,
+          {
+            "Cache-Control": "no-store",
+          }
+        ),
+      }
+    );
+  }
+
   try {
     const { searchParams } =
       new URL(request.url);
@@ -478,9 +554,93 @@ export async function GET(
         },
         {
           status: 400,
-          headers: {
-            "Cache-Control": "no-store",
-          },
+          headers: getRateLimitHeaders(
+            rateLimit.headers,
+            {
+              "Cache-Control":
+                "no-store",
+            }
+          ),
+        }
+      );
+    }
+
+    if (
+      code &&
+      (
+        code.length > MAX_CODE_LENGTH ||
+        !REQUEST_CODE_PATTERN.test(code)
+      )
+    ) {
+      return NextResponse.json(
+        {
+          requests: [],
+          total: 0,
+          error:
+            "Invalid request code",
+        },
+        {
+          status: 400,
+          headers: getRateLimitHeaders(
+            rateLimit.headers,
+            {
+              "Cache-Control":
+                "no-store",
+            }
+          ),
+        }
+      );
+    }
+
+    if (
+      contact &&
+      contact.length > MAX_CONTACT_LENGTH
+    ) {
+      return NextResponse.json(
+        {
+          requests: [],
+          total: 0,
+          error:
+            "Invalid phone or WhatsApp number",
+        },
+        {
+          status: 400,
+          headers: getRateLimitHeaders(
+            rateLimit.headers,
+            {
+              "Cache-Control":
+                "no-store",
+            }
+          ),
+        }
+      );
+    }
+
+    /*
+     * Contact lookup must use a valid Nigerian
+     * phone/WhatsApp number.
+     */
+    if (
+      !code &&
+      contact &&
+      !isValidNigerianPhone(contact)
+    ) {
+      return NextResponse.json(
+        {
+          requests: [],
+          total: 0,
+          error:
+            "Enter a valid Nigerian phone or WhatsApp number",
+        },
+        {
+          status: 400,
+          headers: getRateLimitHeaders(
+            rateLimit.headers,
+            {
+              "Cache-Control":
+                "no-store",
+            }
+          ),
         }
       );
     }
@@ -488,6 +648,30 @@ export async function GET(
     const contactVariants = contact
       ? getContactLookupVariants(contact)
       : [];
+
+    if (
+      !code &&
+      contactVariants.length === 0
+    ) {
+      return NextResponse.json(
+        {
+          requests: [],
+          total: 0,
+          error:
+            "A valid phone or WhatsApp number is required",
+        },
+        {
+          status: 400,
+          headers: getRateLimitHeaders(
+            rateLimit.headers,
+            {
+              "Cache-Control":
+                "no-store",
+            }
+          ),
+        }
+      );
+    }
 
     const requests =
       await prisma.buyerRequest.findMany({
@@ -520,10 +704,14 @@ export async function GET(
           formattedRequests.length,
       },
       {
-        headers: {
-          "Cache-Control": "no-store",
-          Pragma: "no-cache",
-        },
+        headers: getRateLimitHeaders(
+          rateLimit.headers,
+          {
+            "Cache-Control":
+              "no-store",
+            Pragma: "no-cache",
+          }
+        ),
       }
     );
   } catch (error) {
@@ -541,9 +729,13 @@ export async function GET(
       },
       {
         status: 500,
-        headers: {
-          "Cache-Control": "no-store",
-        },
+        headers: getRateLimitHeaders(
+          rateLimit.headers,
+          {
+            "Cache-Control":
+              "no-store",
+          }
+        ),
       }
     );
   }
@@ -561,7 +753,69 @@ export async function GET(
 export async function POST(
   request: NextRequest
 ) {
+  const rateLimit =
+    checkPublicRateLimit(
+      request,
+      "request-create"
+    );
+
+  if (!rateLimit.allowed) {
+    return NextResponse.json(
+      {
+        error:
+          "Too many requests. Please try again shortly.",
+      },
+      {
+        status: 429,
+        headers: getRateLimitHeaders(
+          rateLimit.headers,
+          {
+            "Cache-Control": "no-store",
+          }
+        ),
+      }
+    );
+  }
+
   try {
+    /*
+     * Reject obviously oversized JSON bodies
+     * before parsing them.
+     */
+    const contentLengthHeader =
+      request.headers.get(
+        "content-length"
+      );
+
+    if (contentLengthHeader) {
+      const contentLength =
+        Number(contentLengthHeader);
+
+      if (
+        Number.isFinite(
+          contentLength
+        ) &&
+        contentLength > 25_000
+      ) {
+        return NextResponse.json(
+          {
+            error:
+              "Request body is too large",
+          },
+          {
+            status: 413,
+            headers: getRateLimitHeaders(
+              rateLimit.headers,
+              {
+                "Cache-Control":
+                  "no-store",
+              }
+            ),
+          }
+        );
+      }
+    }
+
     let rawBody: unknown;
 
     /*
@@ -579,6 +833,13 @@ export async function POST(
         },
         {
           status: 400,
+          headers: getRateLimitHeaders(
+            rateLimit.headers,
+            {
+              "Cache-Control":
+                "no-store",
+            }
+          ),
         }
       );
     }
@@ -591,6 +852,13 @@ export async function POST(
         },
         {
           status: 400,
+          headers: getRateLimitHeaders(
+            rateLimit.headers,
+            {
+              "Cache-Control":
+                "no-store",
+            }
+          ),
         }
       );
     }
@@ -641,11 +909,18 @@ export async function POST(
         },
         {
           status: 400,
+          headers: getRateLimitHeaders(
+            rateLimit.headers,
+            {
+              "Cache-Control":
+                "no-store",
+            }
+          ),
         }
       );
     }
 
-    if (query.length > 200) {
+    if (query.length > MAX_QUERY_LENGTH) {
       return NextResponse.json(
         {
           error:
@@ -653,6 +928,57 @@ export async function POST(
         },
         {
           status: 400,
+          headers: getRateLimitHeaders(
+            rateLimit.headers,
+            {
+              "Cache-Control":
+                "no-store",
+            }
+          ),
+        }
+      );
+    }
+
+    if (
+      category.length >
+      MAX_CATEGORY_LENGTH
+    ) {
+      return NextResponse.json(
+        {
+          error:
+            "Selected category is too long",
+        },
+        {
+          status: 400,
+          headers: getRateLimitHeaders(
+            rateLimit.headers,
+            {
+              "Cache-Control":
+                "no-store",
+            }
+          ),
+        }
+      );
+    }
+
+    if (
+      locationArea.length >
+      MAX_LOCATION_LENGTH
+    ) {
+      return NextResponse.json(
+        {
+          error:
+            "Location is too long",
+        },
+        {
+          status: 400,
+          headers: getRateLimitHeaders(
+            rateLimit.headers,
+            {
+              "Cache-Control":
+                "no-store",
+            }
+          ),
         }
       );
     }
@@ -665,6 +991,13 @@ export async function POST(
         },
         {
           status: 400,
+          headers: getRateLimitHeaders(
+            rateLimit.headers,
+            {
+              "Cache-Control":
+                "no-store",
+            }
+          ),
         }
       );
     }
@@ -677,6 +1010,13 @@ export async function POST(
         },
         {
           status: 400,
+          headers: getRateLimitHeaders(
+            rateLimit.headers,
+            {
+              "Cache-Control":
+                "no-store",
+            }
+          ),
         }
       );
     }
@@ -689,6 +1029,35 @@ export async function POST(
         },
         {
           status: 400,
+          headers: getRateLimitHeaders(
+            rateLimit.headers,
+            {
+              "Cache-Control":
+                "no-store",
+            }
+          ),
+        }
+      );
+    }
+
+    if (
+      rawBuyerContact.length >
+      MAX_CONTACT_LENGTH
+    ) {
+      return NextResponse.json(
+        {
+          error:
+            "Phone or WhatsApp number is too long",
+        },
+        {
+          status: 400,
+          headers: getRateLimitHeaders(
+            rateLimit.headers,
+            {
+              "Cache-Control":
+                "no-store",
+            }
+          ),
         }
       );
     }
@@ -705,6 +1074,13 @@ export async function POST(
         },
         {
           status: 400,
+          headers: getRateLimitHeaders(
+            rateLimit.headers,
+            {
+              "Cache-Control":
+                "no-store",
+            }
+          ),
         }
       );
     }
@@ -720,6 +1096,13 @@ export async function POST(
         },
         {
           status: 400,
+          headers: getRateLimitHeaders(
+            rateLimit.headers,
+            {
+              "Cache-Control":
+                "no-store",
+            }
+          ),
         }
       );
     }
@@ -735,11 +1118,21 @@ export async function POST(
         },
         {
           status: 400,
+          headers: getRateLimitHeaders(
+            rateLimit.headers,
+            {
+              "Cache-Control":
+                "no-store",
+            }
+          ),
         }
       );
     }
 
-    if (description.length > 2000) {
+    if (
+      description.length >
+      MAX_DESCRIPTION_LENGTH
+    ) {
       return NextResponse.json(
         {
           error:
@@ -747,11 +1140,21 @@ export async function POST(
         },
         {
           status: 400,
+          headers: getRateLimitHeaders(
+            rateLimit.headers,
+            {
+              "Cache-Control":
+                "no-store",
+            }
+          ),
         }
       );
     }
 
-    if (imageUrl.length > 2000) {
+    if (
+      imageUrl.length >
+      MAX_IMAGE_URL_LENGTH
+    ) {
       return NextResponse.json(
         {
           error:
@@ -759,8 +1162,68 @@ export async function POST(
         },
         {
           status: 400,
+          headers: getRateLimitHeaders(
+            rateLimit.headers,
+            {
+              "Cache-Control":
+                "no-store",
+            }
+          ),
         }
       );
+    }
+
+    /*
+     * imageUrl is stored, not fetched by this
+     * endpoint, so only permit normal web URLs.
+     */
+    if (imageUrl) {
+      try {
+        const parsedImageUrl =
+          new URL(imageUrl);
+
+        if (
+          parsedImageUrl.protocol !==
+            "http:" &&
+          parsedImageUrl.protocol !==
+            "https:"
+        ) {
+          return NextResponse.json(
+            {
+              error:
+                "Invalid image URL",
+            },
+            {
+              status: 400,
+              headers:
+                getRateLimitHeaders(
+                  rateLimit.headers,
+                  {
+                    "Cache-Control":
+                      "no-store",
+                  }
+                ),
+            }
+          );
+        }
+      } catch {
+        return NextResponse.json(
+          {
+            error:
+              "Invalid image URL",
+          },
+          {
+            status: 400,
+            headers: getRateLimitHeaders(
+              rateLimit.headers,
+              {
+                "Cache-Control":
+                  "no-store",
+              }
+            ),
+          }
+        );
+      }
     }
 
     /*
@@ -801,6 +1264,14 @@ export async function POST(
           },
           {
             status: 400,
+            headers:
+              getRateLimitHeaders(
+                rateLimit.headers,
+                {
+                  "Cache-Control":
+                    "no-store",
+                }
+              ),
           }
         );
       }
@@ -863,13 +1334,10 @@ export async function POST(
       const parsedQuery =
         parseQuery(
           query,
-
           locationArea ||
             undefined,
-
           budget ??
             undefined,
-
           category ||
             undefined
         );
@@ -976,7 +1444,8 @@ export async function POST(
 
           await prisma.buyerRequest.update({
             where: {
-              id: buyerRequest.id,
+              id:
+                buyerRequest.id,
             },
 
             data: {
@@ -1015,6 +1484,13 @@ export async function POST(
         },
         {
           status: 500,
+          headers: getRateLimitHeaders(
+            rateLimit.headers,
+            {
+              "Cache-Control":
+                "no-store",
+            }
+          ),
         }
       );
     }
@@ -1026,10 +1502,13 @@ export async function POST(
       },
       {
         status: 201,
-        headers: {
-          "Cache-Control":
-            "no-store",
-        },
+        headers: getRateLimitHeaders(
+          rateLimit.headers,
+          {
+            "Cache-Control":
+              "no-store",
+          }
+        ),
       }
     );
   } catch (error) {
@@ -1045,6 +1524,13 @@ export async function POST(
       },
       {
         status: 500,
+        headers: getRateLimitHeaders(
+          rateLimit.headers,
+          {
+            "Cache-Control":
+              "no-store",
+          }
+        ),
       }
     );
   }

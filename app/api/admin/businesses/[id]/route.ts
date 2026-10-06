@@ -21,6 +21,47 @@ type RouteContext = {
   }>;
 };
 
+const MAX_PRISMA_INT = 2_147_483_647;
+
+const MAX_BUSINESS_ID_LENGTH = 100;
+
+const MAX_NAME_LENGTH = 200;
+const MAX_OWNER_NAME_LENGTH = 200;
+const MAX_DESCRIPTION_LENGTH = 5000;
+
+const MAX_AREA_LENGTH = 200;
+const MAX_STREET_LENGTH = 300;
+const MAX_HOUSE_NUMBER_LENGTH = 100;
+const MAX_CITY_LENGTH = 100;
+const MAX_ADDRESS_LENGTH = 2000;
+
+const MAX_PHONE_LENGTH = 50;
+const MAX_IMAGE_URL_LENGTH = 2000;
+
+const MAX_CATEGORY_IDS = 50;
+const MAX_CATEGORY_ID_LENGTH = 100;
+
+const MAX_SOCIAL_LINKS = 6;
+const MAX_SOCIAL_HANDLE_LENGTH = 2000;
+
+const MAX_REQUEST_BODY_SIZE = 100 * 1024;
+
+function getNoStoreHeaders(): Headers {
+  const headers = new Headers();
+
+  headers.set(
+    "Cache-Control",
+    "no-store"
+  );
+
+  headers.set(
+    "Pragma",
+    "no-cache"
+  );
+
+  return headers;
+}
+
 function cleanString(
   value: unknown
 ): string {
@@ -50,14 +91,20 @@ function parseOptionalInt(
     return null;
   }
 
-  const parsed = Number(
-    value
-  );
+  const parsed =
+    Number(value);
 
   if (
     !Number.isInteger(
       parsed
     )
+  ) {
+    return undefined;
+  }
+
+  if (
+    parsed < 0 ||
+    parsed > MAX_PRISMA_INT
   ) {
     return undefined;
   }
@@ -76,9 +123,8 @@ function parseOptionalFloat(
     return null;
   }
 
-  const parsed = Number(
-    value
-  );
+  const parsed =
+    Number(value);
 
   if (
     !Number.isFinite(
@@ -168,6 +214,17 @@ function normalizeWhatsApp(
     return "";
   }
 
+  if (
+    trimmed.startsWith(
+      "http://"
+    ) ||
+    trimmed.startsWith(
+      "https://"
+    )
+  ) {
+    return trimmed;
+  }
+
   const digits =
     trimmed.replace(
       /\D/g,
@@ -213,7 +270,15 @@ function parseSocialLinks(
     return null;
   }
 
-  const result: ParsedSocialLink[] =
+  if (
+    value.length >
+    MAX_SOCIAL_LINKS
+  ) {
+    return null;
+  }
+
+  const result:
+    ParsedSocialLink[] =
     [];
 
   const seen =
@@ -228,7 +293,7 @@ function parseSocialLinks(
         "object" ||
       Array.isArray(item)
     ) {
-      continue;
+      return null;
     }
 
     const record =
@@ -242,13 +307,20 @@ function parseSocialLinks(
         record.platform
       )
     ) {
-      continue;
+      return null;
     }
 
     let handle =
       cleanString(
         record.handle
       );
+
+    if (
+      handle.length >
+      MAX_SOCIAL_HANDLE_LENGTH
+    ) {
+      return null;
+    }
 
     if (
       record.platform ===
@@ -260,13 +332,23 @@ function parseSocialLinks(
         );
     }
 
+    /*
+     * Empty handles are ignored.
+     */
+    if (!handle) {
+      continue;
+    }
+
+    /*
+     * Only one link per platform
+     * is allowed.
+     */
     if (
-      !handle ||
       seen.has(
         record.platform
       )
     ) {
-      continue;
+      return null;
     }
 
     seen.add(
@@ -276,6 +358,7 @@ function parseSocialLinks(
     result.push({
       platform:
         record.platform,
+
       handle,
     });
   }
@@ -305,22 +388,55 @@ function parseCategoryIds(
     return null;
   }
 
-  return Array.from(
-    new Set(
-      value
-        .filter(
-          (
-            item
-          ): item is string =>
-            typeof item ===
-            "string"
-        )
-        .map((item) =>
-          item.trim()
-        )
-        .filter(Boolean)
-    )
-  );
+  if (
+    value.length >
+    MAX_CATEGORY_IDS
+  ) {
+    return null;
+  }
+
+  const result: string[] =
+    [];
+
+  const seen =
+    new Set<string>();
+
+  for (
+    const item of value
+  ) {
+    if (
+      typeof item !==
+      "string"
+    ) {
+      return null;
+    }
+
+    const id =
+      item.trim();
+
+    if (!id) {
+      continue;
+    }
+
+    if (
+      id.length >
+      MAX_CATEGORY_ID_LENGTH
+    ) {
+      return null;
+    }
+
+    if (
+      seen.has(id)
+    ) {
+      return null;
+    }
+
+    seen.add(id);
+
+    result.push(id);
+  }
+
+  return result;
 }
 
 /*
@@ -330,7 +446,7 @@ function parseCategoryIds(
  *
  * Canonical ReMarket address:
  *
- * House Number, Street, Area, City, Nigeria
+ * House Number, Street,Area, City, Nigeria
  */
 
 function composeLocationAddress(
@@ -349,7 +465,6 @@ function composeLocationAddress(
     .filter(Boolean)
     .join(", ");
 }
-
 function parseStoredLocationAddress(
   address: string | null,
   area: string
@@ -413,16 +528,8 @@ function parseStoredLocationAddress(
   }
 
   /*
-   * Remove the known Area wherever it appears
-   * as its own address component.
-   *
-   * This supports:
-   *
-   * House, Street, Area, City, Nigeria
-   *
-   * and older:
-   *
-   * House, Street, City, Area, Nigeria
+   * Remove the known Area wherever it
+   * appears as its own address component.
    */
   const normalizedArea =
     area
@@ -437,7 +544,9 @@ function parseStoredLocationAddress(
           normalizedArea
       );
 
-    if (areaIndex >= 0) {
+    if (
+      areaIndex >= 0
+    ) {
       parts.splice(
         areaIndex,
         1
@@ -486,35 +595,33 @@ function parseStoredLocationAddress(
       return {
         houseNumber:
           firstPart,
+
         street:
           parts[1],
-        city: "",
+
+        city:
+          "",
       };
     }
 
     return {
       houseNumber: "",
+
       street:
         parts[0],
+
       city:
         parts[1],
     };
   }
 
-  /*
-   * After removing Area and Nigeria,
-   * the canonical structure is:
-   *
-   * House Number, Street, City
-   *
-   * Any extra components remain part of the city
-   * rather than being invented into another field.
-   */
   return {
     houseNumber:
       parts[0],
+
     street:
       parts[1],
+
     city:
       parts
         .slice(2)
@@ -533,7 +640,8 @@ async function loadBusiness(
         },
 
         include: {
-          location: true,
+          location:
+            true,
 
           categories: {
             include: {
@@ -582,6 +690,40 @@ async function loadBusiness(
   };
 }
 
+function bodyTooLarge(
+  request: NextRequest
+): boolean {
+  const contentLengthHeader =
+    request.headers.get(
+      "content-length"
+    );
+
+  if (
+    !contentLengthHeader
+  ) {
+    return false;
+  }
+
+  const contentLength =
+    Number(
+      contentLengthHeader
+    );
+
+  return (
+    Number.isFinite(
+      contentLength
+    ) &&
+    contentLength >
+      MAX_REQUEST_BODY_SIZE
+  );
+}
+
+/*
+ * ------------------------------------------------
+ * GET BUSINESS
+ * ------------------------------------------------
+ */
+
 export async function GET(
   _request: NextRequest,
   context: RouteContext
@@ -604,6 +746,25 @@ export async function GET(
       },
       {
         status: 400,
+        headers:
+          getNoStoreHeaders(),
+      }
+    );
+  }
+
+  if (
+    id.length >
+    MAX_BUSINESS_ID_LENGTH
+  ) {
+    return NextResponse.json(
+      {
+        error:
+          "Invalid business ID.",
+      },
+      {
+        status: 400,
+        headers:
+          getNoStoreHeaders(),
       }
     );
   }
@@ -622,6 +783,8 @@ export async function GET(
         },
         {
           status: 404,
+          headers:
+            getNoStoreHeaders(),
         }
       );
     }
@@ -629,6 +792,11 @@ export async function GET(
     return NextResponse.json(
       {
         business,
+      },
+      {
+        status: 200,
+        headers:
+          getNoStoreHeaders(),
       }
     );
   } catch (error) {
@@ -644,10 +812,18 @@ export async function GET(
       },
       {
         status: 500,
+        headers:
+          getNoStoreHeaders(),
       }
     );
   }
 }
+
+/*
+ * ------------------------------------------------
+ * PATCH BUSINESS
+ * ------------------------------------------------
+ */
 
 export async function PATCH(
   request: NextRequest,
@@ -671,11 +847,48 @@ export async function PATCH(
       },
       {
         status: 400,
+        headers:
+          getNoStoreHeaders(),
+      }
+    );
+  }
+
+  if (
+    id.length >
+    MAX_BUSINESS_ID_LENGTH
+  ) {
+    return NextResponse.json(
+      {
+        error:
+          "Invalid business ID.",
+      },
+      {
+        status: 400,
+        headers:
+          getNoStoreHeaders(),
       }
     );
   }
 
   try {
+    if (
+      bodyTooLarge(
+        request
+      )
+    ) {
+      return NextResponse.json(
+        {
+          error:
+            "Request body is too large.",
+        },
+        {
+          status: 413,
+          headers:
+            getNoStoreHeaders(),
+        }
+      );
+    }
+
     const existing =
       await prisma.business.findUnique(
         {
@@ -698,12 +911,30 @@ export async function PATCH(
         },
         {
           status: 404,
+          headers:
+            getNoStoreHeaders(),
         }
       );
     }
 
-    const body: unknown =
-      await request.json();
+    let body: unknown;
+
+    try {
+      body =
+        await request.json();
+    } catch {
+      return NextResponse.json(
+        {
+          error:
+            "Invalid JSON body.",
+        },
+        {
+          status: 400,
+          headers:
+            getNoStoreHeaders(),
+        }
+      );
+    }
 
     if (
       !body ||
@@ -718,6 +949,8 @@ export async function PATCH(
         },
         {
           status: 400,
+          headers:
+            getNoStoreHeaders(),
         }
       );
     }
@@ -749,6 +982,8 @@ export async function PATCH(
           },
           {
             status: 400,
+            headers:
+              getNoStoreHeaders(),
           }
         );
       }
@@ -763,6 +998,8 @@ export async function PATCH(
           },
           {
             status: 409,
+            headers:
+              getNoStoreHeaders(),
           }
         );
       }
@@ -794,6 +1031,8 @@ export async function PATCH(
           },
           {
             status: 500,
+            headers:
+              getNoStoreHeaders(),
           }
         );
       }
@@ -807,6 +1046,11 @@ export async function PATCH(
             true,
 
           business,
+        },
+        {
+          status: 200,
+          headers:
+            getNoStoreHeaders(),
         }
       );
     }
@@ -823,13 +1067,31 @@ export async function PATCH(
       description?: string | null;
       phone?: string | null;
       imageUrl?: string | null;
-      availability?: Availability;
-      status?: BusinessStatus;
-      verification?: VerificationStatus;
-      priceMin?: number | null;
-      priceMax?: number | null;
-      locationId?: string;
+
+      availability?:
+        Availability;
+
+      status?:
+        BusinessStatus;
+
+      verification?:
+        VerificationStatus;
+
+      priceMin?:
+        number | null;
+
+      priceMax?:
+        number | null;
+
+      locationId?:
+        string;
     } = {};
+
+    /*
+     * -----------------------------------------
+     * NAME
+     * -----------------------------------------
+     */
 
     if (
       "name" in
@@ -848,13 +1110,15 @@ export async function PATCH(
           },
           {
             status: 400,
+            headers:
+              getNoStoreHeaders(),
           }
         );
       }
 
       if (
         name.length >
-        200
+        MAX_NAME_LENGTH
       ) {
         return NextResponse.json(
           {
@@ -863,6 +1127,8 @@ export async function PATCH(
           },
           {
             status: 400,
+            headers:
+              getNoStoreHeaders(),
           }
         );
       }
@@ -871,34 +1137,92 @@ export async function PATCH(
         name;
     }
 
+    /*
+     * -----------------------------------------
+     * OWNER NAME
+     * -----------------------------------------
+     */
+
     if (
       "ownerName" in
       payload
     ) {
-      data.ownerName =
+      const ownerName =
         nullableString(
           payload.ownerName
         );
+
+      if (
+        ownerName &&
+        ownerName.length >
+          MAX_OWNER_NAME_LENGTH
+      ) {
+        return NextResponse.json(
+          {
+            error:
+              "Owner name is too long.",
+          },
+          {
+            status: 400,
+            headers:
+              getNoStoreHeaders(),
+          }
+        );
+      }
+
+      data.ownerName =
+        ownerName;
     }
+
+    /*
+     * -----------------------------------------
+     * DESCRIPTION
+     * -----------------------------------------
+     */
 
     if (
       "description" in
       payload
     ) {
-      data.description =
+      const description =
         nullableString(
           payload.description
         );
+
+      if (
+        description &&
+        description.length >
+          MAX_DESCRIPTION_LENGTH
+      ) {
+        return NextResponse.json(
+          {
+            error:
+              "Business description is too long.",
+          },
+          {
+            status: 400,
+            headers:
+              getNoStoreHeaders(),
+          }
+        );
+      }
+
+      data.description =
+        description;
     }
 
     /*
-     * Legacy phone input is still
-     * accepted for compatibility.
+     * -----------------------------------------
+     * LEGACY PHONE
+     * -----------------------------------------
      *
-     * When socialLinks are supplied,
-     * the PHONE social link becomes
-     * the source of truth.
+     * The PHONE social link remains the
+     * source of truth when socialLinks are
+     * explicitly supplied.
+     *
+     * Business.phone is kept as a mirror.
      */
+
     const legacyPhoneProvided =
       "phone" in
       payload;
@@ -913,7 +1237,7 @@ export async function PATCH(
     if (
       legacyPhone &&
       legacyPhone.length >
-        50
+        MAX_PHONE_LENGTH
     ) {
       return NextResponse.json(
         {
@@ -922,6 +1246,8 @@ export async function PATCH(
         },
         {
           status: 400,
+          headers:
+            getNoStoreHeaders(),
         }
       );
     }
@@ -933,15 +1259,88 @@ export async function PATCH(
         legacyPhone;
     }
 
+    /*
+     * -----------------------------------------
+     * IMAGE URL
+     * -----------------------------------------
+     */
+
     if (
       "imageUrl" in
       payload
     ) {
-      data.imageUrl =
+      const imageUrl =
         nullableString(
           payload.imageUrl
         );
+
+      if (
+        imageUrl &&
+        imageUrl.length >
+          MAX_IMAGE_URL_LENGTH
+      ) {
+        return NextResponse.json(
+          {
+            error:
+              "Image URL is too long.",
+          },
+          {
+            status: 400,
+            headers:
+              getNoStoreHeaders(),
+          }
+        );
+      }
+
+      if (imageUrl) {
+        try {
+          const parsedImageUrl =
+            new URL(
+              imageUrl
+            );
+
+          if (
+            parsedImageUrl.protocol !==
+              "http:" &&
+            parsedImageUrl.protocol !==
+              "https:"
+          ) {
+            return NextResponse.json(
+              {
+                error:
+                  "Image URL must use HTTP or HTTPS.",
+              },
+              {
+                status: 400,
+                headers:
+                  getNoStoreHeaders(),
+              }
+            );
+          }
+        } catch {
+          return NextResponse.json(
+            {
+              error:
+                "Invalid image URL.",
+            },
+            {
+              status: 400,
+              headers:
+                getNoStoreHeaders(),
+            }
+          );
+        }
+      }
+
+      data.imageUrl =
+        imageUrl;
     }
+
+    /*
+     * -----------------------------------------
+     * AVAILABILITY
+     * -----------------------------------------
+     */
 
     if (
       "availability" in
@@ -959,6 +1358,8 @@ export async function PATCH(
           },
           {
             status: 400,
+            headers:
+              getNoStoreHeaders(),
           }
         );
       }
@@ -966,6 +1367,12 @@ export async function PATCH(
       data.availability =
         payload.availability;
     }
+
+    /*
+     * -----------------------------------------
+     * BUSINESS STATUS
+     * -----------------------------------------
+     */
 
     if (
       "status" in
@@ -983,6 +1390,8 @@ export async function PATCH(
           },
           {
             status: 400,
+            headers:
+              getNoStoreHeaders(),
           }
         );
       }
@@ -990,6 +1399,12 @@ export async function PATCH(
       data.status =
         payload.status;
     }
+
+    /*
+     * -----------------------------------------
+     * BUSINESS VERIFICATION
+     * -----------------------------------------
+     */
 
     if (
       "verification" in
@@ -1007,6 +1422,8 @@ export async function PATCH(
           },
           {
             status: 400,
+            headers:
+              getNoStoreHeaders(),
           }
         );
       }
@@ -1044,6 +1461,8 @@ export async function PATCH(
           },
           {
             status: 400,
+            headers:
+              getNoStoreHeaders(),
           }
         );
       }
@@ -1078,10 +1497,12 @@ export async function PATCH(
       return NextResponse.json(
         {
           error:
-            "Minimum price must be a valid integer.",
+            "Minimum price must be a valid integer between 0 and 2147483647.",
         },
         {
           status: 400,
+          headers:
+            getNoStoreHeaders(),
         }
       );
     }
@@ -1098,10 +1519,12 @@ export async function PATCH(
       return NextResponse.json(
         {
           error:
-            "Maximum price must be a valid integer.",
+            "Maximum price must be a valid integer between 0 and 2147483647.",
         },
         {
           status: 400,
+          headers:
+            getNoStoreHeaders(),
         }
       );
     }
@@ -1145,6 +1568,8 @@ export async function PATCH(
         },
         {
           status: 400,
+          headers:
+            getNoStoreHeaders(),
         }
       );
     }
@@ -1157,21 +1582,21 @@ export async function PATCH(
 
     const locationWasProvided =
       "area" in
-      payload ||
+        payload ||
       "address" in
-      payload ||
+        payload ||
       "street" in
-      payload ||
+        payload ||
       "houseNumber" in
-      payload ||
+        payload ||
       "city" in
-      payload ||
+        payload ||
       "lat" in
-      payload ||
+        payload ||
       "lng" in
-      payload ||
+        payload ||
       "long" in
-      payload;
+        payload;
 
     const categoryIdsProvided =
       "categoryIds" in
@@ -1204,10 +1629,12 @@ export async function PATCH(
         return NextResponse.json(
           {
             error:
-              "categoryIds must be an array.",
+              "categoryIds must be an array containing no more than 50 valid IDs.",
           },
           {
             status: 400,
+            headers:
+              getNoStoreHeaders(),
           }
         );
       }
@@ -1243,6 +1670,8 @@ export async function PATCH(
             },
             {
               status: 400,
+              headers:
+                getNoStoreHeaders(),
             }
           );
         }
@@ -1272,10 +1701,12 @@ export async function PATCH(
         return NextResponse.json(
           {
             error:
-              "socialLinks must be an array.",
+              "socialLinks must be an array containing no more than 6 valid links.",
           },
           {
             status: 400,
+            headers:
+              getNoStoreHeaders(),
           }
         );
       }
@@ -1288,7 +1719,7 @@ export async function PATCH(
       if (
         phoneFromSocial &&
         phoneFromSocial.length >
-          50
+          MAX_PHONE_LENGTH
       ) {
         return NextResponse.json(
           {
@@ -1297,16 +1728,17 @@ export async function PATCH(
           },
           {
             status: 400,
+            headers:
+              getNoStoreHeaders(),
           }
         );
       }
 
       /*
-       * PHONE social link is the
-       * authoritative phone value.
+       * PHONE social link is authoritative.
        *
-       * Business.phone is maintained
-       * as a compatibility mirror.
+       * Business.phone remains its compatibility
+       * mirror.
        */
       if (
         phoneFromSocial
@@ -1314,19 +1746,33 @@ export async function PATCH(
         data.phone =
           phoneFromSocial;
       } else if (
-        legacyPhone
+        legacyPhoneProvided
       ) {
-        socialLinks.push({
-          platform:
-            SocialPlatform.PHONE,
+        /*
+         * Keep legacy phone compatible by creating
+         * the canonical PHONE social link.
+         */
+        if (
+          legacyPhone
+        ) {
+          socialLinks.push({
+            platform:
+              SocialPlatform.PHONE,
 
-          handle:
-            legacyPhone,
-        });
+            handle:
+              legacyPhone,
+          });
+        }
 
         data.phone =
           legacyPhone;
       } else {
+        /*
+         * socialLinks was explicitly supplied
+         * without a PHONE link or legacy phone.
+         *
+         * That means PHONE is intentionally removed.
+         */
         data.phone =
           null;
       }
@@ -1414,14 +1860,15 @@ export async function PATCH(
           currentArea
         );
 
-      /*
-       * Location.street is the canonical
-       * street source. The stored address is
-       * only the backwards-compatible fallback.
-       */
       const existingStreet =
         currentStreet ||
         parsedExistingAddress.street;
+
+      /*
+       * -----------------------------------------
+       * AREA
+       * -----------------------------------------
+       */
 
       requestedArea =
         "area" in
@@ -1439,13 +1886,15 @@ export async function PATCH(
           },
           {
             status: 400,
+            headers:
+              getNoStoreHeaders(),
           }
         );
       }
 
       if (
         requestedArea.length >
-        200
+        MAX_AREA_LENGTH
       ) {
         return NextResponse.json(
           {
@@ -1454,13 +1903,15 @@ export async function PATCH(
           },
           {
             status: 400,
+            headers:
+              getNoStoreHeaders(),
           }
         );
       }
 
       /*
        * -----------------------------------------
-       * STRUCTURED LOCATION INPUT
+       * STRUCTURED LOCATION
        * -----------------------------------------
        */
 
@@ -1505,7 +1956,60 @@ export async function PATCH(
               )
             : parsedExistingAddress.city;
 
-        if (!resultingStreet) {
+        if (
+          resultingStreet.length >
+          MAX_STREET_LENGTH
+        ) {
+          return NextResponse.json(
+            {
+              error:
+                "Business street is too long.",
+            },
+            {
+              status: 400,
+              headers:
+                getNoStoreHeaders(),
+            }
+          );
+        }
+
+        if (
+          resultingHouseNumber.length >
+          MAX_HOUSE_NUMBER_LENGTH
+        ) {
+          return NextResponse.json(
+            {
+              error:
+                "House or shop number is too long.",
+            },
+            {
+              status: 400,
+              headers:
+                getNoStoreHeaders(),
+            }
+          );
+        }
+
+        if (
+          resultingCity.length >
+          MAX_CITY_LENGTH
+        ) {
+          return NextResponse.json(
+            {
+              error:
+                "Business city is too long.",
+            },
+            {
+              status: 400,
+              headers:
+                getNoStoreHeaders(),
+            }
+          );
+        }
+
+        if (
+          !resultingStreet
+        ) {
           return NextResponse.json(
             {
               error:
@@ -1513,6 +2017,8 @@ export async function PATCH(
             },
             {
               status: 400,
+              headers:
+                getNoStoreHeaders(),
             }
           );
         }
@@ -1521,7 +2027,7 @@ export async function PATCH(
           resultingStreet;
 
         /*
-         * Exact ReMarket order:
+         * Canonical address:
          *
          * House Number, Street, Area, City, Nigeria
          */
@@ -1530,12 +2036,12 @@ export async function PATCH(
             resultingHouseNumber,
             resultingStreet,
             requestedArea,
-            resultingCity
+            resultingCity,
+           
           );
       } else {
         /*
-         * Backward-compatible address-only
-         * update path.
+         * Address-only / legacy caller.
          */
         requestedAddress =
           "address" in
@@ -1550,11 +2056,15 @@ export async function PATCH(
           null;
       }
 
+      /*
+       * The check explicitly excludes both
+       * null and undefined.
+       */
       if (
-        requestedAddress !==
+        requestedAddress !=
           null &&
         requestedAddress.length >
-          2000
+          MAX_ADDRESS_LENGTH
       ) {
         return NextResponse.json(
           {
@@ -1563,6 +2073,8 @@ export async function PATCH(
           },
           {
             status: 400,
+            headers:
+              getNoStoreHeaders(),
           }
         );
       }
@@ -1592,6 +2104,8 @@ export async function PATCH(
           },
           {
             status: 400,
+            headers:
+              getNoStoreHeaders(),
           }
         );
       }
@@ -1609,6 +2123,8 @@ export async function PATCH(
           },
           {
             status: 400,
+            headers:
+              getNoStoreHeaders(),
           }
         );
       }
@@ -1637,10 +2153,15 @@ export async function PATCH(
           },
           {
             status: 400,
+            headers:
+              getNoStoreHeaders(),
           }
         );
       }
 
+      /*
+       * Coordinates must always exist as a pair.
+       */
       if (
         (requestedLat ===
           null) !==
@@ -1654,6 +2175,8 @@ export async function PATCH(
           },
           {
             status: 400,
+            headers:
+              getNoStoreHeaders(),
           }
         );
       }
@@ -1675,6 +2198,8 @@ export async function PATCH(
           },
           {
             status: 400,
+            headers:
+              getNoStoreHeaders(),
           }
         );
       }
@@ -1696,9 +2221,17 @@ export async function PATCH(
           },
           {
             status: 400,
+            headers:
+              getNoStoreHeaders(),
           }
         );
       }
+
+      /*
+       * -----------------------------------------
+       * DETERMINE LOCATION CHANGES
+       * -----------------------------------------
+       */
 
       const areaChanged =
         requestedArea !==
@@ -1735,6 +2268,10 @@ export async function PATCH(
        * -----------------------------------------
        * RE-GEOCODE CHANGED LOCATION
        * -----------------------------------------
+       *
+       * If the address/area/street changed
+       * without newly supplied coordinates,
+       * the old coordinates must not be retained.
        */
 
       if (
@@ -1769,7 +2306,7 @@ export async function PATCH(
                       requestedAddress,
 
                     area:
-                      requestedArea,
+                      requestedArea!,
                   }
                 );
 
@@ -1794,8 +2331,8 @@ export async function PATCH(
               );
 
               /*
-               * Do not retain stale coordinates
-               * belonging to the old location.
+               * Never retain stale coordinates from
+               * the previous physical location.
                */
               resolvedLat =
                 null;
@@ -1812,8 +2349,7 @@ export async function PATCH(
           }
         } else {
           /*
-           * Fresh coordinates were explicitly
-           * supplied/captured.
+           * Newly supplied coordinates are authoritative.
            */
           resolvedStreet =
             requestedStreet ??
@@ -1822,9 +2358,8 @@ export async function PATCH(
       }
 
       /*
-       * If only the street value changed and
-       * the other location fields did not,
-       * preserve the explicitly supplied street.
+       * If only the stored street changed, preserve
+       * the newly requested street.
        */
       if (
         streetChanged &&
@@ -1855,6 +2390,10 @@ export async function PATCH(
           currentLong;
     }
 
+    /*
+     * A location verification request needs
+     * an existing or newly supplied location.
+     */
     if (
       locationVerificationWasProvided &&
       !existing.location &&
@@ -1867,6 +2406,8 @@ export async function PATCH(
         },
         {
           status: 400,
+          headers:
+            getNoStoreHeaders(),
         }
       );
     }
@@ -1879,16 +2420,20 @@ export async function PATCH(
 
     await prisma.$transaction(
       async (tx) => {
+        /*
+         * -----------------------------------------
+         * LOCATION
+         * -----------------------------------------
+         */
+
         if (
           locationWasProvided &&
           locationChanged
         ) {
           /*
-           * A changed location always becomes
-           * UNVERIFIED.
-           *
-           * Verification must happen separately
-           * after the new location is confirmed.
+           * Any physical location change creates
+           * a fresh Location record and resets
+           * location verification.
            */
           const location =
             await tx.location.create(
@@ -1942,6 +2487,13 @@ export async function PATCH(
           );
         }
 
+        /*
+         * -----------------------------------------
+         * BUSINESS
+         * -----------------------------------------
+         *
+         * Only validated fields are passed to Prisma.
+         */
         await tx.business.update(
           {
             where: {
@@ -1953,7 +2505,9 @@ export async function PATCH(
         );
 
         /*
+         * -----------------------------------------
          * CATEGORIES
+         * -----------------------------------------
          */
 
         if (
@@ -1995,12 +2549,17 @@ export async function PATCH(
         }
 
         /*
+         * -----------------------------------------
          * SOCIAL LINKS
+         * -----------------------------------------
          */
 
         if (
           socialLinksProvided
         ) {
+          /*
+           * socialLinks is a full replacement.
+           */
           await tx.businessSocialLink.deleteMany(
             {
               where: {
@@ -2042,10 +2601,10 @@ export async function PATCH(
           legacyPhoneProvided
         ) {
           /*
-           * Older callers can still submit only
-           * phone.
+           * Legacy callers can still update only
+           * the phone number.
            *
-           * Keep the PHONE social link synchronized.
+           * Keep PHONE social link synchronized.
            */
           await tx.businessSocialLink.deleteMany(
             {
@@ -2081,6 +2640,12 @@ export async function PATCH(
       }
     );
 
+    /*
+     * -----------------------------------------
+     * RELOAD UPDATED BUSINESS
+     * -----------------------------------------
+     */
+
     const updatedBusiness =
       await loadBusiness(
         id
@@ -2096,6 +2661,8 @@ export async function PATCH(
         },
         {
           status: 500,
+          headers:
+            getNoStoreHeaders(),
         }
       );
     }
@@ -2107,6 +2674,11 @@ export async function PATCH(
 
         business:
           updatedBusiness,
+      },
+      {
+        status: 200,
+        headers:
+          getNoStoreHeaders(),
       }
     );
   } catch (error) {
@@ -2122,6 +2694,8 @@ export async function PATCH(
       },
       {
         status: 500,
+        headers:
+          getNoStoreHeaders(),
       }
     );
   }
@@ -2131,6 +2705,11 @@ export async function PATCH(
  * ------------------------------------------------
  * SOFT DELETE
  * ------------------------------------------------
+ *
+ * DELETE /api/admin/businesses/[id]
+ *
+ * This does NOT physically remove the business.
+ * It only sets deletedAt.
  */
 
 export async function DELETE(
@@ -2155,6 +2734,25 @@ export async function DELETE(
       },
       {
         status: 400,
+        headers:
+          getNoStoreHeaders(),
+      }
+    );
+  }
+
+  if (
+    id.length >
+    MAX_BUSINESS_ID_LENGTH
+  ) {
+    return NextResponse.json(
+      {
+        error:
+          "Invalid business ID.",
+      },
+      {
+        status: 400,
+        headers:
+          getNoStoreHeaders(),
       }
     );
   }
@@ -2169,7 +2767,10 @@ export async function DELETE(
 
           select: {
             id: true,
-            name: true,
+
+            name:
+              true,
+
             deletedAt:
               true,
           },
@@ -2184,6 +2785,8 @@ export async function DELETE(
         },
         {
           status: 404,
+          headers:
+            getNoStoreHeaders(),
         }
       );
     }
@@ -2198,6 +2801,8 @@ export async function DELETE(
         },
         {
           status: 409,
+          headers:
+            getNoStoreHeaders(),
         }
       );
     }
@@ -2216,7 +2821,10 @@ export async function DELETE(
 
           select: {
             id: true,
-            name: true,
+
+            name:
+              true,
+
             deletedAt:
               true,
           },
@@ -2232,6 +2840,11 @@ export async function DELETE(
           true,
 
         business,
+      },
+      {
+        status: 200,
+        headers:
+          getNoStoreHeaders(),
       }
     );
   } catch (error) {
@@ -2247,6 +2860,8 @@ export async function DELETE(
       },
       {
         status: 500,
+        headers:
+          getNoStoreHeaders(),
       }
     );
   }

@@ -4,6 +4,23 @@ import {
 } from "next/server";
 
 import { prisma } from "@/lib/prisma";
+import { checkPublicRateLimit } from "@/lib/rate-limit";
+
+const MAX_BUSINESS_ID_LENGTH = 100;
+
+function getResponseHeaders(
+  rateLimitHeaders: Headers
+): Headers {
+  const headers =
+    new Headers(rateLimitHeaders);
+
+  headers.set(
+    "Cache-Control",
+    "no-store"
+  );
+
+  return headers;
+}
 
 function normalizeNigerianPhone(
   value: string
@@ -74,6 +91,32 @@ export async function GET(
     }>;
   }
 ) {
+  const rateLimit =
+    checkPublicRateLimit(
+      request,
+      "featured"
+    );
+
+  /*
+   * The business-detail route uses the
+   * existing public limiter while avoiding
+   * creation of another limiter scope/file.
+   */
+  if (!rateLimit.allowed) {
+    return NextResponse.json(
+      {
+        error:
+          "Too many business requests. Please try again shortly.",
+      },
+      {
+        status: 429,
+        headers: getResponseHeaders(
+          rateLimit.headers
+        ),
+      }
+    );
+  }
+
   try {
     const { id } = await params;
 
@@ -85,6 +128,27 @@ export async function GET(
         },
         {
           status: 400,
+          headers: getResponseHeaders(
+            rateLimit.headers
+          ),
+        }
+      );
+    }
+
+    if (
+      id.length >
+      MAX_BUSINESS_ID_LENGTH
+    ) {
+      return NextResponse.json(
+        {
+          error:
+            "Invalid business ID",
+        },
+        {
+          status: 400,
+          headers: getResponseHeaders(
+            rateLimit.headers
+          ),
         }
       );
     }
@@ -255,6 +319,9 @@ export async function GET(
         },
         {
           status: 404,
+          headers: getResponseHeaders(
+            rateLimit.headers
+          ),
         }
       );
     }
@@ -517,10 +584,17 @@ export async function GET(
         formattedSocialLinks,
     };
 
-    return NextResponse.json({
-      business:
-        formattedBusiness,
-    });
+    return NextResponse.json(
+      {
+        business:
+          formattedBusiness,
+      },
+      {
+        headers: getResponseHeaders(
+          rateLimit.headers
+        ),
+      }
+    );
   } catch (error) {
     console.error(
       "Business API error:",
@@ -534,6 +608,9 @@ export async function GET(
       },
       {
         status: 500,
+        headers: getResponseHeaders(
+          rateLimit.headers
+        ),
       }
     );
   }

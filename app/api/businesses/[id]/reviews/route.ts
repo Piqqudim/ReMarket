@@ -19,6 +19,20 @@ type RouteContext = {
   }>;
 };
 
+const MAX_BUSINESS_ID_LENGTH = 100;
+const MAX_COMMENT_LENGTH = 2000;
+
+function getNoStoreHeaders(): Headers {
+  const headers = new Headers();
+
+  headers.set(
+    "Cache-Control",
+    "no-store"
+  );
+
+  return headers;
+}
+
 function cleanString(
   value: unknown
 ): string {
@@ -97,29 +111,46 @@ export async function GET(
       },
       {
         status: 400,
+        headers:
+          getNoStoreHeaders(),
+      }
+    );
+  }
+
+  if (
+    id.length >
+    MAX_BUSINESS_ID_LENGTH
+  ) {
+    return NextResponse.json(
+      {
+        error:
+          "Invalid business ID.",
+      },
+      {
+        status: 400,
+        headers:
+          getNoStoreHeaders(),
       }
     );
   }
 
   try {
     const business =
-      await prisma.business.findFirst(
-        {
-          where: {
-            id,
+      await prisma.business.findFirst({
+        where: {
+          id,
 
-            status:
-              "ACTIVE",
+          status:
+            "ACTIVE",
 
-            deletedAt:
-              null,
-          },
+          deletedAt:
+            null,
+        },
 
-          select: {
-            id: true,
-          },
-        }
-      );
+        select: {
+          id: true,
+        },
+      });
 
     if (!business) {
       return NextResponse.json(
@@ -129,6 +160,8 @@ export async function GET(
         },
         {
           status: 404,
+          headers:
+            getNoStoreHeaders(),
         }
       );
     }
@@ -204,7 +237,12 @@ export async function GET(
         review.rating <= 5
       ) {
         ratingBreakdown[
-          review.rating as 1 | 2 | 3 | 4 | 5
+          review.rating as
+            | 1
+            | 2
+            | 3
+            | 4
+            | 5
         ] += 1;
       }
     }
@@ -247,10 +285,8 @@ export async function GET(
         ratingBreakdown,
       },
       {
-        headers: {
-          "Cache-Control":
-            "no-store",
-        },
+        headers:
+          getNoStoreHeaders(),
       }
     );
   } catch (error) {
@@ -266,6 +302,8 @@ export async function GET(
       },
       {
         status: 500,
+        headers:
+          getNoStoreHeaders(),
       }
     );
   }
@@ -289,6 +327,12 @@ export async function POST(
   request: NextRequest,
   context: RouteContext
 ) {
+  /*
+   * -----------------------------------------
+   * AUTHENTICATION
+   * -----------------------------------------
+   */
+
   const session =
     await getServerSession(
       authOptions
@@ -302,6 +346,8 @@ export async function POST(
       },
       {
         status: 401,
+        headers:
+          getNoStoreHeaders(),
       }
     );
   }
@@ -315,10 +361,10 @@ export async function POST(
   const userId =
     typeof sessionUser.id ===
     "string"
-      ? sessionUser.id
+      ? sessionUser.id.trim()
       : "";
 
-  const role =
+  const sessionRole =
     typeof sessionUser.role ===
     "string"
       ? sessionUser.role
@@ -332,11 +378,18 @@ export async function POST(
       },
       {
         status: 401,
+        headers:
+          getNoStoreHeaders(),
       }
     );
   }
 
-  if (role !== "BUYER") {
+  /*
+   * Only BUYER accounts may create reviews.
+   */
+  if (
+    sessionRole !== "BUYER"
+  ) {
     return NextResponse.json(
       {
         error:
@@ -344,28 +397,129 @@ export async function POST(
       },
       {
         status: 403,
+        headers:
+          getNoStoreHeaders(),
       }
     );
   }
 
-  const { id } =
-    await context.params;
-
-  if (!id) {
-    return NextResponse.json(
-      {
-        error:
-          "Business ID is required.",
-      },
-      {
-        status: 400,
-      }
-    );
-  }
+  /*
+   * -----------------------------------------
+   * CURRENT ROLE VERIFICATION
+   * -----------------------------------------
+   *
+   * Verify the user's current database role
+   * instead of relying only on the JWT/session
+   * role, which can become stale after a role
+   * change.
+   */
 
   try {
-    const body: unknown =
-      await request.json();
+    const currentUser =
+      await prisma.user.findUnique({
+        where: {
+          id: userId,
+        },
+
+        select: {
+          role: true,
+        },
+      });
+
+    if (!currentUser) {
+      return NextResponse.json(
+        {
+          error:
+            "Your account could not be found.",
+        },
+        {
+          status: 401,
+          headers:
+            getNoStoreHeaders(),
+        }
+      );
+    }
+
+    if (
+      currentUser.role !== "BUYER"
+    ) {
+      return NextResponse.json(
+        {
+          error:
+            "Only buyers can leave business reviews.",
+        },
+        {
+          status: 403,
+          headers:
+            getNoStoreHeaders(),
+        }
+      );
+    }
+
+    /*
+     * -----------------------------------------
+     * BUSINESS ID
+     * -----------------------------------------
+     */
+
+    const { id } =
+      await context.params;
+
+    if (!id) {
+      return NextResponse.json(
+        {
+          error:
+            "Business ID is required.",
+        },
+        {
+          status: 400,
+          headers:
+            getNoStoreHeaders(),
+        }
+      );
+    }
+
+    if (
+      id.length >
+      MAX_BUSINESS_ID_LENGTH
+    ) {
+      return NextResponse.json(
+        {
+          error:
+            "Invalid business ID.",
+        },
+        {
+          status: 400,
+          headers:
+            getNoStoreHeaders(),
+        }
+      );
+    }
+
+    /*
+     * -----------------------------------------
+     * PARSE REQUEST BODY
+     * -----------------------------------------
+     */
+
+    let body: unknown;
+
+    try {
+      body =
+        await request.json();
+    } catch {
+      return NextResponse.json(
+        {
+          error:
+            "Invalid JSON body.",
+        },
+        {
+          status: 400,
+          headers:
+            getNoStoreHeaders(),
+        }
+      );
+    }
 
     if (
       !body ||
@@ -380,6 +534,8 @@ export async function POST(
         },
         {
           status: 400,
+          headers:
+            getNoStoreHeaders(),
         }
       );
     }
@@ -389,6 +545,12 @@ export async function POST(
         string,
         unknown
       >;
+
+    /*
+     * -----------------------------------------
+     * VALIDATE RATING
+     * -----------------------------------------
+     */
 
     const rating =
       parseRating(
@@ -403,9 +565,17 @@ export async function POST(
         },
         {
           status: 400,
+          headers:
+            getNoStoreHeaders(),
         }
       );
     }
+
+    /*
+     * -----------------------------------------
+     * VALIDATE COMMENT
+     * -----------------------------------------
+     */
 
     const comment =
       parseComment(
@@ -414,7 +584,8 @@ export async function POST(
 
     if (
       comment &&
-      comment.length > 2000
+      comment.length >
+        MAX_COMMENT_LENGTH
     ) {
       return NextResponse.json(
         {
@@ -423,9 +594,17 @@ export async function POST(
         },
         {
           status: 400,
+          headers:
+            getNoStoreHeaders(),
         }
       );
     }
+
+    /*
+     * -----------------------------------------
+     * VERIFY BUSINESS
+     * -----------------------------------------
+     */
 
     const business =
       await prisma.business.findFirst(
@@ -455,38 +634,28 @@ export async function POST(
         },
         {
           status: 404,
+          headers:
+            getNoStoreHeaders(),
         }
       );
     }
 
-    const existingReview =
-      await prisma.businessReview.findUnique(
-        {
-          where: {
-            businessId_userId: {
-              businessId:
-                id,
-              userId,
-            },
-          },
-
-          select: {
-            id: true,
-          },
-        }
-      );
-
-    if (existingReview) {
-      return NextResponse.json(
-        {
-          error:
-            "You have already reviewed this business. You can edit your existing review.",
-        },
-        {
-          status: 409,
-        }
-      );
-    }
+    /*
+     * -----------------------------------------
+     * CREATE REVIEW
+     * -----------------------------------------
+     *
+     * Do not perform a separate
+     * findUnique() first.
+     *
+     * The database unique constraint:
+     *
+     * [businessId, userId]
+     *
+     * is the authoritative protection against
+     * duplicate reviews and simultaneous
+     * submissions.
+     */
 
     const review =
       await prisma.businessReview.create(
@@ -552,6 +721,8 @@ export async function POST(
       },
       {
         status: 201,
+        headers:
+          getNoStoreHeaders(),
       }
     );
   } catch (error) {
@@ -568,11 +739,14 @@ export async function POST(
      * same buyer.
      */
     if (
-      typeof error ===
-        "object" &&
-      error !== null &&
+      error instanceof
+        Error &&
       "code" in error &&
-      error.code ===
+      (
+        error as {
+          code?: unknown;
+        }
+      ).code ===
         "P2002"
     ) {
       return NextResponse.json(
@@ -582,6 +756,8 @@ export async function POST(
         },
         {
           status: 409,
+          headers:
+            getNoStoreHeaders(),
         }
       );
     }
@@ -593,6 +769,8 @@ export async function POST(
       },
       {
         status: 500,
+        headers:
+          getNoStoreHeaders(),
       }
     );
   }

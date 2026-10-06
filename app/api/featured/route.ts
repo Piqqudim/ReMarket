@@ -1,21 +1,65 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 
 import { prisma } from "@/lib/prisma";
+import { checkPublicRateLimit } from "@/lib/rate-limit";
 
 const FEATURED_COUNT = 4;
 
-export async function GET() {
+function getResponseHeaders(
+  rateLimitHeaders: Headers
+): Headers {
+  const headers =
+    new Headers(rateLimitHeaders);
+
+  headers.set(
+    "Cache-Control",
+    "no-store, no-cache, must-revalidate"
+  );
+
+  return headers;
+}
+
+export async function GET(
+  request: NextRequest
+) {
+  const rateLimit =
+    checkPublicRateLimit(
+      request,
+      "featured"
+    );
+
+  if (!rateLimit.allowed) {
+    return NextResponse.json(
+      {
+        businesses: [],
+        total: 0,
+        error:
+          "Too many featured-business requests. Please try again shortly.",
+      },
+      {
+        status: 429,
+        headers: getResponseHeaders(
+          rateLimit.headers
+        ),
+      }
+    );
+  }
+
   try {
     /*
      * -----------------------------------------
      * SELECT RANDOM FEATURED BUSINESSES
      * -----------------------------------------
      *
-     * Only active and non-soft-deleted businesses
-     * can appear publicly.
+     * Only active and non-soft-deleted
+     * businesses can appear publicly.
+     *
+     * The query is parameterized through Prisma.
      */
     const randomBusinessRows =
-      await prisma.$queryRaw<{ id: string }[]>`
+      await prisma.$queryRaw<
+        { id: string }[]
+      >`
         SELECT "id"
         FROM "Business"
         WHERE "status" = 'ACTIVE'
@@ -41,9 +85,10 @@ export async function GET() {
           total: 0,
         },
         {
-          headers: {
-            "Cache-Control": "no-store",
-          },
+          headers:
+            getResponseHeaders(
+              rateLimit.headers
+            ),
         }
       );
     }
@@ -52,6 +97,9 @@ export async function GET() {
      * -----------------------------------------
      * LOAD PUBLIC BUSINESS DATA
      * -----------------------------------------
+     *
+     * Only fields actually used by the public
+     * response are selected.
      */
     const businesses =
       await prisma.business.findMany({
@@ -68,8 +116,23 @@ export async function GET() {
           deletedAt: null,
         },
 
-        include: {
-          location: true,
+        select: {
+          id: true,
+          name: true,
+          ownerName: true,
+          description: true,
+          imageUrl: true,
+          availability: true,
+          verification: true,
+
+          location: {
+            select: {
+              id: true,
+              area: true,
+              lat: true,
+              long: true,
+            },
+          },
 
           /*
            * Only active categories are public.
@@ -81,8 +144,12 @@ export async function GET() {
               },
             },
 
-            include: {
-              category: true,
+            select: {
+              category: {
+                select: {
+                  name: true,
+                },
+              },
             },
           },
 
@@ -147,6 +214,10 @@ export async function GET() {
             },
           },
 
+          /*
+           * Preserve the existing public
+           * social-links response.
+           */
           socialLinks: true,
         },
       });
@@ -255,7 +326,8 @@ export async function GET() {
               (product) => ({
                 id: product.id,
 
-                name: product.name,
+                name:
+                  product.name,
 
                 description:
                   product.description,
@@ -284,9 +356,11 @@ export async function GET() {
                 images:
                   product.images.map(
                     (image) => ({
-                      id: image.id,
+                      id:
+                        image.id,
 
-                      url: image.url,
+                      url:
+                        image.url,
 
                       publicId:
                         image.publicId,
@@ -308,8 +382,8 @@ export async function GET() {
      * RESPONSE
      * -----------------------------------------
      *
-     * Disable caching because Featured is
-     * intentionally randomized.
+     * Featured is intentionally randomized,
+     * so public caching is disabled.
      */
     return NextResponse.json(
       {
@@ -319,10 +393,10 @@ export async function GET() {
           featured.length,
       },
       {
-        headers: {
-          "Cache-Control":
-            "no-store, no-cache, must-revalidate",
-        },
+        headers:
+          getResponseHeaders(
+            rateLimit.headers
+          ),
       }
     );
   } catch (error) {
@@ -340,6 +414,10 @@ export async function GET() {
       },
       {
         status: 500,
+        headers:
+          getResponseHeaders(
+            rateLimit.headers
+          ),
       }
     );
   }

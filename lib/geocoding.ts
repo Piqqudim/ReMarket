@@ -46,6 +46,12 @@ const NOMINATIM_URL =
 const NOMINATIM_REVERSE_URL =
   "https://nominatim.openstreetmap.org/reverse";
 
+/*
+ * Maximum amount of time ReMarket will wait
+ * for a Nominatim response.
+ */
+const NOMINATIM_TIMEOUT_MS = 10_000;
+
 const PRECISE_TYPES =
   new Set([
     "house",
@@ -379,7 +385,7 @@ function getLocalityValues(
 
   if (
     typeof result.display_name ===
-    "string" &&
+      "string" &&
     result.display_name.trim()
   ) {
     values.push(
@@ -704,25 +710,56 @@ function parseNominatimObject(
 async function fetchNominatim(
   url: URL,
   userAgent: string
-): Promise<NominatimResult | NominatimResult[]> {
-  const response =
-    await fetch(
-      url.toString(),
-      {
-        method: "GET",
+): Promise<
+  NominatimResult |
+  NominatimResult[]
+> {
+  let response: Response;
 
-        headers: {
-          "User-Agent":
-            userAgent,
+  try {
+    response =
+      await fetch(
+        url.toString(),
+        {
+          method: "GET",
 
-          "Accept":
-            "application/json",
-        },
+          headers: {
+            "User-Agent":
+              userAgent,
 
-        cache:
-          "no-store",
-      }
+            "Accept":
+              "application/json",
+          },
+
+          cache:
+            "no-store",
+
+          /*
+           * Prevent an external location-service
+           * request from hanging indefinitely.
+           */
+          signal:
+            AbortSignal.timeout(
+              NOMINATIM_TIMEOUT_MS
+            ),
+        }
+      );
+  } catch (error) {
+    if (
+      error instanceof
+        DOMException &&
+      error.name ===
+        "TimeoutError"
+    ) {
+      throw new Error(
+        "The location service timed out."
+      );
+    }
+
+    throw new Error(
+      "The location service could not be reached right now."
     );
+  }
 
   if (!response.ok) {
     console.error(
