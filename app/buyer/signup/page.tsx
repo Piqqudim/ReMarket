@@ -1,7 +1,8 @@
 "use client";
 
-import React, {
+import {
   useState,
+  type FormEvent,
 } from "react";
 
 import Link from "next/link";
@@ -19,41 +20,48 @@ import {
   CircleAlert,
 } from "lucide-react";
 
+function getSignupError(
+  data: unknown,
+  fallback: string
+): string {
+  if (
+    typeof data === "object" &&
+    data !== null &&
+    "error" in data &&
+    typeof data.error === "string"
+  ) {
+    return data.error;
+  }
+
+  return fallback;
+}
+
 export default function BuyerSignup() {
   const router = useRouter();
 
-  const [name, setName] =
+  const [name, setName] = useState("");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] =
     useState("");
 
-  const [email, setEmail] =
-    useState("");
+  const [error, setError] = useState("");
+  const [loading, setLoading] = useState(false);
 
-  const [password, setPassword] =
-    useState("");
-
-  const [
-    confirmPassword,
-    setConfirmPassword,
-  ] = useState("");
-
-  const [error, setError] =
-    useState("");
-
-  const [loading, setLoading] =
+  const [showPassword, setShowPassword] =
     useState(false);
 
-  const [
-    showPassword,
-    setShowPassword,
-  ] = useState(false);
+  const [showConfirmPassword, setShowConfirmPassword] =
+    useState(false);
 
-  const [
-    showConfirmPassword,
-    setShowConfirmPassword,
-  ] = useState(false);
+  function clearError() {
+    if (error) {
+      setError("");
+    }
+  }
 
   async function submit(
-    event: React.FormEvent<HTMLFormElement>
+    event: FormEvent<HTMLFormElement>
   ) {
     event.preventDefault();
 
@@ -61,32 +69,23 @@ export default function BuyerSignup() {
       return;
     }
 
-    const trimmedName =
-      name.trim();
-
-    const trimmedEmail =
-      email.trim().toLowerCase();
+    const trimmedName = name.trim();
+    const trimmedEmail = email.trim().toLowerCase();
 
     setError("");
 
     if (!trimmedName) {
-      setError(
-        "Name is required."
-      );
+      setError("Name is required.");
       return;
     }
 
     if (!trimmedEmail) {
-      setError(
-        "Email address is required."
-      );
+      setError("Email address is required.");
       return;
     }
 
     if (!password) {
-      setError(
-        "Password is required."
-      );
+      setError("Password is required.");
       return;
     }
 
@@ -97,60 +96,61 @@ export default function BuyerSignup() {
       return;
     }
 
-    if (
-      password !==
-      confirmPassword
-    ) {
-      setError(
-        "Passwords do not match."
-      );
+    /*
+     * Do not trim passwords. Spaces can be part
+     * of a user's password and must be preserved.
+     */
+    if (password !== confirmPassword) {
+      setError("Passwords do not match.");
       return;
     }
 
     setLoading(true);
 
     try {
-      const response =
-        await fetch(
-          "/api/buyer/signup",
-          {
-            method: "POST",
-            headers: {
-              "Content-Type":
-                "application/json",
-            },
-            body: JSON.stringify({
-              name: trimmedName,
-              email:
-                trimmedEmail,
-              password,
-            }),
-          }
-        );
+      const response = await fetch(
+        "/api/buyer/signup",
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            name: trimmedName,
+            email: trimmedEmail,
+            password,
+          }),
+        }
+      );
 
-      const data =
-        await response.json();
+      /*
+       * Handle non-JSON error responses without
+       * replacing the original API error with a
+       * JSON parsing exception.
+       */
+      const data: unknown = await response
+        .json()
+        .catch(() => null);
 
       if (!response.ok) {
         setError(
-          data?.error ??
-            "Unable to create your account."
+          getSignupError(
+            data,
+            "Unable to create your account. Please try again."
+          )
         );
 
         return;
       }
 
       /*
-       * The account has now been created
-       * with role = BUYER.
+       * Account creation is complete.
        *
-       * Send the customer to the existing
-       * buyer login page so NextAuth can
-       * establish the authenticated session.
+       * Preserve the existing authentication flow:
+       * the buyer signs in through NextAuth on the
+       * existing buyer login page.
        */
-      router.push(
-        "/buyer/login"
-      );
+      router.push("/buyer/login");
     } catch (signupError) {
       console.error(
         "Buyer signup error:",
@@ -166,88 +166,106 @@ export default function BuyerSignup() {
   }
 
   return (
-    <main className="relative flex min-h-screen items-center justify-center overflow-hidden bg-[#FFF0DC] px-4 py-10 sm:px-6">
-      {/* Top-left decorative shape */}
+    <main className="relative flex min-h-screen items-center justify-center overflow-hidden bg-[#FFF0DC] px-4 py-8 sm:px-6 sm:py-10">
 
-      <div className="absolute left-[-80px] top-16 h-64 w-64 rounded-full bg-[#FF9A6B] opacity-80 sm:left-10 sm:top-24 sm:h-72 sm:w-72" />
+      {/* TOP-LEFT DECORATIVE SHAPE */}
 
-      {/* Top-right dots */}
+      <div
+        aria-hidden="true"
+        className="pointer-events-none absolute left-[-100px] top-16 h-56 w-56 rounded-full bg-[#FF9A6B] opacity-80 sm:left-10 sm:top-24 sm:h-72 sm:w-72"
+      />
 
-      <div className="absolute right-6 top-16 grid grid-cols-4 gap-2.5 opacity-50 sm:right-16 sm:top-24 sm:gap-3">
-        {Array.from({
-          length: 16,
-        }).map((_, index) => (
-          <span
-            key={index}
-            className="h-2 w-2 rounded-full bg-[#F89B68]"
-          />
-        ))}
+      {/* TOP-RIGHT DOTS */}
+
+      <div
+        aria-hidden="true"
+        className="pointer-events-none absolute right-5 top-12 grid grid-cols-4 gap-2 opacity-50 sm:right-16 sm:top-24 sm:gap-3"
+      >
+        {Array.from({ length: 16 }).map(
+          (_, index) => (
+            <span
+              key={index}
+              className="h-2 w-2 rounded-full bg-[#F89B68]"
+            />
+          )
+        )}
       </div>
 
-      {/* Bottom-left dots */}
+      {/* BOTTOM-LEFT DOTS */}
 
-      <div className="absolute bottom-16 left-6 grid grid-cols-4 gap-2.5 opacity-50 sm:bottom-24 sm:left-16 sm:gap-3">
-        {Array.from({
-          length: 16,
-        }).map((_, index) => (
-          <span
-            key={index}
-            className="h-2 w-2 rounded-full bg-[#F89B68]"
-          />
-        ))}
+      <div
+        aria-hidden="true"
+        className="pointer-events-none absolute bottom-12 left-5 grid grid-cols-4 gap-2 opacity-50 sm:bottom-24 sm:left-16 sm:gap-3"
+      >
+        {Array.from({ length: 16 }).map(
+          (_, index) => (
+            <span
+              key={index}
+              className="h-2 w-2 rounded-full bg-[#F89B68]"
+            />
+          )
+        )}
       </div>
 
-      {/* Bottom-right decorative shape */}
+      {/* BOTTOM-RIGHT DECORATIVE SHAPE */}
 
-      <div className="absolute bottom-[-80px] right-[-70px] h-64 w-80 rotate-[-20deg] rounded-[50%] bg-[#FF9A6B] opacity-80 sm:bottom-[-50px] sm:right-[-40px] sm:h-72 sm:w-[23rem]" />
+      <div
+        aria-hidden="true"
+        className="pointer-events-none absolute bottom-[-100px] right-[-100px] h-56 w-64 rotate-[-20deg] rounded-[50%] bg-[#FF9A6B] opacity-80 sm:bottom-[-50px] sm:right-[-40px] sm:h-72 sm:w-[23rem]"
+      />
 
-      {/* Main content */}
+      {/* MAIN CONTENT */}
 
       <section className="relative z-[15] flex w-full max-w-[655px] flex-col items-center">
-        {/* Brand */}
 
-        <div className="mb-8 flex flex-col items-center text-center sm:mb-10">
-          <div className="mb-5 flex h-24 w-24 items-center justify-center rounded-[26px] bg-[#FF563F] shadow-[0_12px_30px_rgba(255,86,63,0.25)] sm:h-28 sm:w-28">
+        {/* BRAND */}
+
+        <div className="mb-7 flex flex-col items-center text-center sm:mb-10">
+          <div className="mb-5 flex h-20 w-20 items-center justify-center rounded-[24px] bg-[#FF563F] shadow-[0_12px_30px_rgba(255,86,63,0.25)] sm:h-28 sm:w-28 sm:rounded-[26px]">
             <Store
-              className="h-14 w-14 text-white sm:h-16 sm:w-16"
+              className="h-11 w-11 text-white sm:h-16 sm:w-16"
               strokeWidth={1.8}
             />
           </div>
 
-          <h1 className="text-[42px] font-semibold leading-none tracking-[-2px] text-[#111C27] sm:text-[52px]">
+          <h1 className="text-[38px] font-semibold leading-none tracking-[-2px] text-[#111C27] sm:text-[52px]">
             Re
             <span className="text-[#FF563F]">
               Market
             </span>
           </h1>
 
-          <p className="mt-3 text-[18px] font-normal text-[#718096] sm:mt-4 sm:text-[22px]">
+          <p className="mt-3 text-base font-normal text-[#718096] sm:mt-4 sm:text-[22px]">
             Buyer Account
           </p>
         </div>
 
-        {/* Signup card */}
+        {/* SIGNUP CARD */}
 
-        <div className="w-full rounded-[28px] bg-white px-6 py-8 shadow-[0_20px_60px_rgba(80,50,20,0.10)] sm:px-14 sm:py-12">
-          {/* Header */}
+        <div className="w-full min-w-0 rounded-[24px] bg-white px-5 py-7 shadow-[0_20px_60px_rgba(80,50,20,0.10)] sm:rounded-[28px] sm:px-14 sm:py-12">
 
-          <div className="mb-8 sm:mb-9">
-            <h2 className="text-[28px] font-semibold leading-tight text-[#111C27] sm:text-[32px]">
+          {/* HEADER */}
+
+          <div className="mb-7 sm:mb-9">
+            <h2 className="text-[26px] font-semibold leading-tight text-[#111C27] sm:text-[32px]">
               Create your account
             </h2>
 
-            <p className="mt-3 text-[17px] text-[#718096] sm:text-[19px]">
-              Create a free buyer account to leave ratings and reviews
+            <p className="mt-3 text-base leading-6 text-[#718096] sm:text-[19px]">
+              Create a free buyer account to leave ratings
+              and reviews.
             </p>
           </div>
 
-          {/* Form */}
+          {/* SIGNUP FORM */}
 
           <form
             onSubmit={submit}
+            aria-busy={loading}
             className="space-y-6 sm:space-y-7"
           >
-            {/* Name */}
+
+            {/* NAME */}
 
             <div>
               <label
@@ -259,7 +277,8 @@ export default function BuyerSignup() {
 
               <div className="relative">
                 <UserRound
-                  className="absolute left-5 top-1/2 h-5 w-5 -translate-y-1/2 text-[#FF694F]"
+                  aria-hidden="true"
+                  className="absolute left-4 top-1/2 h-5 w-5 -translate-y-1/2 text-[#FF694F] sm:left-5"
                   strokeWidth={2}
                 />
 
@@ -270,23 +289,20 @@ export default function BuyerSignup() {
                   placeholder="Your name"
                   value={name}
                   onChange={(event) => {
-                    setName(
-                      event.target.value
-                    );
-
-                    if (error) {
-                      setError("");
-                    }
+                    setName(event.target.value);
+                    clearError();
                   }}
                   autoComplete="name"
+                  maxLength={120}
                   required
                   disabled={loading}
-                  className="h-[64px] w-full rounded-[14px] border border-[#D9DEE5] bg-white pl-14 pr-5 text-[17px] text-[#111C27] outline-none transition-all placeholder:text-[#8491A3] focus:border-[#FF694F] focus:ring-4 focus:ring-[#FF694F]/10 disabled:cursor-not-allowed disabled:bg-[#F8F8F7]"
+                  aria-invalid={Boolean(error)}
+                  className="h-[58px] w-full rounded-[14px] border border-[#D9DEE5] bg-white pl-12 pr-4 text-base text-[#111C27] outline-none transition-all placeholder:text-[#8491A3] focus:border-[#FF694F] focus:ring-4 focus:ring-[#FF694F]/10 disabled:cursor-not-allowed disabled:bg-[#F8F8F7] sm:h-[64px] sm:pl-14 sm:pr-5 sm:text-[17px]"
                 />
               </div>
             </div>
 
-            {/* Email */}
+            {/* EMAIL */}
 
             <div>
               <label
@@ -298,7 +314,8 @@ export default function BuyerSignup() {
 
               <div className="relative">
                 <Mail
-                  className="absolute left-5 top-1/2 h-5 w-5 -translate-y-1/2 text-[#FF694F]"
+                  aria-hidden="true"
+                  className="absolute left-4 top-1/2 h-5 w-5 -translate-y-1/2 text-[#FF694F] sm:left-5"
                   strokeWidth={2}
                 />
 
@@ -309,25 +326,22 @@ export default function BuyerSignup() {
                   placeholder="you@example.com"
                   value={email}
                   onChange={(event) => {
-                    setEmail(
-                      event.target.value
-                    );
-
-                    if (error) {
-                      setError("");
-                    }
+                    setEmail(event.target.value);
+                    clearError();
                   }}
                   autoComplete="email"
                   autoCapitalize="none"
                   spellCheck={false}
+                  maxLength={254}
                   required
                   disabled={loading}
-                  className="h-[64px] w-full rounded-[14px] border border-[#D9DEE5] bg-white pl-14 pr-5 text-[17px] text-[#111C27] outline-none transition-all placeholder:text-[#8491A3] focus:border-[#FF694F] focus:ring-4 focus:ring-[#FF694F]/10 disabled:cursor-not-allowed disabled:bg-[#F8F8F7]"
+                  aria-invalid={Boolean(error)}
+                  className="h-[58px] w-full rounded-[14px] border border-[#D9DEE5] bg-white pl-12 pr-4 text-base text-[#111C27] outline-none transition-all placeholder:text-[#8491A3] focus:border-[#FF694F] focus:ring-4 focus:ring-[#FF694F]/10 disabled:cursor-not-allowed disabled:bg-[#F8F8F7] sm:h-[64px] sm:pl-14 sm:pr-5 sm:text-[17px]"
                 />
               </div>
             </div>
 
-            {/* Password */}
+            {/* PASSWORD */}
 
             <div>
               <label
@@ -339,7 +353,8 @@ export default function BuyerSignup() {
 
               <div className="relative">
                 <LockKeyhole
-                  className="absolute left-5 top-1/2 h-5 w-5 -translate-y-1/2 text-[#FF694F]"
+                  aria-hidden="true"
+                  className="absolute left-4 top-1/2 h-5 w-5 -translate-y-1/2 text-[#FF694F] sm:left-5"
                   strokeWidth={2}
                 />
 
@@ -354,26 +369,22 @@ export default function BuyerSignup() {
                   placeholder="Create a password"
                   value={password}
                   onChange={(event) => {
-                    setPassword(
-                      event.target.value
-                    );
-
-                    if (error) {
-                      setError("");
-                    }
+                    setPassword(event.target.value);
+                    clearError();
                   }}
                   autoComplete="new-password"
+                  minLength={8}
                   required
                   disabled={loading}
-                  className="h-[64px] w-full rounded-[14px] border border-[#D9DEE5] bg-white pl-14 pr-14 text-[17px] text-[#111C27] outline-none transition-all placeholder:text-[#8491A3] focus:border-[#FF694F] focus:ring-4 focus:ring-[#FF694F]/10 disabled:cursor-not-allowed disabled:bg-[#F8F8F7]"
+                  aria-invalid={Boolean(error)}
+                  className="h-[58px] w-full rounded-[14px] border border-[#D9DEE5] bg-white pl-12 pr-12 text-base text-[#111C27] outline-none transition-all placeholder:text-[#8491A3] focus:border-[#FF694F] focus:ring-4 focus:ring-[#FF694F]/10 disabled:cursor-not-allowed disabled:bg-[#F8F8F7] sm:h-[64px] sm:pl-14 sm:pr-14 sm:text-[17px]"
                 />
 
                 <button
                   type="button"
                   onClick={() =>
                     setShowPassword(
-                      (current) =>
-                        !current
+                      (current) => !current
                     )
                   }
                   disabled={loading}
@@ -382,7 +393,8 @@ export default function BuyerSignup() {
                       ? "Hide password"
                       : "Show password"
                   }
-                  className="absolute right-5 top-1/2 -translate-y-1/2 text-[#718096] transition-colors hover:text-[#111C27] disabled:cursor-not-allowed disabled:opacity-50"
+                  aria-pressed={showPassword}
+                  className="absolute right-4 top-1/2 -translate-y-1/2 rounded-md p-1 text-[#718096] transition-colors hover:text-[#111C27] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#FF694F] disabled:cursor-not-allowed disabled:opacity-50 sm:right-5"
                 >
                   {showPassword ? (
                     <EyeOff
@@ -398,12 +410,12 @@ export default function BuyerSignup() {
                 </button>
               </div>
 
-              <p className="mt-2 text-[12px] text-[#8491A3]">
+              <p className="mt-2 text-xs text-[#8491A3]">
                 Use at least 8 characters.
               </p>
             </div>
 
-            {/* Confirm password */}
+            {/* CONFIRM PASSWORD */}
 
             <div>
               <label
@@ -415,7 +427,8 @@ export default function BuyerSignup() {
 
               <div className="relative">
                 <LockKeyhole
-                  className="absolute left-5 top-1/2 h-5 w-5 -translate-y-1/2 text-[#FF694F]"
+                  aria-hidden="true"
+                  className="absolute left-4 top-1/2 h-5 w-5 -translate-y-1/2 text-[#FF694F] sm:left-5"
                   strokeWidth={2}
                 />
 
@@ -428,39 +441,36 @@ export default function BuyerSignup() {
                       : "password"
                   }
                   placeholder="Enter your password again"
-                  value={
-                    confirmPassword
-                  }
+                  value={confirmPassword}
                   onChange={(event) => {
                     setConfirmPassword(
                       event.target.value
                     );
 
-                    if (error) {
-                      setError("");
-                    }
+                    clearError();
                   }}
                   autoComplete="new-password"
                   required
                   disabled={loading}
-                  className="h-[64px] w-full rounded-[14px] border border-[#D9DEE5] bg-white pl-14 pr-14 text-[17px] text-[#111C27] outline-none transition-all placeholder:text-[#8491A3] focus:border-[#FF694F] focus:ring-4 focus:ring-[#FF694F]/10 disabled:cursor-not-allowed disabled:bg-[#F8F8F7]"
+                  aria-invalid={Boolean(error)}
+                  className="h-[58px] w-full rounded-[14px] border border-[#D9DEE5] bg-white pl-12 pr-12 text-base text-[#111C27] outline-none transition-all placeholder:text-[#8491A3] focus:border-[#FF694F] focus:ring-4 focus:ring-[#FF694F]/10 disabled:cursor-not-allowed disabled:bg-[#F8F8F7] sm:h-[64px] sm:pl-14 sm:pr-14 sm:text-[17px]"
                 />
 
                 <button
                   type="button"
                   onClick={() =>
                     setShowConfirmPassword(
-                      (current) =>
-                        !current
+                      (current) => !current
                     )
                   }
                   disabled={loading}
                   aria-label={
                     showConfirmPassword
-                      ? "Hide password"
-                      : "Show password"
+                      ? "Hide confirmation password"
+                      : "Show confirmation password"
                   }
-                  className="absolute right-5 top-1/2 -translate-y-1/2 text-[#718096] transition-colors hover:text-[#111C27] disabled:cursor-not-allowed disabled:opacity-50"
+                  aria-pressed={showConfirmPassword}
+                  className="absolute right-4 top-1/2 -translate-y-1/2 rounded-md p-1 text-[#718096] transition-colors hover:text-[#111C27] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#FF694F] disabled:cursor-not-allowed disabled:opacity-50 sm:right-5"
                 >
                   {showConfirmPassword ? (
                     <EyeOff
@@ -477,13 +487,13 @@ export default function BuyerSignup() {
               </div>
             </div>
 
-            {/* Error */}
+            {/* ERROR MESSAGE */}
 
             {error && (
               <div
                 role="alert"
                 aria-live="polite"
-                className="flex items-center gap-4 rounded-[14px] border border-[#FFB8B0] bg-[#FFF0EE] px-5 py-4"
+                className="flex items-start gap-3 rounded-[14px] border border-[#FFB8B0] bg-[#FFF0EE] px-4 py-4 sm:gap-4 sm:px-5"
               >
                 <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[#EF3F3F] text-white">
                   <CircleAlert
@@ -492,18 +502,18 @@ export default function BuyerSignup() {
                   />
                 </div>
 
-                <p className="text-[15px] text-[#E33B22] sm:text-[16px]">
+                <p className="min-w-0 flex-1 break-words pt-1 text-sm text-[#E33B22] sm:text-base">
                   {error}
                 </p>
               </div>
             )}
 
-            {/* Create account button */}
+            {/* CREATE ACCOUNT BUTTON */}
 
             <button
               type="submit"
               disabled={loading}
-              className="flex h-[66px] w-full items-center justify-center gap-3 rounded-[14px] bg-[#FF563F] text-[18px] font-semibold text-white shadow-[0_10px_25px_rgba(255,86,63,0.22)] transition-all hover:bg-[#F44D37] hover:shadow-[0_14px_30px_rgba(255,86,63,0.28)] active:scale-[0.99] disabled:cursor-not-allowed disabled:opacity-60 sm:text-[19px]"
+              className="flex min-h-[60px] w-full items-center justify-center gap-3 rounded-[14px] bg-[#FF563F] px-4 py-3 text-base font-semibold text-white shadow-[0_10px_25px_rgba(255,86,63,0.22)] transition-all hover:bg-[#F44D37] hover:shadow-[0_14px_30px_rgba(255,86,63,0.28)] active:scale-[0.99] focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-[#FF694F]/30 disabled:cursor-not-allowed disabled:opacity-60 sm:min-h-[66px] sm:text-[19px]"
             >
               {loading ? (
                 <>
@@ -527,30 +537,31 @@ export default function BuyerSignup() {
             </button>
           </form>
 
-          {/* Login */}
+          {/* LOGIN LINK */}
 
           <div className="mt-7 text-center sm:mt-8">
-            <p className="text-[14px] text-[#718096] sm:text-[15px]">
+            <p className="text-sm text-[#718096] sm:text-[15px]">
               Already have a buyer account?{" "}
+
               <Link
                 href="/buyer/login"
-                className="font-semibold text-[#FF563F] transition-colors hover:text-[#F44D37]"
+                className="font-semibold text-[#FF563F] transition-colors hover:text-[#F44D37] focus-visible:rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#FF694F]"
               >
                 Log in
               </Link>
             </p>
           </div>
 
-          {/* Footer */}
+          {/* FOOTER */}
 
-          <div className="mt-8 flex items-center gap-4 sm:mt-10 sm:gap-5">
-            <div className="h-px flex-1 bg-[#D9DEE5]" />
+          <div className="mt-8 flex items-center gap-3 sm:mt-10 sm:gap-5">
+            <div className="h-px min-w-0 flex-1 bg-[#D9DEE5]" />
 
-            <p className="whitespace-nowrap text-[12px] text-[#718096] sm:text-[15px]">
+            <p className="text-center text-[11px] text-[#718096] sm:whitespace-nowrap sm:text-[15px]">
               Powered by your local marketplace
             </p>
 
-            <div className="h-px flex-1 bg-[#D9DEE5]" />
+            <div className="h-px min-w-0 flex-1 bg-[#D9DEE5]" />
           </div>
         </div>
       </section>

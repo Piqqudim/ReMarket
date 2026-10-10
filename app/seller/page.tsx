@@ -5,11 +5,14 @@ import {
   useState,
   type FormEvent,
 } from "react";
+
 import Link from "next/link";
 import { signOut } from "next-auth/react";
 import { useRouter } from "next/navigation";
+
 import ProductImageUpload from "@/components/ProductImageUpload";
 import NotificationBell from "@/components/NotificationBell";
+
 import {
   Store,
   MapPin,
@@ -86,8 +89,7 @@ function getSocialValue(
 ): string {
   return (
     links?.find(
-      (link) =>
-        link.platform === platform
+      (link) => link.platform === platform
     )?.handle ?? ""
   );
 }
@@ -97,33 +99,15 @@ function getSocialValues(
   fallbackPhone?: string | null
 ): Record<SocialPlatform, string> {
   return {
-    WHATSAPP: getSocialValue(
-      links,
-      "WHATSAPP"
-    ),
-    INSTAGRAM: getSocialValue(
-      links,
-      "INSTAGRAM"
-    ),
-    TIKTOK: getSocialValue(
-      links,
-      "TIKTOK"
-    ),
-    FACEBOOK: getSocialValue(
-      links,
-      "FACEBOOK"
-    ),
+    WHATSAPP: getSocialValue(links, "WHATSAPP"),
+    INSTAGRAM: getSocialValue(links, "INSTAGRAM"),
+    TIKTOK: getSocialValue(links, "TIKTOK"),
+    FACEBOOK: getSocialValue(links, "FACEBOOK"),
     PHONE:
-      getSocialValue(
-        links,
-        "PHONE"
-      ) ||
+      getSocialValue(links, "PHONE") ||
       fallbackPhone?.trim() ||
       "",
-    DIRECTIONS: getSocialValue(
-      links,
-      "DIRECTIONS"
-    ),
+    DIRECTIONS: getSocialValue(links, "DIRECTIONS"),
   };
 }
 
@@ -135,9 +119,7 @@ function buildSocialLinks(
       platform: value,
       handle: values[value].trim(),
     }))
-    .filter(
-      (item) => item.handle
-    );
+    .filter((item) => item.handle);
 }
 
 const LAGOS_AREA_GROUPS = [
@@ -409,46 +391,43 @@ const LAGOS_AREA_GROUPS = [
 
 const DEFAULT_COUNTRY = "Nigeria";
 
-function isKnownLagosArea(
-  area: string
-): boolean {
-  const normalized =
-    area.trim().toLowerCase();
+function isKnownLagosArea(area: string): boolean {
+  const normalized = area.trim().toLowerCase();
 
   if (!normalized) {
     return false;
   }
 
-  return LAGOS_AREA_GROUPS.some(
-    (group) =>
-      group.areas.some(
-        (item) =>
-          item.toLowerCase() ===
-          normalized
-      )
+  return LAGOS_AREA_GROUPS.some((group) =>
+    group.areas.some(
+      (item) => item.toLowerCase() === normalized
+    )
   );
 }
 
-function looksLikeHouseNumber(
-  value: string
-): boolean {
-  const normalized =
-    value.trim().toLowerCase();
+function looksLikeHouseNumber(value: string): boolean {
+  const normalized = value.trim().toLowerCase();
 
   if (!normalized) {
     return false;
   }
 
   return (
-    /^\d+[a-z]?\b/.test(
-      normalized
-    ) ||
+    /^\d+[a-z]?\b/.test(normalized) ||
     /^(shop|house|building|block|plot|suite|unit|flat)\b/.test(
       normalized
     )
   );
 }
 
+/**
+ * Parse the address order used by ReMarket:
+ *
+ * House number, Street, Area, City, Nigeria
+ *
+ * Also supports older addresses where no house number
+ * was stored.
+ */
 function parseLocationAddress(
   address: string | null | undefined,
   area: string
@@ -464,9 +443,7 @@ function parseLocationAddress(
   };
 
   const trimmedAddress =
-    typeof address === "string"
-      ? address.trim()
-      : "";
+    typeof address === "string" ? address.trim() : "";
 
   if (!trimmedAddress) {
     return fallback;
@@ -482,101 +459,72 @@ function parseLocationAddress(
   }
 
   const withoutCountry =
-    parts[
-      parts.length - 1
-    ].toLowerCase() ===
+    parts[parts.length - 1].toLowerCase() ===
     DEFAULT_COUNTRY.toLowerCase()
       ? parts.slice(0, -1)
       : parts;
 
-  const normalizedArea =
-    area.trim().toLowerCase();
+  const normalizedArea = area.trim().toLowerCase();
 
-  const areaIndex =
-    normalizedArea
-      ? withoutCountry.findLastIndex(
-          (part) =>
-            part.toLowerCase() ===
-            normalizedArea
-        )
-      : -1;
+  let areaIndex = -1;
+
+  // Avoid requiring the ES2023 Array.findLastIndex type.
+  if (normalizedArea) {
+    for (
+      let index = 0;
+      index < withoutCountry.length;
+      index += 1
+    ) {
+      if (
+        withoutCountry[index].toLowerCase() ===
+        normalizedArea
+      ) {
+        areaIndex = index;
+      }
+    }
+  }
 
   if (areaIndex < 0) {
     return {
       houseNumber: "",
-      street:
-        withoutCountry.join(", "),
+      street: withoutCountry.join(", "),
       city: "",
     };
   }
 
-  const beforeArea =
-    withoutCountry.slice(
-      0,
-      areaIndex
-    );
+  const beforeArea = withoutCountry.slice(0, areaIndex);
+  const afterArea = withoutCountry.slice(areaIndex + 1);
 
-  const afterArea =
-    withoutCountry.slice(
-      areaIndex + 1
-    );
-
-  if (afterArea.length > 0) {
-    return {
-      houseNumber: "",
-      street:
-        beforeArea.join(", "),
-      city:
-        afterArea[0] ?? "",
-    };
-  }
+  const city = afterArea.join(", ");
 
   if (beforeArea.length === 0) {
-    return fallback;
+    return {
+      houseNumber: "",
+      street: "",
+      city,
+    };
   }
 
   if (beforeArea.length === 1) {
     return {
       houseNumber: "",
       street: beforeArea[0],
-      city: "",
+      city,
     };
   }
 
-  if (beforeArea.length === 2) {
-    const [first, second] =
-      beforeArea;
-
-    if (
-      looksLikeHouseNumber(first)
-    ) {
-      return {
-        houseNumber: first,
-        street: second,
-        city: "",
-      };
-    }
-
+  if (looksLikeHouseNumber(beforeArea[0])) {
     return {
-      houseNumber: "",
-      street: first,
-      city: second,
+      houseNumber: beforeArea[0],
+      street: beforeArea.slice(1).join(", "),
+      city,
     };
   }
 
   return {
-    houseNumber:
-      beforeArea
-        .slice(0, -2)
-        .join(", "),
-    street:
-      beforeArea[
-        beforeArea.length - 2
-      ],
-    city:
-      beforeArea[
-        beforeArea.length - 1
-      ],
+    houseNumber: "",
+    street: beforeArea.join(", "),
+    city,
   };
 }
 
@@ -622,9 +570,7 @@ type SellerProduct = {
     | "INACTIVE"
     | "PENDING";
   deletedAt: string | null;
-  category:
-    | SellerCategory
-    | null;
+  category: SellerCategory | null;
 };
 
 type SellerBusiness = {
@@ -734,198 +680,153 @@ const INITIAL_PRODUCT_FORM: ProductForm = {
   images: [],
 };
 
+async function readJsonSafely<T>(
+  response: Response
+): Promise<T | null> {
+  try {
+    return (await response.json()) as T;
+  } catch {
+    return null;
+  }
+}
+
+function getResponseError(
+  data: unknown,
+  fallback: string
+): string {
+  if (
+    typeof data === "object" &&
+    data !== null &&
+    "error" in data &&
+    typeof data.error === "string"
+  ) {
+    return data.error;
+  }
+
+  return fallback;
+}
+
 export default function SellerDashboard() {
   const router = useRouter();
 
   const [business, setBusiness] =
-    useState<SellerBusiness | null>(
-      null
-    );
+    useState<SellerBusiness | null>(null);
 
   const [categories, setCategories] =
     useState<SellerCategory[]>([]);
 
-  const [
-    deletionRequest,
-    setDeletionRequest,
-  ] =
-    useState<DeletionRequest | null>(
-      null
-    );
+  const [deletionRequest, setDeletionRequest] =
+    useState<DeletionRequest | null>(null);
 
-  const [loading, setLoading] =
-    useState(true);
+  const [loading, setLoading] = useState(true);
+  const [dashboardLoadFailed, setDashboardLoadFailed] =
+    useState(false);
+  const [loadAttempt, setLoadAttempt] = useState(0);
+  const [redirecting, setRedirecting] = useState(false);
 
-  const [
-    savingBusiness,
-    setSavingBusiness,
-  ] = useState(false);
-
-  const [
-    creatingProduct,
-    setCreatingProduct,
-  ] = useState(false);
-
-  const [
-    updatingProduct,
-    setUpdatingProduct,
-  ] = useState(false);
-
-  const [
-    deletingProductId,
-    setDeletingProductId,
-  ] = useState<string | null>(null);
-
+  const [savingBusiness, setSavingBusiness] =
+    useState(false);
+  const [creatingProduct, setCreatingProduct] =
+    useState(false);
+  const [updatingProduct, setUpdatingProduct] =
+    useState(false);
+  const [deletingProductId, setDeletingProductId] =
+    useState<string | null>(null);
   const [
     submittingDeletionRequest,
     setSubmittingDeletionRequest,
   ] = useState(false);
 
-  const [
-    editingBusiness,
-    setEditingBusiness,
-  ] = useState(false);
+  const [editingBusiness, setEditingBusiness] =
+    useState(false);
+  const [showProductForm, setShowProductForm] =
+    useState(false);
+  const [editingProductId, setEditingProductId] =
+    useState<string | null>(null);
+  const [showDeletionForm, setShowDeletionForm] =
+    useState(false);
 
-  const [
-    showProductForm,
-    setShowProductForm,
-  ] = useState(false);
+  const [deletionReason, setDeletionReason] =
+    useState("");
+  const [categoryChanged, setCategoryChanged] =
+    useState(false);
 
-  const [
-    editingProductId,
-    setEditingProductId,
-  ] = useState<string | null>(null);
+  const [socialValues, setSocialValues] =
+    useState<Record<SocialPlatform, string>>({
+      WHATSAPP: "",
+      INSTAGRAM: "",
+      TIKTOK: "",
+      FACEBOOK: "",
+      PHONE: "",
+      DIRECTIONS: "",
+    });
 
-  const [
-    showDeletionForm,
-    setShowDeletionForm,
-  ] = useState(false);
-
-  const [
-    deletionReason,
-    setDeletionReason,
-  ] = useState("");
-
-  const [
-    categoryChanged,
-    setCategoryChanged,
-  ] = useState(false);
-
-  const [
-    socialValues,
-    setSocialValues,
-  ] = useState<
-    Record<SocialPlatform, string>
-  >({
-    WHATSAPP: "",
-    INSTAGRAM: "",
-    TIKTOK: "",
-    FACEBOOK: "",
-    PHONE: "",
-    DIRECTIONS: "",
-  });
-
-  const [
-    businessLatitude,
-    setBusinessLatitude,
-  ] = useState<string>("");
-
-  const [
-    businessLongitude,
-    setBusinessLongitude,
-  ] = useState<string>("");
-
-  const [
-    capturingLocation,
-    setCapturingLocation,
-  ] = useState(false);
-
-  const [
-    locationStatus,
-    setLocationStatus,
-  ] = useState("");
-
-  const [
-    locationError,
-    setLocationError,
-  ] = useState("");
-
-  const [error, setError] =
+  const [businessLatitude, setBusinessLatitude] =
+    useState("");
+  const [businessLongitude, setBusinessLongitude] =
+    useState("");
+  const [capturingLocation, setCapturingLocation] =
+    useState(false);
+  const [locationStatus, setLocationStatus] =
+    useState("");
+  const [locationError, setLocationError] =
     useState("");
 
-  const [success, setSuccess] =
-    useState("");
+  const [error, setError] = useState("");
+  const [success, setSuccess] = useState("");
 
-  const [
-    businessForm,
-    setBusinessForm,
-  ] = useState<BusinessForm>(
-    INITIAL_BUSINESS_FORM
-  );
+  const [businessForm, setBusinessForm] =
+    useState<BusinessForm>(INITIAL_BUSINESS_FORM);
 
-  const [
-    productForm,
-    setProductForm,
-  ] = useState<ProductForm>(
-    INITIAL_PRODUCT_FORM
-  );
+  const [productForm, setProductForm] =
+    useState<ProductForm>(INITIAL_PRODUCT_FORM);
+
+  // Exclude soft-deleted products from the seller's visible list
+  // and from the active-product limit.
+  const dashboardProducts =
+    business?.products?.filter(
+      (product) => !product.deletedAt
+    ) ?? [];
 
   const activeProductCount =
-    business?.products.filter(
-      (product) =>
-        product.status === "ACTIVE"
-    ).length ?? 0;
+    dashboardProducts.filter(
+      (product) => product.status === "ACTIVE"
+    ).length;
 
   const reachedProductLimit =
-    activeProductCount >=
-    MAX_ACTIVE_PRODUCTS;
+    activeProductCount >= MAX_ACTIVE_PRODUCTS;
 
-  const remainingProductSlots =
-    Math.max(
-      0,
-      MAX_ACTIVE_PRODUCTS -
-        activeProductCount
-    );
+  const remainingProductSlots = Math.max(
+    0,
+    MAX_ACTIVE_PRODUCTS - activeProductCount
+  );
 
   useEffect(() => {
     let cancelled = false;
 
     async function loadDashboard() {
+      setLoading(true);
+      setDashboardLoadFailed(false);
+      setRedirecting(false);
+      setError("");
+
       try {
-        const [
-          businessResponse,
-          categoriesResponse,
-          deletionRequestResponse,
-        ] = await Promise.all([
-          fetch(
-            "/api/seller/business",
-            {
-              cache: "no-store",
-            }
-          ),
-          fetch(
-            "/api/categories",
-            {
-              cache: "no-store",
-            }
-          ),
-          fetch(
-            "/api/seller/business/deletion-request",
-            {
-              cache: "no-store",
-            }
-          ),
-        ]);
+        const businessResponse = await fetch(
+          "/api/seller/business",
+          {
+            cache: "no-store",
+          }
+        );
 
         if (
-          businessResponse.status ===
-            401 ||
-          businessResponse.status ===
-            403
+          businessResponse.status === 401 ||
+          businessResponse.status === 403
         ) {
-          router.replace(
-            "/seller/login"
-          );
+          if (!cancelled) {
+            setRedirecting(true);
+            router.replace("/seller/login");
+          }
+
           return;
         }
 
@@ -936,7 +837,43 @@ export default function SellerDashboard() {
         }
 
         const businessData =
-          await businessResponse.json();
+          await readJsonSafely<{
+            business?: SellerBusiness | null;
+          }>(businessResponse);
+
+        if (
+          !businessData ||
+          !Object.prototype.hasOwnProperty.call(
+            businessData,
+            "business"
+          )
+        ) {
+          throw new Error(
+            "The seller business response was invalid."
+          );
+        }
+
+        const loadedBusiness =
+          businessData.business ?? null;
+
+        // Categories and deletion status are secondary data.
+        // A failed secondary request should not prevent access
+        // to the main seller dashboard.
+        const [
+          categoriesResponse,
+          deletionRequestResponse,
+        ] = await Promise.all([
+          fetch("/api/categories", {
+            cache: "no-store",
+          }).catch(() => null),
+
+          fetch(
+            "/api/seller/business/deletion-request",
+            {
+              cache: "no-store",
+            }
+          ).catch(() => null),
+        ]);
 
         let categoryData:
           | {
@@ -944,60 +881,47 @@ export default function SellerDashboard() {
             }
           | null = null;
 
-        if (
-          categoriesResponse.ok
-        ) {
+        if (categoriesResponse?.ok) {
           categoryData =
-            await categoriesResponse.json();
+            await readJsonSafely<{
+              categories?: SellerCategory[];
+            }>(categoriesResponse);
         }
 
         let deletionData:
           | {
-              request?:
-                | DeletionRequest
-                | null;
+              request?: DeletionRequest | null;
             }
           | null = null;
 
-        if (
-          deletionRequestResponse.ok
-        ) {
+        if (deletionRequestResponse?.ok) {
           deletionData =
-            await deletionRequestResponse.json();
+            await readJsonSafely<{
+              request?: DeletionRequest | null;
+            }>(deletionRequestResponse);
         }
 
         if (cancelled) {
           return;
         }
 
-        const loadedBusiness =
-          businessData.business ??
-          null;
-
-        setBusiness(
-          loadedBusiness
-        );
+        setBusiness(loadedBusiness);
 
         setCategories(
-          Array.isArray(
-            categoryData?.categories
-          )
+          Array.isArray(categoryData?.categories)
             ? categoryData.categories
             : []
         );
 
         setDeletionRequest(
-          deletionData?.request ??
-            null
+          deletionData?.request ?? null
         );
 
         if (loadedBusiness) {
           const parsedLocation =
             parseLocationAddress(
-              loadedBusiness.location
-                ?.address,
-              loadedBusiness.location
-                ?.area ?? ""
+              loadedBusiness.location?.address,
+              loadedBusiness.location?.area ?? ""
             );
 
           setSocialValues(
@@ -1008,66 +932,42 @@ export default function SellerDashboard() {
           );
 
           setBusinessForm({
-            name:
-              loadedBusiness.name ??
-              "",
-            ownerName:
-              loadedBusiness.ownerName ??
-              "",
-            description:
-              loadedBusiness.description ??
-              "",
-            area:
-              loadedBusiness.location
-                ?.area ?? "",
-            houseNumber:
-              parsedLocation.houseNumber,
-            street:
-              parsedLocation.street,
-            city:
-              parsedLocation.city,
+            name: loadedBusiness.name ?? "",
+            ownerName: loadedBusiness.ownerName ?? "",
+            description: loadedBusiness.description ?? "",
+            area: loadedBusiness.location?.area ?? "",
+            houseNumber: parsedLocation.houseNumber,
+            street: parsedLocation.street,
+            city: parsedLocation.city,
             categoryId:
-              loadedBusiness
-                .categories?.[0]
-                ?.category?.id ?? "",
+              loadedBusiness.categories?.[0]?.category?.id ??
+              "",
             availability:
-              loadedBusiness.availability ??
-              "ASK_SELLER",
+              loadedBusiness.availability ?? "ASK_SELLER",
             priceMin:
-              loadedBusiness.priceMin !==
-              null
-                ? String(
-                    loadedBusiness.priceMin
-                  )
+              loadedBusiness.priceMin !== null
+                ? String(loadedBusiness.priceMin)
                 : "",
             priceMax:
-              loadedBusiness.priceMax !==
-              null
-                ? String(
-                    loadedBusiness.priceMax
-                  )
+              loadedBusiness.priceMax !== null
+                ? String(loadedBusiness.priceMax)
                 : "",
           });
 
           setBusinessLatitude(
-            loadedBusiness.location
-              ?.lat != null
-              ? String(
-                  loadedBusiness.location.lat
-                )
+            loadedBusiness.location?.lat != null
+              ? String(loadedBusiness.location.lat)
               : ""
           );
 
           setBusinessLongitude(
-            loadedBusiness.location
-              ?.long != null
-              ? String(
-                  loadedBusiness.location
-                    .long
-                )
+            loadedBusiness.location?.long != null
+              ? String(loadedBusiness.location.long)
               : ""
           );
         }
+
+        setDashboardLoadFailed(false);
       } catch (loadError) {
         console.error(
           "Seller dashboard load error:",
@@ -1076,8 +976,9 @@ export default function SellerDashboard() {
 
         if (!cancelled) {
           setError(
-            "Unable to load your seller dashboard."
+            "Unable to load your seller dashboard. Please try again."
           );
+          setDashboardLoadFailed(true);
         }
       } finally {
         if (!cancelled) {
@@ -1091,7 +992,7 @@ export default function SellerDashboard() {
     return () => {
       cancelled = true;
     };
-  }, [router]);
+  }, [router, loadAttempt]);
 
   function updateBusinessField<
     K extends keyof BusinessForm
@@ -1099,12 +1000,10 @@ export default function SellerDashboard() {
     field: K,
     value: BusinessForm[K]
   ) {
-    setBusinessForm(
-      (current) => ({
-        ...current,
-        [field]: value,
-      })
-    );
+    setBusinessForm((current) => ({
+      ...current,
+      [field]: value,
+    }));
 
     if (error) {
       setError("");
@@ -1131,12 +1030,10 @@ export default function SellerDashboard() {
     field: K,
     value: ProductForm[K]
   ) {
-    setProductForm(
-      (current) => ({
-        ...current,
-        [field]: value,
-      })
-    );
+    setProductForm((current) => ({
+      ...current,
+      [field]: value,
+    }));
 
     if (error) {
       setError("");
@@ -1151,12 +1048,10 @@ export default function SellerDashboard() {
     platform: SocialPlatform,
     value: string
   ) {
-    setSocialValues(
-      (current) => ({
-        ...current,
-        [platform]: value,
-      })
-    );
+    setSocialValues((current) => ({
+      ...current,
+      [platform]: value,
+    }));
 
     if (error) {
       setError("");
@@ -1169,20 +1064,14 @@ export default function SellerDashboard() {
 
   function getBusinessFormValues() {
     const priceMin =
-      businessForm.priceMin.trim() ===
-      ""
+      businessForm.priceMin.trim() === ""
         ? null
-        : Number(
-            businessForm.priceMin
-          );
+        : Number(businessForm.priceMin);
 
     const priceMax =
-      businessForm.priceMax.trim() ===
-      ""
+      businessForm.priceMax.trim() === ""
         ? null
-        : Number(
-            businessForm.priceMax
-          );
+        : Number(businessForm.priceMax);
 
     return {
       priceMin,
@@ -1191,16 +1080,12 @@ export default function SellerDashboard() {
   }
 
   function validateBusinessPrices() {
-    const {
-      priceMin,
-      priceMax,
-    } =
+    const { priceMin, priceMax } =
       getBusinessFormValues();
 
     if (
       priceMin !== null &&
-      (!Number.isInteger(priceMin) ||
-        priceMin < 0)
+      (!Number.isInteger(priceMin) || priceMin < 0)
     ) {
       setError(
         "Minimum price must be a valid whole number."
@@ -1210,8 +1095,7 @@ export default function SellerDashboard() {
 
     if (
       priceMax !== null &&
-      (!Number.isInteger(priceMax) ||
-        priceMax < 0)
+      (!Number.isInteger(priceMax) || priceMax < 0)
     ) {
       setError(
         "Maximum price must be a valid whole number."
@@ -1234,21 +1118,27 @@ export default function SellerDashboard() {
   }
 
   function validateBusinessLocation() {
-    const area =
-      businessForm.area.trim();
-
-    const street =
-      businessForm.street.trim();
+    const area = businessForm.area.trim();
+    const street = businessForm.street.trim();
 
     if (!area) {
-      setError(
-        "Business area is required."
-      );
+      setError("Business area is required.");
       return false;
     }
 
+    /*
+     * Preserve a legacy saved area when editing an existing
+     * business. New businesses must use an area from the list.
+     */
+    const currentSavedArea =
+      business?.location?.area?.trim().toLowerCase() ?? "";
+
+    const isCurrentSavedArea =
+      area.toLowerCase() === currentSavedArea;
+
     if (
-      !isKnownLagosArea(area)
+      !isKnownLagosArea(area) &&
+      !isCurrentSavedArea
     ) {
       setError(
         "Select a business area from the Lagos area list."
@@ -1264,40 +1154,27 @@ export default function SellerDashboard() {
     }
 
     const hasLatitude =
-      businessLatitude.trim() !==
-      "";
+      businessLatitude.trim() !== "";
 
     const hasLongitude =
-      businessLongitude.trim() !==
-      "";
+      businessLongitude.trim() !== "";
 
-    if (
-      hasLatitude !==
-      hasLongitude
-    ) {
+    if (hasLatitude !== hasLongitude) {
       setError(
         "Business coordinates must be captured as a complete location pair."
       );
       return false;
     }
 
-    if (
-      hasLatitude
-    ) {
+    if (hasLatitude) {
       const parsedLatitude =
-        Number(
-          businessLatitude
-        );
+        Number(businessLatitude);
 
       const parsedLongitude =
-        Number(
-          businessLongitude
-        );
+        Number(businessLongitude);
 
       if (
-        !Number.isFinite(
-          parsedLatitude
-        ) ||
+        !Number.isFinite(parsedLatitude) ||
         parsedLatitude < -90 ||
         parsedLatitude > 90
       ) {
@@ -1308,9 +1185,7 @@ export default function SellerDashboard() {
       }
 
       if (
-        !Number.isFinite(
-          parsedLongitude
-        ) ||
+        !Number.isFinite(parsedLongitude) ||
         parsedLongitude < -180 ||
         parsedLongitude > 180
       ) {
@@ -1349,51 +1224,35 @@ export default function SellerDashboard() {
 
     setBusinessForm({
       name: business.name ?? "",
-      ownerName:
-        business.ownerName ?? "",
-      description:
-        business.description ?? "",
-      area:
-        business.location?.area ?? "",
-      houseNumber:
-        parsedLocation.houseNumber,
-      street:
-        parsedLocation.street,
-      city:
-        parsedLocation.city,
+      ownerName: business.ownerName ?? "",
+      description: business.description ?? "",
+      area: business.location?.area ?? "",
+      houseNumber: parsedLocation.houseNumber,
+      street: parsedLocation.street,
+      city: parsedLocation.city,
       categoryId:
-        business.categories?.[0]
-          ?.category?.id ?? "",
+        business.categories?.[0]?.category?.id ?? "",
       availability:
-        business.availability ??
-        "ASK_SELLER",
+        business.availability ?? "ASK_SELLER",
       priceMin:
         business.priceMin !== null
-          ? String(
-              business.priceMin
-            )
+          ? String(business.priceMin)
           : "",
       priceMax:
         business.priceMax !== null
-          ? String(
-              business.priceMax
-            )
+          ? String(business.priceMax)
           : "",
     });
 
     setBusinessLatitude(
       business.location?.lat != null
-        ? String(
-            business.location.lat
-          )
+        ? String(business.location.lat)
         : ""
     );
 
     setBusinessLongitude(
       business.location?.long != null
-        ? String(
-            business.location.long
-          )
+        ? String(business.location.long)
         : ""
     );
 
@@ -1425,53 +1284,36 @@ export default function SellerDashboard() {
     );
 
     setBusinessForm({
-      name:
-        business.name ?? "",
-      ownerName:
-        business.ownerName ?? "",
-      description:
-        business.description ?? "",
-      area:
-        business.location?.area ?? "",
-      houseNumber:
-        parsedLocation.houseNumber,
-      street:
-        parsedLocation.street,
-      city:
-        parsedLocation.city,
+      name: business.name ?? "",
+      ownerName: business.ownerName ?? "",
+      description: business.description ?? "",
+      area: business.location?.area ?? "",
+      houseNumber: parsedLocation.houseNumber,
+      street: parsedLocation.street,
+      city: parsedLocation.city,
       categoryId:
-        business.categories?.[0]
-          ?.category?.id ?? "",
+        business.categories?.[0]?.category?.id ?? "",
       availability:
-        business.availability ??
-        "ASK_SELLER",
+        business.availability ?? "ASK_SELLER",
       priceMin:
         business.priceMin !== null
-          ? String(
-              business.priceMin
-            )
+          ? String(business.priceMin)
           : "",
       priceMax:
         business.priceMax !== null
-          ? String(
-              business.priceMax
-            )
+          ? String(business.priceMax)
           : "",
     });
 
     setBusinessLatitude(
       business.location?.lat != null
-        ? String(
-            business.location.lat
-          )
+        ? String(business.location.lat)
         : ""
     );
 
     setBusinessLongitude(
       business.location?.long != null
-        ? String(
-            business.location.long
-          )
+        ? String(business.location.long)
         : ""
     );
 
@@ -1490,8 +1332,7 @@ export default function SellerDashboard() {
     setLocationStatus("");
 
     if (
-      typeof window ===
-        "undefined" ||
+      typeof window === "undefined" ||
       !navigator.geolocation
     ) {
       setLocationError(
@@ -1504,59 +1345,41 @@ export default function SellerDashboard() {
 
     navigator.geolocation.getCurrentPosition(
       (position) => {
-        const latitude =
-          position.coords.latitude;
-
-        const longitude =
-          position.coords.longitude;
+        const latitude = position.coords.latitude;
+        const longitude = position.coords.longitude;
 
         if (
-          !Number.isFinite(
-            latitude
-          ) ||
+          !Number.isFinite(latitude) ||
           latitude < -90 ||
           latitude > 90
         ) {
           setLocationError(
             "The device returned an invalid latitude."
           );
-          setCapturingLocation(
-            false
-          );
+          setCapturingLocation(false);
           return;
         }
 
         if (
-          !Number.isFinite(
-            longitude
-          ) ||
+          !Number.isFinite(longitude) ||
           longitude < -180 ||
           longitude > 180
         ) {
           setLocationError(
             "The device returned an invalid longitude."
           );
-          setCapturingLocation(
-            false
-          );
+          setCapturingLocation(false);
           return;
         }
 
-        setBusinessLatitude(
-          String(latitude)
-        );
-
-        setBusinessLongitude(
-          String(longitude)
-        );
+        setBusinessLatitude(String(latitude));
+        setBusinessLongitude(String(longitude));
 
         setLocationStatus(
           "Business location captured from this device."
         );
 
-        setCapturingLocation(
-          false
-        );
+        setCapturingLocation(false);
       },
       (geolocationError) => {
         console.error(
@@ -1567,9 +1390,7 @@ export default function SellerDashboard() {
         let message =
           "Unable to capture the business location.";
 
-        switch (
-          geolocationError.code
-        ) {
+        switch (geolocationError.code) {
           case 1:
             message =
               "Location permission was denied. Allow location access and try again.";
@@ -1587,9 +1408,7 @@ export default function SellerDashboard() {
         }
 
         setLocationError(message);
-        setCapturingLocation(
-          false
-        );
+        setCapturingLocation(false);
       },
       {
         enableHighAccuracy: true,
@@ -1600,29 +1419,19 @@ export default function SellerDashboard() {
   }
 
   function buildBusinessLocationPayload() {
-    const latitude =
-      businessLatitude.trim()
-        ? Number(
-            businessLatitude
-          )
-        : null;
+    const latitude = businessLatitude.trim()
+      ? Number(businessLatitude)
+      : null;
 
-    const longitude =
-      businessLongitude.trim()
-        ? Number(
-            businessLongitude
-          )
-        : null;
+    const longitude = businessLongitude.trim()
+      ? Number(businessLongitude)
+      : null;
 
     return {
-      area:
-        businessForm.area.trim(),
-      houseNumber:
-        businessForm.houseNumber.trim(),
-      street:
-        businessForm.street.trim(),
-      city:
-        businessForm.city.trim(),
+      area: businessForm.area.trim(),
+      houseNumber: businessForm.houseNumber.trim(),
+      street: businessForm.street.trim(),
+      city: businessForm.city.trim(),
       lat: latitude,
       long: longitude,
     };
@@ -1640,22 +1449,15 @@ export default function SellerDashboard() {
     setError("");
     setSuccess("");
 
-    if (
-      !validateBusinessLocation()
-    ) {
+    if (!validateBusinessLocation()) {
       return;
     }
 
-    if (
-      !validateBusinessPrices()
-    ) {
+    if (!validateBusinessPrices()) {
       return;
     }
 
-    const {
-      priceMin,
-      priceMax,
-    } =
+    const { priceMin, priceMax } =
       getBusinessFormValues();
 
     const locationPayload =
@@ -1664,145 +1466,110 @@ export default function SellerDashboard() {
     setSavingBusiness(true);
 
     try {
-      const response =
-        await fetch(
-          "/api/seller/business",
-          {
-            method: "POST",
-            headers: {
-              "Content-Type":
-                "application/json",
-            },
-            body: JSON.stringify({
-              name: businessForm.name,
-              ownerName:
-                businessForm.ownerName,
-              description:
-                businessForm.description,
-              ...locationPayload,
-              socialLinks:
-                buildSocialLinks(
-                  socialValues
-                ),
-              categoryIds:
-                businessForm.categoryId
-                  ? [
-                      businessForm.categoryId,
-                    ]
-                  : [],
-              availability:
-                businessForm.availability,
-              priceMin,
-              priceMax,
-            }),
-          }
-        );
+      const response = await fetch(
+        "/api/seller/business",
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            name: businessForm.name,
+            ownerName: businessForm.ownerName,
+            description: businessForm.description,
+            ...locationPayload,
+            socialLinks: buildSocialLinks(socialValues),
+            categoryIds: businessForm.categoryId
+              ? [businessForm.categoryId]
+              : [],
+            availability: businessForm.availability,
+            priceMin,
+            priceMax,
+          }),
+        }
+      );
 
       const data =
-        await response.json();
+        await readJsonSafely<{
+          business?: SellerBusiness | null;
+          error?: unknown;
+        }>(response);
 
       if (
-        response.status ===
-          401 ||
-        response.status ===
-          403
+        response.status === 401 ||
+        response.status === 403
       ) {
-        router.replace(
-          "/seller/login"
-        );
+        router.replace("/seller/login");
         return;
       }
 
       if (!response.ok) {
         setError(
-          data?.error ??
+          getResponseError(
+            data,
             "Unable to create your business."
+          )
         );
         return;
       }
 
       const createdBusiness =
-        data.business ?? null;
+        data?.business ?? null;
 
-      setBusiness(
-        createdBusiness
+      if (!createdBusiness) {
+        setError(
+          "The business was submitted, but the server did not return the created business. Refresh the dashboard before trying again."
+        );
+        return;
+      }
+
+      setBusiness(createdBusiness);
+
+      const parsedLocation =
+        parseLocationAddress(
+          createdBusiness.location?.address,
+          createdBusiness.location?.area ?? ""
+        );
+
+      setBusinessLatitude(
+        createdBusiness.location?.lat != null
+          ? String(createdBusiness.location.lat)
+          : ""
       );
 
-      if (createdBusiness) {
-        const parsedLocation =
-          parseLocationAddress(
-            createdBusiness.location
-              ?.address,
-            createdBusiness.location
-              ?.area ?? ""
-          );
+      setBusinessLongitude(
+        createdBusiness.location?.long != null
+          ? String(createdBusiness.location.long)
+          : ""
+      );
 
-        setBusinessLatitude(
-          createdBusiness.location
-            ?.lat != null
-            ? String(
-                createdBusiness
-                  .location.lat
-              )
-            : ""
-        );
-
-        setBusinessLongitude(
-          createdBusiness.location
-            ?.long != null
-            ? String(
-                createdBusiness
-                  .location.long
-              )
-            : ""
-        );
-
-        setBusinessForm({
-          name:
-            createdBusiness.name ??
-            "",
-          ownerName:
-            createdBusiness.ownerName ??
-            "",
-          description:
-            createdBusiness.description ??
-            "",
-          area:
-            createdBusiness.location
-              ?.area ?? "",
-          houseNumber:
-            parsedLocation.houseNumber,
-          street:
-            parsedLocation.street,
-          city:
-            parsedLocation.city,
-          categoryId:
-            createdBusiness
-              .categories?.[0]
-              ?.category?.id ?? "",
-          availability:
-            createdBusiness.availability ??
-            "ASK_SELLER",
-          priceMin:
-            createdBusiness.priceMin !==
-            null
-              ? String(
-                  createdBusiness.priceMin
-                )
-              : "",
-          priceMax:
-            createdBusiness.priceMax !==
-            null
-              ? String(
-                  createdBusiness.priceMax
-                )
-              : "",
-        });
-      }
+      setBusinessForm({
+        name: createdBusiness.name ?? "",
+        ownerName: createdBusiness.ownerName ?? "",
+        description: createdBusiness.description ?? "",
+        area: createdBusiness.location?.area ?? "",
+        houseNumber: parsedLocation.houseNumber,
+        street: parsedLocation.street,
+        city: parsedLocation.city,
+        categoryId:
+          createdBusiness.categories?.[0]?.category?.id ??
+          "",
+        availability:
+          createdBusiness.availability ?? "ASK_SELLER",
+        priceMin:
+          createdBusiness.priceMin !== null
+            ? String(createdBusiness.priceMin)
+            : "",
+        priceMax:
+          createdBusiness.priceMax !== null
+            ? String(createdBusiness.priceMax)
+            : "",
+      });
 
       setSocialValues(
         getSocialValues(
-          createdBusiness?.socialLinks
+          createdBusiness.socialLinks,
+          createdBusiness.phone
         )
       );
 
@@ -1827,36 +1594,26 @@ export default function SellerDashboard() {
   }
 
   async function updateBusiness(
-    event: React.SubmitEvent<HTMLFormElement>
+    event: FormEvent<HTMLFormElement>
   ) {
     event.preventDefault();
 
-    if (
-      savingBusiness ||
-      !business
-    ) {
+    if (savingBusiness || !business) {
       return;
     }
 
     setError("");
     setSuccess("");
 
-    if (
-      !validateBusinessLocation()
-    ) {
+    if (!validateBusinessLocation()) {
       return;
     }
 
-    if (
-      !validateBusinessPrices()
-    ) {
+    if (!validateBusinessPrices()) {
       return;
     }
 
-    const {
-      priceMin,
-      priceMax,
-    } =
+    const { priceMin, priceMax } =
       getBusinessFormValues();
 
     const locationPayload =
@@ -1865,132 +1622,102 @@ export default function SellerDashboard() {
     setSavingBusiness(true);
 
     try {
-      const body: Record<
-        string,
-        unknown
-      > = {
-        name:
-          businessForm.name,
-        ownerName:
-          businessForm.ownerName,
-        description:
-          businessForm.description,
+      const body: Record<string, unknown> = {
+        name: businessForm.name,
+        ownerName: businessForm.ownerName,
+        description: businessForm.description,
         ...locationPayload,
-        socialLinks:
-          buildSocialLinks(
-            socialValues
-          ),
-        availability:
-          businessForm.availability,
+        socialLinks: buildSocialLinks(socialValues),
+        availability: businessForm.availability,
         priceMin,
         priceMax,
       };
 
       if (categoryChanged) {
-        body.categoryIds =
-          businessForm.categoryId
-            ? [
-                businessForm.categoryId,
-              ]
-            : [];
+        body.categoryIds = businessForm.categoryId
+          ? [businessForm.categoryId]
+          : [];
       }
 
-      const response =
-        await fetch(
-          "/api/seller/business",
-          {
-            method: "PATCH",
-            headers: {
-              "Content-Type":
-                "application/json",
-            },
-            body: JSON.stringify(
-              body
-            ),
-          }
-        );
+      const response = await fetch(
+        "/api/seller/business",
+        {
+          method: "PATCH",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify(body),
+        }
+      );
 
       const data =
-        await response.json();
+        await readJsonSafely<{
+          business?: SellerBusiness | null;
+          error?: unknown;
+        }>(response);
 
       if (
-        response.status ===
-          401 ||
-        response.status ===
-          403
+        response.status === 401 ||
+        response.status === 403
       ) {
-        router.replace(
-          "/seller/login"
-        );
+        router.replace("/seller/login");
         return;
       }
 
       if (!response.ok) {
         setError(
-          data?.error ??
+          getResponseError(
+            data,
             "Unable to update your business."
+          )
         );
         return;
       }
 
       const updatedBusiness =
-        data.business ?? null;
+        data?.business ?? null;
 
-      setBusiness(
-        updatedBusiness
+      if (!updatedBusiness) {
+        setError(
+          "The server did not return the updated business. Refresh the dashboard to verify your changes."
+        );
+        return;
+      }
+
+      setBusiness(updatedBusiness);
+
+      const parsedLocation =
+        parseLocationAddress(
+          updatedBusiness.location?.address,
+          updatedBusiness.location?.area ?? ""
+        );
+
+      setBusinessForm((current) => ({
+        ...current,
+        area: updatedBusiness.location?.area ?? "",
+        houseNumber: parsedLocation.houseNumber,
+        street: parsedLocation.street,
+        city: parsedLocation.city,
+      }));
+
+      setSocialValues(
+        getSocialValues(
+          updatedBusiness.socialLinks,
+          updatedBusiness.phone
+        )
       );
 
-      if (updatedBusiness) {
-        const parsedLocation =
-          parseLocationAddress(
-            updatedBusiness.location
-              ?.address,
-            updatedBusiness.location
-              ?.area ?? ""
-          );
+      setBusinessLatitude(
+        updatedBusiness.location?.lat != null
+          ? String(updatedBusiness.location.lat)
+          : ""
+      );
 
-        setBusinessForm(
-          (current) => ({
-            ...current,
-            area:
-              updatedBusiness
-                .location?.area ??
-              "",
-            houseNumber:
-              parsedLocation.houseNumber,
-            street:
-              parsedLocation.street,
-            city:
-              parsedLocation.city,
-          })
-        );
-
-        setSocialValues(
-          getSocialValues(
-            updatedBusiness.socialLinks
-          )
-        );
-
-        setBusinessLatitude(
-          updatedBusiness.location
-            ?.lat != null
-            ? String(
-                updatedBusiness
-                  .location.lat
-              )
-            : ""
-        );
-
-        setBusinessLongitude(
-          updatedBusiness.location
-            ?.long != null
-            ? String(
-                updatedBusiness
-                  .location.long
-              )
-            : ""
-        );
-      }
+      setBusinessLongitude(
+        updatedBusiness.location?.long != null
+          ? String(updatedBusiness.location.long)
+          : ""
+      );
 
       setCategoryChanged(false);
       setEditingBusiness(false);
@@ -2015,9 +1742,7 @@ export default function SellerDashboard() {
   }
 
   function resetProductForm() {
-    setProductForm(
-      INITIAL_PRODUCT_FORM
-    );
+    setProductForm(INITIAL_PRODUCT_FORM);
   }
 
   function openProductForm() {
@@ -2031,32 +1756,19 @@ export default function SellerDashboard() {
 
     setError("");
     setSuccess("");
-
-    setEditingProductId(
-      null
-    );
-
+    setEditingProductId(null);
     resetProductForm();
-
     setShowProductForm(true);
   }
 
   function closeProductForm() {
-    if (
-      creatingProduct ||
-      updatingProduct
-    ) {
+    if (creatingProduct || updatingProduct) {
       return;
     }
 
     setError("");
-
     resetProductForm();
-
-    setEditingProductId(
-      null
-    );
-
+    setEditingProductId(null);
     setShowProductForm(false);
   }
 
@@ -2067,122 +1779,77 @@ export default function SellerDashboard() {
     setSuccess("");
 
     setProductForm({
-      name:
-        product.name ?? "",
-      description:
-        product.description ??
-        "",
-      categoryId:
-        product.category?.id ??
-        "",
+      name: product.name ?? "",
+      description: product.description ?? "",
+      categoryId: product.category?.id ?? "",
       price:
         product.price !== null
-          ? String(
-              product.price
-            )
+          ? String(product.price)
           : "",
       priceMin:
-        product.priceMin !==
-        null
-          ? String(
-              product.priceMin
-            )
+        product.priceMin !== null
+          ? String(product.priceMin)
           : "",
       priceMax:
-        product.priceMax !==
-        null
-          ? String(
-              product.priceMax
-            )
+        product.priceMax !== null
+          ? String(product.priceMax)
           : "",
-      availability:
-        product.availability ??
-        "ASK_SELLER",
-      images:
-        Array.isArray(
-          product.images
-        )
-          ? product.images
-              .slice()
-              .sort(
-                (a, b) =>
-                  a.sortOrder -
-                  b.sortOrder
-              )
-              .map(
-                (image) =>
-                  image.url
-              )
-          : product.imageUrl
-            ? [product.imageUrl]
-            : [],
+      availability: product.availability ?? "ASK_SELLER",
+      images: Array.isArray(product.images)
+        ? product.images
+            .slice()
+            .sort((a, b) => a.sortOrder - b.sortOrder)
+            .map((image) => image.url)
+        : product.imageUrl
+          ? [product.imageUrl]
+          : [],
     });
 
-    setEditingProductId(
-      product.id
-    );
-
+    setEditingProductId(product.id);
     setShowProductForm(true);
   }
 
   function validateProductPrices() {
     const price =
-      productForm.price.trim() ===
-      ""
+      productForm.price.trim() === ""
         ? null
-        : Number(
-            productForm.price
-          );
+        : Number(productForm.price);
 
     const priceMin =
-      productForm.priceMin.trim() ===
-      ""
+      productForm.priceMin.trim() === ""
         ? null
-        : Number(
-            productForm.priceMin
-          );
+        : Number(productForm.priceMin);
 
     const priceMax =
-      productForm.priceMax.trim() ===
-      ""
+      productForm.priceMax.trim() === ""
         ? null
-        : Number(
-            productForm.priceMax
-          );
+        : Number(productForm.priceMax);
 
     if (
       price !== null &&
-      (!Number.isInteger(price) ||
-        price < 0)
+      (!Number.isInteger(price) || price < 0)
     ) {
-      setError(
-        "Price must be a valid whole number."
-      );
-
+      setError("Price must be a valid whole number.");
       return false;
     }
 
     if (
       priceMin !== null &&
-      (!Number.isInteger(priceMin) ||
-        priceMin < 0)
+      (!Number.isInteger(priceMin) || priceMin < 0)
     ) {
       setError(
         "Minimum price must be a valid whole number."
       );
-
       return false;
     }
 
     if (
       priceMax !== null &&
-      (!Number.isInteger(priceMax) ||
-        priceMax < 0)
+      (!Number.isInteger(priceMax) || priceMax < 0)
     ) {
       setError(
         "Maximum price must be a valid whole number."
       );
-
       return false;
     }
 
@@ -2194,7 +1861,6 @@ export default function SellerDashboard() {
       setError(
         "Minimum price cannot be greater than maximum price."
       );
-
       return false;
     }
 
@@ -2203,28 +1869,19 @@ export default function SellerDashboard() {
 
   function getProductFormValues() {
     const price =
-      productForm.price.trim() ===
-      ""
+      productForm.price.trim() === ""
         ? null
-        : Number(
-            productForm.price
-          );
+        : Number(productForm.price);
 
     const priceMin =
-      productForm.priceMin.trim() ===
-      ""
+      productForm.priceMin.trim() === ""
         ? null
-        : Number(
-            productForm.priceMin
-          );
+        : Number(productForm.priceMin);
 
     const priceMax =
-      productForm.priceMax.trim() ===
-      ""
+      productForm.priceMax.trim() === ""
         ? null
-        : Number(
-            productForm.priceMax
-          );
+        : Number(productForm.priceMax);
 
     return {
       price,
@@ -2250,76 +1907,59 @@ export default function SellerDashboard() {
     setSuccess("");
 
     if (!productForm.name.trim()) {
-      setError(
-        "Product name is required."
-      );
-
+      setError("Product name is required.");
       return;
     }
 
-    if (
-      !validateProductPrices()
-    ) {
+    if (!validateProductPrices()) {
       return;
     }
 
-    const {
-      price,
-      priceMin,
-      priceMax,
-    } =
+    const { price, priceMin, priceMax } =
       getProductFormValues();
 
     setCreatingProduct(true);
 
     try {
-      const response =
-        await fetch(
-          "/api/seller/products",
-          {
-            method: "POST",
-            headers: {
-              "Content-Type":
-                "application/json",
-            },
-            body: JSON.stringify({
-              name:
-                productForm.name,
-              description:
-                productForm.description,
-              categoryId:
-                productForm.categoryId ||
-                null,
-              price,
-              priceMin,
-              priceMax,
-              availability:
-                productForm.availability,
-              images:
-                productForm.images,
-            }),
-          }
-        );
+      const response = await fetch(
+        "/api/seller/products",
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            name: productForm.name,
+            description: productForm.description,
+            categoryId: productForm.categoryId || null,
+            price,
+            priceMin,
+            priceMax,
+            availability: productForm.availability,
+            images: productForm.images,
+          }),
+        }
+      );
 
       const data =
-        await response.json();
+        await readJsonSafely<{
+          error?: unknown;
+        }>(response);
 
       if (
-        response.status ===
-          401 ||
-        response.status ===
-          403
+        response.status === 401 ||
+        response.status === 403
       ) {
-        router.replace(
-          "/seller/login"
-        );
+        router.replace("/seller/login");
         return;
       }
 
       if (!response.ok) {
         setError(
-          data?.error ??
+          getResponseError(
+            data,
             "Unable to create product."
+          )
         );
         return;
       }
@@ -2327,12 +1967,9 @@ export default function SellerDashboard() {
       await reloadBusiness();
 
       resetProductForm();
-
       setShowProductForm(false);
 
-      setSuccess(
-        "Product added successfully."
-      );
+      setSuccess("Product added successfully.");
     } catch (productError) {
       console.error(
         "Seller product creation error:",
@@ -2352,10 +1989,7 @@ export default function SellerDashboard() {
   ) {
     event.preventDefault();
 
-    if (
-      updatingProduct ||
-      !editingProductId
-    ) {
+    if (updatingProduct || !editingProductId) {
       return;
     }
 
@@ -2363,76 +1997,59 @@ export default function SellerDashboard() {
     setSuccess("");
 
     if (!productForm.name.trim()) {
-      setError(
-        "Product name is required."
-      );
-
+      setError("Product name is required.");
       return;
     }
 
-    if (
-      !validateProductPrices()
-    ) {
+    if (!validateProductPrices()) {
       return;
     }
 
-    const {
-      price,
-      priceMin,
-      priceMax,
-    } =
+    const { price, priceMin, priceMax } =
       getProductFormValues();
 
     setUpdatingProduct(true);
 
     try {
-      const response =
-        await fetch(
-          `/api/seller/products/${editingProductId}`,
-          {
-            method: "PATCH",
-            headers: {
-              "Content-Type":
-                "application/json",
-            },
-            body: JSON.stringify({
-              name:
-                productForm.name,
-              description:
-                productForm.description,
-              categoryId:
-                productForm.categoryId ||
-                null,
-              price,
-              priceMin,
-              priceMax,
-              availability:
-                productForm.availability,
-              images:
-                productForm.images,
-            }),
-          }
-        );
+      const response = await fetch(
+        `/api/seller/products/${editingProductId}`,
+        {
+          method: "PATCH",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            name: productForm.name,
+            description: productForm.description,
+            categoryId: productForm.categoryId || null,
+            price,
+            priceMin,
+            priceMax,
+            availability: productForm.availability,
+            images: productForm.images,
+          }),
+        }
+      );
 
       const data =
-        await response.json();
+        await readJsonSafely<{
+          error?: unknown;
+        }>(response);
 
       if (
-        response.status ===
-          401 ||
-        response.status ===
-          403
+        response.status === 401 ||
+        response.status === 403
       ) {
-        router.replace(
-          "/seller/login"
-        );
+        router.replace("/seller/login");
         return;
       }
 
       if (!response.ok) {
         setError(
-          data?.error ??
+          getResponseError(
+            data,
             "Unable to update product."
+          )
         );
         return;
       }
@@ -2440,16 +2057,10 @@ export default function SellerDashboard() {
       await reloadBusiness();
 
       resetProductForm();
-
-      setEditingProductId(
-        null
-      );
-
+      setEditingProductId(null);
       setShowProductForm(false);
 
-      setSuccess(
-        "Product updated successfully."
-      );
+      setSuccess("Product updated successfully.");
     } catch (productError) {
       console.error(
         "Seller product update error:",
@@ -2467,16 +2078,13 @@ export default function SellerDashboard() {
   async function deleteProduct(
     product: SellerProduct
   ) {
-    if (
-      deletingProductId
-    ) {
+    if (deletingProductId) {
       return;
     }
 
-    const confirmed =
-      window.confirm(
-        `Delete "${product.name}" from your active products?`
-      );
+    const confirmed = window.confirm(
+      `Delete "${product.name}" from your active products?`
+    );
 
     if (!confirmed) {
       return;
@@ -2484,61 +2092,48 @@ export default function SellerDashboard() {
 
     setError("");
     setSuccess("");
-
-    setDeletingProductId(
-      product.id
-    );
+    setDeletingProductId(product.id);
 
     try {
-      const response =
-        await fetch(
-          `/api/seller/products/${product.id}`,
-          {
-            method: "DELETE",
-          }
-        );
+      const response = await fetch(
+        `/api/seller/products/${product.id}`,
+        {
+          method: "DELETE",
+        }
+      );
 
       const data =
-        await response.json();
+        await readJsonSafely<{
+          error?: unknown;
+        }>(response);
 
       if (
-        response.status ===
-          401 ||
-        response.status ===
-          403
+        response.status === 401 ||
+        response.status === 403
       ) {
-        router.replace(
-          "/seller/login"
-        );
+        router.replace("/seller/login");
         return;
       }
 
       if (!response.ok) {
         setError(
-          data?.error ??
+          getResponseError(
+            data,
             "Unable to delete product."
+          )
         );
         return;
       }
 
       await reloadBusiness();
 
-      if (
-        editingProductId ===
-        product.id
-      ) {
+      if (editingProductId === product.id) {
         resetProductForm();
-
-        setEditingProductId(
-          null
-        );
-
+        setEditingProductId(null);
         setShowProductForm(false);
       }
 
-      setSuccess(
-        "Product deleted successfully."
-      );
+      setSuccess("Product deleted successfully.");
     } catch (deleteError) {
       console.error(
         "Seller product deletion error:",
@@ -2549,25 +2144,19 @@ export default function SellerDashboard() {
         "Something went wrong. Please try again."
       );
     } finally {
-      setDeletingProductId(
-        null
-      );
+      setDeletingProductId(null);
     }
   }
 
   function openDeletionForm() {
     setError("");
     setSuccess("");
-
     setDeletionReason("");
-
     setShowDeletionForm(true);
   }
 
   function closeDeletionForm() {
-    if (
-      submittingDeletionRequest
-    ) {
+    if (submittingDeletionRequest) {
       return;
     }
 
@@ -2590,55 +2179,47 @@ export default function SellerDashboard() {
 
     setError("");
     setSuccess("");
-
-    setSubmittingDeletionRequest(
-      true
-    );
+    setSubmittingDeletionRequest(true);
 
     try {
-      const response =
-        await fetch(
-          "/api/seller/business/deletion-request",
-          {
-            method: "POST",
-            headers: {
-              "Content-Type":
-                "application/json",
-            },
-            body: JSON.stringify({
-              reason:
-                deletionReason,
-            }),
-          }
-        );
+      const response = await fetch(
+        "/api/seller/business/deletion-request",
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            reason: deletionReason.trim(),
+          }),
+        }
+      );
 
       const data =
-        await response.json();
+        await readJsonSafely<{
+          request?: DeletionRequest | null;
+          error?: unknown;
+        }>(response);
 
       if (
-        response.status ===
-          401 ||
-        response.status ===
-          403
+        response.status === 401 ||
+        response.status === 403
       ) {
-        router.replace(
-          "/seller/login"
-        );
+        router.replace("/seller/login");
         return;
       }
 
       if (!response.ok) {
         setError(
-          data?.error ??
+          getResponseError(
+            data,
             "Unable to submit deletion request."
+          )
         );
         return;
       }
 
-      setDeletionRequest(
-        data.request ?? null
-      );
-
+      setDeletionRequest(data?.request ?? null);
       setDeletionReason("");
       setShowDeletionForm(false);
 
@@ -2655,51 +2236,53 @@ export default function SellerDashboard() {
         "Something went wrong. Please try again."
       );
     } finally {
-      setSubmittingDeletionRequest(
-        false
-      );
+      setSubmittingDeletionRequest(false);
     }
   }
 
   async function reloadBusiness() {
-    const response =
-      await fetch(
-        "/api/seller/business",
-        {
-          cache: "no-store",
-        }
-      );
+    const response = await fetch(
+      "/api/seller/business",
+      {
+        cache: "no-store",
+      }
+    );
 
     if (
-      response.status ===
-        401 ||
-      response.status ===
-        403
+      response.status === 401 ||
+      response.status === 403
     ) {
-      router.replace(
-        "/seller/login"
-      );
+      router.replace("/seller/login");
       return;
     }
 
     if (!response.ok) {
-      throw new Error(
-        "Unable to reload business."
-      );
+      throw new Error("Unable to reload business.");
     }
 
     const data =
-      await response.json();
+      await readJsonSafely<{
+        business?: SellerBusiness | null;
+      }>(response);
 
-    setBusiness(
-      data.business ?? null
-    );
+    if (
+      !data ||
+      !Object.prototype.hasOwnProperty.call(
+        data,
+        "business"
+      )
+    ) {
+      throw new Error(
+        "The seller business response was invalid."
+      );
+    }
+
+    setBusiness(data.business ?? null);
   }
 
   async function logout() {
     await signOut({
-      callbackUrl:
-        "/seller/login",
+      callbackUrl: "/seller/login",
     });
   }
 
@@ -2718,14 +2301,95 @@ export default function SellerDashboard() {
     }
   }
 
-  if (loading) {
+  function getBusinessStatusClasses(
+    status: SellerBusiness["status"]
+  ) {
+    switch (status) {
+      case "ACTIVE":
+        return "bg-[#DDF5EA] text-[#137A59]";
+
+      case "PENDING":
+        return "bg-[#FFF5D9] text-[#9A6700]";
+
+      case "INACTIVE":
+        return "bg-gray-100 text-gray-600";
+    }
+  }
+
+  function getProductStatusClasses(
+    status: SellerProduct["status"]
+  ) {
+    switch (status) {
+      case "ACTIVE":
+        return "bg-[#DDF5EA] text-[#137A59]";
+
+      case "PENDING":
+        return "bg-[#FFF5D9] text-[#9A6700]";
+
+      case "INACTIVE":
+        return "bg-gray-100 text-gray-600";
+    }
+  }
+
+  if (loading || redirecting) {
     return (
       <main className="min-h-screen bg-[#FFF7ED]">
         <div className="mx-auto flex min-h-screen w-full max-w-[1500px] items-center justify-center px-4">
           <div className="flex items-center gap-3 text-sm font-medium text-gray-600">
-            <LoaderCircle className="h-5 w-5 animate-spin text-[#FF5A36]" />
-            Loading seller dashboard...
+            <LoaderCircle
+              aria-hidden="true"
+              className="h-5 w-5 animate-spin text-[#FF5A36]"
+            />
+
+            {redirecting
+              ? "Redirecting to login..."
+              : "Loading seller dashboard..."}
           </div>
+        </div>
+      </main>
+    );
+  }
+
+  if (dashboardLoadFailed) {
+    return (
+      <main className="min-h-screen bg-[#FFF7ED]">
+        <div className="mx-auto flex min-h-screen w-full max-w-[1500px] items-center justify-center px-4 py-8">
+          <section className="w-full max-w-[480px] rounded-[22px] border border-[#E8E4DE] bg-white p-6 text-center shadow-sm sm:p-8">
+            <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-xl bg-[#FFF0EE] text-[#E33B22]">
+              <AlertCircle
+                aria-hidden="true"
+                className="h-6 w-6"
+              />
+            </div>
+
+            <h1 className="mt-4 text-xl font-bold text-[#17202A]">
+              Unable to load your dashboard
+            </h1>
+
+            <p
+              role="alert"
+              className="mt-2 text-sm leading-6 text-gray-500"
+            >
+              {error ||
+                "Your business information could not be loaded."}
+            </p>
+
+            <button
+              type="button"
+              onClick={() => {
+                setLoading(true);
+                setLoadAttempt((attempt) => attempt + 1);
+              }}
+              className="mt-5 inline-flex h-11 items-center justify-center gap-2 rounded-xl bg-[#FF5A36] px-5 text-sm font-bold text-white transition hover:opacity-90 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-[#FF5A36]/25"
+            >
+              <LoaderCircle
+                aria-hidden="true"
+                className="h-4 w-4"
+              />
+
+              Try again
+            </button>
+          </section>
         </div>
       </main>
     );
@@ -2765,7 +2429,6 @@ export default function SellerDashboard() {
                 className="inline-flex items-center gap-2 rounded-xl bg-[#FFF0E9] px-3 py-2.5 text-xs font-bold text-[#FF5A36] transition hover:bg-[#FFE7DD]"
               >
                 <Store className="h-4 w-4" />
-
                 Dashboard
               </Link>
 
@@ -2774,7 +2437,6 @@ export default function SellerDashboard() {
                 className="inline-flex items-center gap-2 rounded-xl px-3 py-2.5 text-xs font-semibold text-gray-600 transition hover:bg-[#FFF7ED] hover:text-[#9F2D18]"
               >
                 <UserRound className="h-4 w-4" />
-
                 Profile
               </Link>
 
@@ -2783,7 +2445,6 @@ export default function SellerDashboard() {
                 className="inline-flex items-center gap-2 rounded-xl px-3 py-2.5 text-xs font-semibold text-gray-600 transition hover:bg-[#FFF7ED] hover:text-[#9F2D18]"
               >
                 <ShieldCheck className="h-4 w-4" />
-
                 Claims
               </Link>
             </nav>
@@ -2848,6 +2509,7 @@ export default function SellerDashboard() {
               {error && (
                 <div
                   role="alert"
+                  aria-live="polite"
                   className="mb-5 flex items-start gap-3 rounded-2xl border border-[#FFB8B0] bg-[#FFF0EE] px-4 py-4"
                 >
                   <AlertCircle className="mt-0.5 h-5 w-5 shrink-0 text-[#E33B22]" />
@@ -2861,6 +2523,7 @@ export default function SellerDashboard() {
               {success && (
                 <div
                   role="status"
+                  aria-live="polite"
                   className="mb-5 flex items-start gap-3 rounded-2xl border border-[#BDE8D8] bg-[#EFFBF6] px-4 py-4"
                 >
                   <CheckCircle2 className="mt-0.5 h-5 w-5 shrink-0 text-[#137A59]" />
@@ -2873,1750 +2536,1442 @@ export default function SellerDashboard() {
 
               {/* Existing business */}
 
-              {business &&
-                !editingBusiness && (
-                  <section>
-                    <div className="rounded-[22px] border border-[#E8E4DE] bg-white p-5 shadow-sm sm:p-6">
-                      <div className="flex flex-col gap-5 sm:flex-row sm:items-start sm:justify-between">
-                        <div className="flex items-start gap-4">
-                          <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl bg-[#FFF0EB] text-[#FF5A36]">
-                            <Store className="h-7 w-7" />
-                          </div>
-
-                          <div>
-                            <div className="flex flex-wrap items-center gap-2">
-                              <h2 className="text-xl font-bold text-[#17202A]">
-                                {business.name}
-                              </h2>
-
-                              <span className="rounded-full bg-[#DDF5EA] px-2.5 py-1 text-[10px] font-bold text-[#137A59]">
-                                {
-                                  business.status
-                                }
-                              </span>
-
-                              {business.verification ===
-                                "VERIFIED" && (
-                                <span className="rounded-full bg-[#E7F0FF] px-2.5 py-1 text-[10px] font-bold text-[#3566B8]">
-                                  Verified
-                                </span>
-                              )}
-                            </div>
-
-                            <p className="mt-1 text-sm text-gray-500">
-                              {business.description ||
-                                "Your ReMarket business profile."}
-                            </p>
-                          </div>
+              {business && !editingBusiness && (
+                <section>
+                  <div className="rounded-[22px] border border-[#E8E4DE] bg-white p-5 shadow-sm sm:p-6">
+                    <div className="flex flex-col gap-5 sm:flex-row sm:items-start sm:justify-between">
+                      <div className="flex items-start gap-4">
+                        <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl bg-[#FFF0EB] text-[#FF5A36]">
+                          <Store className="h-7 w-7" />
                         </div>
 
-                        <div className="flex flex-col gap-2 sm:flex-row">
-                          <button
-                            type="button"
-                            onClick={
-                              startEditingBusiness
-                            }
-                            className="inline-flex shrink-0 items-center justify-center gap-2 rounded-xl border border-[#E8E4DE] bg-white px-4 py-2.5 text-xs font-bold text-gray-700 transition hover:bg-[#FFF7ED] hover:text-[#9F2D18]"
-                          >
-                            <Pencil className="h-4 w-4" />
+                        <div>
+                          <div className="flex flex-wrap items-center gap-2">
+                            <h2 className="text-xl font-bold text-[#17202A]">
+                              {business.name}
+                            </h2>
 
-                            Edit business
-                          </button>
-
-                          <Link
-                            href={`/seller/${business.id}`}
-                            className="inline-flex shrink-0 items-center justify-center gap-2 rounded-xl bg-[#FF5A36] px-4 py-2.5 text-xs font-bold text-white transition hover:opacity-90"
-                          >
-                            View public page
-
-                            <ExternalLink className="h-4 w-4" />
-                          </Link>
-                        </div>
-                      </div>
-
-                      <div className="mt-6 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-                        <div className="rounded-2xl bg-[#FCFAF6] p-4">
-                          <div className="flex items-center gap-2 text-gray-400">
-                            <MapPin className="h-4 w-4" />
-
-                            <span className="text-[10px] font-semibold uppercase tracking-wide">
-                              Area
+                            <span
+                              className={`rounded-full px-2.5 py-1 text-[10px] font-bold ${getBusinessStatusClasses(
+                                business.status
+                              )}`}
+                            >
+                              {business.status}
                             </span>
-                          </div>
 
-                          <p className="mt-2 text-sm font-semibold text-gray-800">
-                            {business.location?.area ||
-                              "Not set"}
-                          </p>
-
-                          <p className="mt-1 truncate text-[10px] text-gray-400">
-                            {business.location?.address ||
-                              "Address not set"}
-                          </p>
-
-                          <p className="mt-2 text-[10px] font-medium text-gray-400">
-                            {business.location?.lat != null &&
-                            business.location?.long != null
-                              ? "Exact location available"
-                              : "Precise location not yet set"}
-                          </p>
-                        </div>
-
-                        <div className="rounded-2xl bg-[#FCFAF6] p-4">
-                          <div className="flex items-center gap-2 text-gray-400">
-                            <Phone className="h-4 w-4" />
-
-                            <span className="text-[10px] font-semibold uppercase tracking-wide">
-                              Phone
-                            </span>
-                          </div>
-
-                          <p className="mt-2 truncate text-sm font-semibold text-gray-800">
-                            {business.phone ||
-                              "Not set"}
-                          </p>
-                        </div>
-
-                        <div className="rounded-2xl bg-[#FCFAF6] p-4">
-                          <div className="flex items-center gap-2 text-gray-400">
-                            <Package className="h-4 w-4" />
-
-                            <span className="text-[10px] font-semibold uppercase tracking-wide">
-                              Products
-                            </span>
-                          </div>
-
-                          <p className="mt-2 text-sm font-semibold text-gray-800">
-                            {activeProductCount}/
-                            {MAX_ACTIVE_PRODUCTS}
-                          </p>
-                        </div>
-
-                        <div className="rounded-2xl bg-[#FCFAF6] p-4">
-                          <div className="flex items-center gap-2 text-gray-400">
-                            <Store className="h-4 w-4" />
-
-                            <span className="text-[10px] font-semibold uppercase tracking-wide">
-                              Availability
-                            </span>
-                          </div>
-
-                          <p className="mt-2 text-sm font-semibold text-gray-800">
-                            {business.availability.replace(
-                              "_",
-                              " "
-                            )}
-                          </p>
-                        </div>
-                      </div>
-
-                      {business.categories.length >
-                        0 && (
-                        <div className="mt-5">
-                          <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-gray-400">
-                            Categories
-                          </p>
-
-                          <div className="mt-2 flex flex-wrap gap-2">
-                            {business.categories.map(
-                              ({
-                                category,
-                              }) => (
-                                <span
-                                  key={
-                                    category.id
-                                  }
-                                  className="rounded-full border border-[#E8E4DE] bg-white px-3 py-1.5 text-xs font-medium text-gray-700"
-                                >
-                                  {
-                                    category.name
-                                  }
-                                </span>
-                              )
-                            )}
-                          </div>
-                        </div>
-                      )}
-
-                      <div className="mt-5 border-t border-[#EAE6DF] pt-5">
-                        <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-gray-400">
-                          Contact & social links
-                        </p>
-
-                        {business.socialLinks.length > 0 ? (
-                          <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-                            {business.socialLinks.map(
-                              (link) => {
-                                const label =
-                                  SOCIAL_PLATFORMS.find(
-                                    (platform) =>
-                                      platform.value ===
-                                      link.platform
-                                  )?.label ??
-                                  link.platform;
-
-                                return (
-                                  <div
-                                    key={
-                                      link.id
-                                    }
-                                    className="rounded-2xl bg-[#FCFAF6] p-4"
-                                  >
-                                    <p className="text-[10px] font-semibold uppercase tracking-wide text-gray-400">
-                                      {label}
-                                    </p>
-
-                                    <p className="mt-2 truncate text-sm font-semibold text-gray-800">
-                                      {
-                                        link.handle
-                                      }
-                                    </p>
-                                  </div>
-                                );
-                              }
-                            )}
-                          </div>
-                        ) : (
-                          <p className="mt-2 text-xs text-gray-500">
-                            No contact or social links have been added yet.
-                          </p>
-                        )}
-                      </div>
-
-                      {/* Business deletion */}
-
-                      <div className="mt-6 border-t border-[#EAE6DF] pt-5">
-                        <div className="rounded-2xl border border-[#F1D5D0] bg-[#FFF9F7] p-4">
-                          <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
-                            <div className="flex items-start gap-3">
-                              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-[#FFF0EE] text-[#C5402D]">
-                                <AlertTriangle className="h-5 w-5" />
-                              </div>
-
-                              <div>
-                                <h3 className="text-sm font-bold text-[#17202A]">
-                                  Business deletion
-                                </h3>
-
-                                <p className="mt-1 max-w-[600px] text-xs leading-5 text-gray-500">
-                                  Business deletion requires admin approval. Submitting a request does not delete your business immediately.
-                                </p>
-                              </div>
-                            </div>
-
-                            {deletionRequest && (
-                              <span
-                                className={`shrink-0 rounded-full px-3 py-1.5 text-[10px] font-bold ${getDeletionStatusClasses(
-                                  deletionRequest.status
-                                )}`}
-                              >
-                                {
-                                  deletionRequest.status
-                                }
+                            {business.verification ===
+                              "VERIFIED" && (
+                              <span className="rounded-full bg-[#E7F0FF] px-2.5 py-1 text-[10px] font-bold text-[#3566B8]">
+                                Verified
                               </span>
                             )}
                           </div>
 
-                          {deletionRequest?.status ===
-                            "PENDING" && (
-                            <p className="mt-3 text-xs text-[#9A6700]">
-                              Your deletion request is currently waiting for admin review.
-                            </p>
-                          )}
-
-                          {deletionRequest?.status ===
-                            "APPROVED" && (
-                            <p className="mt-3 text-xs text-[#3566B8]">
-                              Your deletion request has been approved by an admin.
-                            </p>
-                          )}
-
-                          {deletionRequest?.status ===
-                            "REJECTED" && (
-                            <p className="mt-3 text-xs text-[#C5402D]">
-                              Your previous deletion request was rejected. You may submit a new request.
-                            </p>
-                          )}
-
-                          {(!deletionRequest ||
-                            deletionRequest.status ===
-                              "REJECTED") && (
-                            <button
-                              type="button"
-                              onClick={
-                                openDeletionForm
-                              }
-                              className="mt-4 inline-flex items-center justify-center gap-2 rounded-xl border border-[#E5B9B1] bg-white px-4 py-2.5 text-xs font-bold text-[#C5402D] transition hover:bg-[#FFF0EE]"
-                            >
-                              <Trash2 className="h-4 w-4" />
-
-                              Request business deletion
-                            </button>
-                          )}
-
-                          {showDeletionForm && (
-                            <form
-                              onSubmit={
-                                submitDeletionRequest
-                              }
-                              className="mt-4 rounded-2xl border border-[#F0CEC8] bg-white p-4"
-                            >
-                              <h4 className="text-sm font-bold text-[#17202A]">
-                                Request business deletion
-                              </h4>
-
-                              <p className="mt-1 text-xs leading-5 text-gray-500">
-                                Tell the admin why you want this business removed.
-                              </p>
-
-                              <label
-                                htmlFor="deletion-reason"
-                                className="mt-4 mb-2 block text-xs font-bold text-gray-700"
-                              >
-                                Reason
-                              </label>
-
-                              <textarea
-                                id="deletion-reason"
-                                value={
-                                  deletionReason
-                                }
-                                onChange={(
-                                  event
-                                ) =>
-                                  setDeletionReason(
-                                    event
-                                      .target
-                                      .value
-                                  )
-                                }
-                                rows={4}
-                                placeholder="Optional reason for your request"
-                                disabled={
-                                  submittingDeletionRequest
-                                }
-                                className="w-full resize-none rounded-xl border border-[#D9DEE5] bg-white px-4 py-3 text-sm text-[#17202A] outline-none transition focus:border-[#FF694F] focus:ring-4 focus:ring-[#FF694F]/10 disabled:bg-gray-50"
-                              />
-
-                              <div className="mt-4 flex flex-col gap-2 sm:flex-row sm:justify-end">
-                                <button
-                                  type="button"
-                                  onClick={
-                                    closeDeletionForm
-                                  }
-                                  disabled={
-                                    submittingDeletionRequest
-                                  }
-                                  className="inline-flex items-center justify-center gap-2 rounded-xl border border-[#E8E4DE] bg-white px-4 py-2.5 text-xs font-semibold text-gray-700 transition hover:bg-[#FFF7ED] disabled:cursor-not-allowed disabled:opacity-50"
-                                >
-                                  <X className="h-4 w-4" />
-
-                                  Cancel
-                                </button>
-
-                                <button
-                                  type="submit"
-                                  disabled={
-                                    submittingDeletionRequest
-                                  }
-                                  className="inline-flex items-center justify-center gap-2 rounded-xl bg-[#C5402D] px-4 py-2.5 text-xs font-bold text-white transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60"
-                                >
-                                  {submittingDeletionRequest ? (
-                                    <>
-                                      <LoaderCircle className="h-4 w-4 animate-spin" />
-
-                                      Submitting...
-                                    </>
-                                  ) : (
-                                    <>
-                                      <Trash2 className="h-4 w-4" />
-
-                                      Submit request
-                                    </>
-                                  )}
-                                </button>
-                              </div>
-                            </form>
-                          )}
+                          <p className="mt-1 text-sm text-gray-500">
+                            {business.description ||
+                              "Your ReMarket business profile."}
+                          </p>
                         </div>
+                      </div>
+
+                      <div className="flex flex-col gap-2 sm:flex-row">
+                        <button
+                          type="button"
+                          onClick={startEditingBusiness}
+                          className="inline-flex shrink-0 items-center justify-center gap-2 rounded-xl border border-[#E8E4DE] bg-white px-4 py-2.5 text-xs font-bold text-gray-700 transition hover:bg-[#FFF7ED] hover:text-[#9F2D18]"
+                        >
+                          <Pencil className="h-4 w-4" />
+                          Edit business
+                        </button>
+
+                        <Link
+                          href={`/seller/${business.id}`}
+                          className="inline-flex shrink-0 items-center justify-center gap-2 rounded-xl bg-[#FF5A36] px-4 py-2.5 text-xs font-bold text-white transition hover:opacity-90"
+                        >
+                          View public page
+                          <ExternalLink className="h-4 w-4" />
+                        </Link>
                       </div>
                     </div>
-                  </section>
-                )}
+
+                    <div className="mt-6 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                      <div className="rounded-2xl bg-[#FCFAF6] p-4">
+                        <div className="flex items-center gap-2 text-gray-400">
+                          <MapPin className="h-4 w-4" />
+                          <span className="text-[10px] font-semibold uppercase tracking-wide">
+                            Area
+                          </span>
+                        </div>
+
+                        <p className="mt-2 text-sm font-semibold text-gray-800">
+                          {business.location?.area || "Not set"}
+                        </p>
+
+                        <p className="mt-1 truncate text-[10px] text-gray-400">
+                          {business.location?.address ||
+                            "Address not set"}
+                        </p>
+
+                        <p className="mt-2 text-[10px] font-medium text-gray-400">
+                          {business.location?.lat != null &&
+                          business.location?.long != null
+                            ? "Exact location available"
+                            : "Precise location not yet set"}
+                        </p>
+                      </div>
+
+                      <div className="rounded-2xl bg-[#FCFAF6] p-4">
+                        <div className="flex items-center gap-2 text-gray-400">
+                          <Phone className="h-4 w-4" />
+                          <span className="text-[10px] font-semibold uppercase tracking-wide">
+                            Phone
+                          </span>
+                        </div>
+
+                        <p className="mt-2 truncate text-sm font-semibold text-gray-800">
+                          {business.phone || "Not set"}
+                        </p>
+                      </div>
+
+                      <div className="rounded-2xl bg-[#FCFAF6] p-4">
+                        <div className="flex items-center gap-2 text-gray-400">
+                          <Package className="h-4 w-4" />
+                          <span className="text-[10px] font-semibold uppercase tracking-wide">
+                            Products
+                          </span>
+                        </div>
+
+                        <p className="mt-2 text-sm font-semibold text-gray-800">
+                          {activeProductCount}/{MAX_ACTIVE_PRODUCTS}
+                        </p>
+                      </div>
+
+                      <div className="rounded-2xl bg-[#FCFAF6] p-4">
+                        <div className="flex items-center gap-2 text-gray-400">
+                          <Store className="h-4 w-4" />
+                          <span className="text-[10px] font-semibold uppercase tracking-wide">
+                            Availability
+                          </span>
+                        </div>
+
+                        <p className="mt-2 text-sm font-semibold text-gray-800">
+                          {business.availability.replace("_", " ")}
+                        </p>
+                      </div>
+                    </div>
+
+                    {business.categories.length > 0 && (
+                      <div className="mt-5">
+                        <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-gray-400">
+                          Categories
+                        </p>
+
+                        <div className="mt-2 flex flex-wrap gap-2">
+                          {business.categories.map(
+                            ({ category }) => (
+                              <span
+                                key={category.id}
+                                className="rounded-full border border-[#E8E4DE] bg-white px-3 py-1.5 text-xs font-medium text-gray-700"
+                              >
+                                {category.name}
+                              </span>
+                            )
+                          )}
+                        </div>
+                      </div>
+                    )}
+
+                    <div className="mt-5 border-t border-[#EAE6DF] pt-5">
+                      <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-gray-400">
+                        Contact & social links
+                      </p>
+
+                      {business.socialLinks.length > 0 ? (
+                        <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                          {business.socialLinks.map((link) => {
+                            const label =
+                              SOCIAL_PLATFORMS.find(
+                                (platform) =>
+                                  platform.value === link.platform
+                              )?.label ?? link.platform;
+
+                            return (
+                              <div
+                                key={link.id}
+                                className="rounded-2xl bg-[#FCFAF6] p-4"
+                              >
+                                <p className="text-[10px] font-semibold uppercase tracking-wide text-gray-400">
+                                  {label}
+                                </p>
+
+                                <p className="mt-2 truncate text-sm font-semibold text-gray-800">
+                                  {link.handle}
+                                </p>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      ) : (
+                        <p className="mt-2 text-xs text-gray-500">
+                          No contact or social links have been added yet.
+                        </p>
+                      )}
+                    </div>
+
+                    {/* Business deletion */}
+
+                    <div className="mt-6 border-t border-[#EAE6DF] pt-5">
+                      <div className="rounded-2xl border border-[#F1D5D0] bg-[#FFF9F7] p-4">
+                        <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+                          <div className="flex items-start gap-3">
+                            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-[#FFF0EE] text-[#C5402D]">
+                              <AlertTriangle className="h-5 w-5" />
+                            </div>
+
+                            <div>
+                              <h3 className="text-sm font-bold text-[#17202A]">
+                                Business deletion
+                              </h3>
+
+                              <p className="mt-1 max-w-[600px] text-xs leading-5 text-gray-500">
+                                Business deletion requires admin approval. Submitting a request does not delete your business immediately.
+                              </p>
+                            </div>
+                          </div>
+
+                          {deletionRequest && (
+                            <span
+                              className={`shrink-0 rounded-full px-3 py-1.5 text-[10px] font-bold ${getDeletionStatusClasses(
+                                deletionRequest.status
+                              )}`}
+                            >
+                              {deletionRequest.status}
+                            </span>
+                          )}
+                        </div>
+
+                        {deletionRequest?.status === "PENDING" && (
+                          <p className="mt-3 text-xs text-[#9A6700]">
+                            Your deletion request is currently waiting for admin review.
+                          </p>
+                        )}
+
+                        {deletionRequest?.status === "APPROVED" && (
+                          <p className="mt-3 text-xs text-[#3566B8]">
+                            Your deletion request has been approved by an admin.
+                          </p>
+                        )}
+
+                        {deletionRequest?.status === "REJECTED" && (
+                          <p className="mt-3 text-xs text-[#C5402D]">
+                            Your previous deletion request was rejected. You may submit a new request.
+                          </p>
+                        )}
+
+                        {(!deletionRequest ||
+                          deletionRequest.status === "REJECTED") && (
+                          <button
+                            type="button"
+                            onClick={openDeletionForm}
+                            className="mt-4 inline-flex items-center justify-center gap-2 rounded-xl border border-[#E5B9B1] bg-white px-4 py-2.5 text-xs font-bold text-[#C5402D] transition hover:bg-[#FFF0EE]"
+                          >
+                            <Trash2 className="h-4 w-4" />
+                            Request business deletion
+                          </button>
+                        )}
+
+                        {showDeletionForm && (
+                          <form
+                            onSubmit={submitDeletionRequest}
+                            className="mt-4 rounded-2xl border border-[#F0CEC8] bg-white p-4"
+                          >
+                            <h4 className="text-sm font-bold text-[#17202A]">
+                              Request business deletion
+                            </h4>
+
+                            <p className="mt-1 text-xs leading-5 text-gray-500">
+                              Tell the admin why you want this business removed.
+                            </p>
+
+                            <label
+                              htmlFor="deletion-reason"
+                              className="mb-2 mt-4 block text-xs font-bold text-gray-700"
+                            >
+                              Reason
+                            </label>
+
+                            <textarea
+                              id="deletion-reason"
+                              value={deletionReason}
+                              onChange={(event) =>
+                                setDeletionReason(event.target.value)
+                              }
+                              rows={4}
+                              maxLength={1000}
+                              placeholder="Optional reason for your request"
+                              disabled={submittingDeletionRequest}
+                              className="w-full resize-none rounded-xl border border-[#D9DEE5] bg-white px-4 py-3 text-sm text-[#17202A] outline-none transition focus:border-[#FF694F] focus:ring-4 focus:ring-[#FF694F]/10 disabled:bg-gray-50"
+                            />
+
+                            <div className="mt-4 flex flex-col gap-2 sm:flex-row sm:justify-end">
+                              <button
+                                type="button"
+                                onClick={closeDeletionForm}
+                                disabled={submittingDeletionRequest}
+                                className="inline-flex items-center justify-center gap-2 rounded-xl border border-[#E8E4DE] bg-white px-4 py-2.5 text-xs font-semibold text-gray-700 transition hover:bg-[#FFF7ED] disabled:cursor-not-allowed disabled:opacity-50"
+                              >
+                                <X className="h-4 w-4" />
+                                Cancel
+                              </button>
+
+                              <button
+                                type="submit"
+                                disabled={submittingDeletionRequest}
+                                className="inline-flex items-center justify-center gap-2 rounded-xl bg-[#C5402D] px-4 py-2.5 text-xs font-bold text-white transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60"
+                              >
+                                {submittingDeletionRequest ? (
+                                  <>
+                                    <LoaderCircle className="h-4 w-4 animate-spin" />
+                                    Submitting...
+                                  </>
+                                ) : (
+                                  <>
+                                    <Trash2 className="h-4 w-4" />
+                                    Submit request
+                                  </>
+                                )}
+                              </button>
+                            </div>
+                          </form>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                </section>
+              )}
 
               {/* Edit business */}
 
-              {business &&
-                editingBusiness && (
-                  <section className="rounded-[22px] border border-[#E8E4DE] bg-white shadow-sm">
-                    <div className="flex flex-col gap-4 border-b border-[#EAE6DF] px-5 py-5 sm:flex-row sm:items-center sm:justify-between sm:px-6">
-                      <div>
-                        <p className="text-xs font-semibold uppercase tracking-[0.12em] text-[#FF5A36]">
-                          Business settings
-                        </p>
+              {business && editingBusiness && (
+                <section className="rounded-[22px] border border-[#E8E4DE] bg-white shadow-sm">
+                  <div className="flex flex-col gap-4 border-b border-[#EAE6DF] px-5 py-5 sm:flex-row sm:items-center sm:justify-between sm:px-6">
+                    <div>
+                      <p className="text-xs font-semibold uppercase tracking-[0.12em] text-[#FF5A36]">
+                        Business settings
+                      </p>
 
-                        <h2 className="mt-1 text-lg font-bold text-[#17202A]">
-                          Edit your business
-                        </h2>
+                      <h2 className="mt-1 text-lg font-bold text-[#17202A]">
+                        Edit your business
+                      </h2>
 
-                        <p className="mt-1 text-xs text-gray-500">
-                          Update the information customers see on ReMarket.
-                        </p>
-                      </div>
-
-                      <button
-                        type="button"
-                        onClick={
-                          cancelEditingBusiness
-                        }
-                        disabled={
-                          savingBusiness
-                        }
-                        className="inline-flex items-center justify-center gap-2 rounded-xl border border-[#E8E4DE] bg-white px-4 py-2.5 text-xs font-semibold text-gray-700 transition hover:bg-[#FFF7ED] disabled:cursor-not-allowed disabled:opacity-60"
-                      >
-                        <X className="h-4 w-4" />
-
-                        Cancel
-                      </button>
+                      <p className="mt-1 text-xs text-gray-500">
+                        Update the information customers see on ReMarket.
+                      </p>
                     </div>
 
-                    <form
-                      onSubmit={
-                        updateBusiness
-                      }
-                      className="space-y-5 px-5 py-6 sm:px-6"
+                    <button
+                      type="button"
+                      onClick={cancelEditingBusiness}
+                      disabled={savingBusiness}
+                      className="inline-flex items-center justify-center gap-2 rounded-xl border border-[#E8E4DE] bg-white px-4 py-2.5 text-xs font-semibold text-gray-700 transition hover:bg-[#FFF7ED] disabled:cursor-not-allowed disabled:opacity-60"
                     >
-                      <div className="grid gap-5 sm:grid-cols-2">
-                        <div>
-                          <label
-                            htmlFor="edit-business-name"
-                            className="mb-2 block text-xs font-bold text-gray-700"
-                          >
-                            Business name
-                          </label>
+                      <X className="h-4 w-4" />
+                      Cancel
+                    </button>
+                  </div>
 
-                          <input
-                            id="edit-business-name"
-                            type="text"
-                            value={
-                              businessForm.name
-                            }
-                            onChange={(
-                              event
-                            ) =>
-                              updateBusinessField(
-                                "name",
-                                event.target
-                                  .value
-                              )
-                            }
-                            required
-                            disabled={
-                              savingBusiness
-                            }
-                            className="h-12 w-full rounded-xl border border-[#D9DEE5] bg-white px-4 text-sm text-[#17202A] outline-none transition focus:border-[#FF694F] focus:ring-4 focus:ring-[#FF694F]/10 disabled:bg-gray-50"
-                          />
-                        </div>
+                  <form
+                    onSubmit={updateBusiness}
+                    className="space-y-5 px-5 py-6 sm:px-6"
+                  >
+                    <div className="grid gap-5 sm:grid-cols-2">
+                      <div>
+                        <label
+                          htmlFor="edit-business-name"
+                          className="mb-2 block text-xs font-bold text-gray-700"
+                        >
+                          Business name
+                        </label>
 
-                        <div>
-                          <label
-                            htmlFor="edit-owner-name"
-                            className="mb-2 block text-xs font-bold text-gray-700"
-                          >
-                            Owner name
-                          </label>
-
-                          <input
-                            id="edit-owner-name"
-                            type="text"
-                            value={
-                              businessForm.ownerName
-                            }
-                            onChange={(
-                              event
-                            ) =>
-                              updateBusinessField(
-                                "ownerName",
-                                event.target
-                                  .value
-                              )
-                            }
-                            disabled={
-                              savingBusiness
-                            }
-                            className="h-12 w-full rounded-xl border border-[#D9DEE5] bg-white px-4 text-sm text-[#17202A] outline-none transition focus:border-[#FF694F] focus:ring-4 focus:ring-[#FF694F]/10 disabled:bg-gray-50"
-                          />
-                        </div>
+                        <input
+                          id="edit-business-name"
+                          type="text"
+                          value={businessForm.name}
+                          onChange={(event) =>
+                            updateBusinessField(
+                              "name",
+                              event.target.value
+                            )
+                          }
+                          maxLength={150}
+                          required
+                          disabled={savingBusiness}
+                          className="h-12 w-full rounded-xl border border-[#D9DEE5] bg-white px-4 text-sm text-[#17202A] outline-none transition focus:border-[#FF694F] focus:ring-4 focus:ring-[#FF694F]/10 disabled:bg-gray-50"
+                        />
                       </div>
 
                       <div>
                         <label
-                          htmlFor="edit-description"
+                          htmlFor="edit-owner-name"
                           className="mb-2 block text-xs font-bold text-gray-700"
                         >
-                          Description
+                          Owner name
                         </label>
 
-                        <textarea
-                          id="edit-description"
-                          value={
-                            businessForm.description
-                          }
-                          onChange={(
-                            event
-                          ) =>
+                        <input
+                          id="edit-owner-name"
+                          type="text"
+                          value={businessForm.ownerName}
+                          onChange={(event) =>
                             updateBusinessField(
-                              "description",
-                              event.target
-                                .value
+                              "ownerName",
+                              event.target.value
                             )
                           }
-                          rows={4}
-                          disabled={
-                            savingBusiness
+                          maxLength={100}
+                          disabled={savingBusiness}
+                          className="h-12 w-full rounded-xl border border-[#D9DEE5] bg-white px-4 text-sm text-[#17202A] outline-none transition focus:border-[#FF694F] focus:ring-4 focus:ring-[#FF694F]/10 disabled:bg-gray-50"
+                        />
+                      </div>
+                    </div>
+
+                    <div>
+                      <label
+                        htmlFor="edit-description"
+                        className="mb-2 block text-xs font-bold text-gray-700"
+                      >
+                        Description
+                      </label>
+
+                      <textarea
+                        id="edit-description"
+                        value={businessForm.description}
+                        onChange={(event) =>
+                          updateBusinessField(
+                            "description",
+                            event.target.value
+                          )
+                        }
+                        rows={4}
+                        maxLength={2000}
+                        disabled={savingBusiness}
+                        className="w-full resize-none rounded-xl border border-[#D9DEE5] bg-white px-4 py-3 text-sm text-[#17202A] outline-none transition focus:border-[#FF694F] focus:ring-4 focus:ring-[#FF694F]/10 disabled:bg-gray-50"
+                      />
+                    </div>
+
+                    <div className="grid gap-5 sm:grid-cols-2">
+                      <div>
+                        <label
+                          htmlFor="edit-area"
+                          className="mb-2 block text-xs font-bold text-gray-700"
+                        >
+                          Business area
+                        </label>
+
+                        <select
+                          id="edit-area"
+                          value={businessForm.area}
+                          onChange={(event) =>
+                            updateBusinessField(
+                              "area",
+                              event.target.value
+                            )
                           }
-                          className="w-full resize-none rounded-xl border border-[#D9DEE5] bg-white px-4 py-3 text-sm text-[#17202A] outline-none transition focus:border-[#FF694F] focus:ring-4 focus:ring-[#FF694F]/10 disabled:bg-gray-50"
+                          required
+                          disabled={savingBusiness}
+                          className="h-12 w-full rounded-xl border border-[#D9DEE5] bg-white px-4 text-sm text-[#17202A] outline-none transition focus:border-[#FF694F] focus:ring-4 focus:ring-[#FF5A36]/10 disabled:bg-gray-50"
+                        >
+                          <option value="">Select area</option>
+
+                          {!isKnownLagosArea(businessForm.area) &&
+                            businessForm.area && (
+                              <option value={businessForm.area}>
+                                {businessForm.area} (saved area)
+                              </option>
+                            )}
+
+                          {LAGOS_AREA_GROUPS.map((group) => (
+                            <optgroup
+                              key={group.lga}
+                              label={group.lga}
+                            >
+                              {group.areas.map((item) => (
+                                <option
+                                  key={item}
+                                  value={item}
+                                >
+                                  {item}
+                                </option>
+                              ))}
+                            </optgroup>
+                          ))}
+                        </select>
+                      </div>
+
+                      <div>
+                        <label
+                          htmlFor="edit-city"
+                          className="mb-2 block text-xs font-bold text-gray-700"
+                        >
+                          City
+                        </label>
+
+                        <input
+                          id="edit-city"
+                          type="text"
+                          value={businessForm.city}
+                          onChange={(event) =>
+                            updateBusinessField(
+                              "city",
+                              event.target.value
+                            )
+                          }
+                          placeholder="Lagos"
+                          maxLength={100}
+                          disabled={savingBusiness}
+                          className="h-12 w-full rounded-xl border border-[#D9DEE5] bg-white px-4 text-sm text-[#17202A] outline-none transition focus:border-[#FF694F] focus:ring-4 focus:ring-[#FF5A36]/10 disabled:bg-gray-50"
+                        />
+                      </div>
+                    </div>
+
+                    <div className="grid gap-5 sm:grid-cols-2">
+                      <div>
+                        <label
+                          htmlFor="edit-house-number"
+                          className="mb-2 block text-xs font-bold text-gray-700"
+                        >
+                          House / Shop / Building number
+                        </label>
+
+                        <input
+                          id="edit-house-number"
+                          type="text"
+                          value={businessForm.houseNumber}
+                          onChange={(event) =>
+                            updateBusinessField(
+                              "houseNumber",
+                              event.target.value
+                            )
+                          }
+                          placeholder="e.g. 12 or Shop 4"
+                          maxLength={100}
+                          disabled={savingBusiness}
+                          className="h-12 w-full rounded-xl border border-[#D9DEE5] bg-white px-4 text-sm text-[#17202A] outline-none transition focus:border-[#FF694F] focus:ring-4 focus:ring-[#FF5A36]/10 disabled:bg-gray-50"
                         />
                       </div>
 
-                      <div className="grid gap-5 sm:grid-cols-2">
-                        <div>
-                          <label
-                            htmlFor="edit-area"
-                            className="mb-2 block text-xs font-bold text-gray-700"
-                          >
-                            Business area
-                          </label>
+                      <div>
+                        <label
+                          htmlFor="edit-street"
+                          className="mb-2 block text-xs font-bold text-gray-700"
+                        >
+                          Street / Road / Close
+                        </label>
 
-                          <select
-                            id="edit-area"
-                            value={
-                              businessForm.area
-                            }
-                            onChange={(
-                              event
-                            ) =>
-                              updateBusinessField(
-                                "area",
-                                event.target
-                                  .value
-                              )
-                            }
-                            required
-                            disabled={
-                              savingBusiness
-                            }
-                            className="h-12 w-full rounded-xl border border-[#D9DEE5] bg-white px-4 text-sm text-[#17202A] outline-none transition focus:border-[#FF694F] focus:ring-4 focus:ring-[#FF5A36]/10 disabled:bg-gray-50"
-                          >
-                            <option value="">
-                              Select area
-                            </option>
+                        <input
+                          id="edit-street"
+                          type="text"
+                          value={businessForm.street}
+                          onChange={(event) =>
+                            updateBusinessField(
+                              "street",
+                              event.target.value
+                            )
+                          }
+                          placeholder="e.g. Agidingbi Road"
+                          maxLength={200}
+                          required
+                          disabled={savingBusiness}
+                          className="h-12 w-full rounded-xl border border-[#D9DEE5] bg-white px-4 text-sm text-[#17202A] outline-none transition focus:border-[#FF694F] focus:ring-4 focus:ring-[#FF694F]/10 disabled:bg-gray-50"
+                        />
+                      </div>
+                    </div>
 
-                            {!isKnownLagosArea(
-                              businessForm.area
-                            ) &&
-                              businessForm.area && (
-                                <option
-                                  value={
-                                    businessForm.area
-                                  }
-                                >
-                                  {
-                                    businessForm.area
-                                  }{" "}
-                                  (saved area)
-                                </option>
-                              )}
-
-                            {LAGOS_AREA_GROUPS.map(
-                              (group) => (
-                                <optgroup
-                                  key={
-                                    group.lga
-                                  }
-                                  label={
-                                    group.lga
-                                  }
-                                >
-                                  {group.areas.map(
-                                    (
-                                      item
-                                    ) => (
-                                      <option
-                                        key={
-                                          item
-                                        }
-                                        value={
-                                          item
-                                        }
-                                      >
-                                        {
-                                          item
-                                        }
-                                      </option>
-                                    )
-                                  )}
-                                </optgroup>
-                              )
-                            )}
-                          </select>
+                    <div className="rounded-2xl border border-[#E8E4DE] bg-[#FCFAF6] p-4">
+                      <div className="flex items-start gap-3">
+                        <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-[#FFF0EB] text-[#FF5A36]">
+                          <MapPin className="h-5 w-5" />
                         </div>
 
-                        <div>
-                          <label
-                            htmlFor="edit-city"
-                            className="mb-2 block text-xs font-bold text-gray-700"
-                          >
-                            City
-                          </label>
+                        <div className="min-w-0">
+                          <p className="text-xs font-bold text-[#17202A]">
+                            Address preview
+                          </p>
 
-                          <input
-                            id="edit-city"
-                            type="text"
-                            value={
+                          <p className="mt-2 text-[11px] leading-5 text-gray-600">
+                            {buildLocationAddressPreview(
+                              businessForm.area,
+                              businessForm.houseNumber,
+                              businessForm.street,
                               businessForm.city
-                            }
-                            onChange={(
-                              event
-                            ) =>
-                              updateBusinessField(
-                                "city",
-                                event.target
-                                  .value
-                              )
-                            }
-                            placeholder="Lagos"
-                            disabled={
-                              savingBusiness
-                            }
-                            className="h-12 w-full rounded-xl border border-[#D9DEE5] bg-white px-4 text-sm text-[#17202A] outline-none transition focus:border-[#FF694F] focus:ring-4 focus:ring-[#FF5A36]/10 disabled:bg-gray-50"
-                          />
+                            ) || "Complete the location fields above."}
+                          </p>
+
+                          <p className="mt-2 text-[10px] leading-5 text-gray-400">
+                            Country: Nigeria
+                          </p>
                         </div>
                       </div>
+                    </div>
 
-                      <div className="grid gap-5 sm:grid-cols-2">
-                        <div>
-                          <label
-                            htmlFor="edit-house-number"
-                            className="mb-2 block text-xs font-bold text-gray-700"
-                          >
-                            House / Shop / Building number
-                          </label>
-
-                          <input
-                            id="edit-house-number"
-                            type="text"
-                            value={
-                              businessForm.houseNumber
-                            }
-                            onChange={(
-                              event
-                            ) =>
-                              updateBusinessField(
-                                "houseNumber",
-                                event.target
-                                  .value
-                              )
-                            }
-                            placeholder="e.g. 12 or Shop 4"
-                            disabled={
-                              savingBusiness
-                            }
-                            className="h-12 w-full rounded-xl border border-[#D9DEE5] bg-white px-4 text-sm text-[#17202A] outline-none transition focus:border-[#FF694F] focus:ring-4 focus:ring-[#FF5A36]/10 disabled:bg-gray-50"
-                          />
-                        </div>
-
-                        <div>
-                          <label
-                            htmlFor="edit-street"
-                            className="mb-2 block text-xs font-bold text-gray-700"
-                          >
-                            Street / Road / Close
-                          </label>
-
-                          <input
-                            id="edit-street"
-                            type="text"
-                            value={
-                              businessForm.street
-                            }
-                            onChange={(
-                              event
-                            ) =>
-                              updateBusinessField(
-                                "street",
-                                event.target
-                                  .value
-                              )
-                            }
-                            placeholder="e.g. Agidingbi Road"
-                            required
-                            disabled={
-                              savingBusiness
-                            }
-                            className="h-12 w-full rounded-xl border border-[#D9DEE5] bg-white px-4 text-sm text-[#17202A] outline-none transition focus:border-[#FF694F] focus:ring-4 focus:ring-[#FF5A36]/10 disabled:bg-gray-50"
-                          />
-                        </div>
-                      </div>
-
-                      <div className="rounded-2xl border border-[#E8E4DE] bg-[#FCFAF6] p-4">
+                    <div className="rounded-2xl border border-[#E8E4DE] bg-[#FCFAF6] p-4">
+                      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
                         <div className="flex items-start gap-3">
                           <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-[#FFF0EB] text-[#FF5A36]">
                             <MapPin className="h-5 w-5" />
                           </div>
 
-                          <div className="min-w-0">
+                          <div>
                             <p className="text-xs font-bold text-[#17202A]">
-                              Address preview
+                              Exact business location
                             </p>
 
-                            <p className="mt-2 text-[11px] leading-5 text-gray-600">
-                              {buildLocationAddressPreview(
-                                businessForm.area,
-                                businessForm.houseNumber,
-                                businessForm.street,
-                                businessForm.city
-                              ) ||
-                                "Complete the location fields above."}
+                            <p className="mt-1 text-[10px] leading-5 text-gray-500">
+                              Use this only when the device is physically at the business. You do not need to type latitude or longitude.
                             </p>
 
-                            <p className="mt-2 text-[10px] leading-5 text-gray-400">
-                              Country: Nigeria
-                            </p>
-                          </div>
-                        </div>
-                      </div>
-
-                      <div className="rounded-2xl border border-[#E8E4DE] bg-[#FCFAF6] p-4">
-                        <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-                          <div className="flex items-start gap-3">
-                            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-[#FFF0EB] text-[#FF5A36]">
-                              <MapPin className="h-5 w-5" />
-                            </div>
-
-                            <div>
-                              <p className="text-xs font-bold text-[#17202A]">
-                                Exact business location
+                            {locationStatus && (
+                              <p className="mt-2 text-[10px] font-semibold text-[#137A59]">
+                                {locationStatus}
                               </p>
-
-                              <p className="mt-1 text-[10px] leading-5 text-gray-500">
-                                Use this only when the device is physically at the business. You do not need to type latitude or longitude.
-                              </p>
-
-                              {locationStatus && (
-                                <p className="mt-2 text-[10px] font-semibold text-[#137A59]">
-                                  {
-                                    locationStatus
-                                  }
-                                </p>
-                              )}
-
-                              {locationError && (
-                                <p className="mt-2 text-[10px] font-medium text-red-600">
-                                  {
-                                    locationError
-                                  }
-                                </p>
-                              )}
-                            </div>
-                          </div>
-
-                          <button
-                            type="button"
-                            onClick={
-                              captureCurrentLocation
-                            }
-                            disabled={
-                              capturingLocation ||
-                              savingBusiness
-                            }
-                            className="inline-flex shrink-0 items-center justify-center gap-2 rounded-xl bg-[#FF5A36] px-4 py-2.5 text-[11px] font-bold text-white transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60"
-                          >
-                            {capturingLocation ? (
-                              <LoaderCircle className="h-4 w-4 animate-spin" />
-                            ) : (
-                              <MapPin className="h-4 w-4" />
                             )}
 
-                            {capturingLocation
-                              ? "Capturing..."
-                              : businessLatitude &&
-                                  businessLongitude
-                                ? "Recapture location"
-                                : "Use current location"}
-                          </button>
-                        </div>
-
-                        {businessLatitude &&
-                          businessLongitude && (
-                            <div className="mt-3 rounded-xl border border-[#BDE8D8] bg-[#EFFBF6] px-3 py-2.5">
-                              <p className="text-[10px] font-semibold text-[#137A59]">
-                                Exact business coordinates are ready. ReMarket stores them internally for location and map use.
+                            {locationError && (
+                              <p className="mt-2 text-[10px] font-medium text-red-600">
+                                {locationError}
                               </p>
-                            </div>
-                          )}
-                      </div>
-
-                      <div className="rounded-2xl border border-[#E8E4DE] bg-[#FCFAF6] p-4">
-                        <div>
-                          <p className="text-xs font-bold text-[#17202A]">
-                            Contact & social links
-                          </p>
-
-                          <p className="mt-1 text-[10px] leading-5 text-gray-500">
-                            Add the contact methods customers can use to reach your business. Phone is managed here as the Phone social link.
-                          </p>
-                        </div>
-
-                        <div className="mt-4 grid gap-4 sm:grid-cols-2">
-                          {SOCIAL_PLATFORMS.map(
-                            ({
-                              value,
-                              label,
-                            }) => (
-                              <div
-                                key={
-                                  value
-                                }
-                              >
-                                <label
-                                  htmlFor={`edit-social-${value.toLowerCase()}`}
-                                  className="mb-2 block text-xs font-bold text-gray-700"
-                                >
-                                  {label}
-                                </label>
-
-                                <input
-                                  id={`edit-social-${value.toLowerCase()}`}
-                                  type={
-                                    value ===
-                                    "PHONE"
-                                      ? "tel"
-                                      : "text"
-                                  }
-                                  value={
-                                    socialValues[
-                                      value
-                                    ]
-                                  }
-                                  onChange={(
-                                    event
-                                  ) =>
-                                    updateSocial(
-                                      value,
-                                      event
-                                        .target
-                                        .value
-                                    )
-                                  }
-                                  placeholder={
-                                    value ===
-                                      "PHONE" ||
-                                    value ===
-                                      "WHATSAPP"
-                                      ? "080..."
-                                      : value ===
-                                          "DIRECTIONS"
-                                        ? "https://maps.google.com/..."
-                                        : "@username or URL"
-                                  }
-                                  disabled={
-                                    savingBusiness
-                                  }
-                                  className="h-12 w-full rounded-xl border border-[#D9DEE5] bg-white px-4 text-sm text-[#17202A] outline-none transition focus:border-[#FF694F] focus:ring-4 focus:ring-[#FF694F]/10 disabled:bg-gray-50"
-                                />
-                              </div>
-                            )
-                          )}
-                        </div>
-                      </div>
-
-                      <div className="grid gap-5 sm:grid-cols-3">
-                        <div>
-                          <label
-                            htmlFor="edit-category"
-                            className="mb-2 block text-xs font-bold text-gray-700"
-                          >
-                            Category
-                          </label>
-
-                          <select
-                            id="edit-category"
-                            value={
-                              businessForm.categoryId
-                            }
-                            onChange={(
-                              event
-                            ) => {
-                              updateBusinessField(
-                                "categoryId",
-                                event.target
-                                  .value
-                              );
-
-                              setCategoryChanged(
-                                true
-                              );
-                            }}
-                            disabled={
-                              savingBusiness
-                            }
-                            className="h-12 w-full rounded-xl border border-[#D9DEE5] bg-white px-4 text-sm text-[#17202A] outline-none transition focus:border-[#FF694F] focus:ring-4 focus:ring-[#FF694F]/10 disabled:bg-gray-50"
-                          >
-                            <option value="">
-                              Select category
-                            </option>
-
-                            {categories.map(
-                              (
-                                category
-                              ) => (
-                                <option
-                                  key={
-                                    category.id
-                                  }
-                                  value={
-                                    category.id
-                                  }
-                                >
-                                  {
-                                    category.name
-                                  }
-                                </option>
-                              )
                             )}
-                          </select>
-                        </div>
-
-                        <div>
-                          <label
-                            htmlFor="edit-availability"
-                            className="mb-2 block text-xs font-bold text-gray-700"
-                          >
-                            Availability
-                          </label>
-
-                          <select
-                            id="edit-availability"
-                            value={
-                              businessForm.availability
-                            }
-                            onChange={(
-                              event
-                            ) =>
-                              updateBusinessField(
-                                "availability",
-                                event.target
-                                  .value as BusinessForm["availability"]
-                              )
-                            }
-                            disabled={
-                              savingBusiness
-                            }
-                            className="h-12 w-full rounded-xl border border-[#D9DEE5] bg-white px-4 text-sm text-[#17202A] outline-none transition focus:border-[#FF694F] focus:ring-4 focus:ring-[#FF694F]/10 disabled:bg-gray-50"
-                          >
-                            <option value="ASK_SELLER">
-                              Ask seller
-                            </option>
-
-                            <option value="AVAILABLE">
-                              Available
-                            </option>
-
-                            <option value="UNAVAILABLE">
-                              Unavailable
-                            </option>
-                          </select>
-                        </div>
-
-                        <div className="grid grid-cols-2 gap-3">
-                          <div>
-                            <label
-                              htmlFor="edit-price-min"
-                              className="mb-2 block text-xs font-bold text-gray-700"
-                            >
-                              Min price
-                            </label>
-
-                            <input
-                              id="edit-price-min"
-                              type="number"
-                              min="0"
-                              step="1"
-                              value={
-                                businessForm.priceMin
-                              }
-                              onChange={(
-                                event
-                              ) =>
-                                updateBusinessField(
-                                  "priceMin",
-                                  event.target
-                                    .value
-                                )
-                              }
-                              disabled={
-                                savingBusiness
-                              }
-                              className="h-12 w-full rounded-xl border border-[#D9DEE5] bg-white px-3 text-sm text-[#17202A] outline-none transition focus:border-[#FF694F] focus:ring-4 focus:ring-[#FF694F]/10 disabled:bg-gray-50"
-                            />
-                          </div>
-
-                          <div>
-                            <label
-                              htmlFor="edit-price-max"
-                              className="mb-2 block text-xs font-bold text-gray-700"
-                            >
-                              Max price
-                            </label>
-
-                            <input
-                              id="edit-price-max"
-                              type="number"
-                              min="0"
-                              step="1"
-                              value={
-                                businessForm.priceMax
-                              }
-                              onChange={(
-                                event
-                              ) =>
-                                updateBusinessField(
-                                  "priceMax",
-                                  event.target
-                                    .value
-                                )
-                              }
-                              disabled={
-                                savingBusiness
-                              }
-                              className="h-12 w-full rounded-xl border border-[#D9DEE5] bg-white px-3 text-sm text-[#17202A] outline-none transition focus:border-[#FF694F] focus:ring-4 focus:ring-[#FF694F]/10 disabled:bg-gray-50"
-                            />
                           </div>
                         </div>
-                      </div>
 
-                      <div className="flex justify-end border-t border-[#EAE6DF] pt-5">
                         <button
-                          type="submit"
+                          type="button"
+                          onClick={captureCurrentLocation}
                           disabled={
-                            savingBusiness
+                            capturingLocation || savingBusiness
                           }
-                          className="flex h-12 items-center justify-center gap-2 rounded-xl bg-[#FF5A36] px-6 text-sm font-bold text-white shadow-sm transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60"
+                          className="inline-flex shrink-0 items-center justify-center gap-2 rounded-xl bg-[#FF5A36] px-4 py-2.5 text-[11px] font-bold text-white transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60"
                         >
-                          {savingBusiness ? (
-                            <>
-                              <LoaderCircle className="h-4 w-4 animate-spin" />
+                          {capturingLocation ? (
+                            <LoaderCircle className="h-4 w-4 animate-spin" />
+                          ) : (
+                            <MapPin className="h-4 w-4" />
+                          )}
 
-                              Saving...
+                          {capturingLocation
+                            ? "Capturing..."
+                            : businessLatitude && businessLongitude
+                              ? "Recapture location"
+                              : "Use current location"}
+                        </button>
+                      </div>
+
+                      {businessLatitude && businessLongitude && (
+                        <div className="mt-3 rounded-xl border border-[#BDE8D8] bg-[#EFFBF6] px-3 py-2.5">
+                          <p className="text-[10px] font-semibold text-[#137A59]">
+                            Exact business coordinates are ready. ReMarket stores them internally for location and map use.
+                          </p>
+                        </div>
+                      )}
+                    </div>
+
+                    <div className="rounded-2xl border border-[#E8E4DE] bg-[#FCFAF6] p-4">
+                      <div>
+                        <p className="text-xs font-bold text-[#17202A]">
+                          Contact & social links
+                        </p>
+
+                        <p className="mt-1 text-[10px] leading-5 text-gray-500">
+                          Add the contact methods customers can use to reach your business. Phone is managed here as the Phone social link.
+                        </p>
+                      </div>
+
+                      <div className="mt-4 grid gap-4 sm:grid-cols-2">
+                        {SOCIAL_PLATFORMS.map(
+                          ({ value, label }) => (
+                            <div key={value}>
+                              <label
+                                htmlFor={`edit-social-${value.toLowerCase()}`}
+                                className="mb-2 block text-xs font-bold text-gray-700"
+                              >
+                                {label}
+                              </label>
+
+                              <input
+                                id={`edit-social-${value.toLowerCase()}`}
+                                type={
+                                  value === "PHONE"
+                                    ? "tel"
+                                    : "text"
+                                }
+                                value={socialValues[value]}
+                                onChange={(event) =>
+                                  updateSocial(
+                                    value,
+                                    event.target.value
+                                  )
+                                }
+                                placeholder={
+                                  value === "PHONE" ||
+                                  value === "WHATSAPP"
+                                    ? "080..."
+                                    : value === "DIRECTIONS"
+                                      ? "https://maps.google.com/..."
+                                      : "@username or URL"
+                                }
+                                disabled={savingBusiness}
+                                className="h-12 w-full rounded-xl border border-[#D9DEE5] bg-white px-4 text-sm text-[#17202A] outline-none transition focus:border-[#FF694F] focus:ring-4 focus:ring-[#FF694F]/10 disabled:bg-gray-50"
+                              />
+                            </div>
+                          )
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="grid gap-5 sm:grid-cols-3">
+                      <div>
+                        <label
+                          htmlFor="edit-category"
+                          className="mb-2 block text-xs font-bold text-gray-700"
+                        >
+                          Category
+                        </label>
+
+                        <select
+                          id="edit-category"
+                          value={businessForm.categoryId}
+                          onChange={(event) => {
+                            updateBusinessField(
+                              "categoryId",
+                              event.target.value
+                            );
+                            setCategoryChanged(true);
+                          }}
+                          disabled={savingBusiness}
+                          className="h-12 w-full rounded-xl border border-[#D9DEE5] bg-white px-4 text-sm text-[#17202A] outline-none transition focus:border-[#FF694F] focus:ring-4 focus:ring-[#FF694F]/10 disabled:bg-gray-50"
+                        >
+                          <option value="">Select category</option>
+
+                          {categories.map((category) => (
+                            <option
+                              key={category.id}
+                              value={category.id}
+                            >
+                              {category.name}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+
+                      <div>
+                        <label
+                          htmlFor="edit-availability"
+                          className="mb-2 block text-xs font-bold text-gray-700"
+                        >
+                          Availability
+                        </label>
+
+                        <select
+                          id="edit-availability"
+                          value={businessForm.availability}
+                          onChange={(event) =>
+                            updateBusinessField(
+                              "availability",
+                              event.target.value as BusinessForm["availability"]
+                            )
+                          }
+                          disabled={savingBusiness}
+                          className="h-12 w-full rounded-xl border border-[#D9DEE5] bg-white px-4 text-sm text-[#17202A] outline-none transition focus:border-[#FF694F] focus:ring-4 focus:ring-[#FF694F]/10 disabled:bg-gray-50"
+                        >
+                          <option value="ASK_SELLER">
+                            Ask seller
+                          </option>
+                          <option value="AVAILABLE">
+                            Available
+                          </option>
+                          <option value="UNAVAILABLE">
+                            Unavailable
+                          </option>
+                        </select>
+                      </div>
+
+                      <div className="grid grid-cols-2 gap-3">
+                        <div>
+                          <label
+                            htmlFor="edit-price-min"
+                            className="mb-2 block text-xs font-bold text-gray-700"
+                          >
+                            Min price
+                          </label>
+
+                          <input
+                            id="edit-price-min"
+                            type="number"
+                            min="0"
+                            step="1"
+                            value={businessForm.priceMin}
+                            onChange={(event) =>
+                              updateBusinessField(
+                                "priceMin",
+                                event.target.value
+                              )
+                            }
+                            disabled={savingBusiness}
+                            className="h-12 w-full rounded-xl border border-[#D9DEE5] bg-white px-3 text-sm text-[#17202A] outline-none transition focus:border-[#FF694F] focus:ring-4 focus:ring-[#FF694F]/10 disabled:bg-gray-50"
+                          />
+                        </div>
+
+                        <div>
+                          <label
+                            htmlFor="edit-price-max"
+                            className="mb-2 block text-xs font-bold text-gray-700"
+                          >
+                            Max price
+                          </label>
+
+                          <input
+                            id="edit-price-max"
+                            type="number"
+                            min="0"
+                            step="1"
+                            value={businessForm.priceMax}
+                            onChange={(event) =>
+                              updateBusinessField(
+                                "priceMax",
+                                event.target.value
+                              )
+                            }
+                            disabled={savingBusiness}
+                            className="h-12 w-full rounded-xl border border-[#D9DEE5] bg-white px-3 text-sm text-[#17202A] outline-none transition focus:border-[#FF694F] focus:ring-4 focus:ring-[#FF694F]/10 disabled:bg-gray-50"
+                          />
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="flex justify-end border-t border-[#EAE6DF] pt-5">
+                      <button
+                        type="submit"
+                        disabled={savingBusiness}
+                        className="flex h-12 items-center justify-center gap-2 rounded-xl bg-[#FF5A36] px-6 text-sm font-bold text-white shadow-sm transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60"
+                      >
+                        {savingBusiness ? (
+                          <>
+                            <LoaderCircle className="h-4 w-4 animate-spin" />
+                            Saving...
+                          </>
+                        ) : (
+                          <>
+                            <CheckCircle2 className="h-4 w-4" />
+                            Save changes
+                          </>
+                        )}
+                      </button>
+                    </div>
+                  </form>
+                </section>
+              )}
+
+              {/* Products */}
+
+              {business && !editingBusiness && (
+                <section className="mt-5">
+                  <div className="rounded-[22px] border border-[#E8E4DE] bg-white shadow-sm">
+                    {/* Products header */}
+
+                    <div className="flex flex-col gap-4 border-b border-[#EAE6DF] px-5 py-5 sm:px-6">
+                      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+                        <div>
+                          <p className="text-xs font-semibold uppercase tracking-[0.12em] text-[#FF5A36]">
+                            Product management
+                          </p>
+
+                          <h2 className="mt-1 text-lg font-bold text-[#17202A]">
+                            Your products
+                          </h2>
+
+                          <p className="mt-1 text-xs text-gray-500">
+                            Add products customers can discover through your business page.
+                          </p>
+                        </div>
+
+                        <button
+                          type="button"
+                          onClick={
+                            showProductForm
+                              ? closeProductForm
+                              : openProductForm
+                          }
+                          disabled={
+                            reachedProductLimit &&
+                            !showProductForm
+                          }
+                          className={`inline-flex items-center justify-center gap-2 rounded-xl px-4 py-2.5 text-xs font-bold transition ${
+                            reachedProductLimit &&
+                            !showProductForm
+                              ? "cursor-not-allowed bg-gray-200 text-gray-500"
+                              : "bg-[#FF5A36] text-white hover:opacity-90"
+                          }`}
+                        >
+                          {showProductForm ? (
+                            <>
+                              <X className="h-4 w-4" />
+                              Close
                             </>
                           ) : (
                             <>
-                              <CheckCircle2 className="h-4 w-4" />
-
-                              Save changes
+                              <Plus className="h-4 w-4" />
+                              Add product
                             </>
                           )}
                         </button>
                       </div>
-                    </form>
-                  </section>
-                )}
 
-              {/* Products */}
+                      {/* Product limit */}
 
-              {business &&
-                !editingBusiness && (
-                  <section className="mt-5">
-                    <div className="rounded-[22px] border border-[#E8E4DE] bg-white shadow-sm">
-                      {/* Products header */}
-
-                      <div className="flex flex-col gap-4 border-b border-[#EAE6DF] px-5 py-5 sm:px-6">
-                        <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+                      <div className="rounded-2xl border border-[#E8E4DE] bg-[#FCFAF6] p-4">
+                        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                           <div>
-                            <p className="text-xs font-semibold uppercase tracking-[0.12em] text-[#FF5A36]">
-                              Product management
-                            </p>
+                            <div className="flex items-center gap-2">
+                              <Package className="h-4 w-4 text-[#FF5A36]" />
 
-                            <h2 className="mt-1 text-lg font-bold text-[#17202A]">
-                              Your products
-                            </h2>
-
-                            <p className="mt-1 text-xs text-gray-500">
-                              Add products customers can discover through your business page.
-                            </p>
-                          </div>
-
-                          <button
-                            type="button"
-                            onClick={
-                              showProductForm
-                                ? closeProductForm
-                                : openProductForm
-                            }
-                            disabled={
-                              reachedProductLimit &&
-                              !showProductForm
-                            }
-                            className={`inline-flex items-center justify-center gap-2 rounded-xl px-4 py-2.5 text-xs font-bold transition ${
-                              reachedProductLimit &&
-                              !showProductForm
-                                ? "cursor-not-allowed bg-gray-200 text-gray-500"
-                                : "bg-[#FF5A36] text-white hover:opacity-90"
-                            }`}
-                          >
-                            {showProductForm ? (
-                              <>
-                                <X className="h-4 w-4" />
-
-                                Close
-                              </>
-                            ) : (
-                              <>
-                                <Plus className="h-4 w-4" />
-
-                                Add product
-                              </>
-                            )}
-                          </button>
-                        </div>
-
-                        {/* Product limit */}
-
-                        <div className="rounded-2xl border border-[#E8E4DE] bg-[#FCFAF6] p-4">
-                          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                            <div>
-                              <div className="flex items-center gap-2">
-                                <Package className="h-4 w-4 text-[#FF5A36]" />
-
-                                <p className="text-xs font-bold text-[#17202A]">
-                                  Product slots
-                                </p>
-                              </div>
-
-                              <p className="mt-1 text-[11px] text-gray-500">
-                                {reachedProductLimit
-                                  ? "You have reached your active product limit."
-                                  : `${remainingProductSlots} active product ${
-                                      remainingProductSlots ===
-                                      1
-                                        ? "slot"
-                                        : "slots"
-                                    } remaining.`}
+                              <p className="text-xs font-bold text-[#17202A]">
+                                Product slots
                               </p>
                             </div>
 
-                            <p
-                              className={`text-sm font-bold ${
-                                reachedProductLimit
-                                  ? "text-[#C5402D]"
-                                  : "text-[#9F2D18]"
-                              }`}
-                            >
-                              {activeProductCount}/{" "}
-                              {
-                                MAX_ACTIVE_PRODUCTS
-                              }
-                            </p>
-                          </div>
-
-                          <div className="mt-3 h-2 overflow-hidden rounded-full bg-[#EAE6DF]">
-                            <div
-                              className={`h-full rounded-full transition-all ${
-                                reachedProductLimit
-                                  ? "bg-[#C5402D]"
-                                  : "bg-[#FF5A36]"
-                              }`}
-                              style={{
-                                width: `${Math.min(
-                                  100,
-                                  (activeProductCount /
-                                    MAX_ACTIVE_PRODUCTS) *
-                                    100
-                                )}%`,
-                              }}
-                            />
-                          </div>
-                        </div>
-                      </div>
-
-                      {/* Add/Edit product form */}
-
-                      {showProductForm && (
-                        <form
-                          onSubmit={
-                            editingProductId
-                              ? updateProduct
-                              : createProduct
-                          }
-                          className="space-y-5 border-b border-[#EAE6DF] bg-[#FCFAF6] px-5 py-6 sm:px-6"
-                        >
-                          <div className="flex items-start justify-between gap-4">
-                            <div className="flex items-start gap-3">
-                              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-[#FFF0EB] text-[#FF5A36]">
-                                {editingProductId ? (
-                                  <Pencil className="h-5 w-5" />
-                                ) : (
-                                  <Plus className="h-5 w-5" />
-                                )}
-                              </div>
-
-                              <div>
-                                <h3 className="text-sm font-bold text-[#17202A]">
-                                  {editingProductId
-                                    ? "Edit product"
-                                    : "Add a product"}
-                                </h3>
-
-                                <p className="mt-1 text-xs text-gray-500">
-                                  {editingProductId
-                                    ? "Update the information customers see for this product."
-                                    : "Enter the basic information customers need to know."}
-                                </p>
-                              </div>
-                            </div>
-
-                            <button
-                              type="button"
-                              onClick={
-                                closeProductForm
-                              }
-                              disabled={
-                                creatingProduct ||
-                                updatingProduct
-                              }
-                              className="flex h-9 w-9 items-center justify-center rounded-full border border-[#E8E4DE] bg-white text-gray-500 transition hover:text-[#9F2D18] disabled:cursor-not-allowed disabled:opacity-50"
-                              aria-label="Close product form"
-                            >
-                              <X className="h-4 w-4" />
-                            </button>
-                          </div>
-
-                          <div className="grid gap-5 sm:grid-cols-2">
-                            <div>
-                              <label
-                                htmlFor="product-name"
-                                className="mb-2 block text-xs font-bold text-gray-700"
-                              >
-                                Product name
-                              </label>
-
-                              <input
-                                id="product-name"
-                                type="text"
-                                value={
-                                  productForm.name
-                                }
-                                onChange={(
-                                  event
-                                ) =>
-                                  updateProductField(
-                                    "name",
-                                    event.target
-                                      .value
-                                  )
-                                }
-                                placeholder="e.g. Native fabric"
-                                required
-                                disabled={
-                                  creatingProduct ||
-                                  updatingProduct
-                                }
-                                className="h-12 w-full rounded-xl border border-[#D9DEE5] bg-white px-4 text-sm text-[#17202A] outline-none transition focus:border-[#FF694F] focus:ring-4 focus:ring-[#FF694F]/10 disabled:bg-gray-50"
-                              />
-                            </div>
-
-                            <div>
-                              <label
-                                htmlFor="product-category"
-                                className="mb-2 block text-xs font-bold text-gray-700"
-                              >
-                                Category
-                              </label>
-
-                              <select
-                                id="product-category"
-                                value={
-                                  productForm.categoryId
-                                }
-                                onChange={(
-                                  event
-                                ) =>
-                                  updateProductField(
-                                    "categoryId",
-                                    event.target
-                                      .value
-                                  )
-                                }
-                                disabled={
-                                  creatingProduct ||
-                                  updatingProduct
-                                }
-                                className="h-12 w-full rounded-xl border border-[#D9DEE5] bg-white px-4 text-sm text-[#17202A] outline-none transition focus:border-[#FF694F] focus:ring-4 focus:ring-[#FF694F]/10 disabled:bg-gray-50"
-                              >
-                                <option value="">
-                                  Select category
-                                </option>
-
-                                {categories.map(
-                                  (
-                                    category
-                                  ) => (
-                                    <option
-                                      key={
-                                        category.id
-                                      }
-                                      value={
-                                        category.id
-                                      }
-                                    >
-                                      {
-                                        category.name
-                                      }
-                                    </option>
-                                  )
-                                )}
-                              </select>
-                            </div>
-                          </div>
-
-                          <div>
-                            <label
-                              htmlFor="product-description"
-                              className="mb-2 block text-xs font-bold text-gray-700"
-                            >
-                              Description
-                            </label>
-
-                            <textarea
-                              id="product-description"
-                              value={
-                                productForm.description
-                              }
-                              onChange={(
-                                event
-                              ) =>
-                                updateProductField(
-                                  "description",
-                                  event.target
-                                    .value
-                                )
-                              }
-                              rows={3}
-                              disabled={
-                                creatingProduct ||
-                                updatingProduct
-                              }
-                              placeholder="Describe the product"
-                              className="w-full resize-none rounded-xl border border-[#D9DEE5] bg-white px-4 py-3 text-sm text-[#17202A] outline-none transition focus:border-[#FF694F] focus:ring-4 focus:ring-[#FF694F]/10 disabled:bg-gray-50"
-                            />
-                          </div>
-
-                          <div className="grid gap-5 sm:grid-cols-2">
-                            <div>
-                              <label
-                                htmlFor="product-price"
-                                className="mb-2 block text-xs font-bold text-gray-700"
-                              >
-                                Price
-                              </label>
-
-                              <input
-                                id="product-price"
-                                type="number"
-                                min="0"
-                                step="1"
-                                value={
-                                  productForm.price
-                                }
-                                onChange={(
-                                  event
-                                ) =>
-                                  updateProductField(
-                                    "price",
-                                    event.target
-                                      .value
-                                  )
-                                }
-                                placeholder="Leave empty for range pricing"
-                                disabled={
-                                  creatingProduct ||
-                                  updatingProduct
-                                }
-                                className="h-12 w-full rounded-xl border border-[#D9DEE5] bg-white px-4 text-sm text-[#17202A] outline-none transition focus:border-[#FF694F] focus:ring-4 focus:ring-[#FF694F]/10 disabled:bg-gray-50"
-                              />
-                            </div>
-
-                            <div>
-                              <label
-                                htmlFor="product-availability"
-                                className="mb-2 block text-xs font-bold text-gray-700"
-                              >
-                                Availability
-                              </label>
-
-                              <select
-                                id="product-availability"
-                                value={
-                                  productForm.availability
-                                }
-                                onChange={(
-                                  event
-                                ) =>
-                                  updateProductField(
-                                    "availability",
-                                    event.target
-                                      .value as ProductForm["availability"]
-                                  )
-                                }
-                                disabled={
-                                  creatingProduct ||
-                                  updatingProduct
-                                }
-                                className="h-12 w-full rounded-xl border border-[#D9DEE5] bg-white px-4 text-sm text-[#17202A] outline-none transition focus:border-[#FF694F] focus:ring-4 focus:ring-[#FF694F]/10 disabled:bg-gray-50"
-                              >
-                                <option value="ASK_SELLER">
-                                  Ask seller
-                                </option>
-
-                                <option value="AVAILABLE">
-                                  Available
-                                </option>
-
-                                <option value="UNAVAILABLE">
-                                  Unavailable
-                                </option>
-                              </select>
-                            </div>
-                          </div>
-
-                          <div className="grid gap-5 sm:grid-cols-2">
-                            <div className="grid grid-cols-2 gap-3">
-                              <div>
-                                <label
-                                  htmlFor="product-price-min"
-                                  className="mb-2 block text-xs font-bold text-gray-700"
-                                >
-                                  Min price
-                                </label>
-
-                                <input
-                                  id="product-price-min"
-                                  type="number"
-                                  min="0"
-                                  step="1"
-                                  value={
-                                    productForm.priceMin
-                                  }
-                                  onChange={(
-                                    event
-                                  ) =>
-                                    updateProductField(
-                                      "priceMin",
-                                      event.target
-                                        .value
-                                    )
-                                  }
-                                  placeholder="0"
-                                  disabled={
-                                    creatingProduct ||
-                                    updatingProduct
-                                  }
-                                  className="h-12 w-full rounded-xl border border-[#D9DEE5] bg-white px-3 text-sm text-[#17202A] outline-none transition focus:border-[#FF694F] focus:ring-4 focus:ring-[#FF694F]/10 disabled:bg-gray-50"
-                                />
-                              </div>
-
-                              <div>
-                                <label
-                                  htmlFor="product-price-max"
-                                  className="mb-2 block text-xs font-bold text-gray-700"
-                                >
-                                  Max price
-                                </label>
-
-                                <input
-                                  id="product-price-max"
-                                  type="number"
-                                  min="0"
-                                  step="1"
-                                  value={
-                                    productForm.priceMax
-                                  }
-                                  onChange={(
-                                    event
-                                  ) =>
-                                    updateProductField(
-                                      "priceMax",
-                                      event.target
-                                        .value
-                                    )
-                                  }
-                                  placeholder="0"
-                                  disabled={
-                                    creatingProduct ||
-                                    updatingProduct
-                                  }
-                                  className="h-12 w-full rounded-xl border border-[#D9DEE5] bg-white px-3 text-sm text-[#17202A] outline-none transition focus:border-[#FF694F] focus:ring-4 focus:ring-[#FF694F]/10 disabled:bg-gray-50"
-                                />
-                              </div>
-                            </div>
-
-                            <div className="rounded-2xl border border-[#E8E4DE] bg-white p-4">
-                              <div className="flex items-center justify-between gap-3">
-                                <div>
-                                  <p className="text-xs font-bold text-[#17202A]">
-                                    Product images
-                                  </p>
-
-                                  <p className="mt-1 text-[10px] leading-4 text-gray-400">
-                                    The first image is the product cover.
-                                  </p>
-                                </div>
-                              </div>
-
-                              <div className="mt-3">
-                                <ProductImageUpload
-                                  value={
-                                    productForm.images
-                                  }
-                                  onChange={(
-                                    images
-                                  ) =>
-                                    updateProductField(
-                                      "images",
-                                      images
-                                    )
-                                  }
-                                  disabled={
-                                    creatingProduct ||
-                                    updatingProduct
-                                  }
-                                />
-                              </div>
-                            </div>
-                          </div>
-
-                          <div className="flex flex-col gap-3 border-t border-[#E5E0D8] pt-5 sm:flex-row sm:items-center sm:justify-between">
-                            <p className="text-xs leading-5 text-gray-500">
-                              {editingProductId
-                                ? "Changes update this existing product."
-                                : `${remainingProductSlots} active ${
-                                    remainingProductSlots ===
-                                    1
+                            <p className="mt-1 text-[11px] text-gray-500">
+                              {reachedProductLimit
+                                ? "You have reached your active product limit."
+                                : `${remainingProductSlots} active product ${
+                                    remainingProductSlots === 1
                                       ? "slot"
                                       : "slots"
                                   } remaining.`}
                             </p>
+                          </div>
 
-                            <button
-                              type="submit"
+                          <p
+                            className={`text-sm font-bold ${
+                              reachedProductLimit
+                                ? "text-[#C5402D]"
+                                : "text-[#9F2D18]"
+                            }`}
+                          >
+                            {activeProductCount}/{MAX_ACTIVE_PRODUCTS}
+                          </p>
+                        </div>
+
+                        <div className="mt-3 h-2 overflow-hidden rounded-full bg-[#EAE6DF]">
+                          <div
+                            className={`h-full rounded-full transition-all ${
+                              reachedProductLimit
+                                ? "bg-[#C5402D]"
+                                : "bg-[#FF5A36]"
+                            }`}
+                            style={{
+                              width: `${Math.min(
+                                100,
+                                (activeProductCount /
+                                  MAX_ACTIVE_PRODUCTS) *
+                                  100
+                              )}%`,
+                            }}
+                          />
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Add/Edit product form */}
+
+                    {showProductForm && (
+                      <form
+                        onSubmit={
+                          editingProductId
+                            ? updateProduct
+                            : createProduct
+                        }
+                        className="space-y-5 border-b border-[#EAE6DF] bg-[#FCFAF6] px-5 py-6 sm:px-6"
+                      >
+                        <div className="flex items-start justify-between gap-4">
+                          <div className="flex items-start gap-3">
+                            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-[#FFF0EB] text-[#FF5A36]">
+                              {editingProductId ? (
+                                <Pencil className="h-5 w-5" />
+                              ) : (
+                                <Plus className="h-5 w-5" />
+                              )}
+                            </div>
+
+                            <div>
+                              <h3 className="text-sm font-bold text-[#17202A]">
+                                {editingProductId
+                                  ? "Edit product"
+                                  : "Add a product"}
+                              </h3>
+
+                              <p className="mt-1 text-xs text-gray-500">
+                                {editingProductId
+                                  ? "Update the information customers see for this product."
+                                  : "Enter the basic information customers need to know."}
+                              </p>
+                            </div>
+                          </div>
+
+                          <button
+                            type="button"
+                            onClick={closeProductForm}
+                            disabled={
+                              creatingProduct ||
+                              updatingProduct
+                            }
+                            className="flex h-9 w-9 items-center justify-center rounded-full border border-[#E8E4DE] bg-white text-gray-500 transition hover:text-[#9F2D18] disabled:cursor-not-allowed disabled:opacity-50"
+                            aria-label="Close product form"
+                          >
+                            <X className="h-4 w-4" />
+                          </button>
+                        </div>
+
+                        <div className="grid gap-5 sm:grid-cols-2">
+                          <div>
+                            <label
+                              htmlFor="product-name"
+                              className="mb-2 block text-xs font-bold text-gray-700"
+                            >
+                              Product name
+                            </label>
+
+                            <input
+                              id="product-name"
+                              type="text"
+                              value={productForm.name}
+                              onChange={(event) =>
+                                updateProductField(
+                                  "name",
+                                  event.target.value
+                                )
+                              }
+                              placeholder="e.g. Native fabric"
+                              maxLength={150}
+                              required
                               disabled={
                                 creatingProduct ||
                                 updatingProduct
                               }
-                              className="flex h-12 items-center justify-center gap-2 rounded-xl bg-[#FF5A36] px-6 text-sm font-bold text-white shadow-sm transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60"
-                            >
-                              {creatingProduct ||
-                              updatingProduct ? (
-                                <>
-                                  <LoaderCircle className="h-4 w-4 animate-spin" />
-
-                                  {editingProductId
-                                    ? "Saving..."
-                                    : "Adding..."}
-                                </>
-                              ) : (
-                                <>
-                                  {editingProductId ? (
-                                    <CheckCircle2 className="h-4 w-4" />
-                                  ) : (
-                                    <Plus className="h-4 w-4" />
-                                  )}
-
-                                  {editingProductId
-                                    ? "Save changes"
-                                    : "Add product"}
-                                </>
-                              )}
-                            </button>
+                              className="h-12 w-full rounded-xl border border-[#D9DEE5] bg-white px-4 text-sm text-[#17202A] outline-none transition focus:border-[#FF694F] focus:ring-4 focus:ring-[#FF694F]/10 disabled:bg-gray-50"
+                            />
                           </div>
-                        </form>
-                      )}
 
-                      {/* Product list */}
+                          <div>
+                            <label
+                              htmlFor="product-category"
+                              className="mb-2 block text-xs font-bold text-gray-700"
+                            >
+                              Category
+                            </label>
 
-                      <div className="p-5 sm:p-6">
-                        {business.products
-                          .length ===
-                        0 ? (
-                          <div className="rounded-2xl border border-dashed border-[#D9DEE5] bg-[#FCFAF6] px-5 py-10 text-center">
-                            <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-2xl bg-white text-gray-400 shadow-sm">
-                              <Package className="h-6 w-6" />
-                            </div>
-
-                            <h3 className="mt-4 text-sm font-bold text-[#17202A]">
-                              No products yet
-                            </h3>
-
-                            <p className="mx-auto mt-1 max-w-[430px] text-xs leading-5 text-gray-500">
-                              Add your first product so customers can see what your business sells.
-                            </p>
-
-                            <button
-                              type="button"
-                              onClick={
-                                openProductForm
+                            <select
+                              id="product-category"
+                              value={productForm.categoryId}
+                              onChange={(event) =>
+                                updateProductField(
+                                  "categoryId",
+                                  event.target.value
+                                )
                               }
                               disabled={
-                                reachedProductLimit
+                                creatingProduct ||
+                                updatingProduct
                               }
-                              className="mt-4 inline-flex items-center gap-2 rounded-xl bg-[#FF5A36] px-4 py-2.5 text-xs font-bold text-white disabled:cursor-not-allowed disabled:opacity-50"
+                              className="h-12 w-full rounded-xl border border-[#D9DEE5] bg-white px-4 text-sm text-[#17202A] outline-none transition focus:border-[#FF694F] focus:ring-4 focus:ring-[#FF694F]/10 disabled:bg-gray-50"
                             >
-                              <Plus className="h-4 w-4" />
+                              <option value="">
+                                Select category
+                              </option>
 
-                              Add your first product
-                            </button>
-                          </div>
-                        ) : (
-                          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-                            {business.products.map(
-                              (
-                                product
-                              ) => (
-                                <article
-                                  key={
-                                    product.id
-                                  }
-                                  className="overflow-hidden rounded-2xl border border-[#E8E4DE] bg-white"
+                              {categories.map((category) => (
+                                <option
+                                  key={category.id}
+                                  value={category.id}
                                 >
-                                  <div className="h-[150px] overflow-hidden bg-[#FCFAF6]">
-                                    {(
-                                      product.images?.[0]
-                                        ?.url ??
-                                      product.imageUrl
-                                    ) ? (
-                                      <img
-                                        src={
-                                          product
-                                            .images?.[0]
-                                            ?.url ??
-                                          product.imageUrl ??
-                                          ""
-                                        }
-                                        alt={
-                                          product.name
-                                        }
-                                        className="h-full w-full object-cover"
-                                      />
-                                    ) : (
-                                      <div className="flex h-full w-full items-center justify-center text-gray-300">
-                                        <Package className="h-10 w-10" />
-                                      </div>
-                                    )}
-                                  </div>
-
-                                  <div className="p-4">
-                                    <div className="flex items-start justify-between gap-3">
-                                      <div className="min-w-0">
-                                        <h3 className="truncate text-sm font-bold text-[#17202A]">
-                                          {
-                                            product.name
-                                          }
-                                        </h3>
-
-                                        <p className="mt-1 text-[11px] text-gray-500">
-                                          {
-                                            product
-                                              .category
-                                              ?.name
-                                          }
-                                        </p>
-                                      </div>
-
-                                      <span className="shrink-0 rounded-full bg-[#DDF5EA] px-2 py-1 text-[9px] font-bold text-[#137A59]">
-                                        {
-                                          product.status
-                                        }
-                                      </span>
-                                    </div>
-
-                                    <p className="mt-3 line-clamp-2 min-h-[34px] text-xs leading-5 text-gray-500">
-                                      {product.description ||
-                                        "No description added."}
-                                    </p>
-
-                                    <div className="mt-3 flex items-center justify-between gap-3">
-                                      <div className="text-sm font-bold text-[#9F2D18]">
-                                        {product.price !==
-                                        null
-                                          ? `₦${product.price.toLocaleString()}`
-                                          : product.priceMin !==
-                                              null &&
-                                            product.priceMax !==
-                                              null
-                                          ? `₦${product.priceMin.toLocaleString()} - ₦${product.priceMax.toLocaleString()}`
-                                          : "Ask seller"}
-                                      </div>
-
-                                      <span className="text-right text-[10px] font-medium text-gray-400">
-                                        {product.availability.replace(
-                                          "_",
-                                          " "
-                                        )}
-                                      </span>
-                                    </div>
-
-                                    <div className="mt-4 flex gap-2">
-                                      <button
-                                        type="button"
-                                        onClick={() =>
-                                          startEditingProduct(
-                                            product
-                                          )
-                                        }
-                                        disabled={
-                                          deletingProductId ===
-                                          product.id
-                                        }
-                                        className="flex flex-1 items-center justify-center gap-2 rounded-xl border border-[#E8E4DE] px-3 py-2.5 text-xs font-semibold text-gray-700 transition hover:bg-[#FFF7ED] hover:text-[#9F2D18] disabled:cursor-not-allowed disabled:opacity-50"
-                                      >
-                                        <Pencil className="h-3.5 w-3.5" />
-
-                                        Edit
-                                      </button>
-
-                                      <button
-                                        type="button"
-                                        onClick={() =>
-                                          deleteProduct(
-                                            product
-                                          )
-                                        }
-                                        disabled={
-                                          deletingProductId ===
-                                          product.id
-                                        }
-                                        className="flex items-center justify-center rounded-xl border border-[#F1D5D0] px-3 py-2.5 text-xs font-semibold text-[#C5402D] transition hover:bg-[#FFF0EE] disabled:cursor-not-allowed disabled:opacity-50"
-                                        aria-label={`Delete ${product.name}`}
-                                      >
-                                        {deletingProductId ===
-                                        product.id ? (
-                                          <LoaderCircle className="h-4 w-4 animate-spin" />
-                                        ) : (
-                                          <Trash2 className="h-4 w-4" />
-                                        )}
-                                      </button>
-                                    </div>
-                                  </div>
-                                </article>
-                              )
-                            )}
+                                  {category.name}
+                                </option>
+                              ))}
+                            </select>
                           </div>
-                        )}
-                      </div>
+                        </div>
+
+                        <div>
+                          <label
+                            htmlFor="product-description"
+                            className="mb-2 block text-xs font-bold text-gray-700"
+                          >
+                            Description
+                          </label>
+
+                          <textarea
+                            id="product-description"
+                            value={productForm.description}
+                            onChange={(event) =>
+                              updateProductField(
+                                "description",
+                                event.target.value
+                              )
+                            }
+                            rows={3}
+                            maxLength={2000}
+                            disabled={
+                              creatingProduct ||
+                              updatingProduct
+                            }
+                            placeholder="Describe the product"
+                            className="w-full resize-none rounded-xl border border-[#D9DEE5] bg-white px-4 py-3 text-sm text-[#17202A] outline-none transition focus:border-[#FF694F] focus:ring-4 focus:ring-[#FF694F]/10 disabled:bg-gray-50"
+                          />
+                        </div>
+
+                        <div className="grid gap-5 sm:grid-cols-2">
+                          <div>
+                            <label
+                              htmlFor="product-price"
+                              className="mb-2 block text-xs font-bold text-gray-700"
+                            >
+                              Price
+                            </label>
+
+                            <input
+                              id="product-price"
+                              type="number"
+                              min="0"
+                              step="1"
+                              value={productForm.price}
+                              onChange={(event) =>
+                                updateProductField(
+                                  "price",
+                                  event.target.value
+                                )
+                              }
+                              placeholder="Leave empty for range pricing"
+                              disabled={
+                                creatingProduct ||
+                                updatingProduct
+                              }
+                              className="h-12 w-full rounded-xl border border-[#D9DEE5] bg-white px-4 text-sm text-[#17202A] outline-none transition focus:border-[#FF694F] focus:ring-4 focus:ring-[#FF694F]/10 disabled:bg-gray-50"
+                            />
+                          </div>
+
+                          <div>
+                            <label
+                              htmlFor="product-availability"
+                              className="mb-2 block text-xs font-bold text-gray-700"
+                            >
+                              Availability
+                            </label>
+
+                            <select
+                              id="product-availability"
+                              value={productForm.availability}
+                              onChange={(event) =>
+                                updateProductField(
+                                  "availability",
+                                  event.target.value as ProductForm["availability"]
+                                )
+                              }
+                              disabled={
+                                creatingProduct ||
+                                updatingProduct
+                              }
+                              className="h-12 w-full rounded-xl border border-[#D9DEE5] bg-white px-4 text-sm text-[#17202A] outline-none transition focus:border-[#FF694F] focus:ring-4 focus:ring-[#FF694F]/10 disabled:bg-gray-50"
+                            >
+                              <option value="ASK_SELLER">
+                                Ask seller
+                              </option>
+                              <option value="AVAILABLE">
+                                Available
+                              </option>
+                              <option value="UNAVAILABLE">
+                                Unavailable
+                              </option>
+                            </select>
+                          </div>
+                        </div>
+
+                        <div className="grid gap-5 sm:grid-cols-2">
+                          <div className="grid grid-cols-2 gap-3">
+                            <div>
+                              <label
+                                htmlFor="product-price-min"
+                                className="mb-2 block text-xs font-bold text-gray-700"
+                              >
+                                Min price
+                              </label>
+
+                              <input
+                                id="product-price-min"
+                                type="number"
+                                min="0"
+                                step="1"
+                                value={productForm.priceMin}
+                                onChange={(event) =>
+                                  updateProductField(
+                                    "priceMin",
+                                    event.target.value
+                                  )
+                                }
+                                placeholder="0"
+                                disabled={
+                                  creatingProduct ||
+                                  updatingProduct
+                                }
+                                className="h-12 w-full rounded-xl border border-[#D9DEE5] bg-white px-3 text-sm text-[#17202A] outline-none transition focus:border-[#FF694F] focus:ring-4 focus:ring-[#FF694F]/10 disabled:bg-gray-50"
+                              />
+                            </div>
+
+                            <div>
+                              <label
+                                htmlFor="product-price-max"
+                                className="mb-2 block text-xs font-bold text-gray-700"
+                              >
+                                Max price
+                              </label>
+
+                              <input
+                                id="product-price-max"
+                                type="number"
+                                min="0"
+                                step="1"
+                                value={productForm.priceMax}
+                                onChange={(event) =>
+                                  updateProductField(
+                                    "priceMax",
+                                    event.target.value
+                                  )
+                                }
+                                placeholder="0"
+                                disabled={
+                                  creatingProduct ||
+                                  updatingProduct
+                                }
+                                className="h-12 w-full rounded-xl border border-[#D9DEE5] bg-white px-3 text-sm text-[#17202A] outline-none transition focus:border-[#FF694F] focus:ring-4 focus:ring-[#FF694F]/10 disabled:bg-gray-50"
+                              />
+                            </div>
+                          </div>
+
+                          <div className="rounded-2xl border border-[#E8E4DE] bg-white p-4">
+                            <div>
+                              <p className="text-xs font-bold text-[#17202A]">
+                                Product images
+                              </p>
+
+                              <p className="mt-1 text-[10px] leading-4 text-gray-400">
+                                The first image is the product cover.
+                              </p>
+                            </div>
+
+                            <div className="mt-3">
+                              <ProductImageUpload
+                                value={productForm.images}
+                                onChange={(images) =>
+                                  updateProductField(
+                                    "images",
+                                    images
+                                  )
+                                }
+                                disabled={
+                                  creatingProduct ||
+                                  updatingProduct
+                                }
+                              />
+                            </div>
+                          </div>
+                        </div>
+
+                        <div className="flex flex-col gap-3 border-t border-[#E5E0D8] pt-5 sm:flex-row sm:items-center sm:justify-between">
+                          <p className="text-xs leading-5 text-gray-500">
+                            {editingProductId
+                              ? "Changes update this existing product."
+                              : `${remainingProductSlots} active ${
+                                  remainingProductSlots === 1
+                                    ? "slot"
+                                    : "slots"
+                                } remaining.`}
+                          </p>
+
+                          <button
+                            type="submit"
+                            disabled={
+                              creatingProduct ||
+                              updatingProduct
+                            }
+                            className="flex h-12 items-center justify-center gap-2 rounded-xl bg-[#FF5A36] px-6 text-sm font-bold text-white shadow-sm transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60"
+                          >
+                            {creatingProduct ||
+                            updatingProduct ? (
+                              <>
+                                <LoaderCircle className="h-4 w-4 animate-spin" />
+                                {editingProductId
+                                  ? "Saving..."
+                                  : "Adding..."}
+                              </>
+                            ) : (
+                              <>
+                                {editingProductId ? (
+                                  <CheckCircle2 className="h-4 w-4" />
+                                ) : (
+                                  <Plus className="h-4 w-4" />
+                                )}
+                                {editingProductId
+                                  ? "Save changes"
+                                  : "Add product"}
+                              </>
+                            )}
+                          </button>
+                        </div>
+                      </form>
+                    )}
+
+                    {/* Product list */}
+
+                    <div className="p-5 sm:p-6">
+                      {dashboardProducts.length === 0 ? (
+                        <div className="rounded-2xl border border-dashed border-[#D9DEE5] bg-[#FCFAF6] px-5 py-10 text-center">
+                          <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-2xl bg-white text-gray-400 shadow-sm">
+                            <Package className="h-6 w-6" />
+                          </div>
+
+                          <h3 className="mt-4 text-sm font-bold text-[#17202A]">
+                            No products yet
+                          </h3>
+
+                          <p className="mx-auto mt-1 max-w-[430px] text-xs leading-5 text-gray-500">
+                            Add your first product so customers can see what your business sells.
+                          </p>
+
+                          <button
+                            type="button"
+                            onClick={openProductForm}
+                            disabled={reachedProductLimit}
+                            className="mt-4 inline-flex items-center gap-2 rounded-xl bg-[#FF5A36] px-4 py-2.5 text-xs font-bold text-white disabled:cursor-not-allowed disabled:opacity-50"
+                          >
+                            <Plus className="h-4 w-4" />
+                            Add your first product
+                          </button>
+                        </div>
+                      ) : (
+                        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                          {dashboardProducts.map((product) => (
+                            <article
+                              key={product.id}
+                              className="overflow-hidden rounded-2xl border border-[#E8E4DE] bg-white"
+                            >
+                              <div className="h-[150px] overflow-hidden bg-[#FCFAF6]">
+                                {product.images?.[0]?.url ||
+                                product.imageUrl ? (
+                                  <img
+                                    src={
+                                      product.images?.[0]?.url ??
+                                      product.imageUrl ??
+                                      ""
+                                    }
+                                    alt={product.name}
+                                    loading="lazy"
+                                    className="h-full w-full object-cover"
+                                  />
+                                ) : (
+                                  <div className="flex h-full w-full items-center justify-center text-gray-300">
+                                    <Package className="h-10 w-10" />
+                                  </div>
+                                )}
+                              </div>
+
+                              <div className="p-4">
+                                <div className="flex items-start justify-between gap-3">
+                                  <div className="min-w-0">
+                                    <h3 className="truncate text-sm font-bold text-[#17202A]">
+                                      {product.name}
+                                    </h3>
+
+                                    <p className="mt-1 text-[11px] text-gray-500">
+                                      {product.category?.name ??
+                                        "No category"}
+                                    </p>
+                                  </div>
+
+                                  <span
+                                    className={`shrink-0 rounded-full px-2 py-1 text-[9px] font-bold ${getProductStatusClasses(
+                                      product.status
+                                    )}`}
+                                  >
+                                    {product.status}
+                                  </span>
+                                </div>
+
+                                <p className="mt-3 line-clamp-2 min-h-[34px] text-xs leading-5 text-gray-500">
+                                  {product.description ||
+                                    "No description added."}
+                                </p>
+
+                                <div className="mt-3 flex items-center justify-between gap-3">
+                                  <div className="text-sm font-bold text-[#9F2D18]">
+                                    {product.price !== null
+                                      ? `₦${product.price.toLocaleString()}`
+                                      : product.priceMin !== null &&
+                                          product.priceMax !== null
+                                        ? `₦${product.priceMin.toLocaleString()} - ₦${product.priceMax.toLocaleString()}`
+                                        : "Ask seller"}
+                                  </div>
+
+                                  <span className="text-right text-[10px] font-medium text-gray-400">
+                                    {product.availability.replace(
+                                      "_",
+                                      " "
+                                    )}
+                                  </span>
+                                </div>
+
+                                <div className="mt-4 flex gap-2">
+                                  <button
+                                    type="button"
+                                    onClick={() =>
+                                      startEditingProduct(product)
+                                    }
+                                    disabled={
+                                      deletingProductId ===
+                                      product.id
+                                    }
+                                    className="flex flex-1 items-center justify-center gap-2 rounded-xl border border-[#E8E4DE] px-3 py-2.5 text-xs font-semibold text-gray-700 transition hover:bg-[#FFF7ED] hover:text-[#9F2D18] disabled:cursor-not-allowed disabled:opacity-50"
+                                  >
+                                    <Pencil className="h-3.5 w-3.5" />
+                                    Edit
+                                  </button>
+
+                                  <button
+                                    type="button"
+                                    onClick={() =>
+                                      deleteProduct(product)
+                                    }
+                                    disabled={
+                                      deletingProductId ===
+                                      product.id
+                                    }
+                                    className="flex items-center justify-center rounded-xl border border-[#F1D5D0] px-3 py-2.5 text-xs font-semibold text-[#C5402D] transition hover:bg-[#FFF0EE] disabled:cursor-not-allowed disabled:opacity-50"
+                                    aria-label={`Delete ${product.name}`}
+                                  >
+                                    {deletingProductId ===
+                                    product.id ? (
+                                      <LoaderCircle className="h-4 w-4 animate-spin" />
+                                    ) : (
+                                      <Trash2 className="h-4 w-4" />
+                                    )}
+                                  </button>
+                                </div>
+                              </div>
+                            </article>
+                          ))}
+                        </div>
+                      )}
                     </div>
-                  </section>
-                )}
+                  </div>
+                </section>
+              )}
 
               {/* Create business */}
 
@@ -4641,9 +3996,7 @@ export default function SellerDashboard() {
                   </div>
 
                   <form
-                    onSubmit={
-                      createBusiness
-                    }
+                    onSubmit={createBusiness}
                     className="space-y-5 px-5 py-6 sm:px-6"
                   >
                     <div className="grid gap-5 sm:grid-cols-2">
@@ -4658,23 +4011,17 @@ export default function SellerDashboard() {
                         <input
                           id="create-business-name"
                           type="text"
-                          value={
-                            businessForm.name
-                          }
-                          onChange={(
-                            event
-                          ) =>
+                          value={businessForm.name}
+                          onChange={(event) =>
                             updateBusinessField(
                               "name",
-                              event.target
-                                .value
+                              event.target.value
                             )
                           }
+                          maxLength={150}
                           placeholder="Your business name"
                           required
-                          disabled={
-                            savingBusiness
-                          }
+                          disabled={savingBusiness}
                           className="h-12 w-full rounded-xl border border-[#D9DEE5] bg-white px-4 text-sm text-[#17202A] outline-none transition focus:border-[#FF694F] focus:ring-4 focus:ring-[#FF694F]/10 disabled:bg-gray-50"
                         />
                       </div>
@@ -4690,22 +4037,16 @@ export default function SellerDashboard() {
                         <input
                           id="create-owner-name"
                           type="text"
-                          value={
-                            businessForm.ownerName
-                          }
-                          onChange={(
-                            event
-                          ) =>
+                          value={businessForm.ownerName}
+                          onChange={(event) =>
                             updateBusinessField(
                               "ownerName",
-                              event.target
-                                .value
+                              event.target.value
                             )
                           }
+                          maxLength={100}
                           placeholder="Your name"
-                          disabled={
-                            savingBusiness
-                          }
+                          disabled={savingBusiness}
                           className="h-12 w-full rounded-xl border border-[#D9DEE5] bg-white px-4 text-sm text-[#17202A] outline-none transition focus:border-[#FF694F] focus:ring-4 focus:ring-[#FF5A36]/10 disabled:bg-gray-50"
                         />
                       </div>
@@ -4721,23 +4062,17 @@ export default function SellerDashboard() {
 
                       <textarea
                         id="create-description"
-                        value={
-                          businessForm.description
-                        }
-                        onChange={(
-                          event
-                        ) =>
+                        value={businessForm.description}
+                        onChange={(event) =>
                           updateBusinessField(
                             "description",
-                            event.target
-                              .value
+                            event.target.value
                           )
                         }
                         placeholder="Tell customers what your business offers"
                         rows={4}
-                        disabled={
-                          savingBusiness
-                        }
+                        maxLength={2000}
+                        disabled={savingBusiness}
                         className="w-full resize-none rounded-xl border border-[#D9DEE5] bg-white px-4 py-3 text-sm text-[#17202A] outline-none transition focus:border-[#FF694F] focus:ring-4 focus:ring-[#FF694F]/10 disabled:bg-gray-50"
                       />
                     </div>
@@ -4753,59 +4088,34 @@ export default function SellerDashboard() {
 
                         <select
                           id="create-area"
-                          value={
-                            businessForm.area
-                          }
-                          onChange={(
-                            event
-                          ) =>
+                          value={businessForm.area}
+                          onChange={(event) =>
                             updateBusinessField(
                               "area",
-                              event.target
-                                .value
+                              event.target.value
                             )
                           }
                           required
-                          disabled={
-                            savingBusiness
-                          }
+                          disabled={savingBusiness}
                           className="h-12 w-full rounded-xl border border-[#D9DEE5] bg-white px-4 text-sm text-[#17202A] outline-none transition focus:border-[#FF694F] focus:ring-4 focus:ring-[#FF5A36]/10 disabled:bg-gray-50"
                         >
-                          <option value="">
-                            Select area
-                          </option>
+                          <option value="">Select area</option>
 
-                          {LAGOS_AREA_GROUPS.map(
-                            (group) => (
-                              <optgroup
-                                key={
-                                  group.lga
-                                }
-                                label={
-                                  group.lga
-                                }
-                              >
-                                {group.areas.map(
-                                  (
-                                    item
-                                  ) => (
-                                    <option
-                                      key={
-                                        item
-                                      }
-                                      value={
-                                        item
-                                      }
-                                    >
-                                      {
-                                        item
-                                      }
-                                    </option>
-                                  )
-                                )}
-                              </optgroup>
-                            )
-                          )}
+                          {LAGOS_AREA_GROUPS.map((group) => (
+                            <optgroup
+                              key={group.lga}
+                              label={group.lga}
+                            >
+                              {group.areas.map((item) => (
+                                <option
+                                  key={item}
+                                  value={item}
+                                >
+                                  {item}
+                                </option>
+                              ))}
+                            </optgroup>
+                          ))}
                         </select>
                       </div>
 
@@ -4820,22 +4130,16 @@ export default function SellerDashboard() {
                         <input
                           id="create-city"
                           type="text"
-                          value={
-                            businessForm.city
-                          }
-                          onChange={(
-                            event
-                          ) =>
+                          value={businessForm.city}
+                          onChange={(event) =>
                             updateBusinessField(
                               "city",
-                              event.target
-                                .value
+                              event.target.value
                             )
                           }
                           placeholder="Lagos"
-                          disabled={
-                            savingBusiness
-                          }
+                          maxLength={100}
+                          disabled={savingBusiness}
                           className="h-12 w-full rounded-xl border border-[#D9DEE5] bg-white px-4 text-sm text-[#17202A] outline-none transition focus:border-[#FF694F] focus:ring-4 focus:ring-[#FF5A36]/10 disabled:bg-gray-50"
                         />
                       </div>
@@ -4853,22 +4157,16 @@ export default function SellerDashboard() {
                         <input
                           id="create-house-number"
                           type="text"
-                          value={
-                            businessForm.houseNumber
-                          }
-                          onChange={(
-                            event
-                          ) =>
+                          value={businessForm.houseNumber}
+                          onChange={(event) =>
                             updateBusinessField(
                               "houseNumber",
-                              event.target
-                                .value
+                              event.target.value
                             )
                           }
                           placeholder="e.g. 12 or Shop 4"
-                          disabled={
-                            savingBusiness
-                          }
+                          maxLength={100}
+                          disabled={savingBusiness}
                           className="h-12 w-full rounded-xl border border-[#D9DEE5] bg-white px-4 text-sm text-[#17202A] outline-none transition focus:border-[#FF694F] focus:ring-4 focus:ring-[#FF5A36]/10 disabled:bg-gray-50"
                         />
                       </div>
@@ -4884,23 +4182,17 @@ export default function SellerDashboard() {
                         <input
                           id="create-street"
                           type="text"
-                          value={
-                            businessForm.street
-                          }
-                          onChange={(
-                            event
-                          ) =>
+                          value={businessForm.street}
+                          onChange={(event) =>
                             updateBusinessField(
                               "street",
-                              event.target
-                                .value
+                              event.target.value
                             )
                           }
                           placeholder="e.g. Agidingbi Road"
+                          maxLength={200}
                           required
-                          disabled={
-                            savingBusiness
-                          }
+                          disabled={savingBusiness}
                           className="h-12 w-full rounded-xl border border-[#D9DEE5] bg-white px-4 py-3 text-sm text-[#17202A] outline-none transition focus:border-[#FF694F] focus:ring-4 focus:ring-[#FF5A36]/10 disabled:bg-gray-50"
                         />
                       </div>
@@ -4923,8 +4215,7 @@ export default function SellerDashboard() {
                               businessForm.houseNumber,
                               businessForm.street,
                               businessForm.city
-                            ) ||
-                              "Complete the location fields above."}
+                            ) || "Complete the location fields above."}
                           </p>
 
                           <p className="mt-2 text-[10px] leading-5 text-gray-400">
@@ -4952,17 +4243,13 @@ export default function SellerDashboard() {
 
                             {locationStatus && (
                               <p className="mt-2 text-[10px] font-semibold text-[#137A59]">
-                                {
-                                  locationStatus
-                                }
+                                {locationStatus}
                               </p>
                             )}
 
                             {locationError && (
                               <p className="mt-2 text-[10px] font-medium text-red-600">
-                                {
-                                  locationError
-                                }
+                                {locationError}
                               </p>
                             )}
                           </div>
@@ -4970,12 +4257,9 @@ export default function SellerDashboard() {
 
                         <button
                           type="button"
-                          onClick={
-                            captureCurrentLocation
-                          }
+                          onClick={captureCurrentLocation}
                           disabled={
-                            capturingLocation ||
-                            savingBusiness
+                            capturingLocation || savingBusiness
                           }
                           className="inline-flex shrink-0 items-center justify-center gap-2 rounded-xl bg-[#FF5A36] px-4 py-2.5 text-[11px] font-bold text-white transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60"
                         >
@@ -4987,21 +4271,19 @@ export default function SellerDashboard() {
 
                           {capturingLocation
                             ? "Capturing..."
-                            : businessLatitude &&
-                                businessLongitude
+                            : businessLatitude && businessLongitude
                               ? "Recapture location"
                               : "Use current location"}
                         </button>
                       </div>
 
-                      {businessLatitude &&
-                        businessLongitude && (
-                          <div className="mt-3 rounded-xl border border-[#BDE8D8] bg-[#EFFBF6] px-3 py-2.5">
-                            <p className="text-[10px] font-semibold text-[#137A59]">
-                              Exact business location is ready to save.
-                            </p>
-                          </div>
-                        )}
+                      {businessLatitude && businessLongitude && (
+                        <div className="mt-3 rounded-xl border border-[#BDE8D8] bg-[#EFFBF6] px-3 py-2.5">
+                          <p className="text-[10px] font-semibold text-[#137A59]">
+                            Exact business location is ready to save.
+                          </p>
+                        </div>
+                      )}
                     </div>
 
                     <div className="rounded-2xl border border-[#E8E4DE] bg-[#FCFAF6] p-4">
@@ -5017,15 +4299,8 @@ export default function SellerDashboard() {
 
                       <div className="mt-4 grid gap-4 sm:grid-cols-2">
                         {SOCIAL_PLATFORMS.map(
-                          ({
-                            value,
-                            label,
-                          }) => (
-                            <div
-                              key={
-                                value
-                              }
-                            >
+                          ({ value, label }) => (
+                            <div key={value}>
                               <label
                                 htmlFor={`create-social-${value.toLowerCase()}`}
                                 className="mb-2 block text-xs font-bold text-gray-700"
@@ -5036,40 +4311,26 @@ export default function SellerDashboard() {
                               <input
                                 id={`create-social-${value.toLowerCase()}`}
                                 type={
-                                  value ===
-                                  "PHONE"
+                                  value === "PHONE"
                                     ? "tel"
                                     : "text"
                                 }
-                                value={
-                                  socialValues[
-                                    value
-                                  ]
-                                }
-                                onChange={(
-                                  event
-                                ) =>
+                                value={socialValues[value]}
+                                onChange={(event) =>
                                   updateSocial(
                                     value,
-                                    event
-                                      .target
-                                      .value
+                                    event.target.value
                                   )
                                 }
                                 placeholder={
-                                  value ===
-                                    "PHONE" ||
-                                  value ===
-                                    "WHATSAPP"
+                                  value === "PHONE" ||
+                                  value === "WHATSAPP"
                                     ? "080..."
-                                    : value ===
-                                        "DIRECTIONS"
+                                    : value === "DIRECTIONS"
                                       ? "https://maps.google.com/..."
                                       : "@username or URL"
                                 }
-                                disabled={
-                                  savingBusiness
-                                }
+                                disabled={savingBusiness}
                                 className="h-12 w-full rounded-xl border border-[#D9DEE5] bg-white px-4 text-sm text-[#17202A] outline-none transition focus:border-[#FF694F] focus:ring-4 focus:ring-[#FF694F]/10 disabled:bg-gray-50"
                               />
                             </div>
@@ -5089,45 +4350,26 @@ export default function SellerDashboard() {
 
                         <select
                           id="create-category"
-                          value={
-                            businessForm.categoryId
-                          }
-                          onChange={(
-                            event
-                          ) =>
+                          value={businessForm.categoryId}
+                          onChange={(event) =>
                             updateBusinessField(
                               "categoryId",
-                              event.target
-                                .value
+                              event.target.value
                             )
                           }
-                          disabled={
-                            savingBusiness
-                          }
+                          disabled={savingBusiness}
                           className="h-12 w-full rounded-xl border border-[#D9DEE5] bg-white px-4 text-sm text-[#17202A] outline-none transition focus:border-[#FF694F] focus:ring-4 focus:ring-[#FF694F]/10 disabled:bg-gray-50"
                         >
-                          <option value="">
-                            Select category
-                          </option>
+                          <option value="">Select category</option>
 
-                          {categories.map(
-                            (
-                              category
-                            ) => (
-                              <option
-                                key={
-                                  category.id
-                                }
-                                value={
-                                  category.id
-                                }
-                              >
-                                {
-                                  category.name
-                                }
-                              </option>
-                            )
-                          )}
+                          {categories.map((category) => (
+                            <option
+                              key={category.id}
+                              value={category.id}
+                            >
+                              {category.name}
+                            </option>
+                          ))}
                         </select>
                       </div>
 
@@ -5141,31 +4383,22 @@ export default function SellerDashboard() {
 
                         <select
                           id="create-availability"
-                          value={
-                            businessForm.availability
-                          }
-                          onChange={(
-                            event
-                          ) =>
+                          value={businessForm.availability}
+                          onChange={(event) =>
                             updateBusinessField(
                               "availability",
-                              event.target
-                                .value as BusinessForm["availability"]
+                              event.target.value as BusinessForm["availability"]
                             )
                           }
-                          disabled={
-                            savingBusiness
-                          }
+                          disabled={savingBusiness}
                           className="h-12 w-full rounded-xl border border-[#D9DEE5] bg-white px-4 text-sm text-[#17202A] outline-none transition focus:border-[#FF694F] focus:ring-4 focus:ring-[#FF5A36]/10 disabled:bg-gray-50"
                         >
                           <option value="ASK_SELLER">
                             Ask seller
                           </option>
-
                           <option value="AVAILABLE">
                             Available
                           </option>
-
                           <option value="UNAVAILABLE">
                             Unavailable
                           </option>
@@ -5186,22 +4419,15 @@ export default function SellerDashboard() {
                             type="number"
                             min="0"
                             step="1"
-                            value={
-                              businessForm.priceMin
-                            }
-                            onChange={(
-                              event
-                            ) =>
+                            value={businessForm.priceMin}
+                            onChange={(event) =>
                               updateBusinessField(
                                 "priceMin",
-                                event.target
-                                  .value
+                                event.target.value
                               )
                             }
                             placeholder="0"
-                            disabled={
-                              savingBusiness
-                            }
+                            disabled={savingBusiness}
                             className="h-12 w-full rounded-xl border border-[#D9DEE5] bg-white px-3 text-sm text-[#17202A] outline-none transition focus:border-[#FF694F] focus:ring-4 focus:ring-[#FF5A36]/10 disabled:bg-gray-50"
                           />
                         </div>
@@ -5219,22 +4445,15 @@ export default function SellerDashboard() {
                             type="number"
                             min="0"
                             step="1"
-                            value={
-                              businessForm.priceMax
-                            }
-                            onChange={(
-                              event
-                            ) =>
+                            value={businessForm.priceMax}
+                            onChange={(event) =>
                               updateBusinessField(
                                 "priceMax",
-                                event.target
-                                  .value
+                                event.target.value
                               )
                             }
                             placeholder="0"
-                            disabled={
-                              savingBusiness
-                            }
+                            disabled={savingBusiness}
                             className="h-12 w-full rounded-xl border border-[#D9DEE5] bg-white px-3 text-sm text-[#17202A] outline-none transition focus:border-[#FF694F] focus:ring-4 focus:ring-[#FF5A36]/10 disabled:bg-gray-50"
                           />
                         </div>
@@ -5248,21 +4467,17 @@ export default function SellerDashboard() {
 
                       <button
                         type="submit"
-                        disabled={
-                          savingBusiness
-                        }
+                        disabled={savingBusiness}
                         className="flex h-12 items-center justify-center gap-2 rounded-xl bg-[#FF5A36] px-6 text-sm font-bold text-white shadow-sm transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60"
                       >
                         {savingBusiness ? (
                           <>
                             <LoaderCircle className="h-4 w-4 animate-spin" />
-
                             Creating...
                           </>
                         ) : (
                           <>
                             <Plus className="h-4 w-4" />
-
                             Create business
                           </>
                         )}

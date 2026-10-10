@@ -1,7 +1,14 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
+
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+} from "react";
+
 import {
   Home,
   ShoppingBag,
@@ -89,6 +96,38 @@ function getAvailabilityDot(
   }
 }
 
+/*
+ * -----------------------------------------
+ * SAVED BUSINESS SNAPSHOT
+ * -----------------------------------------
+ *
+ * Used to detect changes to the saved list
+ * while an API validation request is running.
+ */
+
+function getSavedBusinessIdsSignature(
+  businesses: SavedBusiness[]
+): string {
+  return JSON.stringify(
+    businesses
+      .map((business) => business.id)
+      .sort()
+  );
+}
+
+/*
+ * -----------------------------------------
+ * VALIDATE SAVED BUSINESSES
+ * -----------------------------------------
+ *
+ * Remove businesses only when the public API
+ * explicitly reports that the resource is gone.
+ *
+ * Temporary server errors, rate limits, network
+ * failures and unexpected response formats must
+ * not erase locally saved businesses.
+ */
+
 async function validateSavedBusinesses(
   saved: SavedBusiness[]
 ): Promise<SavedBusiness[]> {
@@ -110,28 +149,51 @@ async function validateSavedBusinesses(
         );
 
         /*
-         * If the public business API returns a
-         * non-OK response, the business is no
-         * longer publicly available.
+         * The API uses 404 for a business that
+         * is no longer publicly available.
          *
-         * This includes the 404 returned when
-         * the Admin soft-deletes a business.
+         * 410 also explicitly indicates that
+         * a resource is gone.
+         */
+        if (
+          response.status === 404 ||
+          response.status === 410
+        ) {
+          return null;
+        }
+
+        /*
+         * Do not treat every unsuccessful
+         * response as a deleted business.
+         *
+         * For example, a 500 or 429 must not
+         * cause the saved item to be removed.
          */
         if (!response.ok) {
-          return null;
+          return business;
         }
 
         const data = await response.json();
 
-        if (!data?.business?.id) {
-          return null;
+        /*
+         * Unexpected successful responses should
+         * not cause saved data to be deleted.
+         */
+        if (
+          data?.business?.id !== business.id
+        ) {
+          console.warn(
+            `Unexpected response while validating saved business ${business.id}.`
+          );
+
+          return business;
         }
 
         return business;
       } catch (error) {
         /*
-         * Do not remove saved businesses because
-         * of a temporary network problem.
+         * Preserve the local business when a
+         * network problem prevents validation.
          */
         console.error(
           `Unable to validate saved business ${business.id}:`,
@@ -151,82 +213,164 @@ async function validateSavedBusinesses(
   );
 }
 
+/*
+ * -----------------------------------------
+ * SAVED PAGE
+ * -----------------------------------------
+ */
+
 export default function SavedPage() {
   const [savedBusinesses, setSavedBusinesses] =
     useState<SavedBusiness[]>([]);
 
-  const [loaded, setLoaded] =
-    useState(false);
+  /*
+   * loaded means the local list has been read.
+   * It does not mean API validation has ended.
+   */
+  const [loaded, setLoaded] = useState(false);
 
   const [checkingSaved, setCheckingSaved] =
     useState(false);
 
-  async function loadSavedBusinesses() {
-    const saved = getSavedBusinesses();
+  /*
+   * Every new load receives a newer request ID.
+   * Older requests cannot overwrite newer state.
+   */
+  const validationRunRef = useRef(0);
 
-    /*
-     * Show the locally saved businesses
-     * immediately while validation runs.
-     */
-    setSavedBusinesses(saved);
+  /*
+   * -----------------------------------------
+   * LOAD SAVED BUSINESSES
+   * -----------------------------------------
+   */
 
-    if (saved.length === 0) {
-      setCheckingSaved(false);
-      setLoaded(true);
-      return;
-    }
-
-    try {
-      setCheckingSaved(true);
-
-      const validBusinesses =
-        await validateSavedBusinesses(saved);
+  const loadSavedBusinesses = useCallback(
+    async function loadSavedBusinesses() {
+      const runId =
+        ++validationRunRef.current;
 
       /*
-       * Remove businesses that no longer
-       * exist publicly.
+       * Read and display the locally saved list
+       * before starting network validation.
        */
-      if (validBusinesses.length !== saved.length) {
-        localStorage.setItem(
-          SAVED_BUSINESSES_KEY,
-          JSON.stringify(validBusinesses)
-        );
+      const saved = getSavedBusinesses();
+
+      setSavedBusinesses(saved);
+      setLoaded(true);
+
+      if (saved.length === 0) {
+        setCheckingSaved(false);
+        return;
       }
 
-      setSavedBusinesses(validBusinesses);
-    } catch (error) {
-      console.error(
-        "Unable to validate saved businesses:",
-        error
-      );
+      setCheckingSaved(true);
 
-      /*
-       * Keep the local list if validation itself
-       * fails unexpectedly.
-       */
-      setSavedBusinesses(
-        getSavedBusinesses()
-      );
-    } finally {
-      setCheckingSaved(false);
-      setLoaded(true);
-    }
-  }
+      const originalSignature =
+        getSavedBusinessIdsSignature(saved);
+
+      try {
+        const validBusinesses =
+          await validateSavedBusinesses(saved);
+
+        /*
+         * A newer load or saved-list change has
+         * occurred while this request was running.
+         * Do not let this stale result overwrite it.
+         */
+        if (
+          runId !== validationRunRef.current
+        ) {
+          return;
+        }
+
+        /*
+         * Check the current local list again before
+         * updating storage. This avoids restoring
+         * businesses that the user has since removed
+         * or overwriting a more recent saved list.
+         */
+        const latestSaved =
+          getSavedBusinesses();
+
+        const latestSignature =
+          getSavedBusinessIdsSignature(
+            latestSaved
+          );
+
+        if (
+          latestSignature !==
+          originalSignature
+        ) {
+          setSavedBusinesses(latestSaved);
+          return;
+        }
+
+        /*
+         * Persist the cleanup only when the API
+         * explicitly identified unavailable records.
+         */
+        const removedStaleBusinesses =
+          validBusinesses.length !== saved.length;
+
+        if (removedStaleBusinesses) {
+          try {
+            localStorage.setItem(
+              SAVED_BUSINESSES_KEY,
+              JSON.stringify(validBusinesses)
+            );
+          } catch (storageError) {
+            /*
+             * A storage failure should not prevent
+             * the current page from displaying the
+             * businesses that passed validation.
+             */
+            console.error(
+              "Unable to update saved businesses in local storage:",
+              storageError
+            );
+          }
+        }
+
+        setSavedBusinesses(validBusinesses);
+      } catch (error) {
+        /*
+         * Keep the latest local list if validation
+         * unexpectedly fails.
+         */
+        console.error(
+          "Unable to validate saved businesses:",
+          error
+        );
+
+        if (
+          runId === validationRunRef.current
+        ) {
+          setSavedBusinesses(
+            getSavedBusinesses()
+          );
+        }
+      } finally {
+        /*
+         * An older run must not stop the loading
+         * indicator belonging to a newer run.
+         */
+        if (
+          runId === validationRunRef.current
+        ) {
+          setCheckingSaved(false);
+          setLoaded(true);
+        }
+      }
+    },
+    []
+  );
 
   /*
    * -----------------------------------------
-   * INITIAL LOAD
+   * INITIAL LOAD AND CROSS-PAGE SYNC
    * -----------------------------------------
    */
-  useEffect(() => {
-    void loadSavedBusinesses();
-  }, []);
 
-  /*
-   * -----------------------------------------
-   * SYNC WITH OTHER REMARKET PAGES / TABS
-   * -----------------------------------------
-   */
   useEffect(() => {
     function handleSavedBusinessesChanged() {
       void loadSavedBusinesses();
@@ -242,6 +386,8 @@ export default function SavedPage() {
       handleSavedBusinessesChanged
     );
 
+    void loadSavedBusinesses();
+
     return () => {
       window.removeEventListener(
         SAVED_BUSINESSES_CHANGED_EVENT,
@@ -252,8 +398,20 @@ export default function SavedPage() {
         "storage",
         handleSavedBusinessesChanged
       );
+
+      /*
+       * Invalidate outstanding requests when
+       * this page unmounts.
+       */
+      validationRunRef.current += 1;
     };
-  }, []);
+  }, [loadSavedBusinesses]);
+
+  /*
+   * -----------------------------------------
+   * REMOVE A SAVED BUSINESS
+   * -----------------------------------------
+   */
 
   function removeSaved(id: string) {
     removeSavedBusiness(id);
@@ -268,12 +426,13 @@ export default function SavedPage() {
   return (
     <div className="min-h-screen bg-[#FFF7ED] px-3 py-3 sm:px-4 lg:px-6">
       <div className="mx-auto min-h-[calc(100vh-24px)] max-w-[1500px] overflow-hidden rounded-[22px] border border-[#FF5A36] bg-[#FFFDFC] shadow-[0_8px_30px_rgba(159,45,24,0.08)]">
-        {/* Header */}
 
-        <header className="flex h-[66px] items-center justify-between border-b border-[#EAE6DF] bg-white px-4 sm:px-6">
+        {/* HEADER */}
+
+        <header className="flex h-[66px] items-center justify-between gap-2 border-b border-[#EAE6DF] bg-white px-4 sm:px-6">
           <Link
             href="/"
-            className="flex items-center gap-2"
+            className="flex shrink-0 items-center gap-2"
           >
             <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-[#FF5A36] text-white">
               <Store
@@ -293,58 +452,67 @@ export default function SavedPage() {
             </div>
           </Link>
 
-          <div className="hidden items-center gap-6 md:flex">
+          {/* DESKTOP HEADER NAVIGATION */}
+
+          <nav
+            aria-label="Main navigation"
+            className="hidden items-center gap-4 lg:flex xl:gap-6"
+          >
+            {NAV_ITEMS.map((item) => {
+              const active =
+                item.href === "/saved";
+
+              return (
+                <Link
+                  key={item.href}
+                  href={item.href}
+                  aria-current={
+                    active ? "page" : undefined
+                  }
+                  className={`whitespace-nowrap text-sm font-medium transition ${
+                    active
+                      ? "font-bold text-[#FF5A36]"
+                      : "text-[#6F675F] hover:text-[#FF5A36]"
+                  }`}
+                >
+                  {item.label}
+                </Link>
+              );
+            })}
+          </nav>
+
+          {/* HEADER ACTIONS */}
+
+          <div className="flex shrink-0 items-center gap-2 sm:gap-3">
             <Link
-              href="/"
-              className="text-sm font-medium text-[#6F675F] transition hover:text-[#FF5A36]"
+              href="/request"
+              className="hidden rounded-xl bg-[#FF5A36] px-3 py-2.5 text-xs font-bold text-white transition hover:bg-[#E94C2A] sm:block sm:px-4 sm:text-sm"
             >
-              Home
+              Request something
             </Link>
 
             <Link
-              href="/shop"
-              className="text-sm font-medium text-[#6F675F] transition hover:text-[#FF5A36]"
+              href="/search"
+              aria-label="Search ReMarket"
+              className="flex h-10 w-10 items-center justify-center rounded-xl bg-[#FFF0D9] text-[#9F2D18] transition hover:bg-[#FFE0D6] sm:hidden"
             >
-              Shop
-            </Link>
-
-            <Link
-              href="/my-requests"
-              className="text-sm font-medium text-[#6F675F] transition hover:text-[#FF5A36]"
-            >
-              Requests
-            </Link>
-
-            <Link
-              href="/saved"
-              className="text-sm font-bold text-[#FF5A36]"
-            >
-              Saved
+              <Search size={19} />
             </Link>
           </div>
-
-          <Link
-            href="/request"
-            className="hidden rounded-xl bg-[#FF5A36] px-4 py-2.5 text-sm font-bold text-white transition hover:bg-[#E94C2A] sm:block"
-          >
-            Request something
-          </Link>
-
-          <Link
-            href="/search"
-            className="flex h-10 w-10 items-center justify-center rounded-xl bg-[#FFF0D9] text-[#9F2D18] sm:hidden"
-          >
-            <Search size={19} />
-          </Link>
         </header>
 
         <div className="flex min-h-[calc(100vh-90px)]">
-          {/* Sidebar */}
 
-          <aside className="hidden w-[190px] shrink-0 border-r border-[#EAE6DF] bg-[#FCFAF6] px-3 py-5 md:block">
-            <nav className="space-y-1">
+          {/* DESKTOP SIDEBAR */}
+
+          <aside className="hidden w-[190px] shrink-0 border-r border-[#EAE6DF] bg-[#FCFAF6] px-3 py-5 lg:block">
+            <nav
+              aria-label="Sidebar navigation"
+              className="space-y-1"
+            >
               {NAV_ITEMS.map((item) => {
                 const Icon = item.icon;
+
                 const active =
                   item.href === "/saved";
 
@@ -352,6 +520,9 @@ export default function SavedPage() {
                   <Link
                     key={item.href}
                     href={item.href}
+                    aria-current={
+                      active ? "page" : undefined
+                    }
                     className={`flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-semibold transition ${
                       active
                         ? "bg-[#FFE0D6] text-[#9F2D18]"
@@ -359,6 +530,7 @@ export default function SavedPage() {
                     }`}
                   >
                     <Icon size={18} />
+
                     {item.label}
                   </Link>
                 );
@@ -380,14 +552,15 @@ export default function SavedPage() {
                 className="mt-3 inline-flex items-center text-xs font-bold text-[#FF5A36]"
               >
                 Make a request
+
                 <ChevronRight size={14} />
               </Link>
             </div>
           </aside>
 
-          {/* Main */}
+          {/* MAIN CONTENT */}
 
-          <main className="min-w-0 flex-1 px-4 py-5 pb-24 sm:px-6 lg:px-7">
+          <main className="min-w-0 flex-1 px-4 py-5 pb-28 sm:px-6 lg:px-7 lg:pb-8">
             <section>
               <div className="flex flex-col justify-between gap-3 sm:flex-row sm:items-end">
                 <div>
@@ -406,13 +579,18 @@ export default function SavedPage() {
                 </div>
 
                 {savedBusinesses.length > 0 && (
-                  <div className="rounded-full bg-[#FFF0D9] px-3 py-1.5 text-xs font-bold text-[#9F2D18]">
-                    {savedBusinesses.length} saved
+                  <div className="self-start rounded-full bg-[#FFF0D9] px-3 py-1.5 text-xs font-bold text-[#9F2D18] sm:self-auto">
+                    {savedBusinesses.length}{" "}
+                    {savedBusinesses.length === 1
+                      ? "saved business"
+                      : "saved businesses"}
                   </div>
                 )}
               </div>
 
-              {!loaded ? (
+              {/* INITIAL LOADING STATE */}
+
+              {!loaded && (
                 <div className="mt-8 flex min-h-[160px] items-center justify-center rounded-2xl border border-[#EAE6DF] bg-white p-8 text-center">
                   <div className="flex items-center gap-2 text-sm font-medium text-[#756B61]">
                     <Loader2
@@ -423,152 +601,173 @@ export default function SavedPage() {
                     Loading saved businesses...
                   </div>
                 </div>
-              ) : savedBusinesses.length === 0 ? (
-                <div className="mt-7 flex min-h-[360px] flex-col items-center justify-center rounded-[20px] border border-dashed border-[#E4DED6] bg-[#FCFAF6] px-6 text-center">
-                  <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-[#FFE0D6] text-[#FF5A36]">
-                    <Heart size={28} />
-                  </div>
+              )}
 
-                  <h2 className="mt-5 text-lg font-extrabold text-[#17202A]">
-                    Nothing saved yet
-                  </h2>
+              {/* EMPTY STATE */}
 
-                  <p className="mt-2 max-w-sm text-sm leading-6 text-[#756B61]">
-                    When you find a business you
-                    like, save it here so you can
-                    easily find it again.
-                  </p>
-
-                  <Link
-                    href="/shop"
-                    className="mt-5 inline-flex items-center gap-2 rounded-xl bg-[#FF5A36] px-5 py-3 text-sm font-bold text-white transition hover:bg-[#E94C2A]"
-                  >
-                    Explore nearby
-                    <ChevronRight size={16} />
-                  </Link>
-                </div>
-              ) : (
-                <>
-                  {checkingSaved && (
-                    <div className="mt-4 inline-flex items-center gap-2 rounded-full bg-[#FCFAF6] px-3 py-1.5 text-[11px] font-semibold text-[#8A8178]">
-                      <Loader2
-                        size={12}
-                        className="animate-spin text-[#FF5A36]"
-                      />
-
-                      Checking saved businesses...
+              {loaded &&
+                savedBusinesses.length === 0 && (
+                  <div className="mt-7 flex min-h-[360px] flex-col items-center justify-center rounded-[20px] border border-dashed border-[#E4DED6] bg-[#FCFAF6] px-6 text-center">
+                    <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-[#FFE0D6] text-[#FF5A36]">
+                      <Heart size={28} />
                     </div>
-                  )}
 
-                  <div className="mt-7 grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
-                    {savedBusinesses.map(
-                      (business) => (
-                        <article
-                          key={business.id}
-                          className="group overflow-hidden rounded-[18px] border border-[#EAE6DF] bg-white transition hover:-translate-y-0.5 hover:shadow-[0_10px_25px_rgba(23,32,42,0.07)]"
-                        >
-                          <div className="flex items-start justify-between p-4">
-                            <Link
-                              href={`/seller/${business.id}`}
-                              className="flex min-w-0 flex-1 gap-3"
-                            >
-                              <div className="flex h-12 w-12 shrink-0 items-center justify-center overflow-hidden rounded-xl bg-[#FFE0D6] text-sm font-extrabold text-[#9F2D18]">
-                                {business.imageUrl ? (
-                                  <img
-                                    src={
-                                      business.imageUrl
-                                    }
-                                    alt={
+                    <h2 className="mt-5 text-lg font-extrabold text-[#17202A]">
+                      Nothing saved yet
+                    </h2>
+
+                    <p className="mt-2 max-w-sm text-sm leading-6 text-[#756B61]">
+                      When you find a business you
+                      like, save it here so you can
+                      easily find it again.
+                    </p>
+
+                    <Link
+                      href="/shop"
+                      className="mt-5 inline-flex items-center gap-2 rounded-xl bg-[#FF5A36] px-5 py-3 text-sm font-bold text-white transition hover:bg-[#E94C2A]"
+                    >
+                      Explore nearby
+
+                      <ChevronRight size={16} />
+                    </Link>
+                  </div>
+                )}
+
+              {/* SAVED BUSINESSES */}
+
+              {loaded &&
+                savedBusinesses.length > 0 && (
+                  <>
+                    {checkingSaved && (
+                      <div
+                        role="status"
+                        className="mt-4 inline-flex items-center gap-2 rounded-full bg-[#FCFAF6] px-3 py-1.5 text-[11px] font-semibold text-[#8A8178]"
+                      >
+                        <Loader2
+                          size={12}
+                          className="animate-spin text-[#FF5A36]"
+                        />
+
+                        Checking saved businesses...
+                      </div>
+                    )}
+
+                    <div className="mt-7 grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
+                      {savedBusinesses.map(
+                        (business) => (
+                          <article
+                            key={business.id}
+                            className="group min-w-0 overflow-hidden rounded-[18px] border border-[#EAE6DF] bg-white transition hover:-translate-y-0.5 hover:shadow-[0_10px_25px_rgba(23,32,42,0.07)]"
+                          >
+                            {/* BUSINESS INFORMATION */}
+
+                            <div className="flex items-start justify-between gap-2 p-4">
+                              <Link
+                                href={`/seller/${business.id}`}
+                                className="flex min-w-0 flex-1 gap-3"
+                              >
+                                <div className="flex h-12 w-12 shrink-0 items-center justify-center overflow-hidden rounded-xl bg-[#FFE0D6] text-sm font-extrabold text-[#9F2D18]">
+                                  {business.imageUrl ? (
+                                    <img
+                                      src={business.imageUrl}
+                                      alt={business.name}
+                                      loading="lazy"
+                                      className="h-full w-full object-cover"
+                                    />
+                                  ) : (
+                                    getInitials(
                                       business.name
-                                    }
-                                    className="h-full w-full object-cover"
-                                  />
-                                ) : (
-                                  getInitials(
-                                    business.name
-                                  )
-                                )}
-                              </div>
-
-                              <div className="min-w-0">
-                                <h2 className="truncate text-sm font-extrabold text-[#17202A]">
-                                  {business.name}
-                                </h2>
-
-                                <p className="mt-0.5 text-xs text-[#8A8178]">
-                                  {business.category}
-                                </p>
-
-                                <div className="mt-1.5 flex items-center gap-1 text-xs text-[#756B61]">
-                                  <MapPin size={12} />
-
-                                  <span className="truncate">
-                                    {business.area}
-                                  </span>
+                                    )
+                                  )}
                                 </div>
-                              </div>
-                            </Link>
 
-                            <button
-                              type="button"
-                              onClick={() =>
-                                removeSaved(
-                                  business.id
-                                )
-                              }
-                              aria-label={`Remove ${business.name} from saved`}
-                              className="ml-2 flex h-9 w-9 shrink-0 items-center justify-center rounded-xl text-[#A39A91] transition hover:bg-[#FFF0D9] hover:text-[#9F2D18]"
-                            >
-                              <Trash2 size={17} />
-                            </button>
-                          </div>
+                                <div className="min-w-0 flex-1">
+                                  <h2 className="truncate text-sm font-extrabold text-[#17202A]">
+                                    {business.name}
+                                  </h2>
 
-                          <div className="flex items-center justify-between border-t border-[#F0ECE7] px-4 py-3">
-                            <div className="flex items-center gap-2">
-                              <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-[#756B61]">
-                                <span
-                                  className={`h-2 w-2 rounded-full ${getAvailabilityDot(
-                                    business.availability
-                                  )}`}
-                                />
+                                  <p className="mt-0.5 truncate text-xs text-[#8A8178]">
+                                    {business.category}
+                                  </p>
 
-                                {getAvailabilityLabel(
-                                  business.availability
-                                )}
-                              </span>
+                                  <div className="mt-1.5 flex min-w-0 items-center gap-1 text-xs text-[#756B61]">
+                                    <MapPin
+                                      size={12}
+                                      className="shrink-0"
+                                    />
 
-                              {business.verified && (
-                                <span className="rounded-full bg-[#DDF5EA] px-2 py-1 text-[10px] font-bold text-[#24734A]">
-                                  Verified
-                                </span>
-                              )}
+                                    <span className="truncate">
+                                      {business.area}
+                                    </span>
+                                  </div>
+                                </div>
+                              </Link>
+
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  removeSaved(
+                                    business.id
+                                  )
+                                }
+                                aria-label={`Remove ${business.name} from saved`}
+                                className="ml-1 flex h-9 w-9 shrink-0 items-center justify-center rounded-xl text-[#A39A91] transition hover:bg-[#FFF0D9] hover:text-[#9F2D18]"
+                              >
+                                <Trash2 size={17} />
+                              </button>
                             </div>
 
-                            <Link
-                              href={`/seller/${business.id}`}
-                              className="flex items-center gap-1 text-xs font-bold text-[#FF5A36]"
-                            >
-                              View seller
-                              <ChevronRight
-                                size={14}
-                              />
-                            </Link>
-                          </div>
-                        </article>
-                      )
-                    )}
-                  </div>
-                </>
-              )}
+                            {/* AVAILABILITY AND VERIFICATION */}
+
+                            <div className="flex flex-wrap items-center justify-between gap-2 border-t border-[#F0ECE7] px-4 py-3">
+                              <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-2">
+                                <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-[#756B61]">
+                                  <span
+                                    className={`h-2 w-2 shrink-0 rounded-full ${getAvailabilityDot(
+                                      business.availability
+                                    )}`}
+                                  />
+
+                                  {getAvailabilityLabel(
+                                    business.availability
+                                  )}
+                                </span>
+
+                                {business.verified && (
+                                  <span className="rounded-full bg-[#DDF5EA] px-2 py-1 text-[10px] font-bold text-[#24734A]">
+                                    Verified
+                                  </span>
+                                )}
+                              </div>
+
+                              <Link
+                                href={`/seller/${business.id}`}
+                                className="flex shrink-0 items-center gap-1 text-xs font-bold text-[#FF5A36] transition hover:text-[#9F2D18]"
+                              >
+                                View seller
+
+                                <ChevronRight size={14} />
+                              </Link>
+                            </div>
+                          </article>
+                        )
+                      )}
+                    </div>
+                  </>
+                )}
             </section>
           </main>
         </div>
 
-        {/* Mobile Bottom Navigation */}
+        {/* MOBILE / TABLET BOTTOM NAVIGATION */}
 
-        <nav className="fixed bottom-3 left-3 right-3 z-50 mx-auto flex max-w-md items-center justify-around rounded-2xl border border-[#EAE6DF] bg-white/95 px-2 py-2 shadow-[0_8px_30px_rgba(23,32,42,0.12)] backdrop-blur md:hidden">
+        <nav
+          aria-label="Mobile navigation"
+          className="fixed bottom-[max(12px,env(safe-area-inset-bottom))] left-3 right-3 z-50 mx-auto flex max-w-md items-center justify-around rounded-2xl border border-[#EAE6DF] bg-white/95 px-2 py-2 shadow-[0_8px_30px_rgba(23,32,42,0.12)] backdrop-blur lg:hidden"
+        >
           {NAV_ITEMS.map((item) => {
             const Icon = item.icon;
+
             const active =
               item.href === "/saved";
 
@@ -576,13 +775,17 @@ export default function SavedPage() {
               <Link
                 key={item.href}
                 href={item.href}
-                className={`flex min-w-[64px] flex-col items-center gap-1 rounded-xl px-3 py-2 text-[10px] font-bold ${
+                aria-current={
+                  active ? "page" : undefined
+                }
+                className={`flex min-w-[60px] flex-col items-center gap-1 rounded-xl px-3 py-2 text-[10px] font-bold transition ${
                   active
                     ? "bg-[#FFE0D6] text-[#9F2D18]"
-                    : "text-[#8A8178]"
+                    : "text-[#8A8178] hover:bg-[#FCFAF6]"
                 }`}
               >
                 <Icon size={18} />
+
                 {item.label}
               </Link>
             );

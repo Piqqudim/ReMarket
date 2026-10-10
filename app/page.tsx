@@ -1,6 +1,7 @@
 "use client";
 
 import {
+  type FormEvent,
   type MouseEvent,
   useEffect,
   useMemo,
@@ -107,6 +108,7 @@ type NearbyBusiness = {
  * It does NOT describe the value as driving
  * distance.
  */
+
 function getDistanceLabel(
   distanceKm: number | null
 ): string | null {
@@ -119,10 +121,9 @@ function getDistanceLabel(
   }
 
   if (distanceKm < 1) {
-    const distanceMetres =
-      Math.round(
-        distanceKm * 1000
-      );
+    const distanceMetres = Math.round(
+      distanceKm * 1000
+    );
 
     if (distanceMetres < 1) {
       return "Less than 1 m away";
@@ -172,21 +173,16 @@ const NAV_ITEMS = [
  * primitive string so useSyncExternalStore
  * can safely detect changes.
  */
+
 function getSavedBusinessIdsSnapshot(): string {
-  if (
-    typeof window === "undefined"
-  ) {
+  if (typeof window === "undefined") {
     return "";
   }
 
-  const saved =
-    getSavedBusinesses();
+  const saved = getSavedBusinesses();
 
   return saved
-    .map(
-      (business) =>
-        business.id
-    )
+    .map((business) => business.id)
     .sort()
     .join("|");
 }
@@ -218,59 +214,46 @@ function subscribeSavedBusinesses(
 }
 
 export default function HomePage() {
-  const [q, setQ] =
-    useState("");
+  const [q, setQ] = useState("");
 
   const [
     categories,
     setCategories,
-  ] =
-    useState<ReMarketCategory[]>(
-      DEFAULT_CATEGORIES
-    );
+  ] = useState<ReMarketCategory[]>(
+    DEFAULT_CATEGORIES
+  );
 
   const [
     featuredBusinesses,
     setFeaturedBusinesses,
-  ] =
-    useState<FeaturedBusiness[]>(
-      []
-    );
+  ] = useState<FeaturedBusiness[]>([]);
 
   const [
     businessLoading,
     setBusinessLoading,
-  ] =
-    useState(true);
+  ] = useState(true);
 
   const [
     nearbyBusinesses,
     setNearbyBusiness,
-  ] =
-    useState<NearbyBusiness[]>(
-      []
-    );
+  ] = useState<NearbyBusiness[]>([]);
 
   const [
     nearbyLoading,
     setNearbyLoading,
-  ] =
-    useState(false);
+  ] = useState(false);
 
   const [
     nearbyLocationRequested,
     setNearbyLocationRequested,
-  ] =
-    useState(false);
+  ] = useState(false);
 
   const [
     nearbyError,
     setNearbyError,
-  ] =
-    useState("");
+  ] = useState("");
 
-  const router =
-    useRouter();
+  const router = useRouter();
 
   /*
    * -----------------------------------------
@@ -285,18 +268,15 @@ export default function HomePage() {
       () => ""
     );
 
-  const savedBusinessIds =
-    useMemo(
-      () =>
-        new Set(
-          savedBusinessIdsSnapshot
-            ? savedBusinessIdsSnapshot.split(
-                "|"
-              )
-            : []
-        ),
-      [savedBusinessIdsSnapshot]
-    );
+  const savedBusinessIds = useMemo(
+    () =>
+      new Set(
+        savedBusinessIdsSnapshot
+          ? savedBusinessIdsSnapshot.split("|")
+          : []
+      ),
+    [savedBusinessIdsSnapshot]
+  );
 
   /*
    * -----------------------------------------
@@ -304,19 +284,12 @@ export default function HomePage() {
    * -----------------------------------------
    */
 
-  function getCategoryVisual(
-    name: string
-  ) {
-    const category =
-      categories.find(
-        (item) =>
-          item.name
-            .trim()
-            .toLowerCase() ===
-          name
-            .trim()
-            .toLowerCase()
-      );
+  function getCategoryVisual(name: string) {
+    const category = categories.find(
+      (item) =>
+        item.name.trim().toLowerCase() ===
+        name.trim().toLowerCase()
+    );
 
     if (!category) {
       return {
@@ -327,14 +300,11 @@ export default function HomePage() {
       };
     }
 
-    const Icon =
-      category.icon;
+    const Icon = category.icon;
 
     return {
       bg: category.bg,
-      icon: (
-        <Icon className="h-6 w-6" />
-      ),
+      icon: <Icon className="h-6 w-6" />,
     };
   }
 
@@ -345,40 +315,28 @@ export default function HomePage() {
    */
 
   useEffect(() => {
-    let cancelled =
-      false;
+    let cancelled = false;
 
     async function loadHomeData() {
       try {
         const [
           categoriesResponse,
           featuredResponse,
-        ] =
-          await Promise.all([
-            fetch(
-              "/api/categories",
-              {
-                cache:
-                  "no-store",
-              }
-            ),
+        ] = await Promise.all([
+          fetch("/api/categories", {
+            cache: "no-store",
+          }),
 
-            fetch(
-              "/api/featured",
-              {
-                cache:
-                  "no-store",
-              }
-            ),
-          ]);
+          fetch("/api/featured", {
+            cache: "no-store",
+          }),
+        ]);
 
         /*
          * Categories
          */
 
-        if (
-          categoriesResponse.ok
-        ) {
+        if (categoriesResponse.ok) {
           const categoryData =
             await categoriesResponse.json();
 
@@ -395,13 +353,10 @@ export default function HomePage() {
             );
 
           if (
-            mergedCategories.length >
-              0 &&
+            mergedCategories.length > 0 &&
             !cancelled
           ) {
-            setCategories(
-              mergedCategories
-            );
+            setCategories(mergedCategories);
           }
         }
 
@@ -409,9 +364,7 @@ export default function HomePage() {
          * Featured businesses
          */
 
-        if (
-          featuredResponse.ok
-        ) {
+        if (featuredResponse.ok) {
           const featuredData =
             await featuredResponse.json();
 
@@ -428,18 +381,14 @@ export default function HomePage() {
             );
           }
         }
-      } catch (
-        error
-      ) {
+      } catch (error) {
         console.error(
           "Failed to load homepage data",
           error
         );
       } finally {
         if (!cancelled) {
-          setBusinessLoading(
-            false
-          );
+          setBusinessLoading(false);
         }
       }
     }
@@ -457,9 +406,7 @@ export default function HomePage() {
    * -----------------------------------------
    */
 
-  function handleCategory(
-    category: string
-  ) {
+  function handleCategory(category: string) {
     router.push(
       `/shop?category=${encodeURIComponent(
         category
@@ -482,16 +429,12 @@ export default function HomePage() {
     event.preventDefault();
     event.stopPropagation();
 
-    const alreadySaved =
-      savedBusinessIds.has(
-        business.id
-      );
+    const alreadySaved = savedBusinessIds.has(
+      business.id
+    );
 
     if (alreadySaved) {
-      removeSavedBusiness(
-        business.id
-      );
-
+      removeSavedBusiness(business.id);
       return;
     }
 
@@ -501,13 +444,9 @@ export default function HomePage() {
       area: location,
       category,
       verified:
-        business.verification ===
-        "VERIFIED",
-      availability:
-        business.availability,
-      imageUrl:
-        business.imageUrl ??
-        null,
+        business.verification === "VERIFIED",
+      availability: business.availability,
+      imageUrl: business.imageUrl ?? null,
     });
   }
 
@@ -517,129 +456,97 @@ export default function HomePage() {
    * -----------------------------------------
    */
 
-  const loadNearbyBusinesses =
-    () => {
-      if (
-        !navigator.geolocation
-      ) {
-        setNearbyError(
-          "Location is not supported by this browser"
-        );
-
-        setNearbyLocationRequested(
-          true
-        );
-
-        return;
-      }
-
-      setNearbyLocationRequested(
-        true
+  const loadNearbyBusinesses = () => {
+    if (!navigator.geolocation) {
+      setNearbyError(
+        "Location is not supported by this browser"
       );
 
-      setNearbyLoading(
-        true
-      );
+      setNearbyLocationRequested(true);
+      return;
+    }
 
-      setNearbyError("");
+    setNearbyLocationRequested(true);
+    setNearbyLoading(true);
+    setNearbyError("");
 
-      /*
-       * Clear previous nearby results
-       * before starting a new search.
-       */
+    /*
+     * Clear previous nearby results
+     * before starting a new search.
+     */
 
-      setNearbyBusiness([]);
+    setNearbyBusiness([]);
 
-      navigator.geolocation.getCurrentPosition(
-        async (
-          position
-        ) => {
-          try {
-            const {
-              latitude,
-              longitude,
-            } =
-              position.coords;
+    navigator.geolocation.getCurrentPosition(
+      async (position) => {
+        try {
+          const {
+            latitude,
+            longitude,
+          } = position.coords;
 
-            const response =
-              await fetch(
-                `/api/near-me?lat=${latitude}&lng=${longitude}`,
-                {
-                  cache:
-                    "no-store",
-                }
-              );
-
-            if (!response.ok) {
-              throw new Error(
-                "Failed to load nearby businesses"
-              );
+          const response = await fetch(
+            `/api/near-me?lat=${latitude}&lng=${longitude}`,
+            {
+              cache: "no-store",
             }
+          );
 
-            const data =
-              await response.json();
-
-            /*
-             * GPS can succeed even when
-             * there are no businesses nearby.
-             *
-             * An empty array is therefore
-             * not treated as an error.
-             */
-
-            setNearbyBusiness(
-              Array.isArray(
-                data.businesses
-              )
-                ? data.businesses.slice(
-                    0,
-                    4
-                  )
-                : []
-            );
-          } catch (
-            error
-          ) {
-            console.error(
-              "Failed to load nearby businesses:",
-              error
-            );
-
-            setNearbyError(
-              "We couldn't load nearby sellers right now"
-            );
-          } finally {
-            setNearbyLoading(
-              false
+          if (!response.ok) {
+            throw new Error(
+              "Failed to load nearby businesses"
             );
           }
-        },
 
-        (
-          error
-        ) => {
+          const data = await response.json();
+
+          /*
+           * GPS can succeed even when
+           * there are no businesses nearby.
+           *
+           * An empty array is therefore
+           * not treated as an error.
+           */
+
+          setNearbyBusiness(
+            Array.isArray(data.businesses)
+              ? data.businesses.slice(0, 4)
+              : []
+          );
+        } catch (error) {
           console.error(
-            "Geolocation error:",
+            "Failed to load nearby businesses:",
             error
           );
 
           setNearbyError(
-            "Allow location access to discover sellers near you"
+            "We couldn't load nearby sellers right now"
           );
-
-          setNearbyLoading(
-            false
-          );
-        },
-
-        {
-          enableHighAccuracy:
-            false,
-          timeout: 100000,
-          maximumAge: 300000,
+        } finally {
+          setNearbyLoading(false);
         }
-      );
-    };
+      },
+
+      (error) => {
+        console.error(
+          "Geolocation error:",
+          error
+        );
+
+        setNearbyError(
+          "Allow location access to discover sellers near you"
+        );
+
+        setNearbyLoading(false);
+      },
+
+      {
+        enableHighAccuracy: false,
+        timeout: 100000,
+        maximumAge: 300000,
+      }
+    );
+  };
 
   /*
    * -----------------------------------------
@@ -648,12 +555,11 @@ export default function HomePage() {
    */
 
   const submit = (
-    event: React.FormEvent<HTMLFormElement>
+    event: FormEvent<HTMLFormElement>
   ) => {
     event.preventDefault();
 
-    const query =
-      q.trim();
+    const query = q.trim();
 
     if (!query) {
       return;
@@ -667,977 +573,842 @@ export default function HomePage() {
   };
 
   return (
-    <main className="min-h-screen bg-[#FFF7ED]">
-      <div className="mx-auto min-h-screen w-full max-w-[1500px] px-3 py-3 sm:px-5 sm:py-5">
-        <div className="min-h-[calc(100vh-24px)] overflow-hidden rounded-[18px] border border-[#FF5A36] bg-[#FFFDFC] shadow-sm sm:rounded-[22px] lg:min-h-[calc(100vh-40px)]">
+    <main className="min-h-dvh w-full overflow-x-clip bg-[#FFFDFC]">
+      <div className="min-h-dvh w-full bg-[#FFFDFC]">
 
-          {/* Header */}
+        {/* Header */}
 
-          <header className="flex h-[64px] items-center justify-between border-b border-[#EAE6DF] bg-white px-4 sm:px-6 lg:h-[66px] lg:px-6">
-            <div className="flex min-w-0 items-center gap-2.5">
-              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-[#FF5A36] text-white shadow-sm">
-                <Store className="h-5 w-5" />
-              </div>
-
-              <div className="min-w-0">
-                <p className="truncate text-sm font-bold tracking-tight text-base">
-                  ReMarket
-                </p>
-
-                <p className="truncate text-[10px] leading-none text-muted sm:text-[10px]">
-                  Find it nearby
-                </p>
-              </div>
+        <header className="flex h-[64px] items-center justify-between border-b border-[#EAE6DF] bg-white px-4 sm:px-6 lg:h-[66px] lg:px-6">
+          <div className="flex min-w-0 items-center gap-2.5">
+            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-[#FF5A36] text-white shadow-sm">
+              <Store className="h-5 w-5" />
             </div>
 
-            {/* Desktop Navigation */}
+            <div className="min-w-0">
+              <p className="truncate text-sm font-bold tracking-tight text-[#17202A]">
+                ReMarket
+              </p>
 
-            <nav className="hidden items-center gap-1 md:flex">
-              {NAV_ITEMS.map(
-                (item) => (
+              <p className="truncate text-[10px] leading-none text-muted sm:text-[10px]">
+                Find it nearby
+              </p>
+            </div>
+          </div>
+
+          {/* Desktop Navigation */}
+
+          <nav className="hidden items-center gap-1 xl:flex">
+            {NAV_ITEMS.map((item) => (
+              <button
+                key={item.label}
+                type="button"
+                onClick={() =>
+                  router.push(item.href)
+                }
+                className="rounded-xl px-4 py-2 text-xs font-semibold text-gray-700 transition hover:bg-gray-50"
+              >
+                {item.label}
+              </button>
+            ))}
+          </nav>
+
+          {/* Right Action */}
+
+          <div className="flex shrink-0 items-center gap-1.5 sm:gap-3">
+
+            {/* Search */}
+
+            <button
+              type="button"
+              onClick={() => {
+                const input =
+                  document.getElementById(
+                    "homepage-search"
+                  );
+
+                input?.focus();
+              }}
+              className="hidden h-9 w-9 items-center justify-center rounded-full hover:bg-gray-50 sm:flex"
+              aria-label="Search"
+            >
+              <Search className="h-[19px] w-[19px] text-gray-700" />
+            </button>
+
+            {/* Saved */}
+
+            <button
+              type="button"
+              onClick={() =>
+                router.push("/saved")
+              }
+              className="hidden h-9 w-9 items-center justify-center rounded-full hover:bg-gray-50 sm:flex"
+              aria-label="Saved"
+            >
+              <Heart className="h-[19px] w-[19px] text-gray-700" />
+            </button>
+
+            {/* Notifications */}
+
+            <div className="shrink-0">
+              <NotificationBell />
+            </div>
+
+            {/* Profile */}
+
+            <button
+              type="button"
+              className="hidden h-9 w-9 items-center justify-center rounded-full bg-gray-100 sm:flex"
+              aria-label="Profile"
+            >
+              <UserCircle className="h-6 w-6 text-gray-700" />
+            </button>
+
+            {/* Request */}
+
+            <button
+              type="button"
+              onClick={() =>
+                router.push("/request")
+              }
+              className="shrink-0 whitespace-nowrap rounded-xl bg-[#FF5A36] px-2.5 py-2.5 text-[10px] font-bold text-white shadow-sm transition hover:opacity-90 sm:px-4 sm:text-xs"
+            >
+              <span className="sm:hidden">
+                Request
+              </span>
+
+              <span className="hidden sm:inline">
+                Request something
+              </span>
+            </button>
+          </div>
+        </header>
+
+        {/* Left Sidebar */}
+
+        <div className="flex">
+          <aside className="hidden w-[190px] shrink-0 border-r border-[#EAE6DF] bg-[#FCFAF6] px-3 py-5 lg:block">
+            <nav className="space-y-1">
+              {NAV_ITEMS.map((item) => {
+                const Icon = item.icon;
+
+                return (
                   <button
-                    key={
-                      item.label
-                    }
+                    key={item.label}
                     type="button"
                     onClick={() =>
-                      router.push(
-                        item.href
-                      )
+                      router.push(item.href)
                     }
-                    className="rounded-xl px-4 py-2 text-xs font-semibold text-gray-700 transition hover:bg-gray-50"
+                    className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-sm font-medium text-gray-700 transition hover:bg-white"
                   >
-                    {
-                      item.label
-                    }
+                    <Icon className="h-[18px] w-[18px]" />
+
+                    <span>{item.label}</span>
                   </button>
-                )
-              )}
+                );
+              })}
             </nav>
 
-            {/* Right Action */}
+            <div className="my-5 h-px bg-[#E7E2DB]" />
 
-            <div className="flex shrink-0 items-center gap-1.5 sm:gap-3">
-              {/* Search */}
+            <div>
+              <p className="px-3 text-[10px] font-bold uppercase tracking-[0.12em] text-gray-400">
+                Categories
+              </p>
 
-              <button
-                type="button"
-                onClick={() => {
-                  const input =
-                    document.getElementById(
-                      "homepage-search"
-                    );
+              <div className="mt-3 space-y-1">
+                {categories.map((category) => {
+                  const Icon = category.icon;
 
-                  input?.focus();
-                }}
-                className="hidden h-9 w-9 items-center justify-center rounded-full hover:bg-gray-50 sm:flex"
-                aria-label="Search"
-              >
-                <Search className="h-[19px] w-[19px] text-gray-700" />
-              </button>
+                  return (
+                    <button
+                      key={category.id}
+                      type="button"
+                      onClick={() =>
+                        handleCategory(category.name)
+                      }
+                      className="flex w-full items-center gap-3 rounded-xl px-3 py-2 text-left transition hover:bg-white"
+                    >
+                      <span
+                        className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full"
+                        style={{
+                          backgroundColor: category.bg,
+                        }}
+                      >
+                        <Icon className="h-4 w-4 text-[#9F2D18]" />
+                      </span>
 
-              {/* Saved */}
+                      <span className="truncate text-xs font-medium text-gray-700">
+                        {category.name}
+                      </span>
+                    </button>
+                  );
+                })}
 
-              <button
-                type="button"
-                onClick={() =>
-                  router.push(
-                    "/saved"
-                  )
-                }
-                className="hidden h-9 w-9 items-center justify-center rounded-full hover:bg-gray-50 sm:flex"
-                aria-label="Saved"
-              >
-                <Heart className="h-[19px] w-[19px] text-gray-700" />
-              </button>
+                <button
+                  type="button"
+                  onClick={() =>
+                    router.push("/shop")
+                  }
+                  className="flex w-full items-center gap-3 rounded-xl px-3 py-2 text-left transition hover:bg-white"
+                >
+                  <span className="flex h-7 w-7 items-center justify-center rounded-full bg-gray-100">
+                    <MoreHorizontal className="h-4 w-4 text-gray-500" />
+                  </span>
 
-              {/* Notifications */}
-
-              <div className="shrink-0">
-                <NotificationBell />
+                  <span className="text-xs font-medium text-gray-700">
+                    More
+                  </span>
+                </button>
               </div>
-
-              {/* Profile */}
-
-              <button
-                type="button"
-                className="hidden h-9 w-9 items-center justify-center rounded-full bg-gray-100 sm:flex"
-                aria-label="Profile"
-              >
-                <UserCircle className="h-6 w-6 text-gray-700" />
-              </button>
-
-              {/* Request */}
-
-              <button
-                type="button"
-                onClick={() =>
-                  router.push(
-                    "/request"
-                  )
-                }
-                className="shrink-0 whitespace-nowrap rounded-xl bg-[#FF5A36] px-2.5 py-2.5 text-[10px] font-bold text-white shadow-sm transition hover:opacity-90 sm:px-4 sm:text-xs"
-              >
-                <span className="sm:hidden">
-                  Request
-                </span>
-
-                <span className="hidden sm:inline">
-                  Request something
-                </span>
-              </button>
             </div>
-          </header>
+          </aside>
 
-          {/* Left Sidebar */}
+          {/* Page Content */}
 
-          <div className="flex">
-            <aside className="hidden w-[190px] shrink-0 border-r border-[#EAE6DF] bg-[#FCFAF6] px-3 py-5 lg:block">
-              <nav className="space-y-1">
-                {NAV_ITEMS.map(
-                  (item) => {
-                    const Icon =
-                      item.icon;
+          <div className="min-w-0 flex-1">
+            <div className="px-4 pb-24 pt-4 sm:px-6 sm:pt-6 lg:px-6 lg:pb-8">
+
+              {/* Hero */}
+
+              <section className="relative min-h-[260px] overflow-hidden rounded-[18px] bg-[#FF5A36] px-6 py-7 text-white shadow-soft sm:min-h-[275px] sm:px-8 sm:py-9 lg:min-h-[275px] lg:px-8">
+
+                {/* Seller entry point */}
+
+                <Link
+                  href="/seller/login"
+                  aria-label="Seller login"
+                  title="Seller login"
+                  className="absolute right-4 top-4 z-20 flex h-10 w-10 items-center justify-center rounded-full bg-white/15 text-white backdrop-blur-sm transition hover:bg-white/25 sm:right-5 sm:top-5"
+                >
+                  <Store className="h-5 w-5" />
+                </Link>
+
+                <div className="absolute -right-16 -top-24 h-[260px] w-[260px] rounded-full bg-white/5">
+                  <div className="pointer-events-none absolute right-6 top-7 hidden opacity-90 md:block lg:right-12">
+                    <div className="relative h-[190px] w-[220px]">
+                      <div className="absolute bottom-3 left-8 h-[110px] w-[105px] rotate-[-8deg] rounded-b-xl bg-white/70" />
+
+                      <div className="absolute left-[55px] top-3 h-[80px] w-[65px] rounded-t-[40px] border-[10px] border-white/60 border-b-0" />
+
+                      <div className="absolute bottom-0 right-3 flex h-[82px] w-[65px] rotate-[8deg] items-center justify-center rounded-[28px_28px_35px_35px] bg-white/40">
+                        <div className="h-10 w-10 rounded-full border-[8px] border-white/90" />
+                      </div>
+
+                      <div className="absolute right-0 top-[95px] h-12 w-12 rotate-45 rounded-t-[28px] rounded-br-[28px] bg-white/70">
+                        <div className="absolute left-1/2 top-1/2 h-4 w-4 -translate-x-1/2 -translate-y-1/2 rounded-full bg-[#FF5A36]" />
+                      </div>
+
+                      <div className="absolute right-[105px] top-0 h-4 w-1 rotate-[-35deg] bg-white/70" />
+
+                      <div className="absolute right-[130px] top-5 h-3 w-1 rotate-[-50deg] bg-white/70" />
+                    </div>
+                  </div>
+                </div>
+
+                <div className="relative z-10 max-w-[600px]">
+                  <div className="mb-4 inline-flex items-center rounded-full bg-white px-4 py-2 text-[10px] font-medium text-[#9F2D18]">
+                    Your local marketplace
+                  </div>
+
+                  <h1 className="max-w-[520px] text-[29px] font-bold leading-[1.1] tracking-tight sm:text-[34px] lg:text-[36px]">
+                    Find what you need,
+                    <br />
+                    right around you
+                  </h1>
+
+                  <p className="mt-3 max-w-[470px] text-xs leading-5 text-white/85 sm:text-sm">
+                    Search sellers, discover products and connect with people nearby without the hassle.
+                  </p>
+
+                  <form
+                    onSubmit={submit}
+                    className="mt-5 flex h-[48px] w-full max-w-[455px] items-center rounded-full bg-white p-1.5 shadow-sm"
+                  >
+                    <Search className="ml-3 h-[18px] w-[18px] shrink-0 text-gray-500" />
+
+                    <input
+                      id="homepage-search"
+                      value={q}
+                      onChange={(event) =>
+                        setQ(event.target.value)
+                      }
+                      placeholder="What are you looking for?"
+                      className="min-w-0 flex-1 bg-transparent px-3 text-xs text-gray-800 outline-none placeholder:text-gray-400"
+                    />
+
+                    <button
+                      type="submit"
+                      className="flex h-[38px] items-center rounded-full bg-[#FF5A36] px-5 text-xs font-bold text-white transition hover:opacity-90"
+                    >
+                      Search
+                    </button>
+                  </form>
+                </div>
+              </section>
+
+              {/* Categories */}
+
+              <section className="mt-5 sm:mt-6">
+                <div className="mb-3 flex items-end justify-between">
+                  <div>
+                    <h2 className="text-lg font-bold text-[#17202A]">
+                      Explore categories
+                    </h2>
+
+                    <p className="mt-0.5 text-xs text-muted">
+                      Start with something you need
+                    </p>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={() =>
+                      router.push("/shop")
+                    }
+                    className="flex items-center gap-1 text-xs font-medium text-[#9F2D18]"
+                  >
+                    View all
+                    <ArrowRight className="h-3.5 w-3.5" />
+                  </button>
+                </div>
+
+                <div className="grid grid-cols-3 gap-2.5 sm:grid-cols-3 lg:grid-cols-6">
+                  {categories.map((category) => {
+                    const Icon = category.icon;
 
                     return (
                       <button
-                        key={
-                          item.label
-                        }
+                        key={category.id}
                         type="button"
                         onClick={() =>
-                          router.push(
-                            item.href
-                          )
+                          handleCategory(category.name)
                         }
-                        className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-sm font-medium text-gray-700 transition hover:bg-white"
+                        className="group flex min-h-[112px] flex-col items-center justify-center rounded-xl border border-[#E8E4DE] bg-white px-2 py-2 transition hover:-translate-y-0.5 hover:shadow-md"
                       >
-                        <Icon className="h-[18px] w-[18px]" />
+                        <span
+                          className="flex h-[58px] w-[58px] items-center justify-center rounded-full transition group-hover:scale-105"
+                          style={{
+                            background: category.bg,
+                          }}
+                        >
+                          <Icon className="h-6 w-6" />
+                        </span>
 
-                        <span>
-                          {
-                            item.label
-                          }
+                        <span className="mt-3 max-w-full truncate text-xs font-medium text-gray-800">
+                          {category.name}
                         </span>
                       </button>
                     );
-                  }
-                )}
-              </nav>
-
-              <div className="my-5 h-px bg-[#E7E2DB]" />
-
-              <div>
-                <p className="px-3 text-[10px] font-bold uppercase tracking-[0.12em] text-gray-400">
-                  Categories
-                </p>
-
-                <div className="mt-3 space-y-1">
-                  {categories.map(
-                    (category) => {
-                      const Icon =
-                        category.icon;
-
-                      return (
-                        <button
-                          key={
-                            category.id
-                          }
-                          type="button"
-                          onClick={() =>
-                            handleCategory(
-                              category.name
-                            )
-                          }
-                          className="flex w-full items-center gap-3 rounded-xl px-3 py-2 text-left transition hover:bg-white"
-                        >
-                          <span
-                            className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full"
-                            style={{
-                              backgroundColor:
-                                category.bg,
-                            }}
-                          >
-                            <Icon className="h-4 w-4 text-[#9F2D18]" />
-                          </span>
-
-                          <span className="truncate text-xs font-medium text-gray-700">
-                            {
-                              category.name
-                            }
-                          </span>
-                        </button>
-                      );
-                    }
-                  )}
+                  })}
 
                   <button
                     type="button"
                     onClick={() =>
-                      router.push(
-                        "/shop"
-                      )
+                      router.push("/shop")
                     }
-                    className="flex w-full items-center gap-3 rounded-xl px-3 py-2 text-left transition hover:bg-white"
+                    className="group flex min-h-[112px] flex-col items-center justify-center rounded-xl border border-[#E8E4DE] bg-white px-2 py-3 transition hover:-translate-y-0.5 hover:shadow-md"
                   >
-                    <span className="flex h-7 w-7 items-center justify-center rounded-full bg-gray-100">
-                      <MoreHorizontal className="h-4 w-4 text-gray-500" />
+                    <span className="flex h-[58px] w-[58px] items-center justify-center rounded-full bg-[#E9EDF0] transition group-hover:scale-105">
+                      <MoreHorizontal className="h-6 w-6 text-gray-600" />
                     </span>
 
-                    <span className="text-xs font-medium text-gray-700">
+                    <span className="mt-3 text-xs font-medium text-gray-800">
                       More
                     </span>
                   </button>
                 </div>
-              </div>
-            </aside>
+              </section>
 
-            {/* Page Content */}
+              {/* Request Banner */}
 
-            <div className="min-w-0 flex-1">
-              <div className="px-4 pb-24 pt-4 sm:px-6 sm:pt-6 lg:px-6 lg:pb-8">
+              <section className="mt-5 flex flex-col gap-4 rounded-xl border border-[#F4DFC3] bg-[#FFF0D9] px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
+                <div className="flex items-center gap-3">
+                  <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-[#FFE0AD]">
+                    <ClipboardList className="h-5 w-5 text-[#A76013]" />
+                  </div>
 
-                {/* Hero */}
+                  <div>
+                    <h2 className="text-sm font-bold text-gray-800">
+                      Can't find what you need?
+                    </h2>
 
-                <section className="relative min-h-[260px] overflow-hidden rounded-[18px] bg-[#FF5A36] px-6 py-7 text-white shadow-soft sm:min-h-[275px] sm:px-8 sm:py-9 lg:min-h-[275px] lg:px-8">
+                    <p className="mt-0.5 text-[11px] text-gray-600">
+                      Tell us what you are looking for and we will help find matching sellers.
+                    </p>
+                  </div>
+                </div>
 
-                  {/* Seller entry point */}
+                <button
+                  type="button"
+                  onClick={() =>
+                    router.push("/request")
+                  }
+                  className="flex shrink-0 items-center justify-center gap-2 rounded-xl bg-[#FF5A36] px-5 py-3 text-xs font-bold text-white transition hover:opacity-90"
+                >
+                  Submit a request
+                  <ArrowRight className="h-3.5 w-3.5" />
+                </button>
+              </section>
+
+              {/* Nearby Businesses */}
+
+              <section className="mt-8">
+                <div className="flex items-end justify-between">
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <div className="flex h-8 w-8 items-center justify-center rounded-xl bg-orange-100 text-[#9F2D18]">
+                        <MapPin size={16} />
+                      </div>
+
+                      <h2 className="text-lg font-bold">
+                        Near you
+                      </h2>
+                    </div>
+
+                    <p className="mt-1 text-xs text-muted">
+                      Discover businesses closest to you
+                    </p>
+                  </div>
 
                   <Link
-                    href="/seller/login"
-                    aria-label="Seller login"
-                    title="Seller login"
-                    className="absolute right-4 top-4 z-20 flex h-10 w-10 items-center justify-center rounded-full bg-white/15 text-white backdrop-blur-sm transition hover:bg-white/25 sm:right-5 sm:top-5"
+                    href="/near-me"
+                    className="flex shrink-0 items-center gap-1 text-xs font-semibold text-[#9F2D18]"
                   >
-                    <Store className="h-5 w-5" />
+                    View All
+                    <ArrowRight size={14} />
                   </Link>
+                </div>
 
-                  <div className="absolute -right-16 -top-24 h-[260px] w-[260px] rounded-full bg-white/5">
-                    <div className="pointer-events-none absolute right-6 top-7 hidden opacity-90 md:block lg:right-12">
-                      <div className="relative h-[190px] w-[220px]">
-                        <div className="absolute bottom-3 left-8 h-[110px] w-[105px] rotate-[-8deg] rounded-b-xl bg-white/70" />
-
-                        <div className="absolute left-[55px] top-3 h-[80px] w-[65px] rounded-t-[40px] border-[10px] border-white/60 border-b-0" />
-
-                        <div className="absolute bottom-0 right-3 flex h-[82px] w-[65px] rotate-[8deg] items-center justify-center rounded-[28px_28px_35px_35px] bg-white/40">
-                          <div className="h-10 w-10 rounded-full border-[8px] border-white/90" />
+                {!nearbyLocationRequested &&
+                  !nearbyLoading && (
+                    <div className="mt-4 rounded-2xl border border-orange-100 bg-white p-5 shadow-card">
+                      <div className="flex flex-col items-center text-center sm:flex-row sm:text-left">
+                        <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-orange-50 text-[#FF5A36]">
+                          <Navigation size={21} />
                         </div>
 
-                        <div className="absolute right-0 top-[95px] h-12 w-12 rotate-45 rounded-t-[28px] rounded-br-[28px] bg-white/70">
-                          <div className="absolute left-1/2 top-1/2 h-4 w-4 -translate-x-1/2 -translate-y-1/2 rounded-full bg-[#FF5A36]" />
+                        <div className="mt-3 sm:ml-4 sm:mt-0">
+                          <p className="text-sm font-bold">
+                            Find businesses near you
+                          </p>
+
+                          <p className="mt-1 text-xs leading-5 text-muted">
+                            Allow location access to see local sellers closest to you.
+                          </p>
                         </div>
 
-                        <div className="absolute right-[105px] top-0 h-4 w-1 rotate-[-35deg] bg-white/70" />
-
-                        <div className="absolute right-[130px] top-5 h-3 w-1 rotate-[-50deg] bg-white/70" />
+                        <button
+                          type="button"
+                          onClick={loadNearbyBusinesses}
+                          className="mt-4 w-full rounded-xl bg-[#FF5A36] px-4 py-3 text-xs font-semibold text-white transition hover:opacity-90 sm:ml-auto sm:mt-0 sm:w-auto"
+                        >
+                          Find near me
+                        </button>
                       </div>
                     </div>
-                  </div>
+                  )}
 
-                  <div className="relative z-10 max-w-[600px]">
-                    <div className="mb-4 inline-flex items-center rounded-full bg-white px-4 py-2 text-[10px] font-medium text-[#9F2D18]">
-                      Your local marketplace
+                {nearbyLoading && (
+                  <div className="mt-4 flex min-h-[150px] items-center justify-center rounded-2xl border border-orange-100 bg-white shadow-card">
+                    <div className="flex items-center gap-2 text-sm text-muted">
+                      <Loader2
+                        size={17}
+                        className="animate-spin text-[#FF5A36]"
+                      />
+                      Finding businesses near me
                     </div>
+                  </div>
+                )}
 
-                    <h1 className="max-w-[520px] text-[29px] font-bold leading-[1.1] tracking-tight sm:text-[34px] lg:text-[36px]">
-                      Find what you need,
-                      <br />
-                      right around you
-                    </h1>
-
-                    <p className="mt-3 max-w-[470px] text-xs leading-5 text-white/85 sm:text-sm">
-                      Search sellers, discover products and connect with people nearby without the hassle.
-                    </p>
-
-                    <form
-                      onSubmit={
-                        submit
-                      }
-                      className="mt-5 flex h-[48px] w-full max-w-[455px] items-center rounded-full bg-white p-1.5 shadow-sm"
-                    >
-                      <Search className="ml-3 h-[18px] w-[18px] shrink-0 text-gray-500" />
-
-                      <input
-                        id="homepage-search"
-                        value={q}
-                        onChange={(
-                          event
-                        ) =>
-                          setQ(
-                            event.target
-                              .value
-                          )
-                        }
-                        placeholder="What are you looking for?"
-                        className="min-w-0 flex-1 bg-transparent px-3 text-xs text-gray-800 outline-none placeholder:text-gray-400"
+                {!!nearbyError &&
+                  !nearbyLoading && (
+                    <div className="mt-4 rounded-2xl border border-orange-100 bg-white p-5 text-center shadow-card">
+                      <MapPin
+                        size={22}
+                        className="mx-auto text-[#FF5A36]"
                       />
 
-                      <button
-                        type="submit"
-                        className="flex h-[38px] items-center rounded-full bg-[#FF5A36] px-5 text-xs font-bold text-white transition hover:opacity-90"
-                      >
-                        Search
-                      </button>
-                    </form>
-                  </div>
-                </section>
-
-                {/* Categories */}
-
-                <section className="mt-5 sm:mt-6">
-                  <div className="mb-3 flex items-end justify-between">
-                    <div>
-                      <h2 className="text-lg font-bold text-[#17202A]">
-                        Explore categories
-                      </h2>
-
-                      <p className="mt-0.5 text-xs text-muted">
-                        Start with something you need
+                      <p className="mt-3 text-sm font-semibold">
+                        We couldn&apos;t find your location
                       </p>
+
+                      <p className="mt-1 text-xs text-muted">
+                        {nearbyError}
+                      </p>
+
+                      <Link
+                        href="/near-me"
+                        className="mt-4 inline-flex items-center gap-2 rounded-xl bg-[#FF5A36] px-4 py-2.5 text-xs font-semibold text-white"
+                      >
+                        Open Near Me
+                        <ArrowRight size={14} />
+                      </Link>
                     </div>
+                  )}
 
-                    <button
-                      type="button"
-                      onClick={() =>
-                        router.push(
-                          "/shop"
-                        )
-                      }
-                      className="flex items-center gap-1 text-xs font-medium text-[#9F2D18]"
-                    >
-                      View all
-                      <ArrowRight className="h-3.5 w-3.5" />
-                    </button>
-                  </div>
+                {!nearbyLoading &&
+                  nearbyLocationRequested &&
+                  !nearbyError &&
+                  nearbyBusinesses.length === 0 && (
+                    <div className="mt-4 rounded-2xl border border-orange-100 bg-white p-6 text-center shadow-card">
+                      <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-2xl bg-orange-50 text-[#FF5A36]">
+                        <MapPin size={21} />
+                      </div>
 
-                  <div className="grid grid-cols-3 gap-2.5 sm:grid-cols-3 lg:grid-cols-6">
-                    {categories.map(
-                      (category) => {
-                        const Icon =
-                          category.icon;
+                      <p className="mt-3 text-sm font-bold">
+                        No businesses found near you yet
+                      </p>
+
+                      <p className="mx-auto mt-1 max-w-[380px] text-xs leading-5 text-muted">
+                        We don&apos;t have businesses registered around your current location yet. You can explore all businesses or search for another area.
+                      </p>
+
+                      <div className="mt-4 flex flex-col justify-center gap-2 sm:flex-row">
+                        <Link
+                          href="/near-me"
+                          className="inline-flex items-center justify-center gap-2 rounded-xl bg-[#FF5A36] px-4 py-2.5 text-xs font-semibold text-white transition hover:opacity-90"
+                        >
+                          Open Near Me
+                          <ArrowRight size={14} />
+                        </Link>
+
+                        <Link
+                          href="/shop"
+                          className="inline-flex items-center justify-center gap-2 rounded-xl border border-[#E8E4DE] bg-white px-4 py-2.5 text-xs font-semibold text-[#9F2D18] transition hover:bg-orange-50"
+                        >
+                          Browse all businesses
+                        </Link>
+                      </div>
+                    </div>
+                  )}
+
+                {!nearbyLoading &&
+                  nearbyBusinesses.length > 0 && (
+                    <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+                      {nearbyBusinesses.map((business) => {
+                        const distanceLabel =
+                          getDistanceLabel(
+                            business.distanceKm
+                          );
 
                         return (
-                          <button
-                            key={
-                              category.id
-                            }
-                            type="button"
-                            onClick={() =>
-                              handleCategory(
-                                category.name
-                              )
-                            }
-                            className="group flex min-h-[112px] flex-col items-center justify-center rounded-xl border border-[#E8E4DE] bg-white px-2 py-2 transition hover:-translate-y-0.5 hover:shadow-md"
+                          <Link
+                            key={business.id}
+                            href={`/seller/${business.id}`}
+                            className="group rounded-2xl border border-orange-100 bg-white p-4 shadow-card transition hover:-translate-y-0.5 hover:shadow-soft"
                           >
-                            <span
-                              className="flex h-[58px] w-[58px] items-center justify-center rounded-full transition group-hover:scale-105"
-                              style={{
-                                background:
-                                  category.bg,
-                              }}
-                            >
-                              <Icon className="h-6 w-6" />
-                            </span>
+                            <div className="flex items-start justify-between gap-3">
+                              <div className="flex min-w-0 items-center gap-3">
+                                <div className="h-10 w-10 shrink-0 overflow-hidden rounded-full bg-orange-100">
+                                  {business.imageUrl ? (
+                                    <img
+                                      src={business.imageUrl}
+                                      alt={business.name}
+                                      className="h-full w-full object-cover"
+                                    />
+                                  ) : (
+                                    <div className="flex h-full w-full items-center justify-center text-xs font-bold text-[#9F2D18]">
+                                      {business.name
+                                        .slice(0, 2)
+                                        .toUpperCase()}
+                                    </div>
+                                  )}
+                                </div>
 
-                            <span className="mt-3 max-w-full truncate text-xs font-medium text-gray-800">
-                              {
-                                category.name
-                              }
-                            </span>
-                          </button>
+                                <div className="min-w-0">
+                                  <p className="truncate text-sm font-bold">
+                                    {business.name}
+                                  </p>
+
+                                  <p className="mt-0.5 truncate text-[11px] text-muted">
+                                    {business.category ??
+                                      "Local business"}
+                                  </p>
+                                </div>
+                              </div>
+
+                              <Store
+                                size={16}
+                                className="shrink-0 text-gray-400 transition group-hover:text-[#FF5A36]"
+                              />
+                            </div>
+
+                            <div className="mt-4 flex items-center gap-2 text-xs text-gray-600">
+                              {business.area && (
+                                <span className="truncate">
+                                  {business.area}
+                                </span>
+                              )}
+
+                              {distanceLabel !== null && (
+                                <>
+                                  {business.area && (
+                                    <span className="text-gray-300">
+                                      ·
+                                    </span>
+                                  )}
+
+                                  <span className="shrink-0">
+                                    {distanceLabel}
+                                  </span>
+                                </>
+                              )}
+                            </div>
+
+                            <div className="mt-2 text-[11px] text-muted">
+                              {business.productCount}{" "}
+                              {business.productCount === 1
+                                ? "product"
+                                : "products"}
+                            </div>
+                          </Link>
                         );
-                      }
-                    )}
+                      })}
+                    </div>
+                  )}
 
-                    <button
-                      type="button"
-                      onClick={() =>
-                        router.push(
-                          "/shop"
-                        )
-                      }
-                      className="group flex min-h-[112px] flex-col items-center justify-center rounded-xl border border-[#E8E4DE] bg-white px-2 py-3 transition hover:-translate-y-0.5 hover:shadow-md"
+                {!nearbyLoading &&
+                  nearbyBusinesses.length > 0 && (
+                    <Link
+                      href="/near-me"
+                      className="mt-4 flex items-center justify-center gap-2 rounded-xl border border-orange-100 bg-white py-3 text-xs font-semibold text-[#9F2D18] transition hover:bg-orange-50"
                     >
-                      <span className="flex h-[58px] w-[58px] items-center justify-center rounded-full bg-[#E9EDF0] transition group-hover:scale-105">
-                        <MoreHorizontal className="h-6 w-6 text-gray-600" />
-                      </span>
+                      Explore all nearby businesses
+                      <ArrowRight size={14} />
+                    </Link>
+                  )}
+              </section>
 
-                      <span className="mt-3 text-xs font-medium text-gray-800">
-                        More
-                      </span>
-                    </button>
-                  </div>
-                </section>
+              {/* Featured Businesses */}
 
-                {/* Request Banner */}
+              <section className="mt-6">
+                <div className="mb-3 flex items-end justify-between">
+                  <div>
+                    <h2 className="text-lg font-bold text-[#17202A]">
+                      Featured businesses
+                    </h2>
 
-                <section className="mt-5 flex flex-col gap-4 rounded-xl border border-[#F4DFC3] bg-[#FFF0D9] px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
-                  <div className="flex items-center gap-3">
-                    <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-[#FFE0AD]">
-                      <ClipboardList className="h-5 w-5 text-[#A76013]" />
-                    </div>
-
-                    <div>
-                      <h2 className="text-sm font-bold text-gray-800">
-                        Can&apos;t find what you need?
-                      </h2>
-
-                      <p className="mt-0.5 text-[11px] text-gray-600">
-                        Tell us what you are looking for and we will help find matching sellers.
-                      </p>
-                    </div>
+                    <p className="mt-0.5 text-xs text-muted">
+                      Discover businesses on ReMarket
+                    </p>
                   </div>
 
                   <button
                     type="button"
                     onClick={() =>
-                      router.push(
-                        "/request"
-                      )
+                      router.push("/shop")
                     }
-                    className="flex shrink-0 items-center justify-center gap-2 rounded-xl bg-[#FF5A36] px-5 py-3 text-xs font-bold text-white transition hover:opacity-90"
+                    className="flex items-center gap-1 text-xs font-medium text-[#9F2D18]"
                   >
-                    Submit a request
+                    View all
                     <ArrowRight className="h-3.5 w-3.5" />
                   </button>
-                </section>
+                </div>
 
-                {/* Nearby Businesses */}
-
-                <section className="mt-8">
-                  <div className="flex items-end justify-between">
-                    <div>
-                      <div className="flex items-center gap-2">
-                        <div className="flex h-8 w-8 items-center justify-center rounded-xl bg-orange-100 text-[#9F2D18]">
-                          <MapPin size={16} />
-                        </div>
-
-                        <h2 className="text-lg font-bold">
-                          Near you
-                        </h2>
-                      </div>
-
-                      <p className="mt-1 text-xs text-muted">
-                        Discover businesses closest to you
-                      </p>
-                    </div>
-
-                    <Link
-                      href="/near-me"
-                      className="flex shrink-0 items-center gap-1 text-xs font-semibold text-[#9F2D18]"
-                    >
-                      View All
-                      <ArrowRight size={14} />
-                    </Link>
+                {businessLoading && (
+                  <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+                    {[1, 2, 3, 4].map((item) => (
+                      <div
+                        key={item}
+                        className="h-[180px] animate-pulse rounded-xl border border-[#E8E4DE] bg-white"
+                      />
+                    ))}
                   </div>
+                )}
 
-                  {!nearbyLocationRequested &&
-                    !nearbyLoading && (
-                      <div className="mt-4 rounded-2xl border border-orange-100 bg-white p-5 shadow-card">
-                        <div className="flex flex-col items-center text-center sm:flex-row sm:text-left">
-                          <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-orange-50 text-[#FF5A36]">
-                            <Navigation size={21} />
-                          </div>
+                {!businessLoading &&
+                  featuredBusinesses.length === 0 && (
+                    <div className="rounded-xl border border-[#E8E4DE] bg-white px-5 py-10 text-center">
+                      <Store className="mx-auto h-8 w-8 text-gray-300" />
 
-                          <div className="mt-3 sm:ml-4 sm:mt-0">
-                            <p className="text-sm font-bold">
-                              Find businesses near you
-                            </p>
+                      <p className="mt-3 text-sm font-semibold text-gray-600">
+                        No businesses available yet
+                      </p>
 
-                            <p className="mt-1 text-xs leading-5 text-muted">
-                              Allow location access to see local sellers closest to you.
-                            </p>
-                          </div>
-
-                          <button
-                            type="button"
-                            onClick={
-                              loadNearbyBusinesses
-                            }
-                            className="mt-4 w-full rounded-xl bg-[#FF5A36] px-4 py-3 text-xs font-semibold text-white transition hover:opacity-90 sm:ml-auto sm:mt-0 sm:w-auto"
-                          >
-                            Find near me
-                          </button>
-                        </div>
-                      </div>
-                    )}
-
-                  {nearbyLoading && (
-                    <div className="mt-4 flex min-h-[150px] items-center justify-center rounded-2xl border border-orange-100 bg-white shadow-card">
-                      <div className="flex items-center gap-2 text-sm text-muted">
-                        <Loader2
-                          size={17}
-                          className="animate-spin text-[#FF5A36]"
-                        />
-                        Finding businesses near me
-                      </div>
+                      <p className="mt-1 text-xs text-gray-400">
+                        Businesses will appear here when they are added to ReMarket.
+                      </p>
                     </div>
                   )}
 
-                  {!!nearbyError &&
-                    !nearbyLoading && (
-                      <div className="mt-4 rounded-2xl border border-orange-100 bg-white p-5 text-center shadow-card">
-                        <MapPin
-                          size={22}
-                          className="mx-auto text-[#FF5A36]"
-                        />
+                {!businessLoading &&
+                  featuredBusinesses.length > 0 && (
+                    <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+                      {featuredBusinesses.map((business) => {
+                        const category =
+                          business.category ||
+                          business.categories?.[0] ||
+                          "Services";
 
-                        <p className="mt-3 text-sm font-semibold">
-                          We couldn&apos;t find your location
-                        </p>
+                        const style =
+                          getCategoryVisual(category);
 
-                        <p className="mt-1 text-xs text-muted">
-                          {
-                            nearbyError
-                          }
-                        </p>
+                        const location =
+                          business.area || "Local";
 
-                        <Link
-                          href="/near-me"
-                          className="mt-4 inline-flex items-center gap-2 rounded-xl bg-[#FF5A36] px-4 py-2.5 text-xs font-semibold text-white"
-                        >
-                          Open Near Me
-                          <ArrowRight size={14} />
-                        </Link>
-                      </div>
-                    )}
+                        const isSaved =
+                          savedBusinessIds.has(
+                            business.id
+                          );
 
-                  {!nearbyLoading &&
-                    nearbyLocationRequested &&
-                    !nearbyError &&
-                    nearbyBusinesses.length ===
-                      0 && (
-                      <div className="mt-4 rounded-2xl border border-orange-100 bg-white p-6 text-center shadow-card">
-                        <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-2xl bg-orange-50 text-[#FF5A36]">
-                          <MapPin size={21} />
-                        </div>
-
-                        <p className="mt-3 text-sm font-bold">
-                          No businesses found near you yet
-                        </p>
-
-                        <p className="mx-auto mt-1 max-w-[380px] text-xs leading-5 text-muted">
-                          We don&apos;t have businesses registered around your current location yet. You can explore all businesses or search for another area.
-                        </p>
-
-                        <div className="mt-4 flex flex-col justify-center gap-2 sm:flex-row">
-                          <Link
-                            href="/near-me"
-                            className="inline-flex items-center justify-center gap-2 rounded-xl bg-[#FF5A36] px-4 py-2.5 text-xs font-semibold text-white transition hover:opacity-90"
+                        return (
+                          <article
+                            key={business.id}
+                            className="overflow-hidden rounded-xl border border-[#E8E4DE] bg-white transition hover:-translate-y-0.5 hover:shadow-md"
                           >
-                            Open Near Me
-                            <ArrowRight size={14} />
-                          </Link>
-
-                          <Link
-                            href="/shop"
-                            className="inline-flex items-center justify-center gap-2 rounded-xl border border-[#E8E4DE] bg-white px-4 py-2.5 text-xs font-semibold text-[#9F2D18] transition hover:bg-orange-50"
-                          >
-                            Browse all businesses
-                          </Link>
-                        </div>
-                      </div>
-                    )}
-
-                  {!nearbyLoading &&
-                    nearbyBusinesses.length >
-                      0 && (
-                      <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-                        {nearbyBusinesses.map(
-                          (
-                            business
-                          ) => {
-                            const distanceLabel =
-                              getDistanceLabel(
-                                business.distanceKm
-                              );
-
-                            return (
-                              <Link
-                                key={
-                                  business.id
-                                }
-                                href={`/seller/${business.id}`}
-                                className="group rounded-2xl border border-orange-100 bg-white p-4 shadow-card transition hover:-translate-y-0.5 hover:shadow-soft"
-                              >
-                                <div className="flex items-start justify-between gap-3">
-                                  <div className="flex min-w-0 items-center gap-3">
-                                    <div className="h-10 w-10 shrink-0 overflow-hidden rounded-full bg-orange-100">
-                                      {business.imageUrl ? (
-                                        <img
-                                          src={
-                                            business.imageUrl
-                                          }
-                                          alt={
-                                            business.name
-                                          }
-                                          className="h-full w-full object-cover"
-                                        />
-                                      ) : (
-                                        <div className="flex h-full w-full items-center justify-center text-xs font-bold text-[#9F2D18]">
-                                          {business.name
-                                            .slice(
-                                              0,
-                                              2
-                                            )
-                                            .toUpperCase()}
-                                        </div>
-                                      )}
-                                    </div>
-
-                                    <div className="min-w-0">
-                                      <p className="truncate text-sm font-bold">
-                                        {
-                                          business.name
-                                        }
-                                      </p>
-
-                                      <p className="mt-0.5 truncate text-[11px] text-muted">
-                                        {
-                                          business.category ??
-                                          "Local business"
-                                        }
-                                      </p>
-                                    </div>
-                                  </div>
-
-                                  <Store
-                                    size={16}
-                                    className="shrink-0 text-gray-400 transition group-hover:text-[#FF5A36]"
-                                  />
+                            <Link
+                              href={`/seller/${business.id}`}
+                              className="relative flex h-[92px] items-center justify-center overflow-hidden"
+                              style={{
+                                backgroundColor: style.bg,
+                              }}
+                            >
+                              {business.imageUrl ? (
+                                <img
+                                  src={business.imageUrl}
+                                  alt={business.name}
+                                  className="h-full w-full object-cover"
+                                />
+                              ) : (
+                                <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-white/75 shadow-sm">
+                                  <Store className="h-7 w-7 text-gray-700" />
                                 </div>
+                              )}
 
-                                <div className="mt-4 flex items-center gap-2 text-xs text-gray-600">
-                                  {business.area && (
-                                    <span className="truncate">
-                                      {
-                                        business.area
-                                      }
-                                    </span>
-                                  )}
+                              <span className="absolute right-3 top-3 rounded-full bg-[#DDF5EA] px-2.5 py-1 text-[9px] font-semibold text-[#137A59]">
+                                Active
+                              </span>
+                            </Link>
 
-                                  {distanceLabel !==
-                                    null && (
-                                    <>
-                                      {business.area && (
-                                        <span className="text-gray-300">
-                                          ·
-                                        </span>
-                                      )}
-
-                                      <span className="shrink-0">
-                                        {
-                                          distanceLabel
-                                        }
-                                      </span>
-                                    </>
-                                  )}
-                                </div>
-
-                                <div className="mt-2 text-[11px] text-muted">
-                                  {
-                                    business.productCount
-                                  }{" "}
-                                  {business.productCount ===
-                                  1
-                                    ? "product"
-                                    : "products"}
-                                </div>
-                              </Link>
-                            );
-                          }
-                        )}
-                      </div>
-                    )}
-
-                  {!nearbyLoading &&
-                    nearbyBusinesses.length >
-                      0 && (
-                      <Link
-                        href="/near-me"
-                        className="mt-4 flex items-center justify-center gap-2 rounded-xl border border-orange-100 bg-white py-3 text-xs font-semibold text-[#9F2D18] transition hover:bg-orange-50"
-                      >
-                        Explore all nearby businesses
-                        <ArrowRight size={14} />
-                      </Link>
-                    )}
-                </section>
-
-                {/* Featured Businesses */}
-
-                <section className="mt-6">
-                  <div className="mb-3 flex items-end justify-between">
-                    <div>
-                      <h2 className="text-lg font-bold text-[#17202A]">
-                        Featured businesses
-                      </h2>
-
-                      <p className="mt-0.5 text-xs text-muted">
-                        Discover businesses on ReMarket
-                      </p>
-                    </div>
-
-                    <button
-                      type="button"
-                      onClick={() =>
-                        router.push(
-                          "/shop"
-                        )
-                      }
-                      className="flex items-center gap-1 text-xs font-medium text-[#9F2D18]"
-                    >
-                      View all
-                      <ArrowRight className="h-3.5 w-3.5" />
-                    </button>
-                  </div>
-
-                  {businessLoading && (
-                    <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-                      {[1, 2, 3, 4].map(
-                        (item) => (
-                          <div
-                            key={item}
-                            className="h-[180px] animate-pulse rounded-xl border border-[#E8E4DE] bg-white"
-                          />
-                        )
-                      )}
-                    </div>
-                  )}
-
-                  {!businessLoading &&
-                    featuredBusinesses.length ===
-                      0 && (
-                      <div className="rounded-xl border border-[#E8E4DE] bg-white px-5 py-10 text-center">
-                        <Store className="mx-auto h-8 w-8 text-gray-300" />
-
-                        <p className="mt-3 text-sm font-semibold text-gray-600">
-                          No businesses available yet
-                        </p>
-
-                        <p className="mt-1 text-xs text-gray-400">
-                          Businesses will appear here when they are added to ReMarket.
-                        </p>
-                      </div>
-                    )}
-
-                  {!businessLoading &&
-                    featuredBusinesses.length >
-                      0 && (
-                      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-                        {featuredBusinesses.map(
-                          (
-                            business
-                          ) => {
-                            const category =
-                              business.category ||
-                              business.categories?.[0] ||
-                              "Services";
-
-                            const style =
-                              getCategoryVisual(
-                                category
-                              );
-
-                            const location =
-                              business.area ||
-                              "Local";
-
-                            const isSaved =
-                              savedBusinessIds.has(
-                                business.id
-                              );
-
-                            return (
-                              <article
-                                key={
-                                  business.id
-                                }
-                                className="overflow-hidden rounded-xl border border-[#E8E4DE] bg-white transition hover:-translate-y-0.5 hover:shadow-md"
-                              >
-                                <Link
-                                  href={`/seller/${business.id}`}
-                                  className="relative flex h-[92px] items-center justify-center overflow-hidden"
-                                  style={{
-                                    backgroundColor:
-                                      style.bg,
-                                  }}
-                                >
-                                  {business.imageUrl ? (
-                                    <img
-                                      src={
-                                        business.imageUrl
-                                      }
-                                      alt={
-                                        business.name
-                                      }
-                                      className="h-full w-full object-cover"
-                                    />
-                                  ) : (
-                                    <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-white/75 shadow-sm">
-                                      <Store className="h-7 w-7 text-gray-700" />
-                                    </div>
-                                  )}
-
-                                  <span className="absolute right-3 top-3 rounded-full bg-[#DDF5EA] px-2.5 py-1 text-[9px] font-semibold text-[#137A59]">
-                                    Active
-                                  </span>
-                                </Link>
-
-                                <div className="p-3.5">
-                                  <div className="flex items-start justify-between gap-2">
-                                    <div className="min-w-0">
-                                      <Link
-                                        href={`/seller/${business.id}`}
-                                        className="block truncate text-sm font-bold text-[#17202A]"
-                                      >
-                                        {
-                                          business.name
-                                        }
-                                      </Link>
-
-                                      <p className="mt-1 truncate text-[10px] text-muted">
-                                        {
-                                          category
-                                        }{" "}
-                                        ·{" "}
-                                        {
-                                          location
-                                        }
-                                      </p>
-                                    </div>
-
-                                    <button
-                                      type="button"
-                                      aria-label={
-                                        isSaved
-                                          ? `Remove ${business.name} from saved`
-                                          : `Save ${business.name}`
-                                      }
-                                      aria-pressed={
-                                        isSaved
-                                      }
-                                      onClick={(
-                                        event
-                                      ) =>
-                                        handleSaveBusiness(
-                                          event,
-                                          business,
-                                          category,
-                                          location
-                                        )
-                                      }
-                                      className={`shrink-0 transition ${
-                                        isSaved
-                                          ? "text-[#FF5A36]"
-                                          : "text-gray-500 hover:text-[#9F2D18]"
-                                      }`}
-                                    >
-                                      <Bookmark
-                                        className="h-4 w-4"
-                                        fill={
-                                          isSaved
-                                            ? "currentColor"
-                                            : "none"
-                                        }
-                                      />
-                                    </button>
-                                  </div>
-
-                                  <div className="mt-3 flex items-center justify-between">
-                                    <div className="flex items-center gap-1">
-                                      <span className="text-[#F2B52B]">
-                                        <Star className="h-6 w-6" />
-                                      </span>
-
-                                      <span className="text-[11px] font-semibold text-gray-700">
-                                        Local
-                                      </span>
-                                    </div>
-
-                                    <div className="flex items-center gap-1 text-[10px] text-gray-400">
-                                      <Package className="h-3 w-3" />
-
-                                      <span>
-                                        {
-                                          business.productCount
-                                        }{" "}
-                                        available
-                                      </span>
-                                    </div>
-                                  </div>
-
+                            <div className="p-3.5">
+                              <div className="flex items-start justify-between gap-2">
+                                <div className="min-w-0">
                                   <Link
                                     href={`/seller/${business.id}`}
-                                    className="mt-3 flex w-full items-center justify-center gap-2 rounded-lg bg-[#FFF1ED] py-2.5 text-[11px] font-bold text-[#9F2D18] transition hover:bg-[#FFE6DF]"
+                                    className="block truncate text-sm font-bold text-[#17202A]"
                                   >
-                                    Browse
-                                    <ArrowRight className="h-3.5 w-3.5" />
+                                    {business.name}
                                   </Link>
+
+                                  <p className="mt-1 truncate text-[10px] text-muted">
+                                    {category} · {location}
+                                  </p>
                                 </div>
-                              </article>
-                            );
-                          }
-                        )}
-                      </div>
-                    )}
-                </section>
 
-                {/* Footer */}
+                                <button
+                                  type="button"
+                                  aria-label={
+                                    isSaved
+                                      ? `Remove ${business.name} from saved`
+                                      : `Save ${business.name}`
+                                  }
+                                  aria-pressed={isSaved}
+                                  onClick={(event) =>
+                                    handleSaveBusiness(
+                                      event,
+                                      business,
+                                      category,
+                                      location
+                                    )
+                                  }
+                                  className={`shrink-0 transition ${
+                                    isSaved
+                                      ? "text-[#FF5A36]"
+                                      : "text-gray-500 hover:text-[#9F2D18]"
+                                  }`}
+                                >
+                                  <Bookmark
+                                    className="h-4 w-4"
+                                    fill={
+                                      isSaved
+                                        ? "currentColor"
+                                        : "none"
+                                    }
+                                  />
+                                </button>
+                              </div>
 
-                <footer className="mt-7 flex items-center justify-center gap-3 text-[10px] text-gray-400">
-                  <span className="h-px w-16 bg-gray-200" />
+                              <div className="mt-3 flex items-center justify-between">
+                                <div className="flex items-center gap-1">
+                                  <span className="text-[#F2B52B]">
+                                    <Star className="h-6 w-6" />
+                                  </span>
 
-                  <span>
-                    ReMarket · Find it nearby
-                  </span>
+                                  <span className="text-[11px] font-semibold text-gray-700">
+                                    Local
+                                  </span>
+                                </div>
 
-                  <span className="h-px w-16 bg-gray-200" />
-                </footer>
-              </div>
+                                <div className="flex items-center gap-1 text-[10px] text-gray-400">
+                                  <Package className="h-3 w-3" />
+
+                                  <span>
+                                    {business.productCount}{" "}
+                                    available
+                                  </span>
+                                </div>
+                              </div>
+
+                              <Link
+                                href={`/seller/${business.id}`}
+                                className="mt-3 flex w-full items-center justify-center gap-2 rounded-lg bg-[#FFF1ED] py-2.5 text-[11px] font-bold text-[#9F2D18] transition hover:bg-[#FFE6DF]"
+                              >
+                                Browse
+                                <ArrowRight className="h-3.5 w-3.5" />
+                              </Link>
+                            </div>
+                          </article>
+                        );
+                      })}
+                    </div>
+                  )}
+              </section>
+
+              {/* Footer */}
+
+              <footer className="mt-7 flex items-center justify-center gap-3 text-[10px] text-gray-400">
+                <span className="h-px w-16 bg-gray-200" />
+
+                <span>
+                  ReMarket · Find it nearby
+                </span>
+
+                <span className="h-px w-16 bg-gray-200" />
+              </footer>
             </div>
           </div>
-
-          {/* Mobile Navigation */}
-
-          <nav className="fixed bottom-0 left-0 right-0 z-50 border-t border-gray-200 bg-white/95 px-2 pb-[max(6px,safe-area-inset-bottom)] pt-1.5 backdrop-blur lg:hidden">
-            <div className="mx-auto grid max-w-md grid-cols-4">
-              {NAV_ITEMS.map(
-                (item) => {
-                  const Icon =
-                    item.icon;
-
-                  return (
-                    <button
-                      key={
-                        item.label
-                      }
-                      type="button"
-                      onClick={() =>
-                        router.push(
-                          item.href
-                        )
-                      }
-                      className={`flex flex-col items-center justify-center gap-1 rounded-xl py-2 ${
-                        item.label ===
-                        "Home"
-                          ? "text-[#9F2D18]"
-                          : "text-gray-500"
-                      }`}
-                    >
-                      <Icon className="h-[19px] w-[19px]" />
-
-                      <span className="text-[9px] font-medium">
-                        {
-                          item.label
-                        }
-                      </span>
-                    </button>
-                  );
-                }
-              )}
-            </div>
-          </nav>
         </div>
+
+        {/* Mobile Navigation */}
+
+        <nav className="fixed inset-x-0 bottom-0 z-50 border-t border-gray-200 bg-white/95 px-2 pb-[max(6px,env(safe-area-inset-bottom))] pt-1.5 backdrop-blur lg:hidden">
+          <div className="grid w-full grid-cols-4">
+            {NAV_ITEMS.map((item) => {
+              const Icon = item.icon;
+
+              return (
+                <button
+                  key={item.label}
+                  type="button"
+                  onClick={() =>
+                    router.push(item.href)
+                  }
+                  className={`flex flex-col items-center justify-center gap-1 rounded-xl py-2 ${
+                    item.label === "Home"
+                      ? "text-[#9F2D18]"
+                      : "text-gray-500"
+                  }`}
+                >
+                  <Icon className="h-[19px] w-[19px]" />
+
+                  <span className="text-[9px] font-medium">
+                    {item.label}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+        </nav>
       </div>
     </main>
   );

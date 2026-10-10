@@ -1,15 +1,18 @@
 "use client";
 
-import React, {
+import {
   Suspense,
   useState,
+  type FormEvent,
 } from "react";
 
 import { signIn } from "next-auth/react";
+
 import {
   useRouter,
   useSearchParams,
 } from "next/navigation";
+
 import Link from "next/link";
 
 import {
@@ -23,75 +26,80 @@ import {
   CircleAlert,
 } from "lucide-react";
 
+/**
+ * Only permit safe, same-origin internal callback paths.
+ *
+ * Examples:
+ * /seller
+ * /seller/business-id
+ * /seller/business-id?tab=products
+ *
+ * External URLs, protocol-relative URLs, backslashes,
+ * control characters, and invalid URLs fall back to /seller.
+ */
 function getSafeCallbackUrl(
   value: string | null
 ): string {
-  /*
-   * Only allow internal ReMarket paths.
-   *
-   * This prevents an external URL from being
-   * used as a redirect destination.
-   */
+  const fallback = "/seller";
+  const baseUrl = "https://remarket.invalid";
+
   if (
     !value ||
     !value.startsWith("/") ||
-    value.startsWith("//")
+    value.startsWith("//") ||
+    value.includes("\\") ||
+    /[\u0000-\u001F\u007F]/.test(value)
   ) {
-    return "/seller";
+    return fallback;
   }
 
-  return value;
+  try {
+    const parsedUrl = new URL(
+      value,
+      baseUrl
+    );
+
+    if (
+      parsedUrl.origin !== baseUrl ||
+      !parsedUrl.pathname.startsWith("/") ||
+      parsedUrl.pathname.startsWith("//")
+    ) {
+      return fallback;
+    }
+
+    return (
+      parsedUrl.pathname +
+      parsedUrl.search +
+      parsedUrl.hash
+    );
+  } catch {
+    return fallback;
+  }
 }
 
 function SellerLoginContent() {
-  const [
-    email,
-    setEmail,
-  ] = useState("");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [error, setError] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [showPassword, setShowPassword] = useState(false);
 
-  const [
-    password,
-    setPassword,
-  ] = useState("");
+  const router = useRouter();
+  const searchParams = useSearchParams();
 
-  const [
-    error,
-    setError,
-  ] = useState("");
-
-  const [
-    loading,
-    setLoading,
-  ] = useState(false);
-
-  const [
-    showPassword,
-    setShowPassword,
-  ] = useState(false);
-
-  const router =
-    useRouter();
-
-  const searchParams =
-    useSearchParams();
-
-  /*
-   * The business page sends:
+  /**
+   * Preserve the page the seller originally came from.
    *
-   * /seller/login?callbackUrl=/seller/[businessId]
-   *
-   * Preserve that exact path through login.
+   * Example:
+   * /seller/login?callbackUrl=/seller/business-id
    */
-  const callbackUrl =
-    getSafeCallbackUrl(
-      searchParams.get(
-        "callbackUrl"
-      )
-    );
+  const callbackUrl = getSafeCallbackUrl(
+    searchParams.get("callbackUrl")
+  );
 
-  /*
-   * Preserve callbackUrl when the seller
-   * chooses to create a new seller account.
+  /**
+   * Preserve the callback when the seller goes
+   * from login to signup.
    */
   const signupUrl =
     `/seller/signup?callbackUrl=${encodeURIComponent(
@@ -99,7 +107,7 @@ function SellerLoginContent() {
     )}`;
 
   async function submit(
-    event: React.FormEvent<HTMLFormElement>
+    event: FormEvent<HTMLFormElement>
   ) {
     event.preventDefault();
 
@@ -107,48 +115,32 @@ function SellerLoginContent() {
       return;
     }
 
-    const trimmedEmail =
-      email.trim();
+    const trimmedEmail = email.trim();
 
     setError("");
 
     if (!trimmedEmail) {
-      setError(
-        "Email address is required."
-      );
-
+      setError("Email address is required.");
       return;
     }
 
     if (!password) {
-      setError(
-        "Password is required."
-      );
-
+      setError("Password is required.");
       return;
     }
 
     setLoading(true);
 
     try {
-      const result =
-        await signIn(
-          "credentials",
-          {
-            email:
-              trimmedEmail,
-
-            password,
-
-            redirect: false,
-
-            /*
-             * Return to the exact page the
-             * seller originally came from.
-             */
-            callbackUrl,
-          }
-        );
+      const result = await signIn(
+        "credentials",
+        {
+          email: trimmedEmail,
+          password,
+          redirect: false,
+          callbackUrl,
+        }
+      );
 
       if (
         !result ||
@@ -156,25 +148,19 @@ function SellerLoginContent() {
         result.ok !== true
       ) {
         setError(
-          "Invalid email or password"
+          "Invalid email or password."
         );
 
         return;
       }
 
-      /*
-       * Return directly to the original
-       * business page instead of always using
-       * /seller.
+      /**
+       * Return to the validated internal path
+       * rather than always redirecting to /seller.
        */
-      router.push(
-        callbackUrl
-      );
-
+      router.push(callbackUrl);
       router.refresh();
-    } catch (
-      loginError
-    ) {
+    } catch (loginError) {
       console.error(
         "Seller login error:",
         loginError
@@ -192,19 +178,21 @@ function SellerLoginContent() {
     <main className="relative flex min-h-screen items-center justify-center overflow-hidden bg-[#FFF0DC] px-4 py-10 sm:px-6">
       {/* Top-left decorative shape */}
 
-      <div className="absolute left-[-80px] top-16 h-64 w-64 rounded-full bg-[#FF9A6B] opacity-80 sm:left-10 sm:top-24 sm:h-72 sm:w-72" />
+      <div
+        aria-hidden="true"
+        className="pointer-events-none absolute left-[-80px] top-16 h-64 w-64 rounded-full bg-[#FF9A6B] opacity-80 sm:left-10 sm:top-24 sm:h-72 sm:w-72"
+      />
 
       {/* Top-right dots */}
 
-      <div className="absolute right-6 top-16 grid grid-cols-4 gap-2.5 opacity-50 sm:right-16 sm:top-24 sm:gap-3">
-        {Array.from({
-          length: 16,
-        }).map(
+      <div
+        aria-hidden="true"
+        className="pointer-events-none absolute right-6 top-16 grid grid-cols-4 gap-2.5 opacity-50 sm:right-16 sm:top-24 sm:gap-3"
+      >
+        {Array.from({ length: 16 }).map(
           (_, index) => (
             <span
-              key={
-                index
-              }
+              key={index}
               className="h-2 w-2 rounded-full bg-[#F89B68]"
             />
           )
@@ -213,15 +201,14 @@ function SellerLoginContent() {
 
       {/* Bottom-left dots */}
 
-      <div className="absolute bottom-16 left-6 grid grid-cols-4 gap-2.5 opacity-50 sm:bottom-24 sm:left-16 sm:gap-3">
-        {Array.from({
-          length: 16,
-        }).map(
+      <div
+        aria-hidden="true"
+        className="pointer-events-none absolute bottom-16 left-6 grid grid-cols-4 gap-2.5 opacity-50 sm:bottom-24 sm:left-16 sm:gap-3"
+      >
+        {Array.from({ length: 16 }).map(
           (_, index) => (
             <span
-              key={
-                index
-              }
+              key={index}
               className="h-2 w-2 rounded-full bg-[#F89B68]"
             />
           )
@@ -230,7 +217,10 @@ function SellerLoginContent() {
 
       {/* Bottom-right decorative shape */}
 
-      <div className="absolute bottom-[-80px] right-[-70px] h-64 w-80 rotate-[-20deg] rounded-[50%] bg-[#FF9A6B] opacity-80 sm:bottom-[-50px] sm:right-[-40px] sm:h-72 sm:w-[23rem]" />
+      <div
+        aria-hidden="true"
+        className="pointer-events-none absolute bottom-[-80px] right-[-70px] h-64 w-80 rotate-[-20deg] rounded-[50%] bg-[#FF9A6B] opacity-80 sm:bottom-[-50px] sm:right-[-40px] sm:h-72 sm:w-[23rem]"
+      />
 
       {/* Main content */}
 
@@ -242,6 +232,7 @@ function SellerLoginContent() {
             <Store
               className="h-14 w-14 text-white sm:h-16 sm:w-16"
               strokeWidth={1.8}
+              aria-hidden="true"
             />
           </div>
 
@@ -275,9 +266,7 @@ function SellerLoginContent() {
           {/* Form */}
 
           <form
-            onSubmit={
-              submit
-            }
+            onSubmit={submit}
             className="space-y-6 sm:space-y-7"
           >
             {/* Email */}
@@ -292,7 +281,8 @@ function SellerLoginContent() {
 
               <div className="relative">
                 <Mail
-                  className="absolute left-5 top-1/2 h-5 w-5 -translate-y-1/2 text-[#FF694F]"
+                  aria-hidden="true"
+                  className="pointer-events-none absolute left-5 top-1/2 h-5 w-5 -translate-y-1/2 text-[#FF694F]"
                   strokeWidth={2}
                 />
 
@@ -301,32 +291,19 @@ function SellerLoginContent() {
                   name="email"
                   type="email"
                   placeholder="you@business.com"
-                  value={
-                    email
-                  }
-                  onChange={(
-                    event
-                  ) => {
-                    setEmail(
-                      event.target
-                        .value
-                    );
+                  value={email}
+                  onChange={(event) => {
+                    setEmail(event.target.value);
 
-                    if (
-                      error
-                    ) {
-                      setError(
-                        ""
-                      );
+                    if (error) {
+                      setError("");
                     }
                   }}
                   autoComplete="email"
                   autoCapitalize="none"
                   spellCheck={false}
                   required
-                  disabled={
-                    loading
-                  }
+                  disabled={loading}
                   className="h-[64px] w-full rounded-[14px] border border-[#D9DEE5] bg-white pl-14 pr-5 text-[17px] text-[#111C27] outline-none transition-all placeholder:text-[#8491A3] focus:border-[#FF694F] focus:ring-4 focus:ring-[#FF694F]/10 disabled:cursor-not-allowed disabled:bg-[#F8F8F7]"
                 />
               </div>
@@ -344,7 +321,8 @@ function SellerLoginContent() {
 
               <div className="relative">
                 <LockKeyhole
-                  className="absolute left-5 top-1/2 h-5 w-5 -translate-y-1/2 text-[#FF694F]"
+                  aria-hidden="true"
+                  className="pointer-events-none absolute left-5 top-1/2 h-5 w-5 -translate-y-1/2 text-[#FF694F]"
                   strokeWidth={2}
                 />
 
@@ -357,66 +335,47 @@ function SellerLoginContent() {
                       : "password"
                   }
                   placeholder="Enter your password"
-                  value={
-                    password
-                  }
-                  onChange={(
-                    event
-                  ) => {
-                    setPassword(
-                      event.target
-                        .value
-                    );
+                  value={password}
+                  onChange={(event) => {
+                    setPassword(event.target.value);
 
-                    if (
-                      error
-                    ) {
-                      setError(
-                        ""
-                      );
+                    if (error) {
+                      setError("");
                     }
                   }}
                   autoComplete="current-password"
                   required
-                  disabled={
-                    loading
-                  }
+                  disabled={loading}
                   className="h-[64px] w-full rounded-[14px] border border-[#D9DEE5] bg-white pl-14 pr-14 text-[17px] text-[#111C27] outline-none transition-all placeholder:text-[#8491A3] focus:border-[#FF694F] focus:ring-4 focus:ring-[#FF694F]/10 disabled:cursor-not-allowed disabled:bg-[#F8F8F7]"
                 />
 
                 <button
                   type="button"
-                  onClick={() =>
+                  onClick={() => {
                     setShowPassword(
-                      (
-                        current
-                      ) =>
-                        !current
-                    )
-                  }
-                  disabled={
-                    loading
-                  }
+                      (current) => !current
+                    );
+                  }}
+                  disabled={loading}
                   aria-label={
                     showPassword
                       ? "Hide password"
                       : "Show password"
                   }
-                  className="absolute right-5 top-1/2 -translate-y-1/2 text-[#718096] transition-colors hover:text-[#111C27] disabled:cursor-not-allowed disabled:opacity-50"
+                  aria-pressed={showPassword}
+                  className="absolute right-5 top-1/2 -translate-y-1/2 rounded-sm text-[#718096] transition-colors hover:text-[#111C27] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#FF694F] focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   {showPassword ? (
                     <EyeOff
+                      aria-hidden="true"
                       className="h-5 w-5"
-                      strokeWidth={
-                        2
-                      }
+                      strokeWidth={2}
                     />
                   ) : (
                     <Eye
+                      aria-hidden="true"
                       className="h-5 w-5"
-                      strokeWidth={
-                        2
-                      }
+                      strokeWidth={2}
                     />
                   )}
                 </button>
@@ -433,17 +392,14 @@ function SellerLoginContent() {
               >
                 <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[#EF3F3F] text-white">
                   <CircleAlert
+                    aria-hidden="true"
                     className="h-4 w-4"
-                    strokeWidth={
-                      2.3
-                    }
+                    strokeWidth={2.3}
                   />
                 </div>
 
-                <p className="text-[15px] text-[#E33B22] sm:text-[16px]">
-                  {
-                    error
-                  }
+                <p className="break-words text-[15px] text-[#E33B22] sm:text-[16px]">
+                  {error}
                 </p>
               </div>
             )}
@@ -452,14 +408,13 @@ function SellerLoginContent() {
 
             <button
               type="submit"
-              disabled={
-                loading
-              }
-              className="flex h-[66px] w-full items-center justify-center gap-3 rounded-[14px] bg-[#FF563F] text-[18px] font-semibold text-white shadow-[0_10px_25px_rgba(255,86,63,0.22)] transition-all hover:bg-[#F44D37] hover:shadow-[0_14px_30px_rgba(255,86,63,0.28)] active:scale-[0.99] disabled:cursor-not-allowed disabled:opacity-60 sm:text-[19px]"
+              disabled={loading}
+              className="flex h-[66px] w-full items-center justify-center gap-3 rounded-[14px] bg-[#FF563F] text-[18px] font-semibold text-white shadow-[0_10px_25px_rgba(255,86,63,0.22)] transition-all hover:bg-[#F44D37] hover:shadow-[0_14px_30px_rgba(255,86,63,0.28)] active:scale-[0.99] focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-[#FF563F]/30 disabled:cursor-not-allowed disabled:opacity-60 sm:text-[19px]"
             >
               {loading ? (
                 <>
                   <LoaderCircle
+                    aria-hidden="true"
                     className="h-6 w-6 animate-spin"
                     strokeWidth={2}
                   />
@@ -471,6 +426,7 @@ function SellerLoginContent() {
                   Log in
 
                   <ArrowRight
+                    aria-hidden="true"
                     className="h-6 w-6"
                     strokeWidth={2}
                   />
@@ -484,11 +440,10 @@ function SellerLoginContent() {
           <div className="mt-7 text-center sm:mt-8">
             <p className="text-[14px] text-[#718096] sm:text-[15px]">
               Don&apos;t have a seller account?{" "}
+
               <Link
-                href={
-                  signupUrl
-                }
-                className="font-semibold text-[#FF563F] transition-colors hover:text-[#F44D37]"
+                href={signupUrl}
+                className="font-semibold text-[#FF563F] transition-colors hover:text-[#F44D37] focus-visible:rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#FF563F] focus-visible:ring-offset-2"
               >
                 Create one
               </Link>
@@ -498,14 +453,19 @@ function SellerLoginContent() {
           {/* Footer */}
 
           <div className="mt-8 flex items-center gap-4 sm:mt-10 sm:gap-5">
-            <div className="h-px flex-1 bg-[#D9DEE5]" />
+            <div
+              aria-hidden="true"
+              className="h-px flex-1 bg-[#D9DEE5]"
+            />
 
             <p className="whitespace-nowrap text-[12px] text-[#718096] sm:text-[15px]">
               Powered by your local marketplace
             </p>
 
-            <div className="h-px flex-1 bg-[#D9DEE5]" />
-
+            <div
+              aria-hidden="true"
+              className="h-px flex-1 bg-[#D9DEE5]"
+            />
           </div>
         </div>
       </section>
@@ -520,6 +480,7 @@ export default function SellerLogin() {
         <main className="flex min-h-screen items-center justify-center bg-[#FFF0DC] px-4">
           <div className="flex items-center gap-3 text-[13px] font-semibold text-[#718096]">
             <LoaderCircle
+              aria-hidden="true"
               className="h-5 w-5 animate-spin text-[#FF563F]"
               strokeWidth={2}
             />

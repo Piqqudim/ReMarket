@@ -1,10 +1,12 @@
+
 "use client";
 
-import React, {
+import {
   Suspense,
   useEffect,
   useRef,
   useState,
+  type FormEvent,
 } from "react";
 
 import {
@@ -25,114 +27,114 @@ import {
   CheckCircle2,
 } from "lucide-react";
 
+/**
+ * Only permit safe seller-portal routes.
+ *
+ * Examples:
+ * /seller
+ * /seller/abc123
+ * /seller/abc123?tab=products
+ *
+ * External destinations and paths outside the seller
+ * portal fall back to /seller.
+ */
 function getSafeCallbackUrl(
   value: string | null
 ): string {
-  /*
-   * Only allow internal ReMarket paths.
-   *
-   * This prevents an external URL from being
-   * used as a redirect destination.
-   */
+  const fallback = "/seller";
+  const baseUrl = "https://remarket.invalid";
+
   if (
     !value ||
     !value.startsWith("/") ||
-    value.startsWith("//")
+    value.startsWith("//") ||
+    value.includes("\\") ||
+    /[\u0000-\u001F\u007F]/.test(value)
   ) {
-    return "/seller";
+    return fallback;
   }
 
-  return value;
+  try {
+    const parsedUrl = new URL(
+      value,
+      baseUrl
+    );
+
+    const isSellerRoute =
+      parsedUrl.pathname === "/seller" ||
+      parsedUrl.pathname.startsWith("/seller/");
+
+    if (
+      parsedUrl.origin !== baseUrl ||
+      !isSellerRoute
+    ) {
+      return fallback;
+    }
+
+    return (
+      parsedUrl.pathname +
+      parsedUrl.search +
+      parsedUrl.hash
+    );
+  } catch {
+    return fallback;
+  }
 }
 
+type SignupResponse = {
+  error?: unknown;
+};
+
 function SellerSignupContent() {
-  const [
-    name,
-    setName,
-  ] = useState("");
+  const [name, setName] = useState("");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] =
+    useState("");
 
-  const [
-    email,
-    setEmail,
-  ] = useState("");
+  const [error, setError] = useState("");
+  const [success, setSuccess] = useState("");
 
-  const [
-    password,
-    setPassword,
-  ] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [completed, setCompleted] = useState(false);
 
-  const [
-    confirmPassword,
-    setConfirmPassword,
-  ] = useState("");
-
-  const [
-    error,
-    setError,
-  ] = useState("");
-
-  const [
-    success,
-    setSuccess,
-  ] = useState("");
-
-  const [
-    loading,
-    setLoading,
-  ] = useState(false);
-
-  const [
-    showPassword,
-    setShowPassword,
-  ] = useState(false);
+  const [showPassword, setShowPassword] =
+    useState(false);
 
   const [
     showConfirmPassword,
     setShowConfirmPassword,
   ] = useState(false);
 
-  const router =
-    useRouter();
+  const router = useRouter();
+  const searchParams = useSearchParams();
 
-  const searchParams =
-    useSearchParams();
-
-  /*
-   * Preserve the exact business page that
-   * started the seller claim flow.
+  /**
+   * Preserve the seller page that initiated the flow.
    *
    * Example:
-   *
    * /seller/signup?callbackUrl=/seller/abc123
    */
-  const callbackUrl =
-    getSafeCallbackUrl(
-      searchParams.get(
-        "callbackUrl"
-      )
-    );
+  const callbackUrl = getSafeCallbackUrl(
+    searchParams.get("callbackUrl")
+  );
 
-  /*
-   * After account creation, send the seller
-   * to login while preserving the same
-   * callback URL.
+  /**
+   * After successful registration, send the seller
+   * to login and preserve their original destination.
    */
   const loginUrl =
     `/seller/login?callbackUrl=${encodeURIComponent(
       callbackUrl
     )}`;
 
-  const redirectTimer =
-    useRef<number | null>(
-      null
-    );
+  const redirectTimer = useRef<number | null>(
+    null
+  );
 
   useEffect(() => {
     return () => {
-      if (
-        redirectTimer.current !==
-        null
-      ) {
+      if (redirectTimer.current !== null) {
         window.clearTimeout(
           redirectTimer.current
         );
@@ -141,144 +143,114 @@ function SellerSignupContent() {
   }, []);
 
   function clearMessages() {
-    if (error) {
-      setError("");
-    }
-
-    if (success) {
-      setSuccess("");
-    }
+    setError("");
+    setSuccess("");
   }
 
   async function submit(
-    event: React.FormEvent<HTMLFormElement>
+    event: FormEvent<HTMLFormElement>
   ) {
     event.preventDefault();
 
-    if (loading) {
+    if (loading || completed) {
       return;
     }
 
-    setError("");
-    setSuccess("");
+    clearMessages();
 
-    const cleanName =
-      name.trim();
-
-    const cleanEmail =
-      email
-        .trim()
-        .toLowerCase();
+    const cleanName = name.trim();
+    const cleanEmail = email.trim().toLowerCase();
 
     if (!cleanName) {
-      setError(
-        "Name is required"
-      );
-
+      setError("Name is required.");
       return;
     }
 
     if (!cleanEmail) {
-      setError(
-        "Email is required"
-      );
-
+      setError("Email is required.");
       return;
     }
 
-    if (
-      password.length <
-      8
-    ) {
+    if (password.length < 8) {
       setError(
-        "Password must be at least 8 characters"
+        "Password must be at least 8 characters."
       );
-
       return;
     }
 
-    if (
-      password !==
-      confirmPassword
-    ) {
-      setError(
-        "Passwords do not match"
-      );
-
+    if (password !== confirmPassword) {
+      setError("Passwords do not match.");
       return;
     }
 
     setLoading(true);
 
+    let signupSucceeded = false;
+
     try {
-      const response =
-        await fetch(
-          "/api/seller/signup",
-          {
-            method: "POST",
-            headers: {
-              "Content-Type":
-                "application/json",
-            },
-            body: JSON.stringify({
-              name:
-                cleanName,
+      const response = await fetch(
+        "/api/seller/signup",
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            name: cleanName,
+            email: cleanEmail,
+            password,
+          }),
+        }
+      );
 
-              email:
-                cleanEmail,
-
-              password,
-            }),
-          }
-        );
-
-      let data:
-        | {
-            error?: unknown;
-          }
-        | null = null;
+      let data: SignupResponse | null = null;
 
       try {
         data =
-          await response.json();
+          (await response.json()) as SignupResponse;
       } catch {
         data = null;
       }
 
       if (!response.ok) {
         setError(
-          typeof data?.error ===
-            "string"
+          typeof data?.error === "string"
             ? data.error
-            : "Unable to create seller account"
+            : "Unable to create your seller account. Please try again."
         );
 
         return;
       }
 
+      signupSucceeded = true;
+      setCompleted(true);
+
       setSuccess(
         "Your seller account has been created. Redirecting to login..."
       );
 
-      redirectTimer.current =
-        window.setTimeout(() => {
-          router.push(
-            loginUrl
-          );
-        }, 800);
-    } catch (
-      signupError
-    ) {
+      redirectTimer.current = window.setTimeout(
+        () => {
+          router.push(loginUrl);
+        },
+        800
+      );
+    } catch (signupError) {
       console.error(
         "Seller signup error:",
         signupError
       );
 
       setError(
-        "Something went wrong. Please try again"
+        "Something went wrong. Please try again."
       );
     } finally {
       setLoading(false);
+
+      // Keep the form locked after successful signup.
+      if (!signupSucceeded) {
+        setCompleted(false);
+      }
     }
   }
 
@@ -286,19 +258,21 @@ function SellerSignupContent() {
     <main className="relative flex min-h-screen items-center justify-center overflow-hidden bg-[#FFF0DC] px-4 py-10 sm:px-6">
       {/* Top-left decorative shape */}
 
-      <div className="absolute left-[-80px] top-16 h-64 w-64 rounded-full bg-[#FF9A6B] opacity-80 sm:left-10 sm:top-24 sm:h-72 sm:w-72" />
+      <div
+        aria-hidden="true"
+        className="pointer-events-none absolute left-[-80px] top-16 h-64 w-64 rounded-full bg-[#FF9A6B] opacity-80 sm:left-10 sm:top-24 sm:h-72 sm:w-72"
+      />
 
       {/* Top-right dots */}
 
-      <div className="absolute right-6 top-16 grid grid-cols-4 gap-2.5 opacity-50 sm:right-16 sm:top-24 sm:gap-3">
-        {Array.from({
-          length: 16,
-        }).map(
+      <div
+        aria-hidden="true"
+        className="pointer-events-none absolute right-6 top-16 grid grid-cols-4 gap-2.5 opacity-50 sm:right-16 sm:top-24 sm:gap-3"
+      >
+        {Array.from({ length: 16 }).map(
           (_, index) => (
             <span
-              key={
-                index
-              }
+              key={index}
               className="h-2 w-2 rounded-full bg-[#F89B68]"
             />
           )
@@ -307,15 +281,14 @@ function SellerSignupContent() {
 
       {/* Bottom-left dots */}
 
-      <div className="absolute bottom-16 left-6 grid grid-cols-4 gap-2.5 opacity-50 sm:bottom-24 sm:left-16 sm:gap-3">
-        {Array.from({
-          length: 16,
-        }).map(
+      <div
+        aria-hidden="true"
+        className="pointer-events-none absolute bottom-16 left-6 grid grid-cols-4 gap-2.5 opacity-50 sm:bottom-24 sm:left-16 sm:gap-3"
+      >
+        {Array.from({ length: 16 }).map(
           (_, index) => (
             <span
-              key={
-                index
-              }
+              key={index}
               className="h-2 w-2 rounded-full bg-[#F89B68]"
             />
           )
@@ -324,7 +297,10 @@ function SellerSignupContent() {
 
       {/* Bottom-right decorative shape */}
 
-      <div className="absolute bottom-[-80px] right-[-70px] h-64 w-80 rotate-[-20deg] rounded-[50%] bg-[#FF9A6B] opacity-80 sm:bottom-[-50px] sm:right-[-40px] sm:h-72 sm:w-[23rem]" />
+      <div
+        aria-hidden="true"
+        className="pointer-events-none absolute bottom-[-80px] right-[-70px] h-64 w-80 rotate-[-20deg] rounded-[50%] bg-[#FF9A6B] opacity-80 sm:bottom-[-50px] sm:right-[-40px] sm:h-72 sm:w-[23rem]"
+      />
 
       {/* Main content */}
 
@@ -334,6 +310,7 @@ function SellerSignupContent() {
         <div className="mb-8 flex flex-col items-center text-center sm:mb-10">
           <div className="mb-5 flex h-24 w-24 items-center justify-center rounded-[26px] bg-[#FF563F] shadow-[0_12px_30px_rgba(255,86,63,0.25)] sm:h-28 sm:w-28">
             <Store
+              aria-hidden="true"
               className="h-14 w-14 text-white sm:h-16 sm:w-16"
               strokeWidth={1.8}
             />
@@ -369,9 +346,7 @@ function SellerSignupContent() {
           {/* Form */}
 
           <form
-            onSubmit={
-              submit
-            }
+            onSubmit={submit}
             className="space-y-6 sm:space-y-7"
           >
             {/* Name */}
@@ -386,7 +361,8 @@ function SellerSignupContent() {
 
               <div className="relative">
                 <UserRound
-                  className="absolute left-5 top-1/2 h-5 w-5 -translate-y-1/2 text-[#FF694F]"
+                  aria-hidden="true"
+                  className="pointer-events-none absolute left-5 top-1/2 h-5 w-5 -translate-y-1/2 text-[#FF694F]"
                   strokeWidth={2}
                 />
 
@@ -395,24 +371,15 @@ function SellerSignupContent() {
                   name="name"
                   type="text"
                   placeholder="Your full name"
-                  value={
-                    name
-                  }
-                  onChange={(
-                    event
-                  ) => {
-                    setName(
-                      event.target
-                        .value
-                    );
-
+                  value={name}
+                  onChange={(event) => {
+                    setName(event.target.value);
                     clearMessages();
                   }}
                   autoComplete="name"
+                  maxLength={100}
                   required
-                  disabled={
-                    loading
-                  }
+                  disabled={loading || completed}
                   className="h-[64px] w-full rounded-[14px] border border-[#D9DEE5] bg-white pl-14 pr-5 text-[17px] text-[#111C27] outline-none transition-all placeholder:text-[#8491A3] focus:border-[#FF694F] focus:ring-4 focus:ring-[#FF694F]/10 disabled:cursor-not-allowed disabled:bg-[#F8F8F7]"
                 />
               </div>
@@ -430,7 +397,8 @@ function SellerSignupContent() {
 
               <div className="relative">
                 <Mail
-                  className="absolute left-5 top-1/2 h-5 w-5 -translate-y-1/2 text-[#FF694F]"
+                  aria-hidden="true"
+                  className="pointer-events-none absolute left-5 top-1/2 h-5 w-5 -translate-y-1/2 text-[#FF694F]"
                   strokeWidth={2}
                 />
 
@@ -439,26 +407,17 @@ function SellerSignupContent() {
                   name="email"
                   type="email"
                   placeholder="you@business.com"
-                  value={
-                    email
-                  }
-                  onChange={(
-                    event
-                  ) => {
-                    setEmail(
-                      event.target
-                        .value
-                    );
-
+                  value={email}
+                  onChange={(event) => {
+                    setEmail(event.target.value);
                     clearMessages();
                   }}
                   autoComplete="email"
                   autoCapitalize="none"
                   spellCheck={false}
+                  maxLength={254}
                   required
-                  disabled={
-                    loading
-                  }
+                  disabled={loading || completed}
                   className="h-[64px] w-full rounded-[14px] border border-[#D9DEE5] bg-white pl-14 pr-5 text-[17px] text-[#111C27] outline-none transition-all placeholder:text-[#8491A3] focus:border-[#FF694F] focus:ring-4 focus:ring-[#FF694F]/10 disabled:cursor-not-allowed disabled:bg-[#F8F8F7]"
                 />
               </div>
@@ -476,82 +435,53 @@ function SellerSignupContent() {
 
               <div className="relative">
                 <LockKeyhole
-                  className="absolute left-5 top-1/2 h-5 w-5 -translate-y-1/2 text-[#FF694F]"
+                  aria-hidden="true"
+                  className="pointer-events-none absolute left-5 top-1/2 h-5 w-5 -translate-y-1/2 text-[#FF694F]"
                   strokeWidth={2}
                 />
 
                 <input
                   id="password"
                   name="password"
-                  type={
-                    showPassword
-                      ? "text"
-                      : "password"
-                  }
+                  type={showPassword ? "text" : "password"}
                   placeholder="Create a password"
-                  value={
-                    password
-                  }
-                  onChange={(
-                    event
-                  ) => {
-                    setPassword(
-                      event.target
-                        .value
-                    );
-
-                    if (
-                      error
-                    ) {
-                      setError(
-                        ""
-                      );
-                    }
+                  value={password}
+                  onChange={(event) => {
+                    setPassword(event.target.value);
+                    clearMessages();
                   }}
                   autoComplete="new-password"
+                  minLength={8}
                   required
-                  minLength={
-                    8
-                  }
-                  disabled={
-                    loading
-                  }
+                  disabled={loading || completed}
                   className="h-[64px] w-full rounded-[14px] border border-[#D9DEE5] bg-white pl-14 pr-14 text-[17px] text-[#111C27] outline-none transition-all placeholder:text-[#8491A3] focus:border-[#FF694F] focus:ring-4 focus:ring-[#FF694F]/10 disabled:cursor-not-allowed disabled:bg-[#F8F8F7]"
                 />
 
                 <button
                   type="button"
-                  onClick={() =>
-                    setShowPassword(
-                      (
-                        current
-                      ) =>
-                        !current
-                    )
-                  }
-                  disabled={
-                    loading
-                  }
+                  onClick={() => {
+                    setShowPassword((current) => !current);
+                  }}
+                  disabled={loading || completed}
                   aria-label={
                     showPassword
                       ? "Hide password"
                       : "Show password"
                   }
-                  className="absolute right-5 top-1/2 -translate-y-1/2 text-[#718096] transition-colors hover:text-[#111C27] disabled:cursor-not-allowed disabled:opacity-50"
+                  aria-pressed={showPassword}
+                  className="absolute right-5 top-1/2 -translate-y-1/2 rounded-sm text-[#718096] transition-colors hover:text-[#111C27] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#FF694F] focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   {showPassword ? (
                     <EyeOff
+                      aria-hidden="true"
                       className="h-5 w-5"
-                      strokeWidth={
-                        2
-                      }
+                      strokeWidth={2}
                     />
                   ) : (
                     <Eye
+                      aria-hidden="true"
                       className="h-5 w-5"
-                      strokeWidth={
-                        2
-                      }
+                      strokeWidth={2}
                     />
                   )}
                 </button>
@@ -570,7 +500,8 @@ function SellerSignupContent() {
 
               <div className="relative">
                 <LockKeyhole
-                  className="absolute left-5 top-1/2 h-5 w-5 -translate-y-1/2 text-[#FF694F]"
+                  aria-hidden="true"
+                  className="pointer-events-none absolute left-5 top-1/2 h-5 w-5 -translate-y-1/2 text-[#FF694F]"
                   strokeWidth={2}
                 />
 
@@ -583,69 +514,45 @@ function SellerSignupContent() {
                       : "password"
                   }
                   placeholder="Enter your password again"
-                  value={
-                    confirmPassword
-                  }
-                  onChange={(
-                    event
-                  ) => {
-                    setConfirmPassword(
-                      event.target
-                        .value
-                    );
-
-                    if (
-                      error
-                    ) {
-                      setError(
-                        ""
-                      );
-                    }
+                  value={confirmPassword}
+                  onChange={(event) => {
+                    setConfirmPassword(event.target.value);
+                    clearMessages();
                   }}
                   autoComplete="new-password"
+                  minLength={8}
                   required
-                  minLength={
-                    8
-                  }
-                  disabled={
-                    loading
-                  }
+                  disabled={loading || completed}
                   className="h-[64px] w-full rounded-[14px] border border-[#D9DEE5] bg-white pl-14 pr-14 text-[17px] text-[#111C27] outline-none transition-all placeholder:text-[#8491A3] focus:border-[#FF694F] focus:ring-4 focus:ring-[#FF694F]/10 disabled:cursor-not-allowed disabled:bg-[#F8F8F7]"
                 />
 
                 <button
                   type="button"
-                  onClick={() =>
+                  onClick={() => {
                     setShowConfirmPassword(
-                      (
-                        current
-                      ) =>
-                        !current
-                    )
-                  }
-                  disabled={
-                    loading
-                  }
+                      (current) => !current
+                    );
+                  }}
+                  disabled={loading || completed}
                   aria-label={
                     showConfirmPassword
                       ? "Hide confirm password"
                       : "Show confirm password"
                   }
-                  className="absolute right-5 top-1/2 -translate-y-1/2 text-[#718096] transition-colors hover:text-[#111C27] disabled:cursor-not-allowed disabled:opacity-50"
+                  aria-pressed={showConfirmPassword}
+                  className="absolute right-5 top-1/2 -translate-y-1/2 rounded-sm text-[#718096] transition-colors hover:text-[#111C27] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#FF694F] focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   {showConfirmPassword ? (
                     <EyeOff
+                      aria-hidden="true"
                       className="h-5 w-5"
-                      strokeWidth={
-                        2
-                      }
+                      strokeWidth={2}
                     />
                   ) : (
                     <Eye
+                      aria-hidden="true"
                       className="h-5 w-5"
-                      strokeWidth={
-                        2
-                      }
+                      strokeWidth={2}
                     />
                   )}
                 </button>
@@ -662,17 +569,14 @@ function SellerSignupContent() {
               >
                 <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[#EF3F3F] text-white">
                   <CircleAlert
+                    aria-hidden="true"
                     className="h-4 w-4"
-                    strokeWidth={
-                      2.3
-                    }
+                    strokeWidth={2.3}
                   />
                 </div>
 
-                <p className="text-[15px] text-[#E33B22] sm:text-[16px]">
-                  {
-                    error
-                  }
+                <p className="break-words text-[15px] text-[#E33B22] sm:text-[16px]">
+                  {error}
                 </p>
               </div>
             )}
@@ -687,17 +591,14 @@ function SellerSignupContent() {
               >
                 <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[#21A366] text-white">
                   <CheckCircle2
+                    aria-hidden="true"
                     className="h-4 w-4"
-                    strokeWidth={
-                      2.3
-                    }
+                    strokeWidth={2.3}
                   />
                 </div>
 
                 <p className="text-[15px] text-[#137A59] sm:text-[16px]">
-                  {
-                    success
-                  }
+                  {success}
                 </p>
               </div>
             )}
@@ -706,25 +607,35 @@ function SellerSignupContent() {
 
             <button
               type="submit"
-              disabled={
-                loading
-              }
-              className="flex h-[66px] w-full items-center justify-center gap-3 rounded-[14px] bg-[#FF563F] text-[18px] font-semibold text-white shadow-[0_10px_25px_rgba(255,86,63,0.22)] transition-all hover:bg-[#F44D37] hover:shadow-[0_14px_30px_rgba(255,86,63,0.28)] active:scale-[0.99] disabled:cursor-not-allowed disabled:opacity-60 sm:text-[19px]"
+              disabled={loading || completed}
+              className="flex h-[66px] w-full items-center justify-center gap-3 rounded-[14px] bg-[#FF563F] text-[18px] font-semibold text-white shadow-[0_10px_25px_rgba(255,86,63,0.22)] transition-all hover:bg-[#F44D37] hover:shadow-[0_14px_30px_rgba(255,86,63,0.28)] active:scale-[0.99] focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-[#FF563F]/30 disabled:cursor-not-allowed disabled:opacity-60 sm:text-[19px]"
             >
               {loading ? (
                 <>
                   <LoaderCircle
+                    aria-hidden="true"
                     className="h-6 w-6 animate-spin"
                     strokeWidth={2}
                   />
 
                   Creating account...
                 </>
+              ) : completed ? (
+                <>
+                  <CheckCircle2
+                    aria-hidden="true"
+                    className="h-6 w-6"
+                    strokeWidth={2}
+                  />
+
+                  Account created
+                </>
               ) : (
                 <>
                   Create account
 
                   <ArrowRight
+                    aria-hidden="true"
                     className="h-6 w-6"
                     strokeWidth={2}
                   />
@@ -738,17 +649,14 @@ function SellerSignupContent() {
           <div className="mt-8 text-center sm:mt-10">
             <p className="text-[14px] text-[#718096] sm:text-[15px]">
               Already have a seller account?{" "}
+
               <button
                 type="button"
-                onClick={() =>
-                  router.push(
-                    loginUrl
-                  )
-                }
-                className="font-semibold text-[#FF563F] hover:underline"
-                disabled={
-                  loading
-                }
+                onClick={() => {
+                  router.push(loginUrl);
+                }}
+                disabled={loading || completed}
+                className="rounded-sm font-semibold text-[#FF563F] transition-colors hover:text-[#F44D37] hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#FF563F] focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
               >
                 Log in
               </button>
@@ -758,13 +666,19 @@ function SellerSignupContent() {
           {/* Footer */}
 
           <div className="mt-8 flex items-center gap-4 sm:mt-10 sm:gap-5">
-            <div className="h-px flex-1 bg-[#D9DEE5]" />
+            <div
+              aria-hidden="true"
+              className="h-px flex-1 bg-[#D9DEE5]"
+            />
 
             <p className="whitespace-nowrap text-[12px] text-[#718096] sm:text-[15px]">
               Powered by your local marketplace
             </p>
 
-            <div className="h-px flex-1 bg-[#D9DEE5]" />
+            <div
+              aria-hidden="true"
+              className="h-px flex-1 bg-[#D9DEE5]"
+            />
           </div>
         </div>
       </section>
@@ -779,6 +693,7 @@ export default function SellerSignup() {
         <main className="flex min-h-screen items-center justify-center bg-[#FFF0DC] px-4">
           <div className="flex items-center gap-3 text-[13px] font-semibold text-[#718096]">
             <LoaderCircle
+              aria-hidden="true"
               className="h-5 w-5 animate-spin text-[#FF563F]"
               strokeWidth={2}
             />
