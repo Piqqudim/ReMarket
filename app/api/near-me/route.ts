@@ -3,6 +3,8 @@ import {
   NextResponse,
 } from "next/server";
 
+import type { Prisma } from "@prisma/client";
+
 import { prisma } from "@/lib/prisma";
 
 import {
@@ -22,43 +24,37 @@ import {
  * REMARKET NEAR ME CONFIGURATION
  * ------------------------------------------------
  *
- * Ranking hierarchy:
+ * GPS ranking hierarchy:
  *
  * 1. Same Street
  * 2. Adjacent Street
  * 3. Nearby Street
  * 4. Whole Area
  *
- * Ranking level always takes precedence over
- * raw physical distance.
+ * Ranking level takes precedence over distance.
+ *
+ * Pagination:
+ * - Default page: 1
+ * - Default page size: 12
+ * - Maximum page size: 50
  */
 
-/**
- * Maximum physical distance used by the
- * street-based Near Me levels.
- *
- * Can be overridden with:
- *
- * REMARKET_NEAR_ME_RADIUS_KM=10
- */
 const DEFAULT_NEAR_ME_RADIUS_KM = 10;
 
-/**
- * Maximum distance for Adjacent Street.
- *
- * Can be overridden with:
- *
- * REMARKET_ADJACENT_STREET_MAX_KM=1
- */
 const DEFAULT_ADJACENT_STREET_MAX_KM = 1;
 
-/**
- * Maximum user-supplied area length.
- *
- * This prevents unnecessarily large values
- * from reaching the database query.
- */
+const DEFAULT_PAGE = 1;
+
+const DEFAULT_PAGE_SIZE = 12;
+
+const MAX_PAGE_SIZE = 50;
+
 const MAX_AREA_LENGTH = 100;
+
+/**
+ * Keep database offsets within a safe range.
+ */
+const MAX_DATABASE_OFFSET = 2_147_483_647;
 
 type ParsedCoordinate =
   | number
@@ -77,6 +73,22 @@ type NearMeRankingLabel =
   | "nearby-street"
   | "whole-area";
 
+type PaginationParams = {
+  page: number;
+  pageSize: number;
+  skip: number;
+};
+
+type PaginationResult =
+  | {
+      valid: true;
+      params: PaginationParams;
+    }
+  | {
+      valid: false;
+      error: string;
+    };
+
 type RankedBusiness = {
   id: string;
   name: string;
@@ -84,45 +96,170 @@ type RankedBusiness = {
   description: string | null;
   imageUrl: string | null;
   area: string;
+
   location: ReturnType<
     typeof serializeLocation
   >;
+
   availability:
     | "AVAILABLE"
     | "ASK_SELLER"
     | "UNAVAILABLE";
+
   verification:
     | "VERIFIED"
     | "UNVERIFIED";
+
   verified: boolean;
+
   categories: unknown;
   products: unknown;
   socialLinks: unknown;
 
-  distanceKm:
-    number | null;
+  distanceKm: number | null;
 
-  ranking:
-    NearMeRanking;
+  ranking: NearMeRanking;
 
-  rankingLabel:
-    NearMeRankingLabel;
+  rankingLabel: NearMeRankingLabel;
 
-  distanceKmRaw:
-    number | null;
+  /**
+   * Retained internally for sorting.
+   * Never returned to the client.
+   */
+  distanceKmRaw: number | null;
 };
 
+/**
+ * ------------------------------------------------
+ * SHARED BUSINESS SELECT
+ * ------------------------------------------------
+ *
+ * Reuse the same selected fields across the
+ * search branches to keep their response data
+ * consistent.
+ *
+ * Exact business coordinates remain server-side.
+ */
+const nearMeBusinessSelect = {
+  id: true,
+  name: true,
+  ownerName: true,
+  description: true,
+  imageUrl: true,
+  availability: true,
+  verification: true,
+  onboardedAt: true,
+
+  location: {
+    select: {
+      id: true,
+      area: true,
+      street: true,
+      address: true,
+      lat: true,
+      long: true,
+    },
+  },
+
+  categories: {
+    where: {
+      category: {
+        isActive: true,
+      },
+    },
+
+    select: {
+      category: {
+        select: {
+          id: true,
+          name: true,
+        },
+      },
+    },
+  },
+
+  products: {
+    where: {
+      status: "ACTIVE",
+      deletedAt: null,
+    },
+
+    select: {
+      id: true,
+      name: true,
+      description: true,
+      price: true,
+      priceMin: true,
+      priceMax: true,
+      availability: true,
+      imageUrl: true,
+      keywords: true,
+
+      images: {
+        select: {
+          id: true,
+          url: true,
+          publicId: true,
+          sortOrder: true,
+        },
+
+        orderBy: {
+          sortOrder: "asc",
+        },
+
+        take: 1,
+      },
+    },
+
+    orderBy: {
+      updatedAt: "desc",
+    },
+
+    take: 1,
+  },
+
+  socialLinks: {
+    select: {
+      id: true,
+      platform: true,
+      handle: true,
+    },
+  },
+} satisfies Prisma.BusinessSelect;
+
+type NearMeBusinessRecord =
+  Prisma.BusinessGetPayload<{
+    select: typeof nearMeBusinessSelect;
+  }>;
+
+/**
+ * ------------------------------------------------
+ * SHARED DATABASE FILTERS
+ * ------------------------------------------------
+ */
+
+const activeBusinessesWithLocationWhere = {
+  status: "ACTIVE",
+  deletedAt: null,
+
+  location: {
+    isNot: null,
+  },
+} satisfies Prisma.BusinessWhereInput;
+
+/**
+ * ------------------------------------------------
+ * CONFIGURATION HELPERS
+ * ------------------------------------------------
+ */
+
 function getNearMeRadiusKm(): number {
-  const configured =
-    Number(
-      process.env
-        .REMARKET_NEAR_ME_RADIUS_KM
-    );
+  const configured = Number(
+    process.env.REMARKET_NEAR_ME_RADIUS_KM
+  );
 
   if (
-    Number.isFinite(
-      configured
-    ) &&
+    Number.isFinite(configured) &&
     configured > 0
   ) {
     return configured;
@@ -132,16 +269,12 @@ function getNearMeRadiusKm(): number {
 }
 
 function getAdjacentStreetMaxKm(): number {
-  const configured =
-    Number(
-      process.env
-        .REMARKET_ADJACENT_STREET_MAX_KM
-    );
+  const configured = Number(
+    process.env.REMARKET_ADJACENT_STREET_MAX_KM
+  );
 
   if (
-    Number.isFinite(
-      configured
-    ) &&
+    Number.isFinite(configured) &&
     configured > 0
   ) {
     return configured;
@@ -156,23 +289,164 @@ function clean(
   return value?.trim() ?? "";
 }
 
-function parseCoordinate(
-  value: string | null
-): ParsedCoordinate {
-  if (!value?.trim()) {
+/**
+ * ------------------------------------------------
+ * PAGINATION
+ * ------------------------------------------------
+ */
+
+function parsePositiveInteger(
+  value: string | null,
+  fallback: number
+): number | null {
+  if (value === null) {
+    return fallback;
+  }
+
+  const normalized = value.trim();
+
+  if (!/^\d+$/.test(normalized)) {
     return null;
   }
 
-  const parsed =
-    Number(
-      value.trim()
-    );
+  const parsed = Number(normalized);
 
   if (
-    !Number.isFinite(
-      parsed
-    )
+    !Number.isSafeInteger(parsed) ||
+    parsed < 1
   ) {
+    return null;
+  }
+
+  return parsed;
+}
+
+function parsePagination(
+  searchParams: URLSearchParams
+): PaginationResult {
+  const parsedPage = parsePositiveInteger(
+    searchParams.get("page"),
+    DEFAULT_PAGE
+  );
+
+  if (parsedPage === null) {
+    return {
+      valid: false,
+      error: "'page' must be a positive integer.",
+    };
+  }
+
+  const parsedPageSize = parsePositiveInteger(
+    searchParams.get("pageSize"),
+    DEFAULT_PAGE_SIZE
+  );
+
+  if (parsedPageSize === null) {
+    return {
+      valid: false,
+      error: "'pageSize' must be a positive integer.",
+    };
+  }
+
+  /**
+   * Enforce an upper limit so clients cannot
+   * request excessively large result pages.
+   */
+  const pageSize = Math.min(
+    parsedPageSize,
+    MAX_PAGE_SIZE
+  );
+
+  const skip =
+    (parsedPage - 1) * pageSize;
+
+  if (
+    !Number.isSafeInteger(skip) ||
+    skip > MAX_DATABASE_OFFSET
+  ) {
+    return {
+      valid: false,
+      error: "Requested page is too large.",
+    };
+  }
+
+  return {
+    valid: true,
+
+    params: {
+      page: parsedPage,
+      pageSize,
+      skip,
+    },
+  };
+}
+
+function paginationMetadata(
+  total: number,
+  page: number,
+  pageSize: number
+) {
+  const totalPages = Math.ceil(
+    total / pageSize
+  );
+
+  return {
+    page,
+    pageSize,
+    total,
+    totalPages,
+
+    hasNextPage:
+      page < totalPages,
+
+    hasPreviousPage:
+      totalPages > 0 &&
+      page > 1,
+  };
+}
+
+/**
+ * ------------------------------------------------
+ * RESPONSE HEADERS
+ * ------------------------------------------------
+ */
+
+function noStoreHeaders(
+  rateLimitHeaders?: Headers
+): Headers {
+  const headers = new Headers(
+    rateLimitHeaders
+  );
+
+  headers.set(
+    "Cache-Control",
+    "no-store"
+  );
+
+  return headers;
+}
+
+/**
+ * ------------------------------------------------
+ * COORDINATE HELPERS
+ * ------------------------------------------------
+ */
+
+function parseCoordinate(
+  value: string | null
+): ParsedCoordinate {
+  if (
+    value === null ||
+    !value.trim()
+  ) {
+    return null;
+  }
+
+  const parsed = Number(
+    value.trim()
+  );
+
+  if (!Number.isFinite(parsed)) {
     return "INVALID";
   }
 
@@ -184,9 +458,7 @@ function isValidLatitude(
 ): value is number {
   return (
     value !== null &&
-    Number.isFinite(
-      value
-    ) &&
+    Number.isFinite(value) &&
     value >= -90 &&
     value <= 90
   );
@@ -197,9 +469,7 @@ function isValidLongitude(
 ): value is number {
   return (
     value !== null &&
-    Number.isFinite(
-      value
-    ) &&
+    Number.isFinite(value) &&
     value >= -180 &&
     value <= 180
   );
@@ -213,111 +483,81 @@ function formatDistance(
   );
 }
 
-function noStoreHeaders(
-  rateLimitHeaders?: Headers
-): Headers {
-  const headers =
-    new Headers(
-      rateLimitHeaders
-    );
+function getBusinessDistanceKm(
+  latitude: number,
+  longitude: number,
+  location: {
+    lat: number | null;
+    long: number | null;
+  }
+): number | null {
+  if (
+    !isValidLatitude(location.lat) ||
+    !isValidLongitude(location.long)
+  ) {
+    return null;
+  }
 
-  headers.set(
-    "Cache-Control",
-    "no-store"
+  const distance = haversineDistance(
+    latitude,
+    longitude,
+    location.lat,
+    location.long
   );
 
-  return headers;
+  if (
+    !Number.isFinite(distance) ||
+    distance < 0
+  ) {
+    return null;
+  }
+
+  return distance;
 }
 
 /**
  * ------------------------------------------------
  * STREET NORMALIZATION
  * ------------------------------------------------
- *
- * Used for comparing the buyer's reverse-
- * geocoded road against the stored business
- * street.
  */
+
 function normalizeStreetName(
   value: string
 ): string {
-  let normalized =
-    value
-      .normalize("NFKD")
-      .replace(
-        /[\u0300-\u036f]/g,
-        ""
-      )
-      .toLowerCase()
-      .replace(
-        /[.,'"`’()-]+/g,
-        " "
-      )
-      .replace(
-        /\s+/g,
-        " "
-      )
-      .trim();
+  let normalized = value
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[.,'"`’()-]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
 
   const replacements: Array<
     [RegExp, string]
   > = [
-    [
-      /\bst\b/g,
-      "street",
-    ],
-    [
-      /\brd\b/g,
-      "road",
-    ],
-    [
-      /\bave\b/g,
-      "avenue",
-    ],
-    [
-      /\bdr\b/g,
-      "drive",
-    ],
-    [
-      /\bln\b/g,
-      "lane",
-    ],
-    [
-      /\bcl\b/g,
-      "close",
-    ],
-    [
-      /\bcres\b/g,
-      "crescent",
-    ],
-    [
-      /\bblvd\b/g,
-      "boulevard",
-    ],
-    [
-      /\bexpwy\b/g,
-      "expressway",
-    ],
+    [/\bst\b/g, "street"],
+    [/\brd\b/g, "road"],
+    [/\bave\b/g, "avenue"],
+    [/\bdr\b/g, "drive"],
+    [/\bln\b/g, "lane"],
+    [/\bcl\b/g, "close"],
+    [/\bcres\b/g, "crescent"],
+    [/\bblvd\b/g, "boulevard"],
+    [/\bexpwy\b/g, "expressway"],
   ];
 
   for (
-    const [
-      pattern,
-      replacement,
-    ] of replacements
+    const [pattern, replacement]
+    of replacements
   ) {
-    normalized =
-      normalized.replace(
-        pattern,
-        replacement
-      );
+    normalized = normalized.replace(
+      pattern,
+      replacement
+    );
   }
 
   return normalized
-    .replace(
-      /\s+/g,
-      " "
-    )
+    .replace(/\s+/g, " ")
     .trim();
 }
 
@@ -325,22 +565,15 @@ function streetsMatch(
   first: string | null,
   second: string | null
 ): boolean {
-  if (
-    !first ||
-    !second
-  ) {
+  if (!first || !second) {
     return false;
   }
 
   const normalizedFirst =
-    normalizeStreetName(
-      first
-    );
+    normalizeStreetName(first);
 
   const normalizedSecond =
-    normalizeStreetName(
-      second
-    );
+    normalizeStreetName(second);
 
   if (
     !normalizedFirst ||
@@ -350,8 +583,7 @@ function streetsMatch(
   }
 
   return (
-    normalizedFirst ===
-    normalizedSecond
+    normalizedFirst === normalizedSecond
   );
 }
 
@@ -359,32 +591,17 @@ function streetsMatch(
  * ------------------------------------------------
  * AREA NORMALIZATION
  * ------------------------------------------------
- *
- * Whole Area uses the detected buyer area
- * and the business Location.area.
- *
- * The values are normalized before comparison
- * so differences in case, punctuation, and
- * whitespace do not prevent a match.
  */
+
 function normalizeAreaName(
   value: string
 ): string {
   return value
     .normalize("NFKD")
-    .replace(
-      /[\u0300-\u036f]/g,
-      ""
-    )
+    .replace(/[\u0300-\u036f]/g, "")
     .toLowerCase()
-    .replace(
-      /[^a-z0-9]+/g,
-      " "
-    )
-    .replace(
-      /\s+/g,
-      " "
-    )
+    .replace(/[^a-z0-9]+/g, " ")
+    .replace(/\s+/g, " ")
     .trim();
 }
 
@@ -392,22 +609,15 @@ function areasMatch(
   first: string | null,
   second: string | null
 ): boolean {
-  if (
-    !first ||
-    !second
-  ) {
+  if (!first || !second) {
     return false;
   }
 
   const normalizedFirst =
-    normalizeAreaName(
-      first
-    );
+    normalizeAreaName(first);
 
   const normalizedSecond =
-    normalizeAreaName(
-      second
-    );
+    normalizeAreaName(second);
 
   if (
     !normalizedFirst ||
@@ -417,8 +627,7 @@ function areasMatch(
   }
 
   return (
-    normalizedFirst ===
-    normalizedSecond
+    normalizedFirst === normalizedSecond
   );
 }
 
@@ -427,113 +636,135 @@ function areasMatch(
  * LEGACY STREET FALLBACK
  * ------------------------------------------------
  *
- * Existing locations created before the
- * dedicated Location.street field was added
- * may still have street information inside
- * the canonical address.
+ * Canonical address ordering:
+ *
+ * House Number, Street, Area, City, Nigeria
+ *
+ * Older records may have the street in address
+ * instead of the dedicated Location.street field.
  */
+
+function isHouseNumberOnly(
+  value: string
+): boolean {
+  return /^\d+[A-Za-z]?(?:\s*[-/]\s*\d+[A-Za-z]?)?$/.test(
+    value.trim()
+  );
+}
+
+function stripLeadingHouseNumber(
+  value: string
+): string {
+  return value
+    .replace(
+      /^\s*\d+[A-Za-z]?(?:\s*[-/]\s*\d+[A-Za-z]?)?\s+/,
+      ""
+    )
+    .trim();
+}
+
 function parseLegacyStreetFromAddress(
   address: string | null,
   area: string
 ): string | null {
-  if (!address) {
+  if (!address?.trim()) {
     return null;
   }
 
-  let parts =
-    address
-      .split(",")
-      .map((part) =>
-        part.trim()
-      )
-      .filter(Boolean);
+  let parts = address
+    .split(",")
+    .map((part) => part.trim())
+    .filter(Boolean);
 
-  if (
-    parts.length ===
-    0
-  ) {
+  if (parts.length === 0) {
     return null;
   }
 
-  const lastPart =
-    parts[
-      parts.length - 1
-    ];
-
+  /**
+   * Remove Nigeria from the end if present.
+   */
   if (
-    lastPart.toLowerCase() ===
-    "nigeria"
+    normalizeAreaName(
+      parts[parts.length - 1]
+    ) === "nigeria"
   ) {
-    parts =
-      parts.slice(
-        0,
-        -1
-      );
+    parts = parts.slice(0, -1);
   }
 
-  if (
-    parts.length > 0 &&
-    area &&
-    parts[
-      parts.length - 1
-    ].toLowerCase() ===
-      area.trim().toLowerCase()
-  ) {
-    parts =
-      parts.slice(
-        0,
-        -1
-      );
-  }
-
-  if (
-    parts.length ===
-    0
-  ) {
+  if (parts.length === 0) {
     return null;
   }
 
-  if (
-    parts.length ===
-    1
-  ) {
-    return (
-      parts[0] ||
-      null
-    );
-  }
+  /**
+   * Prefer finding the stored area within the
+   * address components, rather than assuming
+   * the street is always at a fixed position.
+   */
+  const normalizedArea =
+    normalizeAreaName(area);
 
-  if (
-    parts.length ===
-    2
-  ) {
-    const firstPart =
-      parts[0];
+  const areaIndex = parts.findIndex(
+    (part) =>
+      normalizeAreaName(part) ===
+      normalizedArea
+  );
 
-    const looksLikeHouseNumber =
-      /^\d+[A-Za-z]?(?:\s*[/-]\s*[\w-]+)?$/.test(
-        firstPart
-      );
+  if (areaIndex > 0) {
+    let streetIndex = areaIndex - 1;
 
+    /**
+     * Handle a separate house-number component
+     * immediately before the area if the older
+     * address omitted its street component.
+     */
     if (
-      looksLikeHouseNumber
+      isHouseNumberOnly(parts[streetIndex]) &&
+      streetIndex > 0
     ) {
-      return (
-        parts[1] ||
-        null
-      );
+      streetIndex -= 1;
     }
 
-    return (
-      parts[0] ||
-      null
+    const candidate = stripLeadingHouseNumber(
+      parts[streetIndex]
     );
+
+    return candidate || null;
   }
 
-  return (
-    parts[1] ||
-    null
+  /**
+   * Fallback for older canonical addresses when
+   * the area component is absent or formatted
+   * differently.
+   */
+  if (parts.length >= 3) {
+    const candidate = stripLeadingHouseNumber(
+      parts[1]
+    );
+
+    return candidate || null;
+  }
+
+  if (parts.length === 2) {
+    if (isHouseNumberOnly(parts[0])) {
+      const candidate = stripLeadingHouseNumber(
+        parts[1]
+      );
+
+      return candidate || null;
+    }
+
+    const candidate = stripLeadingHouseNumber(
+      parts[0]
+    );
+
+    return candidate || null;
+  }
+
+  const candidate = stripLeadingHouseNumber(
+    parts[0]
   );
+
+  return candidate || null;
 }
 
 function getBusinessStreet(
@@ -544,8 +775,7 @@ function getBusinessStreet(
   }
 ): string | null {
   const storedStreet =
-    location.street?.trim() ??
-    "";
+    location.street?.trim() ?? "";
 
   if (storedStreet) {
     return storedStreet;
@@ -556,6 +786,15 @@ function getBusinessStreet(
     location.area
   );
 }
+
+/**
+ * ------------------------------------------------
+ * LOCATION SERIALIZATION
+ * ------------------------------------------------
+ *
+ * Exact business coordinates must never be
+ * returned in public Near Me responses.
+ */
 
 function serializeLocation(
   location: {
@@ -568,140 +807,286 @@ function serializeLocation(
     return null;
   }
 
-  /*
-   * Exact business coordinates remain
-   * server-side.
-   */
   return {
-    id:
-      location.id,
-
-    area:
-      location.area,
-
-    street:
-      location.street,
+    id: location.id,
+    area: location.area,
+    street: location.street,
   };
 }
+
+/**
+ * ------------------------------------------------
+ * BUSINESS FORMATTING
+ * ------------------------------------------------
+ */
+
+function buildRankedBusiness(
+  business: NearMeBusinessRecord,
+  ranking: NearMeRanking,
+  rankingLabel: NearMeRankingLabel,
+  distanceKmRaw: number | null,
+  businessStreet: string | null
+): RankedBusiness {
+  const location = business.location;
+
+  return {
+    id: business.id,
+    name: business.name,
+    ownerName: business.ownerName,
+    description: business.description,
+    imageUrl: business.imageUrl,
+
+    area:
+      location?.area ??
+      "Location not added",
+
+    location: serializeLocation(
+      location
+        ? {
+            id: location.id,
+            area: location.area,
+            street: businessStreet,
+          }
+        : null
+    ),
+
+    availability: business.availability,
+
+    verification: business.verification,
+
+    verified:
+      business.verification === "VERIFIED",
+
+    categories: business.categories,
+
+    products: business.products,
+
+    socialLinks: business.socialLinks,
+
+    distanceKm:
+      distanceKmRaw !== null
+        ? formatDistance(distanceKmRaw)
+        : null,
+
+    ranking,
+
+    rankingLabel,
+
+    distanceKmRaw,
+  };
+}
+
+/**
+ * Remove the internal raw distance before
+ * returning a business to the client.
+ */
+function toPublicBusiness(
+  business: RankedBusiness
+) {
+  const {
+    distanceKmRaw: _distanceKmRaw,
+    ...publicBusiness
+  } = business;
+
+  return publicBusiness;
+}
+
+/**
+ * ------------------------------------------------
+ * RANKING SORT
+ * ------------------------------------------------
+ *
+ * Ranking always wins over physical distance.
+ *
+ * Distance only sorts businesses within the
+ * same ranking level.
+ *
+ * Records without coordinates follow records
+ * that have calculable distances.
+ */
+
+function compareRankedBusinesses(
+  first: RankedBusiness,
+  second: RankedBusiness
+): number {
+  if (first.ranking !== second.ranking) {
+    return first.ranking - second.ranking;
+  }
+
+  if (
+    first.distanceKmRaw === null &&
+    second.distanceKmRaw === null
+  ) {
+    return 0;
+  }
+
+  if (first.distanceKmRaw === null) {
+    return 1;
+  }
+
+  if (second.distanceKmRaw === null) {
+    return -1;
+  }
+
+  return (
+    first.distanceKmRaw -
+    second.distanceKmRaw
+  );
+}
+
+function paginateRankedBusinesses(
+  businesses: RankedBusiness[],
+  page: number,
+  pageSize: number
+) {
+  const start = (page - 1) * pageSize;
+
+  return businesses
+    .slice(start, start + pageSize)
+    .map(toPublicBusiness);
+}
+
+/**
+ * ------------------------------------------------
+ * NEAR ME API
+ * ------------------------------------------------
+ */
 
 export async function GET(
   request: NextRequest
 ) {
-  /*
-   * ------------------------------------------------
+  /**
+   * -----------------------------------------
    * PUBLIC RATE LIMIT
-   * ------------------------------------------------
-   *
-   * Near Me is public and can trigger an external
-   * reverse-geocoding request plus database work.
+   * -----------------------------------------
    */
 
-  const rateLimit =
-    checkPublicRateLimit(
-      request,
-      "near-me"
-    );
+  const rateLimit = checkPublicRateLimit(
+    request,
+    "near-me"
+  );
 
-  if (
-    !rateLimit.allowed
-  ) {
-    const headers =
-      noStoreHeaders(
-        rateLimit.headers
-      );
-
+  if (!rateLimit.allowed) {
     return NextResponse.json(
       {
         businesses: [],
         total: 0,
-        mode:
-          "none",
-        location:
-          null,
+        mode: "none",
+        location: null,
+
         error:
           "Too many location searches. Please try again shortly.",
       },
       {
         status: 429,
-        headers,
+
+        headers: noStoreHeaders(
+          rateLimit.headers
+        ),
       }
     );
   }
 
   try {
-    const {
-      searchParams,
-    } = new URL(
+    const { searchParams } = new URL(
       request.url
     );
 
-    /*
+    /**
      * -----------------------------------------
-     * READ QUERY PARAMETERS
-     * -----------------------------------------
-     */
-
-    const area =
-      clean(
-        searchParams.get(
-          "area"
-        )
-      );
-
-    const latitudeRaw =
-      searchParams.get(
-        "lat"
-      );
-
-    const lngRaw =
-      searchParams.get(
-        "lng"
-      );
-
-    const longRaw =
-      searchParams.get(
-        "long"
-      );
-
-    /*
-     * -----------------------------------------
-     * AREA INPUT LIMIT
+     * PAGINATION PARAMETERS
      * -----------------------------------------
      */
 
-    if (
-      area.length >
-      MAX_AREA_LENGTH
-    ) {
+    const paginationResult =
+      parsePagination(searchParams);
+
+    if (!paginationResult.valid) {
       return NextResponse.json(
         {
           businesses: [],
           total: 0,
-          mode:
-            "none",
-          location:
-            null,
-          error:
-            "Area is too long.",
+          mode: "none",
+          location: null,
+
+          error: paginationResult.error,
         },
         {
           status: 400,
-          headers:
-            noStoreHeaders(
-              rateLimit.headers
-            ),
+
+          headers: noStoreHeaders(
+            rateLimit.headers
+          ),
         }
       );
     }
 
-    /*
+    const {
+      page,
+      pageSize,
+      skip,
+    } = paginationResult.params;
+
+    const emptyPagination =
+      paginationMetadata(
+        0,
+        page,
+        pageSize
+      );
+
+    /**
+     * -----------------------------------------
+     * READ LOCATION PARAMETERS
+     * -----------------------------------------
+     */
+
+    const area = clean(
+      searchParams.get("area")
+    );
+
+    const latitudeRaw =
+      searchParams.get("lat");
+
+    const lngRaw =
+      searchParams.get("lng");
+
+    const longRaw =
+      searchParams.get("long");
+
+    /**
+     * -----------------------------------------
+     * VALIDATE AREA INPUT
+     * -----------------------------------------
+     */
+
+    if (area.length > MAX_AREA_LENGTH) {
+      return NextResponse.json(
+        {
+          businesses: [],
+          ...emptyPagination,
+          mode: "none",
+          location: null,
+          error: "Area is too long.",
+        },
+        {
+          status: 400,
+
+          headers: noStoreHeaders(
+            rateLimit.headers
+          ),
+        }
+      );
+    }
+
+    /**
      * -----------------------------------------
      * LONGITUDE ALIAS VALIDATION
      * -----------------------------------------
      *
-     * The API supports both "lng" and "long"
-     * for backwards compatibility, but a caller
-     * must not submit both in the same request.
+     * Support both lng and long.
+     *
+     * Reject two populated aliases, but allow
+     * an empty lng parameter to fall back to long.
      */
 
     if (
@@ -713,121 +1098,105 @@ export async function GET(
       return NextResponse.json(
         {
           businesses: [],
-          total: 0,
-          mode:
-            "none",
-          location:
-            null,
+          ...emptyPagination,
+          mode: "none",
+          location: null,
+
           error:
             "Provide longitude using either 'lng' or 'long', not both.",
         },
         {
           status: 400,
-          headers:
-            noStoreHeaders(
-              rateLimit.headers
-            ),
+
+          headers: noStoreHeaders(
+            rateLimit.headers
+          ),
         }
       );
     }
 
     const longitudeRaw =
-      lngRaw ??
-      longRaw;
+      lngRaw?.trim()
+        ? lngRaw
+        : longRaw;
 
     const parsedLatitude =
-      parseCoordinate(
-        latitudeRaw
-      );
+      parseCoordinate(latitudeRaw);
 
     const parsedLongitude =
-      parseCoordinate(
-        longitudeRaw
-      );
+      parseCoordinate(longitudeRaw);
 
     const latitudeSupplied =
-      latitudeRaw !==
-        null &&
-      latitudeRaw.trim() !==
-        "";
+      latitudeRaw !== null &&
+      latitudeRaw.trim() !== "";
 
     const longitudeSupplied =
-      longitudeRaw !==
-        null &&
-      longitudeRaw.trim() !==
-        "";
+      longitudeRaw !== null &&
+      longitudeRaw.trim() !== "";
 
-    /*
+    /**
      * -----------------------------------------
-     * VALIDATE SUPPLIED COORDINATES
+     * VALIDATE COORDINATE FORMAT
      * -----------------------------------------
      */
 
     if (
       (
         latitudeSupplied &&
-        parsedLatitude ===
-          "INVALID"
+        parsedLatitude === "INVALID"
       ) ||
       (
         longitudeSupplied &&
-        parsedLongitude ===
-          "INVALID"
+        parsedLongitude === "INVALID"
       )
     ) {
       return NextResponse.json(
         {
           businesses: [],
-          total: 0,
-          mode:
-            "none",
-          location:
-            null,
+          ...emptyPagination,
+          mode: "none",
+          location: null,
+
           error:
             "Latitude and longitude must be valid numbers.",
         },
         {
           status: 400,
-          headers:
-            noStoreHeaders(
-              rateLimit.headers
-            ),
+
+          headers: noStoreHeaders(
+            rateLimit.headers
+          ),
         }
       );
     }
 
-    const latitude:
-      | number
-      | null =
-      parsedLatitude ===
-      "INVALID"
+    const latitude: number | null =
+      parsedLatitude === "INVALID"
         ? null
         : parsedLatitude;
 
-    const longitude:
-      | number
-      | null =
-      parsedLongitude ===
-      "INVALID"
+    const longitude: number | null =
+      parsedLongitude === "INVALID"
         ? null
         : parsedLongitude;
 
     const hasLatitude =
-      latitude !==
-      null;
+      latitude !== null;
 
     const hasLongitude =
-      longitude !==
-      null;
+      longitude !== null;
 
-    /*
-     * GPS mode requires both coordinates.
+    /**
+     * -----------------------------------------
+     * VALIDATE GPS PAIR
+     * -----------------------------------------
      *
-     * Existing area precedence remains intact.
+     * Explicit area search keeps precedence
+     * when an area is provided.
      */
+
     const hasPartialGps =
-      hasLatitude !==
-      hasLongitude;
+      hasLatitude !== hasLongitude;
 
     if (
       hasPartialGps &&
@@ -836,340 +1205,188 @@ export async function GET(
       return NextResponse.json(
         {
           businesses: [],
-          total: 0,
-          mode:
-            "none",
-          location:
-            null,
+          ...emptyPagination,
+          mode: "none",
+          location: null,
+
           error:
             "Both latitude and longitude are required for current-location search.",
         },
         {
           status: 400,
-          headers:
-            noStoreHeaders(
-              rateLimit.headers
-            ),
+
+          headers: noStoreHeaders(
+            rateLimit.headers
+          ),
         }
       );
     }
 
-    /*
+    /**
      * -----------------------------------------
-     * VALIDATE GEOGRAPHIC RANGE
+     * VALIDATE GEOGRAPHIC RANGES
      * -----------------------------------------
      */
 
     if (
       (
         hasLatitude &&
-        !isValidLatitude(
-          latitude
-        )
+        !isValidLatitude(latitude)
       ) ||
       (
         hasLongitude &&
-        !isValidLongitude(
-          longitude
-        )
+        !isValidLongitude(longitude)
       )
     ) {
       return NextResponse.json(
         {
           businesses: [],
-          total: 0,
-          mode:
-            "none",
-          location:
-            null,
+          ...emptyPagination,
+          mode: "none",
+          location: null,
+
           error:
             "Latitude must be between -90 and 90, and longitude must be between -180 and 180.",
         },
         {
           status: 400,
-          headers:
-            noStoreHeaders(
-              rateLimit.headers
-            ),
+
+          headers: noStoreHeaders(
+            rateLimit.headers
+          ),
         }
       );
     }
 
     const hasValidGps =
-      isValidLatitude(
-        latitude
-      ) &&
-      isValidLongitude(
-        longitude
-      );
+      isValidLatitude(latitude) &&
+      isValidLongitude(longitude);
 
-    const searchMode =
-      area
-        ? "area"
-        : hasValidGps
-          ? "gps"
-          : "none";
+    const searchMode = area
+      ? "area"
+      : hasValidGps
+        ? "gps"
+        : "none";
 
-    /*
+    /**
      * -----------------------------------------
      * NO LOCATION PROVIDED
      * -----------------------------------------
      */
 
-    if (
-      searchMode ===
-      "none"
-    ) {
+    if (searchMode === "none") {
       return NextResponse.json(
         {
           businesses: [],
-          total: 0,
-          mode:
-            "none",
-          location:
-            null,
+          ...emptyPagination,
+          mode: "none",
+          location: null,
         },
         {
-          headers:
-            noStoreHeaders(
-              rateLimit.headers
-            ),
+          headers: noStoreHeaders(
+            rateLimit.headers
+          ),
         }
       );
     }
 
-    /*
+    /**
      * -----------------------------------------
      * EXPLICIT AREA SEARCH
      * -----------------------------------------
      *
-     * This remains separate from GPS Near Me.
-     *
-     * When a caller explicitly asks for an area,
-     * we return businesses in that area without
-     * applying street ranking.
+     * Area search is paginated in the database.
+     * It is separate from GPS street ranking.
      */
 
-    if (
-      searchMode ===
-      "area"
-    ) {
-      const baseBusinesses =
-        await prisma.business.findMany(
-          {
-            where: {
-              status:
-                "ACTIVE",
+    if (searchMode === "area") {
+      const areaWhere = {
+        status: "ACTIVE",
+        deletedAt: null,
 
-              deletedAt:
-                null,
+        location: {
+          area: {
+            contains: area,
+            mode: "insensitive",
+          },
+        },
+      } satisfies Prisma.BusinessWhereInput;
 
-              location: {
-                area: {
-                  contains:
-                    area,
+      const [
+        total,
+        baseBusinesses,
+      ] = await Promise.all([
+        prisma.business.count({
+          where: areaWhere,
+        }),
 
-                  mode:
-                    "insensitive",
-                },
-              },
+        prisma.business.findMany({
+          where: areaWhere,
+
+          select: nearMeBusinessSelect,
+
+          skip,
+
+          take: pageSize,
+
+          orderBy: [
+            {
+              onboardedAt: "desc",
             },
-
-            select: {
-              id: true,
-              name: true,
-              ownerName: true,
-              description: true,
-              imageUrl: true,
-              availability: true,
-              verification: true,
-              onboardedAt: true,
-
-              location: {
-                select: {
-                  id: true,
-                  area: true,
-                  street: true,
-                },
-              },
-
-              categories: {
-                where: {
-                  category: {
-                    isActive:
-                      true,
-                  },
-                },
-
-                select: {
-                  category: {
-                    select: {
-                      id: true,
-                      name: true,
-                    },
-                  },
-                },
-              },
-
-              products: {
-                where: {
-                  status:
-                    "ACTIVE",
-
-                  deletedAt:
-                    null,
-                },
-
-                select: {
-                  id: true,
-                  name: true,
-                  description:
-                    true,
-                  price:
-                    true,
-                  priceMin:
-                    true,
-                  priceMax:
-                    true,
-                  availability:
-                    true,
-                  imageUrl:
-                    true,
-                  keywords:
-                    true,
-
-                  images: {
-                    select: {
-                      id: true,
-                      url: true,
-                      publicId:
-                        true,
-                      sortOrder:
-                        true,
-                    },
-
-                    orderBy: {
-                      sortOrder:
-                        "asc",
-                    },
-
-                    take: 1,
-                  },
-                },
-
-                orderBy: {
-                  updatedAt:
-                    "desc",
-                },
-
-                take: 1,
-              },
-
-              socialLinks: {
-                select: {
-                  id: true,
-                  platform:
-                    true,
-                  handle:
-                    true,
-                },
-              },
+            {
+              id: "asc",
             },
-
-            orderBy: {
-              onboardedAt:
-                "desc",
-            },
-          }
-        );
+          ],
+        }),
+      ]);
 
       const formattedBusinesses =
         baseBusinesses.map(
-          (business) => ({
-            id:
-              business.id,
-
-            name:
-              business.name,
-
-            ownerName:
-              business.ownerName,
-
-            description:
-              business.description,
-
-            imageUrl:
-              business.imageUrl,
-
-            area:
-              business.location
-                ?.area ??
-              "Location not added",
-
-            location:
-              serializeLocation(
-                business.location
-              ),
-
-            availability:
-              business.availability,
-
-            verification:
-              business.verification,
-
-            verified:
-              business.verification ===
-              "VERIFIED",
-
-            categories:
-              business.categories,
-
-            products:
-              business.products,
-
-            socialLinks:
-              business.socialLinks,
-
-            distanceKm:
+          (business) =>
+            buildRankedBusiness(
+              business,
+              4,
+              "whole-area",
               null,
 
-            ranking:
-              4,
-
-            rankingLabel:
-              "whole-area",
-          })
+              business.location
+                ? getBusinessStreet(
+                    business.location
+                  )
+                : null
+            )
         );
 
       return NextResponse.json(
         {
           businesses:
-            formattedBusinesses,
+            formattedBusinesses.map(
+              toPublicBusiness
+            ),
 
-          total:
-            formattedBusinesses.length,
+          ...paginationMetadata(
+            total,
+            page,
+            pageSize
+          ),
 
-          mode:
-            "area",
+          mode: "area",
 
-          ranking:
-            "whole-area",
+          ranking: "whole-area",
 
-          location:
-            area,
+          location: area,
         },
         {
-          headers:
-            noStoreHeaders(
-              rateLimit.headers
-            ),
+          headers: noStoreHeaders(
+            rateLimit.headers
+          ),
         }
       );
     }
 
-    /*
+    /**
      * -----------------------------------------
-     * GPS NEAR ME
+     * GPS NEAR ME CONFIGURATION
      * -----------------------------------------
      */
 
@@ -1179,30 +1396,24 @@ export async function GET(
     const adjacentStreetMaxKm =
       getAdjacentStreetMaxKm();
 
-    /*
+    /**
      * -----------------------------------------
-     * DETERMINE BUYER STREET + AREA
+     * REVERSE GEOCODING
      * -----------------------------------------
      */
 
-    let reverseLocation:
-      Awaited<
-        ReturnType<
-          typeof reverseGeocodeLocation
-        >
-      >;
+    let reverseLocation: Awaited<
+      ReturnType<
+        typeof reverseGeocodeLocation
+      >
+    >;
 
     try {
       reverseLocation =
-        await reverseGeocodeLocation(
-          {
-            latitude:
-              latitude as number,
-
-            longitude:
-              longitude as number,
-          }
-        );
+        await reverseGeocodeLocation({
+          latitude: latitude as number,
+          longitude: longitude as number,
+        });
     } catch (error) {
       console.error(
         "Near Me reverse geocoding error:",
@@ -1212,26 +1423,18 @@ export async function GET(
       return NextResponse.json(
         {
           businesses: [],
-          total: 0,
-          mode:
-            "gps",
+          ...emptyPagination,
+          mode: "gps",
 
-          ranking:
-            "street-area",
+          ranking: "street-area",
 
           location: {
-            type:
-              "current",
-
-            street:
-              null,
-
-            area:
-              null,
+            type: "current",
+            street: null,
+            area: null,
           },
 
           radiusKm,
-
           adjacentStreetMaxKm,
 
           error:
@@ -1239,472 +1442,210 @@ export async function GET(
         },
         {
           status: 503,
-          headers:
-            noStoreHeaders(
-              rateLimit.headers
-            ),
+
+          headers: noStoreHeaders(
+            rateLimit.headers
+          ),
         }
       );
     }
 
     const userStreet =
-      reverseLocation.street
-        ?.trim() ||
+      reverseLocation.street?.trim() ||
       null;
 
     const userArea =
-      reverseLocation.area
-        ?.trim() ||
+      reverseLocation.area?.trim() ||
       null;
 
-    /*
-     * The first three ranking levels require
-     * a buyer street.
+    /**
+     * -----------------------------------------
+     * NO STREET DETECTED
+     * -----------------------------------------
      *
-     * Whole Area can still operate if only an
-     * area is returned.
+     * If the provider returns an area but no
+     * street, fall back to Whole Area.
+     *
+     * Calculate physical distance when possible,
+     * while keeping every result at ranking 4.
      */
+
     if (!userStreet) {
       if (!userArea) {
         return NextResponse.json(
           {
             businesses: [],
-            total: 0,
-            mode:
-              "gps",
+            ...emptyPagination,
+            mode: "gps",
 
-            ranking:
-              "street-area",
+            ranking: "street-area",
 
             location: {
-              type:
-                "current",
-
-              street:
-                null,
-
-              area:
-                null,
+              type: "current",
+              street: null,
+              area: null,
             },
 
             radiusKm,
-
             adjacentStreetMaxKm,
 
             reason:
               "street-and-area-not-found",
           },
           {
-            headers:
-              noStoreHeaders(
-                rateLimit.headers
-              ),
+            headers: noStoreHeaders(
+              rateLimit.headers
+            ),
           }
         );
       }
 
-      /*
-       * If the location service gives us an area
-       * but no road, use the Whole Area fallback.
-       */
       const wholeAreaBusinesses =
-        await prisma.business.findMany(
-          {
-            where: {
-              status:
-                "ACTIVE",
+        await prisma.business.findMany({
+          where:
+            activeBusinessesWithLocationWhere,
 
-              deletedAt:
-                null,
+          select: nearMeBusinessSelect,
 
-              location: {
-                isNot:
-                  null,
-              },
+          orderBy: [
+            {
+              onboardedAt: "desc",
             },
-
-            select: {
-              id: true,
-              name: true,
-              ownerName: true,
-              description: true,
-              imageUrl: true,
-              availability: true,
-              verification: true,
-              onboardedAt: true,
-
-              location: {
-                select: {
-                  id: true,
-                  area: true,
-                  street: true,
-                },
-              },
-
-              categories: {
-                where: {
-                  category: {
-                    isActive:
-                      true,
-                  },
-                },
-
-                select: {
-                  category: {
-                    select: {
-                      id: true,
-                      name: true,
-                    },
-                  },
-                },
-              },
-
-              products: {
-                where: {
-                  status:
-                    "ACTIVE",
-
-                  deletedAt:
-                    null,
-                },
-
-                select: {
-                  id: true,
-                  name: true,
-                  description:
-                    true,
-                  price:
-                    true,
-                  priceMin:
-                    true,
-                  priceMax:
-                    true,
-                  availability:
-                    true,
-                  imageUrl:
-                    true,
-                  keywords:
-                    true,
-
-                  images: {
-                    select: {
-                      id: true,
-                      url: true,
-                      publicId:
-                        true,
-                      sortOrder:
-                        true,
-                    },
-
-                    orderBy: {
-                      sortOrder:
-                        "asc",
-                    },
-
-                    take: 1,
-                  },
-                },
-
-                orderBy: {
-                  updatedAt:
-                    "desc",
-                },
-
-                take: 1,
-              },
-
-              socialLinks: {
-                select: {
-                  id: true,
-                  platform:
-                    true,
-                  handle:
-                    true,
-                },
-              },
+            {
+              id: "asc",
             },
-
-            orderBy: {
-              onboardedAt:
-                "desc",
-            },
-          }
-        );
+          ],
+        });
 
       const fallbackResults =
         wholeAreaBusinesses
-          .filter(
-            (business) =>
-              business.location !==
-                null &&
-              areasMatch(
-                business.location.area,
-                userArea
-              )
-          )
-          .map(
-            (business) => ({
-              id:
-                business.id,
+          .flatMap(
+            (business): RankedBusiness[] => {
+              const location =
+                business.location;
 
-              name:
-                business.name,
+              if (!location) {
+                return [];
+              }
 
-              ownerName:
-                business.ownerName,
+              if (
+                !areasMatch(
+                  location.area,
+                  userArea
+                )
+              ) {
+                return [];
+              }
 
-              description:
-                business.description,
+              const distanceKmRaw =
+                getBusinessDistanceKm(
+                  latitude as number,
+                  longitude as number,
+                  location
+                );
 
-              imageUrl:
-                business.imageUrl,
-
-              area:
-                business.location
-                  ?.area ??
-                "Location not added",
-
-              location:
-                serializeLocation(
-                  business.location
+              return [
+                buildRankedBusiness(
+                  business,
+                  4,
+                  "whole-area",
+                  distanceKmRaw,
+                  getBusinessStreet(location)
                 ),
-
-              availability:
-                business.availability,
-
-              verification:
-                business.verification,
-
-              verified:
-                business.verification ===
-                "VERIFIED",
-
-              categories:
-                business.categories,
-
-              products:
-                business.products,
-
-              socialLinks:
-                business.socialLinks,
-
-              distanceKm:
-                null,
-
-              ranking:
-                4,
-
-              rankingLabel:
-                "whole-area",
-
-              distanceKmRaw:
-                null,
-            })
+              ];
+            }
+          )
+          .sort(
+            compareRankedBusinesses
           );
+
+      const total =
+        fallbackResults.length;
 
       return NextResponse.json(
         {
           businesses:
-            fallbackResults,
+            paginateRankedBusinesses(
+              fallbackResults,
+              page,
+              pageSize
+            ),
 
-          total:
-            fallbackResults.length,
+          ...paginationMetadata(
+            total,
+            page,
+            pageSize
+          ),
 
-          mode:
-            "gps",
+          mode: "gps",
 
-          ranking:
-            "whole-area",
+          ranking: "whole-area",
 
           location: {
-            type:
-              "current",
-
-            street:
-              null,
-
-            area:
-              userArea,
+            type: "current",
+            street: null,
+            area: userArea,
           },
 
           radiusKm,
-
           adjacentStreetMaxKm,
 
-          reason:
-            "street-not-found",
+          reason: "street-not-found",
         },
         {
-          headers:
-            noStoreHeaders(
-              rateLimit.headers
-            ),
+          headers: noStoreHeaders(
+            rateLimit.headers
+          ),
         }
       );
     }
 
-    /*
+    /**
      * -----------------------------------------
-     * LOAD ACTIVE BUSINESS CANDIDATES
+     * LOAD GPS CANDIDATES
      * -----------------------------------------
+     *
+     * Do not apply database pagination here.
+     *
+     * All candidates must be classified and
+     * sorted before selecting the requested page.
+     *
+     * Otherwise, higher-ranking businesses could
+     * be missed by an early database limit.
      */
 
     const baseBusinesses =
-      await prisma.business.findMany(
-        {
-          where: {
-            status:
-              "ACTIVE",
+      await prisma.business.findMany({
+        where:
+          activeBusinessesWithLocationWhere,
 
-            deletedAt:
-              null,
+        select: nearMeBusinessSelect,
 
-            location: {
-              isNot:
-                null,
-            },
+        orderBy: [
+          {
+            onboardedAt: "desc",
           },
-
-          select: {
-            id: true,
-            name: true,
-            ownerName: true,
-            description: true,
-            imageUrl: true,
-            availability: true,
-            verification: true,
-            onboardedAt: true,
-
-            location: {
-              select: {
-                id: true,
-                area: true,
-                street: true,
-                address: true,
-                lat: true,
-                long: true,
-              },
-            },
-
-            categories: {
-              where: {
-                category: {
-                  isActive:
-                    true,
-                },
-              },
-
-              select: {
-                category: {
-                  select: {
-                    id: true,
-                    name: true,
-                  },
-                },
-              },
-            },
-
-            products: {
-              where: {
-                status:
-                  "ACTIVE",
-
-                deletedAt:
-                  null,
-              },
-
-              select: {
-                id: true,
-                name: true,
-                description:
-                  true,
-                price:
-                  true,
-                priceMin:
-                  true,
-                priceMax:
-                  true,
-                availability:
-                  true,
-                imageUrl:
-                  true,
-                keywords:
-                  true,
-
-                images: {
-                  select: {
-                    id: true,
-                    url: true,
-                    publicId:
-                      true,
-                    sortOrder:
-                      true,
-                  },
-
-                  orderBy: {
-                    sortOrder:
-                      "asc",
-                  },
-
-                  take: 1,
-                },
-              },
-
-              orderBy: {
-                updatedAt:
-                  "desc",
-              },
-
-              take: 1,
-            },
-
-            socialLinks: {
-              select: {
-                id: true,
-                platform:
-                  true,
-                handle:
-                  true,
-              },
-            },
+          {
+            id: "asc",
           },
+        ],
+      });
 
-          orderBy: {
-            onboardedAt:
-              "desc",
-          },
-        }
-      );
-
-    /*
+    /**
      * -----------------------------------------
      * CLASSIFY BUSINESSES
      * -----------------------------------------
-     *
-     * Every business is assigned exactly one
-     * ranking level:
-     *
-     * 1 Same Street
-     * 2 Adjacent Street
-     * 3 Nearby Street
-     * 4 Whole Area
-     *
-     * Businesses outside the buyer's area that
-     * do not qualify for the first three levels
-     * are excluded.
      */
 
     const rankedResults =
       baseBusinesses
-        .map(
-          (
-            business
-          ): RankedBusiness | null => {
+        .flatMap(
+          (business): RankedBusiness[] => {
             const location =
               business.location;
 
             if (!location) {
-              return null;
+              return [];
             }
 
             const businessStreet =
@@ -1712,19 +1653,6 @@ export async function GET(
                 location
               );
 
-            const sameStreet =
-              streetsMatch(
-                businessStreet,
-                userStreet
-              );
-
-            /*
-             * Determine whether the business
-             * belongs to the buyer's current area.
-             *
-             * This is now required for Adjacent
-             * Street and Nearby Street.
-             */
             const sameArea =
               userArea !== null &&
               areasMatch(
@@ -1732,494 +1660,167 @@ export async function GET(
                 userArea
               );
 
-            let distanceKm:
-              | number
-              | null =
-              null;
-
-            /*
-             * Calculate distance whenever
-             * coordinates are available.
-             *
-             * Distance is still useful for:
-             *
-             * - Adjacent Street
-             * - Nearby Street
-             * - ordering businesses within
-             *   the same ranking
-             *
-             * But distance no longer controls
-             * Same Street membership.
+            /**
+             * Determine distance for sorting
+             * and distance-based ranking levels.
              */
-            if (
-              isValidLatitude(
-                location.lat
-              ) &&
-              isValidLongitude(
-                location.long
-              )
-            ) {
-              distanceKm =
-                haversineDistance(
-                  latitude as number,
-                  longitude as number,
-                  location.lat,
-                  location.long
-                );
-            }
+            const distanceKmRaw =
+              getBusinessDistanceKm(
+                latitude as number,
+                longitude as number,
+                location
+              );
 
-            /*
+            /**
              * -------------------------------------
              * 1. SAME STREET
              * -------------------------------------
              *
-             * IMPORTANT:
+             * If the buyer's area is known, the
+             * business must also belong to that
+             * area. This prevents unrelated roads
+             * with identical names from matching.
              *
-             * Same Street is determined by the
-             * street name only.
-             *
-             * We deliberately DO NOT check:
-             *
-             * distanceKm <= radiusKm
-             *
-             * here.
-             *
-             * This means an incorrectly captured
-             * business GPS coordinate cannot remove
-             * a business from the Same Street level.
+             * GPS distance does not determine
+             * Same Street membership.
              */
 
-            if (
-              sameStreet
-            ) {
-              return {
-                id:
-                  business.id,
+            const sameStreetName =
+              streetsMatch(
+                businessStreet,
+                userStreet
+              );
 
-                name:
-                  business.name,
+            const sameStreet =
+              sameStreetName &&
+              (
+                userArea === null ||
+                sameArea
+              );
 
-                ownerName:
-                  business.ownerName,
-
-                description:
-                  business.description,
-
-                imageUrl:
-                  business.imageUrl,
-
-                area:
-                  location.area,
-
-                location:
-                  serializeLocation(
-                    {
-                      id:
-                        location.id,
-
-                      area:
-                        location.area,
-
-                      street:
-                        businessStreet,
-                    }
-                  ),
-
-                availability:
-                  business.availability,
-
-                verification:
-                  business.verification,
-
-                verified:
-                  business.verification ===
-                  "VERIFIED",
-
-                categories:
-                  business.categories,
-
-                products:
-                  business.products,
-
-                socialLinks:
-                  business.socialLinks,
-
-                distanceKm:
-                  distanceKm !==
-                  null
-                    ? formatDistance(
-                        distanceKm
-                      )
-                    : null,
-
-                ranking:
+            if (sameStreet) {
+              return [
+                buildRankedBusiness(
+                  business,
                   1,
-
-                rankingLabel:
                   "same-street",
-
-                distanceKmRaw:
-                  distanceKm,
-              };
+                  distanceKmRaw,
+                  businessStreet
+                ),
+              ];
             }
 
-            /*
+            /**
              * -------------------------------------
              * 2. ADJACENT STREET
              * -------------------------------------
              *
              * Requirements:
-             *
              * - Different street
              * - Same area
-             * - Within the adjacent street
-             *   distance threshold
+             * - Within the configured threshold
              *
-             * This prevents a business in another
-             * area from being called Adjacent Street
-             * merely because its stored GPS point is
-             * physically close.
+             * This uses proximity as a V1
+             * approximation of street adjacency.
              */
 
             if (
-              !sameStreet &&
               sameArea &&
-              distanceKm !==
-                null &&
-              distanceKm <=
+              distanceKmRaw !== null &&
+              distanceKmRaw <=
                 adjacentStreetMaxKm
             ) {
-              return {
-                id:
-                  business.id,
-
-                name:
-                  business.name,
-
-                ownerName:
-                  business.ownerName,
-
-                description:
-                  business.description,
-
-                imageUrl:
-                  business.imageUrl,
-
-                area:
-                  location.area,
-
-                location:
-                  serializeLocation(
-                    {
-                      id:
-                        location.id,
-
-                      area:
-                        location.area,
-
-                      street:
-                        businessStreet,
-                    }
-                  ),
-
-                availability:
-                  business.availability,
-
-                verification:
-                  business.verification,
-
-                verified:
-                  business.verification ===
-                  "VERIFIED",
-
-                categories:
-                  business.categories,
-
-                products:
-                  business.products,
-
-                socialLinks:
-                  business.socialLinks,
-
-                distanceKm:
-                  formatDistance(
-                    distanceKm
-                  ),
-
-                ranking:
+              return [
+                buildRankedBusiness(
+                  business,
                   2,
-
-                rankingLabel:
                   "adjacent-street",
-
-                distanceKmRaw:
-                  distanceKm,
-              };
+                  distanceKmRaw,
+                  businessStreet
+                ),
+              ];
             }
 
-            /*
+            /**
              * -------------------------------------
              * 3. NEARBY STREET
              * -------------------------------------
              *
              * Requirements:
-             *
-             * - Different street
              * - Same area
-             * - Beyond Adjacent Street distance
-             * - Still inside Near Me radius
+             * - Beyond the adjacent threshold
+             * - Within the Near Me radius
              */
 
             if (
-              !sameStreet &&
               sameArea &&
-              distanceKm !==
-                null &&
-              distanceKm >
+              distanceKmRaw !== null &&
+              distanceKmRaw >
                 adjacentStreetMaxKm &&
-              distanceKm <=
-                radiusKm
+              distanceKmRaw <= radiusKm
             ) {
-              return {
-                id:
-                  business.id,
-
-                name:
-                  business.name,
-
-                ownerName:
-                  business.ownerName,
-
-                description:
-                  business.description,
-
-                imageUrl:
-                  business.imageUrl,
-
-                area:
-                  location.area,
-
-                location:
-                  serializeLocation(
-                    {
-                      id:
-                        location.id,
-
-                      area:
-                        location.area,
-
-                      street:
-                        businessStreet,
-                    }
-                  ),
-
-                availability:
-                  business.availability,
-
-                verification:
-                  business.verification,
-
-                verified:
-                  business.verification ===
-                  "VERIFIED",
-
-                categories:
-                  business.categories,
-
-                products:
-                  business.products,
-
-                socialLinks:
-                  business.socialLinks,
-
-                distanceKm:
-                  formatDistance(
-                    distanceKm
-                  ),
-
-                ranking:
+              return [
+                buildRankedBusiness(
+                  business,
                   3,
-
-                rankingLabel:
                   "nearby-street",
-
-                distanceKmRaw:
-                  distanceKm,
-              };
+                  distanceKmRaw,
+                  businessStreet
+                ),
+              ];
             }
 
-            /*
+            /**
              * -------------------------------------
              * 4. WHOLE AREA
              * -------------------------------------
              *
-             * Whole Area is the fallback.
+             * Whole Area is not constrained by
+             * the Near Me radius.
              *
-             * It is intentionally based on area
-             * membership rather than the 10 km
-             * radius.
+             * A matching area is sufficient.
              */
 
-            if (
-              userArea &&
-              areasMatch(
-                location.area,
-                userArea
-              )
-            ) {
-              return {
-                id:
-                  business.id,
-
-                name:
-                  business.name,
-
-                ownerName:
-                  business.ownerName,
-
-                description:
-                  business.description,
-
-                imageUrl:
-                  business.imageUrl,
-
-                area:
-                  location.area,
-
-                location:
-                  serializeLocation(
-                    {
-                      id:
-                        location.id,
-
-                      area:
-                        location.area,
-
-                      street:
-                        businessStreet,
-                    }
-                  ),
-
-                availability:
-                  business.availability,
-
-                verification:
-                  business.verification,
-
-                verified:
-                  business.verification ===
-                  "VERIFIED",
-
-                categories:
-                  business.categories,
-
-                products:
-                  business.products,
-
-                socialLinks:
-                  business.socialLinks,
-
-                distanceKm:
-                  distanceKm !==
-                  null
-                    ? formatDistance(
-                        distanceKm
-                      )
-                    : null,
-
-                ranking:
+            if (sameArea) {
+              return [
+                buildRankedBusiness(
+                  business,
                   4,
-
-                rankingLabel:
                   "whole-area",
-
-                distanceKmRaw:
-                  distanceKm,
-              };
+                  distanceKmRaw,
+                  businessStreet
+                ),
+              ];
             }
 
-            /*
-             * The business is not relevant to
-             * this Near Me request.
+            /**
+             * The business is outside the
+             * applicable ranking levels.
              */
-            return null;
+            return [];
           }
-        )
-        .filter(
-          (
-            business
-          ): business is RankedBusiness =>
-            business !== null
         )
         .sort(
-          (a, b) => {
-            /*
-             * -------------------------------------
-             * PRIMARY SORT
-             * -------------------------------------
-             *
-             * Ranking level always wins.
-             */
-            if (
-              a.ranking !==
-              b.ranking
-            ) {
-              return (
-                a.ranking -
-                b.ranking
-              );
-            }
-
-            /*
-             * -------------------------------------
-             * SECONDARY SORT
-             * -------------------------------------
-             *
-             * Businesses within the same ranking
-             * level are ordered by physical distance.
-             *
-             * For Whole Area businesses without
-             * coordinates, those businesses are placed
-             * after businesses that have coordinates.
-             */
-            if (
-              a.distanceKmRaw ===
-                null &&
-              b.distanceKmRaw ===
-                null
-            ) {
-              return 0;
-            }
-
-            if (
-              a.distanceKmRaw ===
-              null
-            ) {
-              return 1;
-            }
-
-            if (
-              b.distanceKmRaw ===
-              null
-            ) {
-              return -1;
-            }
-
-            return (
-              a.distanceKmRaw -
-              b.distanceKmRaw
-            );
-          }
-        )
-        .map(
-          ({
-            distanceKmRaw,
-            ...business
-          }) =>
-            business
+          compareRankedBusinesses
         );
 
-    /*
+    /**
+     * -----------------------------------------
+     * PAGINATE AFTER RANKING
+     * -----------------------------------------
+     */
+
+    const total =
+      rankedResults.length;
+
+    const paginatedBusinesses =
+      paginateRankedBusinesses(
+        rankedResults,
+        page,
+        pageSize
+      );
+
+    /**
      * -----------------------------------------
      * GPS RESPONSE
      * -----------------------------------------
@@ -2228,37 +1829,32 @@ export async function GET(
     return NextResponse.json(
       {
         businesses:
-          rankedResults,
+          paginatedBusinesses,
 
-        total:
-          rankedResults.length,
+        ...paginationMetadata(
+          total,
+          page,
+          pageSize
+        ),
 
-        mode:
-          "gps",
+        mode: "gps",
 
         ranking:
           "same-street-adjacent-street-nearby-street-whole-area",
 
         location: {
-          type:
-            "current",
-
-          street:
-            userStreet,
-
-          area:
-            userArea,
+          type: "current",
+          street: userStreet,
+          area: userArea,
         },
 
         radiusKm,
-
         adjacentStreetMaxKm,
       },
       {
-        headers:
-          noStoreHeaders(
-            rateLimit.headers
-          ),
+        headers: noStoreHeaders(
+          rateLimit.headers
+        ),
       }
     );
   } catch (error) {
@@ -2271,19 +1867,18 @@ export async function GET(
       {
         businesses: [],
         total: 0,
-        mode:
-          "none",
-        location:
-          null,
+        mode: "none",
+        location: null,
+
         error:
           "Unable to load nearby businesses.",
       },
       {
         status: 500,
-        headers:
-          noStoreHeaders(
-            rateLimit.headers
-          ),
+
+        headers: noStoreHeaders(
+          rateLimit.headers
+        ),
       }
     );
   }
