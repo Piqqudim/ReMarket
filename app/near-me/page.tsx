@@ -2,6 +2,7 @@
 
 import {
   type FormEvent,
+  useEffect,
   useSyncExternalStore,
   useState,
 } from "react";
@@ -20,6 +21,11 @@ import {
   Package,
   ArrowRight,
   Search,
+  ListFilter,
+  ChevronDown,
+  ChevronLeft,
+  ChevronRight,
+  X,
 } from "lucide-react";
 
 import Link from "next/link";
@@ -32,6 +38,12 @@ import {
   removeSavedBusiness,
   SAVED_BUSINESSES_CHANGED_EVENT,
 } from "@/lib/saved";
+
+/**
+ * ------------------------------------------------
+ * TYPES
+ * ------------------------------------------------
+ */
 
 type ProductImage = {
   id: string;
@@ -106,6 +118,48 @@ type SearchLocation = {
   area: string | null;
 };
 
+type NearMeMode =
+  | "none"
+  | "area"
+  | "street"
+  | "gps";
+
+type AreaGroup = {
+  lga: string;
+  areas: string[];
+};
+
+type PaginationState = {
+  page: number;
+  pageSize: number;
+  total: number;
+  totalPages: number;
+  hasNextPage: boolean;
+  hasPreviousPage: boolean;
+};
+
+type GpsCoordinates = {
+  lat: number;
+  lng: number;
+};
+
+/**
+ * ------------------------------------------------
+ * CONFIGURATION
+ * ------------------------------------------------
+ */
+
+const DEFAULT_PAGE_SIZE = 12;
+
+const EMPTY_PAGINATION: PaginationState = {
+  page: 1,
+  pageSize: DEFAULT_PAGE_SIZE,
+  total: 0,
+  totalPages: 0,
+  hasNextPage: false,
+  hasPreviousPage: false,
+};
+
 const NAV_ITEMS = [
   {
     label: "Home",
@@ -129,10 +183,10 @@ const NAV_ITEMS = [
   },
 ];
 
-/*
- * -----------------------------------------
- * PRICE FORMATTING
- * -----------------------------------------
+/**
+ * ------------------------------------------------
+ * PRODUCT HELPERS
+ * ------------------------------------------------
  */
 
 function formatPrice(product: Product): string {
@@ -168,13 +222,13 @@ function getProductImage(
   );
 }
 
-/*
- * -----------------------------------------
+/**
+ * ------------------------------------------------
  * DISTANCE PRESENTATION
- * -----------------------------------------
+ * ------------------------------------------------
  *
- * Haversine gives straight-line distance.
- * Do not describe this value as driving distance.
+ * Haversine calculates straight-line distance.
+ * It is not driving distance.
  */
 
 function getDistanceLabel(
@@ -230,10 +284,10 @@ function getRankingLabel(
   }
 }
 
-/*
- * -----------------------------------------
+/**
+ * ------------------------------------------------
  * SAVED BUSINESSES EXTERNAL STORE
- * -----------------------------------------
+ * ------------------------------------------------
  */
 
 function subscribeToSavedBusinesses(
@@ -274,6 +328,12 @@ function getSavedBusinessesServerSnapshot(): string {
   return "[]";
 }
 
+/**
+ * ------------------------------------------------
+ * NEAR ME PAGE
+ * ------------------------------------------------
+ */
+
 export default function NearMePage() {
   const router = useRouter();
 
@@ -284,22 +344,37 @@ export default function NearMePage() {
     setBusinesses,
   ] = useState<Business[]>([]);
 
-  const [
-    mode,
-    setMode,
-  ] = useState<"none" | "area" | "gps">("none");
+  const [mode, setMode] =
+    useState<NearMeMode>("none");
 
-  const [
-    loading,
-    setLoading,
-  ] = useState(false);
+  const [loading, setLoading] =
+    useState(false);
 
-  const [
-    locating,
-    setLocating,
-  ] = useState(false);
+  const [locating, setLocating] =
+    useState(false);
 
-  const [error, setError] = useState("");
+  const [error, setError] =
+    useState("");
+
+  const [warning, setWarning] =
+    useState("");
+
+  const [areaGroups, setAreaGroups] =
+    useState<AreaGroup[]>([]);
+
+  const [showAreaPicker, setShowAreaPicker] =
+    useState(false);
+
+  const [pagination, setPagination] =
+    useState<PaginationState>(
+      EMPTY_PAGINATION
+    );
+
+  const [activeSearch, setActiveSearch] =
+    useState("");
+
+  const [gpsCoordinates, setGpsCoordinates] =
+    useState<GpsCoordinates | null>(null);
 
   const [
     searchLocation,
@@ -308,6 +383,59 @@ export default function NearMePage() {
     street: null,
     area: null,
   });
+
+  /**
+   * -----------------------------------------
+   * LOAD PREDEFINED AREA LIST
+   * -----------------------------------------
+   */
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadAreaGroups() {
+      try {
+        const response = await fetch(
+          "/api/areas",
+          {
+            cache: "no-store",
+          }
+        );
+
+        if (!response.ok) {
+          throw new Error(
+            "Unable to load predefined areas."
+          );
+        }
+
+        const data = await response.json();
+
+        if (
+          !cancelled &&
+          Array.isArray(data?.groups)
+        ) {
+          setAreaGroups(data.groups);
+        }
+      } catch (areaError) {
+        console.error(
+          "Failed to load predefined areas:",
+          areaError
+        );
+      }
+    }
+
+    void loadAreaGroups();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  /**
+   * -----------------------------------------
+   * SAVED BUSINESSES
+   * -----------------------------------------
+   */
 
   const savedSnapshot = useSyncExternalStore(
     subscribeToSavedBusinesses,
@@ -334,18 +462,80 @@ export default function NearMePage() {
     }
   })();
 
-  /*
+  /**
    * -----------------------------------------
-   * SEARCH BY AREA
+   * PAGINATION RESPONSE
    * -----------------------------------------
    */
 
-  async function loadByArea(
-    selectedArea: string
-  ) {
-    const trimmedArea = selectedArea.trim();
+  function paginationFromResponse(data: {
+    page?: number;
+    pageSize?: number;
+    total?: number;
+    totalPages?: number;
+    hasNextPage?: boolean;
+    hasPreviousPage?: boolean;
+  }): PaginationState {
+    const pageNumber =
+      Number.isInteger(data?.page) &&
+      data.page! > 0
+        ? data.page!
+        : 1;
 
-    if (!trimmedArea) {
+    const pageSize =
+      Number.isInteger(data?.pageSize) &&
+      data.pageSize! > 0
+        ? data.pageSize!
+        : DEFAULT_PAGE_SIZE;
+
+    const total =
+      Number.isInteger(data?.total) &&
+      data.total! >= 0
+        ? data.total!
+        : 0;
+
+    const totalPages =
+      Number.isInteger(data?.totalPages) &&
+      data.totalPages! >= 0
+        ? data.totalPages!
+        : Math.ceil(total / pageSize);
+
+    return {
+      page: pageNumber,
+      pageSize,
+      total,
+      totalPages,
+
+      hasNextPage:
+        typeof data?.hasNextPage === "boolean"
+          ? data.hasNextPage
+          : pageNumber < totalPages,
+
+      hasPreviousPage:
+        typeof data?.hasPreviousPage === "boolean"
+          ? data.hasPreviousPage
+          : pageNumber > 1 && totalPages > 0,
+    };
+  }
+
+  /**
+   * -----------------------------------------
+   * SEARCH BY AREA OR STREET
+   * -----------------------------------------
+   *
+   * The API determines whether the submitted
+   * search is a predefined area or a street.
+   * Area validation remains server-side.
+   */
+
+  async function loadByArea(
+    selectedSearch: string,
+    requestedPage = 1
+  ) {
+    const trimmedSearch =
+      selectedSearch.trim();
+
+    if (!trimmedSearch) {
       setBusinesses([]);
       setMode("none");
 
@@ -354,15 +544,19 @@ export default function NearMePage() {
         area: null,
       });
 
+      setPagination(EMPTY_PAGINATION);
+
       setError(
-        "Enter an area to search for nearby businesses."
+        "Enter an area or street name to search for local businesses."
       );
 
+      setWarning("");
       return;
     }
 
     setLoading(true);
     setError("");
+    setWarning("");
     setBusinesses([]);
     setMode("none");
 
@@ -371,10 +565,23 @@ export default function NearMePage() {
       area: null,
     });
 
+    setGpsCoordinates(null);
+    setActiveSearch(trimmedSearch);
+
+    setPagination({
+      ...EMPTY_PAGINATION,
+      page: requestedPage,
+    });
+
     try {
       const params = new URLSearchParams();
 
-      params.set("area", trimmedArea);
+      params.set("q", trimmedSearch);
+      params.set("page", String(requestedPage));
+      params.set(
+        "pageSize",
+        String(DEFAULT_PAGE_SIZE)
+      );
 
       const response = await fetch(
         `/api/near-me?${params.toString()}`,
@@ -386,6 +593,25 @@ export default function NearMePage() {
 
       const data = await response.json();
 
+      if (
+        !response.ok &&
+        data?.code === "INVALID_AREA"
+      ) {
+        setBusinesses([]);
+        setMode("none");
+        setPagination(EMPTY_PAGINATION);
+
+        setWarning(
+          typeof data?.warning === "string"
+            ? data.warning
+            : typeof data?.error === "string"
+              ? data.error
+              : "This area is not valid. Choose an area from the predefined list or enter a registered street name."
+        );
+
+        return;
+      }
+
       if (!response.ok) {
         throw new Error(
           typeof data?.error === "string"
@@ -394,26 +620,37 @@ export default function NearMePage() {
         );
       }
 
-      const nextBusinesses =
+      setBusinesses(
         Array.isArray(data?.businesses)
           ? data.businesses
-          : [];
+          : []
+      );
 
-      /*
-       * A successful empty response is
-       * still a valid area search.
-       */
+      setMode(
+        data?.mode === "street"
+          ? "street"
+          : "area"
+      );
 
-      setBusinesses(nextBusinesses);
-      setMode("area");
+      setPagination(
+        paginationFromResponse(data)
+      );
+
+      if (
+        data?.mode === "area" &&
+        typeof data?.location === "string"
+      ) {
+        setArea(data.location);
+      }
     } catch (searchError) {
       console.error(
-        "Area near-me error:",
+        "Near Me text search error:",
         searchError
       );
 
       setBusinesses([]);
       setMode("none");
+      setPagination(EMPTY_PAGINATION);
 
       setError(
         searchError instanceof Error
@@ -430,22 +667,155 @@ export default function NearMePage() {
   ) {
     event.preventDefault();
 
-    void loadByArea(area);
+    void loadByArea(area, 1);
   }
 
-  /*
+  /**
+   * -----------------------------------------
+   * PAGINATION CONTROLS
+   * -----------------------------------------
+   */
+
+  function goToPage(nextPage: number) {
+    if (
+      loading ||
+      nextPage < 1 ||
+      nextPage > pagination.totalPages
+    ) {
+      return;
+    }
+
+    if (
+      mode === "gps" &&
+      gpsCoordinates
+    ) {
+      void loadGpsPage(
+        gpsCoordinates,
+        nextPage
+      );
+
+      return;
+    }
+
+    if (activeSearch) {
+      void loadByArea(
+        activeSearch,
+        nextPage
+      );
+    }
+  }
+
+  /**
    * -----------------------------------------
    * CURRENT LOCATION
    * -----------------------------------------
-   *
-   * Latitude and longitude are obtained
-   * internally from the browser.
-   *
-   * The user never types them.
-   *
-   * The API converts the coordinates into
-   * the buyer's current street and area.
    */
+
+  async function loadGpsPage(
+    coordinates: GpsCoordinates,
+    requestedPage = 1
+  ) {
+    setLoading(true);
+    setError("");
+    setWarning("");
+    setBusinesses([]);
+    setMode("none");
+
+    setGpsCoordinates(coordinates);
+
+    setPagination({
+      ...EMPTY_PAGINATION,
+      page: requestedPage,
+    });
+
+    try {
+      const params = new URLSearchParams();
+
+      params.set(
+        "lat",
+        String(coordinates.lat)
+      );
+
+      params.set(
+        "lng",
+        String(coordinates.lng)
+      );
+
+      params.set("page", String(requestedPage));
+
+      params.set(
+        "pageSize",
+        String(DEFAULT_PAGE_SIZE)
+      );
+
+      const response = await fetch(
+        `/api/near-me?${params.toString()}`,
+        {
+          method: "GET",
+          cache: "no-store",
+        }
+      );
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(
+          typeof data?.error === "string"
+            ? data.error
+            : "Unable to find businesses near you."
+        );
+      }
+
+      setBusinesses(
+        Array.isArray(data?.businesses)
+          ? data.businesses
+          : []
+      );
+
+      setSearchLocation({
+        street:
+          typeof data?.location?.street === "string"
+            ? data.location.street
+            : null,
+
+        area:
+          typeof data?.location?.area === "string"
+            ? data.location.area
+            : null,
+      });
+
+      setPagination(
+        paginationFromResponse(data)
+      );
+
+      setMode("gps");
+      setActiveSearch("");
+    } catch (locationError) {
+      console.error(
+        "GPS near-me error:",
+        locationError
+      );
+
+      setBusinesses([]);
+      setMode("none");
+      setGpsCoordinates(null);
+      setPagination(EMPTY_PAGINATION);
+
+      setSearchLocation({
+        street: null,
+        area: null,
+      });
+
+      setError(
+        locationError instanceof Error
+          ? locationError.message
+          : "Unable to find businesses near you."
+      );
+    } finally {
+      setLocating(false);
+      setLoading(false);
+    }
+  }
 
   function useCurrentLocation() {
     if (loading) {
@@ -463,8 +833,11 @@ export default function NearMePage() {
     setLocating(true);
     setLoading(true);
     setError("");
+    setWarning("");
     setBusinesses([]);
     setMode("none");
+    setActiveSearch("");
+    setPagination(EMPTY_PAGINATION);
 
     setSearchLocation({
       street: null,
@@ -472,94 +845,14 @@ export default function NearMePage() {
     });
 
     navigator.geolocation.getCurrentPosition(
-      async (position) => {
-        try {
-          const latitude =
-            position.coords.latitude;
-
-          const longitude =
-            position.coords.longitude;
-
-          const params = new URLSearchParams();
-
-          params.set("lat", String(latitude));
-          params.set("lng", String(longitude));
-
-          const response = await fetch(
-            `/api/near-me?${params.toString()}`,
-            {
-              method: "GET",
-              cache: "no-store",
-            }
-          );
-
-          const data = await response.json();
-
-          if (!response.ok) {
-            throw new Error(
-              typeof data?.error === "string"
-                ? data.error
-                : "Unable to find businesses near you."
-            );
-          }
-
-          const nextBusinesses =
-            Array.isArray(data?.businesses)
-              ? data.businesses
-              : [];
-
-          /*
-           * Preserve the location context
-           * returned by the API.
-           *
-           * Exact buyer coordinates are never
-           * displayed or stored here.
-           */
-
-          setSearchLocation({
-            street:
-              typeof data?.location?.street ===
-              "string"
-                ? data.location.street
-                : null,
-
-            area:
-              typeof data?.location?.area ===
-              "string"
-                ? data.location.area
-                : null,
-          });
-
-          /*
-           * A successful empty GPS response
-           * is still a valid nearby search.
-           */
-
-          setBusinesses(nextBusinesses);
-          setMode("gps");
-        } catch (locationError) {
-          console.error(
-            "GPS near-me error:",
-            locationError
-          );
-
-          setBusinesses([]);
-          setMode("none");
-
-          setSearchLocation({
-            street: null,
-            area: null,
-          });
-
-          setError(
-            locationError instanceof Error
-              ? locationError.message
-              : "Unable to find businesses near you."
-          );
-        } finally {
-          setLocating(false);
-          setLoading(false);
-        }
+      (position) => {
+        void loadGpsPage(
+          {
+            lat: position.coords.latitude,
+            lng: position.coords.longitude,
+          },
+          1
+        );
       },
 
       (geoError) => {
@@ -572,6 +865,8 @@ export default function NearMePage() {
         setLoading(false);
         setBusinesses([]);
         setMode("none");
+        setGpsCoordinates(null);
+        setPagination(EMPTY_PAGINATION);
 
         setSearchLocation({
           street: null,
@@ -581,25 +876,25 @@ export default function NearMePage() {
         switch (geoError.code) {
           case geoError.PERMISSION_DENIED:
             setError(
-              "Location permission was denied. Enter an area instead."
+              "Location permission was denied. Enter an area or street instead."
             );
             break;
 
           case geoError.POSITION_UNAVAILABLE:
             setError(
-              "Your current location is unavailable. Enter an area instead."
+              "Your current location is unavailable. Enter an area or street instead."
             );
             break;
 
           case geoError.TIMEOUT:
             setError(
-              "Finding your location took too long. Enter an area instead."
+              "Finding your location took too long. Enter an area or street instead."
             );
             break;
 
           default:
             setError(
-              "We couldn't access your current location. Enter an area instead."
+              "We couldn't access your current location. Enter an area or street instead."
             );
         }
       },
@@ -612,13 +907,15 @@ export default function NearMePage() {
     );
   }
 
-  /*
+  /**
    * -----------------------------------------
    * SAVE / UNSAVE
    * -----------------------------------------
    */
 
-  function toggleSaved(business: Business) {
+  function toggleSaved(
+    business: Business
+  ) {
     if (isBusinessSaved(business.id)) {
       removeSavedBusiness(business.id);
       return;
@@ -631,18 +928,28 @@ export default function NearMePage() {
     saveBusiness({
       id: business.id,
       name: business.name,
+
       area:
         business.area ??
         business.location?.area ??
         "Local",
+
       category,
+
       verified:
         business.verified ??
         business.verification === "VERIFIED",
+
       availability: business.availability,
       imageUrl: business.imageUrl,
     });
   }
+
+  /**
+   * ------------------------------------------------
+   * PAGE UI
+   * ------------------------------------------------
+   */
 
   return (
     <main className="min-h-dvh w-full overflow-x-clip bg-[#FFFDFC]">
@@ -671,16 +978,14 @@ export default function NearMePage() {
               </div>
             </Link>
 
-            {/* Desktop Navigation */}
+            {/* DESKTOP NAVIGATION */}
 
             <nav className="hidden items-center gap-1 xl:flex">
               {NAV_ITEMS.map((item) => (
                 <button
                   key={item.label}
                   type="button"
-                  onClick={() =>
-                    router.push(item.href)
-                  }
+                  onClick={() => router.push(item.href)}
                   className="rounded-xl px-4 py-2 text-xs font-semibold text-gray-700 hover:bg-gray-50"
                 >
                   {item.label}
@@ -688,14 +993,12 @@ export default function NearMePage() {
               ))}
             </nav>
 
-            {/* Header Actions */}
+            {/* HEADER ACTIONS */}
 
             <div className="flex shrink-0 items-center gap-1.5 sm:gap-3">
               <button
                 type="button"
-                onClick={() =>
-                  router.push("/saved")
-                }
+                onClick={() => router.push("/saved")}
                 className="hidden h-9 w-9 items-center justify-center rounded-full hover:bg-gray-50 sm:flex"
                 aria-label="Saved"
               >
@@ -712,9 +1015,7 @@ export default function NearMePage() {
 
               <button
                 type="button"
-                onClick={() =>
-                  router.push("/request")
-                }
+                onClick={() => router.push("/request")}
                 className="shrink-0 whitespace-nowrap rounded-xl bg-[#FF5A36] px-2.5 py-2.5 text-[10px] font-bold text-white sm:px-4 sm:text-xs"
               >
                 <span className="sm:hidden">
@@ -728,7 +1029,7 @@ export default function NearMePage() {
             </div>
           </header>
 
-          <div className="flex min-w-0">
+          <div className="flex">
 
             {/* SIDEBAR */}
 
@@ -741,9 +1042,7 @@ export default function NearMePage() {
                     <button
                       key={item.label}
                       type="button"
-                      onClick={() =>
-                        router.push(item.href)
-                      }
+                      onClick={() => router.push(item.href)}
                       className={`flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-sm font-medium ${
                         item.label === "Shop"
                           ? "bg-white text-[#9F2D18]"
@@ -775,8 +1074,10 @@ export default function NearMePage() {
                   </h1>
 
                   <p className="mt-2 max-w-[560px] text-xs leading-5 text-white/80 sm:text-sm">
-                    Search by area or use your current location to discover businesses around you.
+                    Search by street or area, or use your current location to discover businesses around you.
                   </p>
+
+                  {/* SEARCH INPUT */}
 
                   <form
                     onSubmit={submitArea}
@@ -786,34 +1087,113 @@ export default function NearMePage() {
 
                     <input
                       value={area}
-                      onChange={(event) =>
-                        setArea(event.target.value)
-                      }
-                      placeholder="Enter an area, e.g. Ogba"
+                      onChange={(event) => {
+                        setArea(event.target.value);
+                        setWarning("");
+                      }}
+                      placeholder="Enter a street or area, e.g. Ogba or Acme Road"
                       className="min-w-0 flex-1 bg-transparent px-3 text-xs text-gray-800 outline-none placeholder:text-gray-400"
+                      aria-label="Search by street or area"
                     />
+
+                    {/* PREDEFINED AREAS ICON */}
+
+                    <button
+                      type="button"
+                      aria-label="Browse predefined areas"
+                      aria-expanded={showAreaPicker}
+                      onClick={() =>
+                        setShowAreaPicker(
+                          (current) => !current
+                        )
+                      }
+                      disabled={loading}
+                      className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-[#9F2D18] hover:bg-[#FFF1ED] disabled:opacity-60"
+                    >
+                      {showAreaPicker ? (
+                        <X className="h-4 w-4" />
+                      ) : (
+                        <ListFilter className="h-4 w-4" />
+                      )}
+                    </button>
 
                     <button
                       type="submit"
                       disabled={loading}
                       className="shrink-0 rounded-full bg-[#FF5A36] px-4 py-2.5 text-xs font-bold text-white disabled:opacity-60 sm:px-5"
                     >
-                      {loading
-                        ? "Searching..."
-                        : "Search"}
+                      {loading ? "Searching..." : "Search"}
                     </button>
                   </form>
+
+                  {/* AREA PICKER */}
+
+                  {showAreaPicker && (
+                    <div className="mt-3 max-h-72 w-full max-w-[720px] overflow-y-auto rounded-2xl border border-[#EAE6DF] bg-white p-4 text-gray-800 shadow-lg">
+                      <div className="mb-3 flex items-center justify-between gap-3">
+                        <div>
+                          <p className="text-xs font-bold text-[#17202A]">
+                            Predefined Lagos areas
+                          </p>
+
+                          <p className="mt-1 text-[10px] text-gray-500">
+                            Choose an area to search.
+                          </p>
+                        </div>
+
+                        <ChevronDown className="h-4 w-4 text-gray-400" />
+                      </div>
+
+                      {areaGroups.length === 0 ? (
+                        <p className="rounded-lg bg-[#FCFAF6] p-3 text-xs text-gray-500">
+                          The area list is temporarily unavailable. You can still enter a street or area.
+                        </p>
+                      ) : (
+                        <div className="space-y-4">
+                          {areaGroups.map((group) => (
+                            <div key={group.lga}>
+                              <p className="mb-2 text-[10px] font-bold uppercase tracking-wide text-[#9F2D18]">
+                                {group.lga}
+                              </p>
+
+                              <div className="flex flex-wrap gap-2">
+                                {group.areas.map((listedArea) => (
+                                  <button
+                                    key={`${group.lga}-${listedArea}`}
+                                    type="button"
+                                    onClick={() => {
+                                      setArea(listedArea);
+                                      setShowAreaPicker(false);
+                                      void loadByArea(
+                                        listedArea,
+                                        1
+                                      );
+                                    }}
+                                    className="rounded-full border border-[#E8E4DE] bg-[#FCFAF6] px-3 py-1.5 text-[10px] font-medium text-gray-700 hover:border-[#FF5A36] hover:text-[#9F2D18]"
+                                  >
+                                    {listedArea}
+                                  </button>
+                                ))}
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {/* CURRENT LOCATION BUTTON */}
 
                   <button
                     type="button"
                     onClick={useCurrentLocation}
                     disabled={loading || locating}
-                    className="mt-3 inline-flex max-w-full items-center gap-2 rounded-xl bg-white/15 px-3.5 py-2.5 text-[11px] font-bold text-white backdrop-blur transition hover:bg-white/20 disabled:opacity-60"
+                    className="mt-3 inline-flex items-center gap-2 rounded-xl bg-white/15 px-3.5 py-2.5 text-[11px] font-bold text-white backdrop-blur transition hover:bg-white/20 disabled:opacity-60"
                   >
                     {locating ? (
-                      <Loader2 className="h-4 w-4 shrink-0 animate-spin" />
+                      <Loader2 className="h-4 w-4 animate-spin" />
                     ) : (
-                      <Navigation className="h-4 w-4 shrink-0" />
+                      <Navigation className="h-4 w-4" />
                     )}
 
                     {locating
@@ -825,22 +1205,24 @@ export default function NearMePage() {
                 {/* RESULTS */}
 
                 <section className="mt-5">
-                  <div className="flex items-start justify-between gap-3">
-                    <div className="min-w-0">
+                  <div className="flex items-center justify-between gap-3">
+                    <div>
                       <h2 className="text-lg font-bold text-[#17202A]">
                         {mode === "gps"
                           ? "Businesses near you"
-                          : mode === "area"
-                            ? `Businesses around ${area.trim()}`
-                            : "Nearby businesses"}
+                          : mode === "street"
+                            ? `Businesses on or matching ${activeSearch}`
+                            : mode === "area"
+                              ? `Businesses around ${area.trim()}`
+                              : "Nearby businesses"}
                       </h2>
 
                       <p className="mt-0.5 text-xs text-muted">
                         {loading
                           ? "Finding local businesses..."
-                          : businesses.length > 0
-                            ? `${businesses.length} ${
-                                businesses.length === 1
+                          : pagination.total > 0
+                            ? `${pagination.total.toLocaleString()} ${
+                                pagination.total === 1
                                   ? "business"
                                   : "businesses"
                               } found`
@@ -848,13 +1230,17 @@ export default function NearMePage() {
                               ? "No businesses were found around your current street or area"
                               : mode === "area"
                                 ? "No businesses were found in this area"
-                                : "Choose an area or use your current location"}
+                                : mode === "street"
+                                  ? "No businesses were found on this street"
+                                  : "Choose a street, area, or use your current location"}
                       </p>
 
                       {mode === "gps" &&
                         !loading &&
-                        (searchLocation.street ||
-                          searchLocation.area) && (
+                        (
+                          searchLocation.street ||
+                          searchLocation.area
+                        ) && (
                           <div className="mt-2 flex flex-wrap items-center gap-1.5 text-[10px] text-[#9A928B]">
                             <MapPin className="h-3 w-3 shrink-0" />
 
@@ -891,16 +1277,26 @@ export default function NearMePage() {
                     {mode !== "none" && (
                       <button
                         type="button"
-                        onClick={() =>
-                          router.push("/shop")
-                        }
-                        className="inline-flex shrink-0 items-center gap-1 text-[11px] font-bold text-[#9F2D18]"
+                        onClick={() => router.push("/shop")}
+                        className="inline-flex items-center gap-1 text-[11px] font-bold text-[#9F2D18]"
                       >
                         Browse all
                         <ArrowRight className="h-3.5 w-3.5" />
                       </button>
                     )}
                   </div>
+
+                  {/* INVALID AREA WARNING */}
+
+                  {warning && (
+                    <div
+                      role="alert"
+                      className="mt-4 flex items-start gap-2 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs text-amber-800"
+                    >
+                      <MapPin className="mt-0.5 h-4 w-4 shrink-0" />
+                      <span>{warning}</span>
+                    </div>
+                  )}
 
                   {/* ERROR */}
 
@@ -923,7 +1319,7 @@ export default function NearMePage() {
                     </div>
                   )}
 
-                  {/* EMPTY RESULT */}
+                  {/* EMPTY RESULTS */}
 
                   {!loading &&
                     !error &&
@@ -941,13 +1337,13 @@ export default function NearMePage() {
                         <p className="mt-4 text-sm font-semibold text-gray-700">
                           {mode === "gps"
                             ? "No businesses found near you"
-                            : "No businesses found in this area"}
+                            : "No businesses found for this search"}
                         </p>
 
                         <p className="mx-auto mt-1 max-w-[360px] text-xs leading-5 text-gray-400">
                           {mode === "gps"
                             ? "We searched your current street first, then nearby streets and your wider area."
-                            : `We don't have businesses registered around ${area.trim()} yet. Try another area or browse all businesses.`}
+                            : `We don't have businesses registered for "${activeSearch}" yet. Try another area or street, or browse all businesses.`}
                         </p>
 
                         <div className="mt-5 flex flex-col items-center justify-center gap-2 sm:flex-row">
@@ -957,6 +1353,8 @@ export default function NearMePage() {
                               setMode("none");
                               setBusinesses([]);
                               setError("");
+                              setWarning("");
+                              setActiveSearch("");
 
                               setSearchLocation({
                                 street: null,
@@ -988,8 +1386,7 @@ export default function NearMePage() {
                       <div className="mt-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
                         {businesses.map((business) => {
                           const category =
-                            business.categories?.[0]
-                              ?.category?.name ??
+                            business.categories?.[0]?.category?.name ??
                             "Services";
 
                           const saved =
@@ -1071,22 +1468,18 @@ export default function NearMePage() {
 
                               <div className="p-3.5">
                                 <div className="flex items-start justify-between gap-2">
-                                  <div className="min-w-0 flex-1">
+                                  <div className="min-w-0">
                                     <Link
                                       href={`/seller/${business.id}`}
-                                      className="block truncate text-sm font-bold text-[#17202A] hover:text-[#9F2D18]"
+                                      className="truncate text-sm font-bold text-[#17202A] hover:text-[#9F2D18]"
                                     >
                                       {business.name}
                                     </Link>
 
                                     <p className="mt-1 flex items-center gap-1 text-[10px] text-muted">
-                                      <span className="shrink-0">
-                                        {category}
-                                      </span>
+                                      <span>{category}</span>
 
-                                      <span className="shrink-0">
-                                        ·
-                                      </span>
+                                      <span>·</span>
 
                                       <span className="flex min-w-0 items-center gap-1 truncate">
                                         <MapPin className="h-3 w-3 shrink-0" />
@@ -1097,9 +1490,7 @@ export default function NearMePage() {
                                     {street &&
                                       business.area &&
                                       street.trim().toLowerCase() !==
-                                        business.area
-                                          .trim()
-                                          .toLowerCase() && (
+                                        business.area.trim().toLowerCase() && (
                                         <p className="mt-1 truncate pl-4 text-[10px] text-gray-400">
                                           {business.area}
                                         </p>
@@ -1142,10 +1533,10 @@ export default function NearMePage() {
                                       <img
                                         src={productImage}
                                         alt={product.name}
-                                        className="h-10 w-10 shrink-0 rounded-lg object-cover"
+                                        className="h-10 w-10 rounded-lg object-cover"
                                       />
                                     ) : (
-                                      <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-[#FCFAF6] text-gray-400">
+                                      <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-[#FCFAF6] text-gray-400">
                                         <Package className="h-4 w-4" />
                                       </div>
                                     )}
@@ -1176,11 +1567,61 @@ export default function NearMePage() {
                       </div>
                     )}
 
+                  {/* PAGINATION */}
+
+                  {!loading &&
+                    !warning &&
+                    pagination.totalPages > 1 && (
+                      <nav
+                        aria-label="Business results pagination"
+                        className="mt-6 flex flex-wrap items-center justify-center gap-3"
+                      >
+                        <button
+                          type="button"
+                          onClick={() =>
+                            goToPage(pagination.page - 1)
+                          }
+                          disabled={
+                            !pagination.hasPreviousPage ||
+                            loading
+                          }
+                          className="inline-flex items-center gap-1 rounded-lg border border-[#E8E4DE] bg-white px-3 py-2 text-xs font-semibold text-[#9F2D18] disabled:cursor-not-allowed disabled:opacity-40"
+                        >
+                          <ChevronLeft className="h-4 w-4" />
+                          Previous
+                        </button>
+
+                        <span
+                          className="text-xs text-gray-600"
+                          aria-live="polite"
+                        >
+                          Page {pagination.page} of{" "}
+                          {pagination.totalPages}
+                        </span>
+
+                        <button
+                          type="button"
+                          onClick={() =>
+                            goToPage(pagination.page + 1)
+                          }
+                          disabled={
+                            !pagination.hasNextPage ||
+                            loading
+                          }
+                          className="inline-flex items-center gap-1 rounded-lg border border-[#E8E4DE] bg-white px-3 py-2 text-xs font-semibold text-[#9F2D18] disabled:cursor-not-allowed disabled:opacity-40"
+                        >
+                          Next
+                          <ChevronRight className="h-4 w-4" />
+                        </button>
+                      </nav>
+                    )}
+
                   {/* INITIAL STATE */}
 
                   {mode === "none" &&
                     !loading &&
-                    !error && (
+                    !error &&
+                    !warning && (
                       <div className="mt-5 rounded-xl border border-[#E8E4DE] bg-white px-5 py-12 text-center">
                         <MapPin className="mx-auto h-8 w-8 text-gray-300" />
 
@@ -1189,7 +1630,7 @@ export default function NearMePage() {
                         </p>
 
                         <p className="mt-1 text-xs leading-5 text-gray-400">
-                          Enter an area or use your current location to discover local businesses.
+                          Enter a street or area, or use your current location to discover local businesses.
                         </p>
                       </div>
                     )}
@@ -1210,7 +1651,7 @@ export default function NearMePage() {
             </div>
           </div>
 
-          {/* MOBILE NAV */}
+          {/* MOBILE NAVIGATION */}
 
           <nav className="fixed inset-x-0 bottom-0 z-50 border-t border-gray-200 bg-white/95 px-2 pb-[max(6px,env(safe-area-inset-bottom))] pt-1.5 backdrop-blur lg:hidden">
             <div className="grid w-full grid-cols-4">
@@ -1221,9 +1662,7 @@ export default function NearMePage() {
                   <button
                     key={item.label}
                     type="button"
-                    onClick={() =>
-                      router.push(item.href)
-                    }
+                    onClick={() => router.push(item.href)}
                     className="flex flex-col items-center justify-center gap-1 rounded-xl py-2 text-gray-500"
                   >
                     <Icon className="h-[19px] w-[19px]" />

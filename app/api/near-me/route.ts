@@ -6,66 +6,45 @@ import {
 import type { Prisma } from "@prisma/client";
 
 import { prisma } from "@/lib/prisma";
-
+import { haversineDistance } from "@/lib/distance";
+import { reverseGeocodeLocation } from "@/lib/geocoding";
+import { checkPublicRateLimit } from "@/lib/rate-limit";
 import {
-  haversineDistance,
-} from "@/lib/distance";
-
-import {
-  reverseGeocodeLocation,
-} from "@/lib/geocoding";
-
-import {
-  checkPublicRateLimit,
-} from "@/lib/rate-limit";
+  areasMatch,
+  resolvePredefinedArea,
+} from "@/lib/lagos-areas";
+import { STREET_ALIASES } from "@/lib/near-me-street-aliases";
 
 /**
- * ------------------------------------------------
- * REMARKET NEAR ME CONFIGURATION
- * ------------------------------------------------
+ * ReMarket Near Me search.
+ *
+ * Text search:
+ * - q=<area or street> is the unified search parameter.
+ * - A predefined area is resolved to its canonical spelling.
+ * - Otherwise, q is matched against registered business streets.
+ * - The legacy area=<area> parameter remains supported.
  *
  * GPS ranking hierarchy:
+ * 1. Same street
+ * 2. Adjacent street
+ * 3. Nearby street
+ * 4. Whole area
  *
- * 1. Same Street
- * 2. Adjacent Street
- * 3. Nearby Street
- * 4. Whole Area
- *
- * Ranking level takes precedence over distance.
- *
- * Pagination:
- * - Default page: 1
- * - Default page size: 12
- * - Maximum page size: 50
+ * Ranking takes precedence over distance.
+ * GPS results are sorted before pagination.
  */
 
 const DEFAULT_NEAR_ME_RADIUS_KM = 10;
-
 const DEFAULT_ADJACENT_STREET_MAX_KM = 1;
-
 const DEFAULT_PAGE = 1;
-
 const DEFAULT_PAGE_SIZE = 12;
-
 const MAX_PAGE_SIZE = 50;
-
-const MAX_AREA_LENGTH = 100;
-
-/**
- * Keep database offsets within a safe range.
- */
+const MAX_SEARCH_LENGTH = 100;
 const MAX_DATABASE_OFFSET = 2_147_483_647;
 
-type ParsedCoordinate =
-  | number
-  | null
-  | "INVALID";
+type ParsedCoordinate = number | null | "INVALID";
 
-type NearMeRanking =
-  | 1
-  | 2
-  | 3
-  | 4;
+type NearMeRanking = 1 | 2 | 3 | 4;
 
 type NearMeRankingLabel =
   | "same-street"
@@ -89,57 +68,19 @@ type PaginationResult =
       error: string;
     };
 
-type RankedBusiness = {
-  id: string;
-  name: string;
-  ownerName: string | null;
-  description: string | null;
-  imageUrl: string | null;
-  area: string;
-
-  location: ReturnType<
-    typeof serializeLocation
-  >;
-
-  availability:
-    | "AVAILABLE"
-    | "ASK_SELLER"
-    | "UNAVAILABLE";
-
-  verification:
-    | "VERIFIED"
-    | "UNVERIFIED";
-
-  verified: boolean;
-
-  categories: unknown;
-  products: unknown;
-  socialLinks: unknown;
-
-  distanceKm: number | null;
-
-  ranking: NearMeRanking;
-
-  rankingLabel: NearMeRankingLabel;
-
-  /**
-   * Retained internally for sorting.
-   * Never returned to the client.
-   */
-  distanceKmRaw: number | null;
-};
+type SearchMode =
+  | "none"
+  | "area"
+  | "street"
+  | "gps"
+  | "invalid-area";
 
 /**
  * ------------------------------------------------
- * SHARED BUSINESS SELECT
+ * BUSINESS SELECT
  * ------------------------------------------------
- *
- * Reuse the same selected fields across the
- * search branches to keep their response data
- * consistent.
- *
- * Exact business coordinates remain server-side.
  */
+
 const nearMeBusinessSelect = {
   id: true,
   name: true,
@@ -232,9 +173,51 @@ type NearMeBusinessRecord =
     select: typeof nearMeBusinessSelect;
   }>;
 
+type SerializedLocation = {
+  id: string;
+  area: string;
+  street: string | null;
+} | null;
+
+type RankedBusiness = {
+  id: string;
+  name: string;
+  ownerName: string | null;
+  description: string | null;
+  imageUrl: string | null;
+  area: string;
+  location: SerializedLocation;
+
+  availability:
+    | "AVAILABLE"
+    | "ASK_SELLER"
+    | "UNAVAILABLE";
+
+  verification:
+    | "VERIFIED"
+    | "UNVERIFIED";
+
+  verified: boolean;
+
+  categories: unknown;
+  products: unknown;
+  socialLinks: unknown;
+
+  distanceKm: number | null;
+
+  ranking: NearMeRanking;
+  rankingLabel: NearMeRankingLabel;
+
+  /**
+   * Internal full-precision distance.
+   * Removed before returning JSON.
+   */
+  distanceKmRaw: number | null;
+};
+
 /**
  * ------------------------------------------------
- * SHARED DATABASE FILTERS
+ * DATABASE FILTER
  * ------------------------------------------------
  */
 
@@ -258,14 +241,12 @@ function getNearMeRadiusKm(): number {
     process.env.REMARKET_NEAR_ME_RADIUS_KM
   );
 
-  if (
+  return (
     Number.isFinite(configured) &&
     configured > 0
-  ) {
-    return configured;
-  }
-
-  return DEFAULT_NEAR_ME_RADIUS_KM;
+  )
+    ? configured
+    : DEFAULT_NEAR_ME_RADIUS_KM;
 }
 
 function getAdjacentStreetMaxKm(): number {
@@ -273,14 +254,12 @@ function getAdjacentStreetMaxKm(): number {
     process.env.REMARKET_ADJACENT_STREET_MAX_KM
   );
 
-  if (
+  return (
     Number.isFinite(configured) &&
     configured > 0
-  ) {
-    return configured;
-  }
-
-  return DEFAULT_ADJACENT_STREET_MAX_KM;
+  )
+    ? configured
+    : DEFAULT_ADJACENT_STREET_MAX_KM;
 }
 
 function clean(
@@ -348,17 +327,12 @@ function parsePagination(
     };
   }
 
-  /**
-   * Enforce an upper limit so clients cannot
-   * request excessively large result pages.
-   */
   const pageSize = Math.min(
     parsedPageSize,
     MAX_PAGE_SIZE
   );
 
-  const skip =
-    (parsedPage - 1) * pageSize;
+  const skip = (parsedPage - 1) * pageSize;
 
   if (
     !Number.isSafeInteger(skip) ||
@@ -446,11 +420,9 @@ function parseCoordinate(
     value.trim()
   );
 
-  if (!Number.isFinite(parsed)) {
-    return "INVALID";
-  }
-
-  return parsed;
+  return Number.isFinite(parsed)
+    ? parsed
+    : "INVALID";
 }
 
 function isValidLatitude(
@@ -505,19 +477,17 @@ function getBusinessDistanceKm(
     location.long
   );
 
-  if (
-    !Number.isFinite(distance) ||
-    distance < 0
-  ) {
-    return null;
-  }
-
-  return distance;
+  return (
+    Number.isFinite(distance) &&
+    distance >= 0
+  )
+    ? distance
+    : null;
 }
 
 /**
  * ------------------------------------------------
- * STREET NORMALIZATION
+ * STREET NORMALIZATION AND ALIASES
  * ------------------------------------------------
  */
 
@@ -561,6 +531,38 @@ function normalizeStreetName(
     .trim();
 }
 
+/**
+ * Convert a canonical street name or alias
+ * to one normalized comparison value.
+ */
+function canonicalizeStreetName(
+  value: string
+): string {
+  const normalized = normalizeStreetName(
+    value
+  );
+
+  if (!normalized) {
+    return "";
+  }
+
+  for (
+    const [canonical, aliases]
+    of Object.entries(STREET_ALIASES)
+  ) {
+    const candidates = [
+      canonical,
+      ...aliases,
+    ].map(normalizeStreetName);
+
+    if (candidates.includes(normalized)) {
+      return normalizeStreetName(canonical);
+    }
+  }
+
+  return normalized;
+}
+
 function streetsMatch(
   first: string | null,
   second: string | null
@@ -570,64 +572,56 @@ function streetsMatch(
   }
 
   const normalizedFirst =
-    normalizeStreetName(first);
+    canonicalizeStreetName(first);
 
   const normalizedSecond =
-    normalizeStreetName(second);
+    canonicalizeStreetName(second);
 
-  if (
-    !normalizedFirst ||
-    !normalizedSecond
-  ) {
-    return false;
-  }
-
-  return (
+  return Boolean(
+    normalizedFirst &&
+    normalizedSecond &&
     normalizedFirst === normalizedSecond
   );
 }
 
 /**
- * ------------------------------------------------
- * AREA NORMALIZATION
- * ------------------------------------------------
+ * Match canonical street names, aliases,
+ * or a leading partial street query.
  */
-
-function normalizeAreaName(
-  value: string
-): string {
-  return value
-    .normalize("NFKD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, " ")
-    .replace(/\s+/g, " ")
-    .trim();
-}
-
-function areasMatch(
-  first: string | null,
-  second: string | null
+function streetMatchesSearch(
+  street: string | null,
+  query: string
 ): boolean {
-  if (!first || !second) {
-    return false;
-  }
-
-  const normalizedFirst =
-    normalizeAreaName(first);
-
-  const normalizedSecond =
-    normalizeAreaName(second);
-
   if (
-    !normalizedFirst ||
-    !normalizedSecond
+    !street?.trim() ||
+    !query.trim()
   ) {
     return false;
   }
 
+  const normalizedStreet =
+    canonicalizeStreetName(street);
+
+  const normalizedQuery =
+    canonicalizeStreetName(query);
+
+  if (
+    !normalizedStreet ||
+    !normalizedQuery
+  ) {
+    return false;
+  }
+
+  if (
+    normalizedStreet === normalizedQuery
+  ) {
+    return true;
+  }
+
+  // Avoid unrelated matches for very short inputs.
   return (
-    normalizedFirst === normalizedSecond
+    normalizedQuery.length >= 3 &&
+    normalizedStreet.startsWith(normalizedQuery)
   );
 }
 
@@ -636,12 +630,8 @@ function areasMatch(
  * LEGACY STREET FALLBACK
  * ------------------------------------------------
  *
- * Canonical address ordering:
- *
- * House Number, Street, Area, City, Nigeria
- *
- * Older records may have the street in address
- * instead of the dedicated Location.street field.
+ * Older records may have the street saved in
+ * Location.address instead of Location.street.
  */
 
 function isHouseNumberOnly(
@@ -680,13 +670,9 @@ function parseLegacyStreetFromAddress(
     return null;
   }
 
-  /**
-   * Remove Nigeria from the end if present.
-   */
   if (
-    normalizeAreaName(
-      parts[parts.length - 1]
-    ) === "nigeria"
+    parts[parts.length - 1].toLowerCase() ===
+    "nigeria"
   ) {
     parts = parts.slice(0, -1);
   }
@@ -695,28 +681,18 @@ function parseLegacyStreetFromAddress(
     return null;
   }
 
-  /**
-   * Prefer finding the stored area within the
-   * address components, rather than assuming
-   * the street is always at a fixed position.
-   */
   const normalizedArea =
-    normalizeAreaName(area);
+    normalizeAreaForComparison(area);
 
   const areaIndex = parts.findIndex(
     (part) =>
-      normalizeAreaName(part) ===
+      normalizeAreaForComparison(part) ===
       normalizedArea
   );
 
   if (areaIndex > 0) {
     let streetIndex = areaIndex - 1;
 
-    /**
-     * Handle a separate house-number component
-     * immediately before the area if the older
-     * address omitted its street component.
-     */
     if (
       isHouseNumberOnly(parts[streetIndex]) &&
       streetIndex > 0
@@ -724,47 +700,50 @@ function parseLegacyStreetFromAddress(
       streetIndex -= 1;
     }
 
-    const candidate = stripLeadingHouseNumber(
-      parts[streetIndex]
+    return (
+      stripLeadingHouseNumber(
+        parts[streetIndex]
+      ) || null
     );
-
-    return candidate || null;
   }
 
-  /**
-   * Fallback for older canonical addresses when
-   * the area component is absent or formatted
-   * differently.
-   */
   if (parts.length >= 3) {
-    const candidate = stripLeadingHouseNumber(
-      parts[1]
+    return (
+      stripLeadingHouseNumber(parts[1]) ||
+      null
     );
-
-    return candidate || null;
   }
 
   if (parts.length === 2) {
     if (isHouseNumberOnly(parts[0])) {
-      const candidate = stripLeadingHouseNumber(
-        parts[1]
+      return (
+        stripLeadingHouseNumber(parts[1]) ||
+        null
       );
-
-      return candidate || null;
     }
 
-    const candidate = stripLeadingHouseNumber(
-      parts[0]
+    return (
+      stripLeadingHouseNumber(parts[0]) ||
+      null
     );
-
-    return candidate || null;
   }
 
-  const candidate = stripLeadingHouseNumber(
-    parts[0]
+  return (
+    stripLeadingHouseNumber(parts[0]) ||
+    null
   );
+}
 
-  return candidate || null;
+function normalizeAreaForComparison(
+  value: string
+): string {
+  return value
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
 function getBusinessStreet(
@@ -777,13 +756,12 @@ function getBusinessStreet(
   const storedStreet =
     location.street?.trim() ?? "";
 
-  if (storedStreet) {
-    return storedStreet;
-  }
-
-  return parseLegacyStreetFromAddress(
-    location.address,
-    location.area
+  return (
+    storedStreet ||
+    parseLegacyStreetFromAddress(
+      location.address,
+      location.area
+    )
   );
 }
 
@@ -792,8 +770,7 @@ function getBusinessStreet(
  * LOCATION SERIALIZATION
  * ------------------------------------------------
  *
- * Exact business coordinates must never be
- * returned in public Near Me responses.
+ * Exact business coordinates are never returned.
  */
 
 function serializeLocation(
@@ -802,7 +779,7 @@ function serializeLocation(
     area: string;
     street: string | null;
   } | null
-) {
+): SerializedLocation {
   if (!location) {
     return null;
   }
@@ -851,16 +828,13 @@ function buildRankedBusiness(
     ),
 
     availability: business.availability,
-
     verification: business.verification,
 
     verified:
       business.verification === "VERIFIED",
 
     categories: business.categories,
-
     products: business.products,
-
     socialLinks: business.socialLinks,
 
     distanceKm:
@@ -869,17 +843,11 @@ function buildRankedBusiness(
         : null,
 
     ranking,
-
     rankingLabel,
-
     distanceKmRaw,
   };
 }
 
-/**
- * Remove the internal raw distance before
- * returning a business to the client.
- */
 function toPublicBusiness(
   business: RankedBusiness
 ) {
@@ -896,13 +864,8 @@ function toPublicBusiness(
  * RANKING SORT
  * ------------------------------------------------
  *
- * Ranking always wins over physical distance.
- *
- * Distance only sorts businesses within the
- * same ranking level.
- *
- * Records without coordinates follow records
- * that have calculable distances.
+ * Ranking level takes priority over distance.
+ * Distance sorts businesses inside each level.
  */
 
 function compareRankedBusinesses(
@@ -917,7 +880,9 @@ function compareRankedBusinesses(
     first.distanceKmRaw === null &&
     second.distanceKmRaw === null
   ) {
-    return 0;
+    return first.name.localeCompare(
+      second.name
+    );
   }
 
   if (first.distanceKmRaw === null) {
@@ -948,19 +913,48 @@ function paginateRankedBusinesses(
 
 /**
  * ------------------------------------------------
- * NEAR ME API
+ * INVALID SEARCH RESPONSE
+ * ------------------------------------------------
+ */
+
+function invalidAreaResponse(
+  rateLimitHeaders: Headers,
+  page: number,
+  pageSize: number
+) {
+  const warning =
+    "This area is not valid. Select an area from the predefined list, or enter a street name used by a registered business.";
+
+  return NextResponse.json(
+    {
+      businesses: [],
+      ...paginationMetadata(
+        0,
+        page,
+        pageSize
+      ),
+      mode: "none",
+      location: null,
+      code: "INVALID_AREA",
+      warning,
+      error: warning,
+    },
+    {
+      status: 400,
+      headers: noStoreHeaders(rateLimitHeaders),
+    }
+  );
+}
+
+/**
+ * ------------------------------------------------
+ * NEAR ME GET HANDLER
  * ------------------------------------------------
  */
 
 export async function GET(
   request: NextRequest
 ) {
-  /**
-   * -----------------------------------------
-   * PUBLIC RATE LIMIT
-   * -----------------------------------------
-   */
-
   const rateLimit = checkPublicRateLimit(
     request,
     "near-me"
@@ -973,16 +967,12 @@ export async function GET(
         total: 0,
         mode: "none",
         location: null,
-
         error:
           "Too many location searches. Please try again shortly.",
       },
       {
         status: 429,
-
-        headers: noStoreHeaders(
-          rateLimit.headers
-        ),
+        headers: noStoreHeaders(rateLimit.headers),
       }
     );
   }
@@ -992,14 +982,9 @@ export async function GET(
       request.url
     );
 
-    /**
-     * -----------------------------------------
-     * PAGINATION PARAMETERS
-     * -----------------------------------------
-     */
-
-    const paginationResult =
-      parsePagination(searchParams);
+    const paginationResult = parsePagination(
+      searchParams
+    );
 
     if (!paginationResult.valid) {
       return NextResponse.json(
@@ -1008,15 +993,11 @@ export async function GET(
           total: 0,
           mode: "none",
           location: null,
-
           error: paginationResult.error,
         },
         {
           status: 400,
-
-          headers: noStoreHeaders(
-            rateLimit.headers
-          ),
+          headers: noStoreHeaders(rateLimit.headers),
         }
       );
     }
@@ -1035,14 +1016,56 @@ export async function GET(
       );
 
     /**
-     * -----------------------------------------
-     * READ LOCATION PARAMETERS
-     * -----------------------------------------
+     * `q` is the unified search parameter used
+     * by the updated Near Me page.
+     *
+     * `area` remains supported for older callers,
+     * but an area supplied this way must be valid.
      */
 
-    const area = clean(
+    const areaParam = clean(
       searchParams.get("area")
     );
+
+    const queryParam = clean(
+      searchParams.get("q")
+    );
+
+    const searchText =
+      queryParam || areaParam;
+
+    const queryWasProvided =
+      queryParam.length > 0;
+
+    const resolvedArea =
+      resolvePredefinedArea(searchText);
+
+    const hasTextSearch =
+      searchText.length > 0;
+
+    if (
+      searchText.length > MAX_SEARCH_LENGTH
+    ) {
+      return NextResponse.json(
+        {
+          businesses: [],
+          ...emptyPagination,
+          mode: "none",
+          location: null,
+          error: "Search text is too long.",
+        },
+        {
+          status: 400,
+          headers: noStoreHeaders(rateLimit.headers),
+        }
+      );
+    }
+
+    /**
+     * -----------------------------------------
+     * GPS PARAMETERS
+     * -----------------------------------------
+     */
 
     const latitudeRaw =
       searchParams.get("lat");
@@ -1052,42 +1075,6 @@ export async function GET(
 
     const longRaw =
       searchParams.get("long");
-
-    /**
-     * -----------------------------------------
-     * VALIDATE AREA INPUT
-     * -----------------------------------------
-     */
-
-    if (area.length > MAX_AREA_LENGTH) {
-      return NextResponse.json(
-        {
-          businesses: [],
-          ...emptyPagination,
-          mode: "none",
-          location: null,
-          error: "Area is too long.",
-        },
-        {
-          status: 400,
-
-          headers: noStoreHeaders(
-            rateLimit.headers
-          ),
-        }
-      );
-    }
-
-    /**
-     * -----------------------------------------
-     * LONGITUDE ALIAS VALIDATION
-     * -----------------------------------------
-     *
-     * Support both lng and long.
-     *
-     * Reject two populated aliases, but allow
-     * an empty lng parameter to fall back to long.
-     */
 
     if (
       lngRaw !== null &&
@@ -1101,16 +1088,12 @@ export async function GET(
           ...emptyPagination,
           mode: "none",
           location: null,
-
           error:
             "Provide longitude using either 'lng' or 'long', not both.",
         },
         {
           status: 400,
-
-          headers: noStoreHeaders(
-            rateLimit.headers
-          ),
+          headers: noStoreHeaders(rateLimit.headers),
         }
       );
     }
@@ -1134,12 +1117,6 @@ export async function GET(
       longitudeRaw !== null &&
       longitudeRaw.trim() !== "";
 
-    /**
-     * -----------------------------------------
-     * VALIDATE COORDINATE FORMAT
-     * -----------------------------------------
-     */
-
     if (
       (
         latitudeSupplied &&
@@ -1156,16 +1133,12 @@ export async function GET(
           ...emptyPagination,
           mode: "none",
           location: null,
-
           error:
             "Latitude and longitude must be valid numbers.",
         },
         {
           status: 400,
-
-          headers: noStoreHeaders(
-            rateLimit.headers
-          ),
+          headers: noStoreHeaders(rateLimit.headers),
         }
       );
     }
@@ -1186,21 +1159,17 @@ export async function GET(
     const hasLongitude =
       longitude !== null;
 
-    /**
-     * -----------------------------------------
-     * VALIDATE GPS PAIR
-     * -----------------------------------------
-     *
-     * Explicit area search keeps precedence
-     * when an area is provided.
-     */
-
     const hasPartialGps =
       hasLatitude !== hasLongitude;
 
+    /**
+     * A text search may be made independently.
+     * A GPS-only request must have both coordinates.
+     */
+
     if (
       hasPartialGps &&
-      !area
+      !hasTextSearch
     ) {
       return NextResponse.json(
         {
@@ -1208,25 +1177,15 @@ export async function GET(
           ...emptyPagination,
           mode: "none",
           location: null,
-
           error:
             "Both latitude and longitude are required for current-location search.",
         },
         {
           status: 400,
-
-          headers: noStoreHeaders(
-            rateLimit.headers
-          ),
+          headers: noStoreHeaders(rateLimit.headers),
         }
       );
     }
-
-    /**
-     * -----------------------------------------
-     * VALIDATE GEOGRAPHIC RANGES
-     * -----------------------------------------
-     */
 
     if (
       (
@@ -1244,16 +1203,12 @@ export async function GET(
           ...emptyPagination,
           mode: "none",
           location: null,
-
           error:
             "Latitude must be between -90 and 90, and longitude must be between -180 and 180.",
         },
         {
           status: 400,
-
-          headers: noStoreHeaders(
-            rateLimit.headers
-          ),
+          headers: noStoreHeaders(rateLimit.headers),
         }
       );
     }
@@ -1262,15 +1217,27 @@ export async function GET(
       isValidLatitude(latitude) &&
       isValidLongitude(longitude);
 
-    const searchMode = area
-      ? "area"
-      : hasValidGps
+    let searchMode: SearchMode;
+
+    if (hasTextSearch) {
+      if (resolvedArea) {
+        searchMode = "area";
+      } else if (queryWasProvided) {
+        // q can be a street or a registered street alias.
+        searchMode = "street";
+      } else {
+        // Legacy area= must refer to a predefined area.
+        searchMode = "invalid-area";
+      }
+    } else {
+      searchMode = hasValidGps
         ? "gps"
         : "none";
+    }
 
     /**
      * -----------------------------------------
-     * NO LOCATION PROVIDED
+     * NO SEARCH LOCATION
      * -----------------------------------------
      */
 
@@ -1283,30 +1250,40 @@ export async function GET(
           location: null,
         },
         {
-          headers: noStoreHeaders(
-            rateLimit.headers
-          ),
+          headers: noStoreHeaders(rateLimit.headers),
         }
+      );
+    }
+
+    if (searchMode === "invalid-area") {
+      return invalidAreaResponse(
+        rateLimit.headers,
+        page,
+        pageSize
       );
     }
 
     /**
      * -----------------------------------------
-     * EXPLICIT AREA SEARCH
+     * AREA SEARCH
      * -----------------------------------------
      *
-     * Area search is paginated in the database.
-     * It is separate from GPS street ranking.
+     * Resolve the input to its canonical area name.
+     * Match that area exactly, not with `contains`.
+     * This prevents a partial or unrelated area from
+     * returning results.
      */
 
     if (searchMode === "area") {
+      const area = resolvedArea as string;
+
       const areaWhere = {
         status: "ACTIVE",
         deletedAt: null,
 
         location: {
           area: {
-            contains: area,
+            equals: area,
             mode: "insensitive",
           },
         },
@@ -1322,39 +1299,30 @@ export async function GET(
 
         prisma.business.findMany({
           where: areaWhere,
-
           select: nearMeBusinessSelect,
-
           skip,
-
           take: pageSize,
 
           orderBy: [
-            {
-              onboardedAt: "desc",
-            },
-            {
-              id: "asc",
-            },
+            { onboardedAt: "desc" },
+            { id: "asc" },
           ],
         }),
       ]);
 
       const formattedBusinesses =
-        baseBusinesses.map(
-          (business) =>
-            buildRankedBusiness(
-              business,
-              4,
-              "whole-area",
-              null,
-
-              business.location
-                ? getBusinessStreet(
-                    business.location
-                  )
-                : null
-            )
+        baseBusinesses.map((business) =>
+          buildRankedBusiness(
+            business,
+            4,
+            "whole-area",
+            null,
+            business.location
+              ? getBusinessStreet(
+                  business.location
+                )
+              : null
+          )
         );
 
       return NextResponse.json(
@@ -1371,15 +1339,113 @@ export async function GET(
           ),
 
           mode: "area",
-
           ranking: "whole-area",
-
           location: area,
         },
         {
-          headers: noStoreHeaders(
-            rateLimit.headers
+          headers: noStoreHeaders(rateLimit.headers),
+        }
+      );
+    }
+
+    /**
+     * -----------------------------------------
+     * STREET SEARCH
+     * -----------------------------------------
+     *
+     * Search stored business street names.
+     * The alias map and normalization make matches
+     * case-insensitive and support configured aliases.
+     *
+     * These are text-search results, not GPS proximity
+     * results, so no distance is inferred.
+     */
+
+    if (searchMode === "street") {
+      const baseBusinesses =
+        await prisma.business.findMany({
+          where:
+            activeBusinessesWithLocationWhere,
+
+          select: nearMeBusinessSelect,
+
+          orderBy: [
+            { onboardedAt: "desc" },
+            { id: "asc" },
+          ],
+        });
+
+      const matching =
+        baseBusinesses.flatMap(
+          (business): RankedBusiness[] => {
+            const location =
+              business.location;
+
+            if (!location) {
+              return [];
+            }
+
+            const businessStreet =
+              getBusinessStreet(location);
+
+            if (
+              !businessStreet ||
+              !streetMatchesSearch(
+                businessStreet,
+                searchText
+              )
+            ) {
+              return [];
+            }
+
+            return [
+              buildRankedBusiness(
+                business,
+                1,
+                "same-street",
+                null,
+                businessStreet
+              ),
+            ];
+          }
+        );
+
+      if (matching.length === 0) {
+        return invalidAreaResponse(
+          rateLimit.headers,
+          page,
+          pageSize
+        );
+      }
+
+      const total = matching.length;
+
+      return NextResponse.json(
+        {
+          businesses:
+            paginateRankedBusinesses(
+              matching,
+              page,
+              pageSize
+            ),
+
+          ...paginationMetadata(
+            total,
+            page,
+            pageSize
           ),
+
+          mode: "street",
+          ranking: "street-match",
+
+          location: {
+            type: "search",
+            street: searchText,
+            area: null,
+          },
+        },
+        {
+          headers: noStoreHeaders(rateLimit.headers),
         }
       );
     }
@@ -1403,9 +1469,7 @@ export async function GET(
      */
 
     let reverseLocation: Awaited<
-      ReturnType<
-        typeof reverseGeocodeLocation
-      >
+      ReturnType<typeof reverseGeocodeLocation>
     >;
 
     try {
@@ -1425,7 +1489,6 @@ export async function GET(
           businesses: [],
           ...emptyPagination,
           mode: "gps",
-
           ranking: "street-area",
 
           location: {
@@ -1442,10 +1505,7 @@ export async function GET(
         },
         {
           status: 503,
-
-          headers: noStoreHeaders(
-            rateLimit.headers
-          ),
+          headers: noStoreHeaders(rateLimit.headers),
         }
       );
     }
@@ -1460,14 +1520,8 @@ export async function GET(
 
     /**
      * -----------------------------------------
-     * NO STREET DETECTED
+     * GPS FALLBACK: NO STREET DETECTED
      * -----------------------------------------
-     *
-     * If the provider returns an area but no
-     * street, fall back to Whole Area.
-     *
-     * Calculate physical distance when possible,
-     * while keeping every result at ranking 4.
      */
 
     if (!userStreet) {
@@ -1477,7 +1531,6 @@ export async function GET(
             businesses: [],
             ...emptyPagination,
             mode: "gps",
-
             ranking: "street-area",
 
             location: {
@@ -1489,13 +1542,10 @@ export async function GET(
             radiusKm,
             adjacentStreetMaxKm,
 
-            reason:
-              "street-and-area-not-found",
+            reason: "street-and-area-not-found",
           },
           {
-            headers: noStoreHeaders(
-              rateLimit.headers
-            ),
+            headers: noStoreHeaders(rateLimit.headers),
           }
         );
       }
@@ -1508,12 +1558,8 @@ export async function GET(
           select: nearMeBusinessSelect,
 
           orderBy: [
-            {
-              onboardedAt: "desc",
-            },
-            {
-              id: "asc",
-            },
+            { onboardedAt: "desc" },
+            { id: "asc" },
           ],
         });
 
@@ -1524,11 +1570,8 @@ export async function GET(
               const location =
                 business.location;
 
-              if (!location) {
-                return [];
-              }
-
               if (
+                !location ||
                 !areasMatch(
                   location.area,
                   userArea
@@ -1555,9 +1598,7 @@ export async function GET(
               ];
             }
           )
-          .sort(
-            compareRankedBusinesses
-          );
+          .sort(compareRankedBusinesses);
 
       const total =
         fallbackResults.length;
@@ -1578,7 +1619,6 @@ export async function GET(
           ),
 
           mode: "gps",
-
           ranking: "whole-area",
 
           location: {
@@ -1589,13 +1629,10 @@ export async function GET(
 
           radiusKm,
           adjacentStreetMaxKm,
-
           reason: "street-not-found",
         },
         {
-          headers: noStoreHeaders(
-            rateLimit.headers
-          ),
+          headers: noStoreHeaders(rateLimit.headers),
         }
       );
     }
@@ -1605,13 +1642,8 @@ export async function GET(
      * LOAD GPS CANDIDATES
      * -----------------------------------------
      *
-     * Do not apply database pagination here.
-     *
-     * All candidates must be classified and
-     * sorted before selecting the requested page.
-     *
-     * Otherwise, higher-ranking businesses could
-     * be missed by an early database limit.
+     * Do not paginate the database results yet.
+     * All candidates must be ranked and sorted first.
      */
 
     const baseBusinesses =
@@ -1622,18 +1654,14 @@ export async function GET(
         select: nearMeBusinessSelect,
 
         orderBy: [
-          {
-            onboardedAt: "desc",
-          },
-          {
-            id: "asc",
-          },
+          { onboardedAt: "desc" },
+          { id: "asc" },
         ],
       });
 
     /**
      * -----------------------------------------
-     * CLASSIFY BUSINESSES
+     * CLASSIFY AND RANK BUSINESSES
      * -----------------------------------------
      */
 
@@ -1649,9 +1677,7 @@ export async function GET(
             }
 
             const businessStreet =
-              getBusinessStreet(
-                location
-              );
+              getBusinessStreet(location);
 
             const sameArea =
               userArea !== null &&
@@ -1660,10 +1686,6 @@ export async function GET(
                 userArea
               );
 
-            /**
-             * Determine distance for sorting
-             * and distance-based ranking levels.
-             */
             const distanceKmRaw =
               getBusinessDistanceKm(
                 latitude as number,
@@ -1672,27 +1694,19 @@ export async function GET(
               );
 
             /**
-             * -------------------------------------
              * 1. SAME STREET
-             * -------------------------------------
              *
-             * If the buyer's area is known, the
-             * business must also belong to that
-             * area. This prevents unrelated roads
-             * with identical names from matching.
-             *
-             * GPS distance does not determine
-             * Same Street membership.
+             * Compare canonical street names and
+             * registered aliases. When the reverse
+             * geocoder supplies an area, require the
+             * business to match that area as well.
              */
 
-            const sameStreetName =
+            const sameStreet =
               streetsMatch(
                 businessStreet,
                 userStreet
-              );
-
-            const sameStreet =
-              sameStreetName &&
+              ) &&
               (
                 userArea === null ||
                 sameArea
@@ -1711,17 +1725,10 @@ export async function GET(
             }
 
             /**
-             * -------------------------------------
              * 2. ADJACENT STREET
-             * -------------------------------------
              *
-             * Requirements:
-             * - Different street
-             * - Same area
-             * - Within the configured threshold
-             *
-             * This uses proximity as a V1
-             * approximation of street adjacency.
+             * V1 proximity approximation:
+             * same area, different street, within threshold.
              */
 
             if (
@@ -1742,14 +1749,10 @@ export async function GET(
             }
 
             /**
-             * -------------------------------------
              * 3. NEARBY STREET
-             * -------------------------------------
              *
-             * Requirements:
-             * - Same area
-             * - Beyond the adjacent threshold
-             * - Within the Near Me radius
+             * Same area and within the configured
+             * radius, beyond the adjacent threshold.
              */
 
             if (
@@ -1771,14 +1774,10 @@ export async function GET(
             }
 
             /**
-             * -------------------------------------
              * 4. WHOLE AREA
-             * -------------------------------------
-             *
-             * Whole Area is not constrained by
-             * the Near Me radius.
              *
              * A matching area is sufficient.
+             * This tier is not limited by the radius.
              */
 
             if (sameArea) {
@@ -1793,16 +1792,10 @@ export async function GET(
               ];
             }
 
-            /**
-             * The business is outside the
-             * applicable ranking levels.
-             */
             return [];
           }
         )
-        .sort(
-          compareRankedBusinesses
-        );
+        .sort(compareRankedBusinesses);
 
     /**
      * -----------------------------------------
@@ -1810,26 +1803,16 @@ export async function GET(
      * -----------------------------------------
      */
 
-    const total =
-      rankedResults.length;
-
-    const paginatedBusinesses =
-      paginateRankedBusinesses(
-        rankedResults,
-        page,
-        pageSize
-      );
-
-    /**
-     * -----------------------------------------
-     * GPS RESPONSE
-     * -----------------------------------------
-     */
+    const total = rankedResults.length;
 
     return NextResponse.json(
       {
         businesses:
-          paginatedBusinesses,
+          paginateRankedBusinesses(
+            rankedResults,
+            page,
+            pageSize
+          ),
 
         ...paginationMetadata(
           total,
@@ -1852,9 +1835,7 @@ export async function GET(
         adjacentStreetMaxKm,
       },
       {
-        headers: noStoreHeaders(
-          rateLimit.headers
-        ),
+        headers: noStoreHeaders(rateLimit.headers),
       }
     );
   } catch (error) {
@@ -1869,16 +1850,11 @@ export async function GET(
         total: 0,
         mode: "none",
         location: null,
-
-        error:
-          "Unable to load nearby businesses.",
+        error: "Unable to load nearby businesses.",
       },
       {
         status: 500,
-
-        headers: noStoreHeaders(
-          rateLimit.headers
-        ),
+        headers: noStoreHeaders(),
       }
     );
   }

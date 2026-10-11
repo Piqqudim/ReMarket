@@ -1205,14 +1205,15 @@ function SearchPageView({
   }
 
   return (
-    <main className="min-h-dvh overflow-x-clip bg-[#FFF7ED]">
-      <div className="mx-auto min-h-dvh w-full min-w-0 max-w-[1500px] px-2 py-2 sm:px-5 sm:py-5">
-        <div className="min-h-[calc(100dvh-16px)] min-w-0 overflow-hidden rounded-[16px] border border-[#FF5A36] bg-[#FFFDFC] shadow-sm sm:min-h-[calc(100dvh-40px)] sm:rounded-[22px]">
+    <main className="min-h-dvh w-full overflow-x-clip bg-[#FFF7ED]">
+      {/* Full-width on mobile; retain the framed desktop shell. */}
+
+      <div className="mx-auto min-h-dvh w-full min-w-0 max-w-[1500px] px-0 py-0 sm:px-5 sm:py-5">
+        <div className="min-h-dvh w-full min-w-0 overflow-hidden rounded-none border-0 bg-[#FFFDFC] shadow-none sm:min-h-[calc(100dvh-40px)] sm:rounded-[22px] sm:border sm:border-[#FF5A36] sm:shadow-sm">
 
           {/* HEADER */}
 
           <header className="flex h-[62px] min-w-0 items-center justify-between gap-2 border-b border-[#EAE6DF] bg-white px-3 sm:h-[66px] sm:px-6">
-
             <Link
               href="/"
               className="flex min-w-0 shrink-0 items-center gap-2 sm:gap-2.5"
@@ -2496,11 +2497,9 @@ export default function SearchPage() {
   return (
     <Suspense
       fallback={
-        <main className="min-h-dvh overflow-x-clip bg-[#FFF7ED]">
-          <div className="mx-auto flex min-h-dvh w-full max-w-[1500px] items-center justify-center px-3 py-3 sm:px-5 sm:py-5">
-            <div className="rounded-xl border border-[#E8E4DE] bg-white px-5 py-4 text-xs text-gray-500 shadow-sm">
-              Loading search...
-            </div>
+        <main className="flex min-h-dvh w-full items-center justify-center overflow-x-clip bg-[#FFFDFC] px-4">
+          <div className="rounded-xl border border-[#E8E4DE] bg-white px-5 py-4 text-xs text-gray-500 shadow-sm">
+            Loading search...
           </div>
         </main>
       }
