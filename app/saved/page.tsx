@@ -96,15 +96,12 @@ function getAvailabilityDot(
   }
 }
 
-/*
- * -----------------------------------------
- * SAVED BUSINESS SNAPSHOT
- * -----------------------------------------
+/**
+ * Creates a snapshot of saved business IDs.
  *
- * Used to detect changes to the saved list
- * while an API validation request is running.
+ * Used to detect changes while server validation
+ * is running.
  */
-
 function getSavedBusinessIdsSignature(
   businesses: SavedBusiness[]
 ): string {
@@ -115,19 +112,15 @@ function getSavedBusinessIdsSignature(
   );
 }
 
-/*
- * -----------------------------------------
- * VALIDATE SAVED BUSINESSES
- * -----------------------------------------
+/**
+ * Validate locally saved businesses.
  *
- * Remove businesses only when the public API
- * explicitly reports that the resource is gone.
+ * Only remove businesses when the API explicitly
+ * responds with 404 or 410.
  *
- * Temporary server errors, rate limits, network
- * failures and unexpected response formats must
- * not erase locally saved businesses.
+ * Network failures, rate limits, server failures
+ * and unexpected responses preserve saved items.
  */
-
 async function validateSavedBusinesses(
   saved: SavedBusiness[]
 ): Promise<SavedBusiness[]> {
@@ -148,13 +141,6 @@ async function validateSavedBusinesses(
           }
         );
 
-        /*
-         * The API uses 404 for a business that
-         * is no longer publicly available.
-         *
-         * 410 also explicitly indicates that
-         * a resource is gone.
-         */
         if (
           response.status === 404 ||
           response.status === 410
@@ -162,23 +148,22 @@ async function validateSavedBusinesses(
           return null;
         }
 
-        /*
-         * Do not treat every unsuccessful
-         * response as a deleted business.
-         *
-         * For example, a 500 or 429 must not
-         * cause the saved item to be removed.
-         */
         if (!response.ok) {
           return business;
         }
 
-        const data = await response.json();
+        let data: {
+          business?: {
+            id?: unknown;
+          };
+        } | null = null;
 
-        /*
-         * Unexpected successful responses should
-         * not cause saved data to be deleted.
-         */
+        try {
+          data = await response.json();
+        } catch {
+          return business;
+        }
+
         if (
           data?.business?.id !== business.id
         ) {
@@ -191,10 +176,6 @@ async function validateSavedBusinesses(
 
         return business;
       } catch (error) {
-        /*
-         * Preserve the local business when a
-         * network problem prevents validation.
-         */
         console.error(
           `Unable to validate saved business ${business.id}:`,
           error
@@ -213,46 +194,30 @@ async function validateSavedBusinesses(
   );
 }
 
-/*
- * -----------------------------------------
- * SAVED PAGE
- * -----------------------------------------
- */
-
 export default function SavedPage() {
   const [savedBusinesses, setSavedBusinesses] =
     useState<SavedBusiness[]>([]);
 
-  /*
-   * loaded means the local list has been read.
-   * It does not mean API validation has ended.
-   */
   const [loaded, setLoaded] = useState(false);
 
   const [checkingSaved, setCheckingSaved] =
     useState(false);
 
-  /*
-   * Every new load receives a newer request ID.
-   * Older requests cannot overwrite newer state.
+  /**
+   * Each load receives a new request ID so
+   * stale requests cannot overwrite newer state.
    */
   const validationRunRef = useRef(0);
 
-  /*
-   * -----------------------------------------
-   * LOAD SAVED BUSINESSES
-   * -----------------------------------------
+  /**
+   * Load local saved businesses immediately,
+   * then validate them against the API.
    */
-
   const loadSavedBusinesses = useCallback(
     async function loadSavedBusinesses() {
       const runId =
         ++validationRunRef.current;
 
-      /*
-       * Read and display the locally saved list
-       * before starting network validation.
-       */
       const saved = getSavedBusinesses();
 
       setSavedBusinesses(saved);
@@ -273,9 +238,7 @@ export default function SavedPage() {
           await validateSavedBusinesses(saved);
 
         /*
-         * A newer load or saved-list change has
-         * occurred while this request was running.
-         * Do not let this stale result overwrite it.
+         * Ignore stale validation results.
          */
         if (
           runId !== validationRunRef.current
@@ -284,10 +247,8 @@ export default function SavedPage() {
         }
 
         /*
-         * Check the current local list again before
-         * updating storage. This avoids restoring
-         * businesses that the user has since removed
-         * or overwriting a more recent saved list.
+         * Do not overwrite a saved list that changed
+         * while API validation was running.
          */
         const latestSaved =
           getSavedBusinesses();
@@ -298,16 +259,15 @@ export default function SavedPage() {
           );
 
         if (
-          latestSignature !==
-          originalSignature
+          latestSignature !== originalSignature
         ) {
           setSavedBusinesses(latestSaved);
           return;
         }
 
         /*
-         * Persist the cleanup only when the API
-         * explicitly identified unavailable records.
+         * Persist cleanup only when the API explicitly
+         * identified unavailable businesses.
          */
         const removedStaleBusinesses =
           validBusinesses.length !== saved.length;
@@ -319,11 +279,6 @@ export default function SavedPage() {
               JSON.stringify(validBusinesses)
             );
           } catch (storageError) {
-            /*
-             * A storage failure should not prevent
-             * the current page from displaying the
-             * businesses that passed validation.
-             */
             console.error(
               "Unable to update saved businesses in local storage:",
               storageError
@@ -333,10 +288,6 @@ export default function SavedPage() {
 
         setSavedBusinesses(validBusinesses);
       } catch (error) {
-        /*
-         * Keep the latest local list if validation
-         * unexpectedly fails.
-         */
         console.error(
           "Unable to validate saved businesses:",
           error
@@ -351,8 +302,8 @@ export default function SavedPage() {
         }
       } finally {
         /*
-         * An older run must not stop the loading
-         * indicator belonging to a newer run.
+         * An old run must not stop a newer run's
+         * loading indicator.
          */
         if (
           runId === validationRunRef.current
@@ -365,12 +316,9 @@ export default function SavedPage() {
     []
   );
 
-  /*
-   * -----------------------------------------
-   * INITIAL LOAD AND CROSS-PAGE SYNC
-   * -----------------------------------------
+  /**
+   * Initial load and cross-page synchronization.
    */
-
   useEffect(() => {
     function handleSavedBusinessesChanged() {
       void loadSavedBusinesses();
@@ -400,19 +348,15 @@ export default function SavedPage() {
       );
 
       /*
-       * Invalidate outstanding requests when
-       * this page unmounts.
+       * Invalidate outstanding requests on unmount.
        */
       validationRunRef.current += 1;
     };
   }, [loadSavedBusinesses]);
 
-  /*
-   * -----------------------------------------
-   * REMOVE A SAVED BUSINESS
-   * -----------------------------------------
+  /**
+   * Remove a saved business.
    */
-
   function removeSaved(id: string) {
     removeSavedBusiness(id);
 
@@ -424,8 +368,14 @@ export default function SavedPage() {
   }
 
   return (
-    <div className="min-h-screen bg-[#FFF7ED] px-3 py-3 sm:px-4 lg:px-6">
-      <div className="mx-auto min-h-[calc(100vh-24px)] max-w-[1500px] overflow-hidden rounded-[22px] border border-[#FF5A36] bg-[#FFFDFC] shadow-[0_8px_30px_rgba(159,45,24,0.08)]">
+    <div className="min-h-dvh w-full bg-[#FFF7ED]">
+      {/*
+        Full-viewport page shell.
+
+        Removed the old outer page padding, max-width,
+        rounded frame and calculated viewport height.
+      */}
+      <div className="min-h-dvh w-full bg-[#FFFDFC]">
 
         {/* HEADER */}
 
@@ -501,7 +451,13 @@ export default function SavedPage() {
           </div>
         </header>
 
-        <div className="flex min-h-[calc(100vh-90px)]">
+        {/*
+          Full-height content row.
+
+          The 66px header is accounted for without
+          assuming the browser's older 100vh behavior.
+        */}
+        <div className="flex min-h-[calc(100dvh-66px)]">
 
           {/* DESKTOP SIDEBAR */}
 
@@ -573,8 +529,7 @@ export default function SavedPage() {
                   </h1>
 
                   <p className="mt-1 text-sm text-[#756B61]">
-                    Businesses you want to come
-                    back to.
+                    Businesses you want to come back to.
                   </p>
                 </div>
 
@@ -711,7 +666,7 @@ export default function SavedPage() {
                                   )
                                 }
                                 aria-label={`Remove ${business.name} from saved`}
-                                className="ml-1 flex h-9 w-9 shrink-0 items-center justify-center rounded-xl text-[#A39A91] transition hover:bg-[#FFF0D9] hover:text-[#9F2D18]"
+                                className="ml-1 flex h-9 w-9 shrink-0 items-center justify-center rounded-xl text-[#A39A91] transition hover:bg-[#FFF0D9] hover:text-[#9F2D18] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#FF5A36]"
                               >
                                 <Trash2 size={17} />
                               </button>

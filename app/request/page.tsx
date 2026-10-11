@@ -169,10 +169,6 @@ export default function RequestPage() {
    * -----------------------------------------
    * LOAD ACTIVE BACKEND CATEGORIES
    * -----------------------------------------
-   *
-   * The backend Category table is authoritative.
-   * Categories added through Admin can appear here
-   * without hardcoding them into this page.
    */
 
   useEffect(() => {
@@ -248,10 +244,6 @@ export default function RequestPage() {
    * -----------------------------------------
    * IMAGE UPLOAD
    * -----------------------------------------
-   *
-   * Client validation improves feedback.
-   * The server must still enforce file type
-   * and size restrictions independently.
    */
 
   async function handleImageUpload(
@@ -265,8 +257,7 @@ export default function RequestPage() {
     }
 
     /*
-     * Allow selecting the same file again after
-     * either success or failure.
+     * Allow selecting the same file again.
      */
     input.value = "";
 
@@ -498,8 +489,13 @@ export default function RequestPage() {
   }
 
   return (
-    <div className="min-h-screen bg-[#FFF7ED] px-3 py-3 sm:px-5 sm:py-5">
-      <div className="mx-auto flex min-h-[calc(100vh-24px)] max-w-[1500px] flex-col overflow-hidden rounded-[22px] border border-[#FF5A36] bg-[#FFFDFC] shadow-sm sm:min-h-[calc(100vh-40px)]">
+    /*
+     * FIX: Full-width, full-viewport shell.
+     * Removed page padding, max-width, border,
+     * rounded outer frame and 100vh subtraction.
+     */
+    <div className="min-h-dvh w-full bg-[#FFF7ED]">
+      <div className="flex min-h-dvh w-full flex-col bg-[#FFFDFC]">
 
         {/* HEADER */}
 
@@ -574,7 +570,12 @@ export default function RequestPage() {
           </div>
         </header>
 
-        <div className="flex flex-1">
+        {/*
+         * FIX: The content row now fills the available
+         * viewport height below the header.
+         * It can also grow naturally when content is taller.
+         */}
+        <div className="flex min-h-[calc(100dvh-66px)] flex-1">
 
           {/* DESKTOP SIDEBAR */}
 
@@ -623,7 +624,7 @@ export default function RequestPage() {
 
           {/* MAIN CONTENT */}
 
-          <main className="min-w-0 flex-1 overflow-y-auto pb-28 lg:pb-8">
+          <main className="min-w-0 flex-1 pb-28 lg:pb-8">
             {createdRequest ? (
               <SuccessView
                 request={createdRequest}
@@ -665,6 +666,7 @@ export default function RequestPage() {
                   {error && (
                     <div
                       role="alert"
+                      aria-live="polite"
                       className="mb-5 rounded-xl border border-[#F5C4B3] bg-[#FFE0D6] px-4 py-3 text-sm font-medium text-[#9F2D18]"
                     >
                       {error}
@@ -815,6 +817,7 @@ export default function RequestPage() {
                       <div className="relative">
                         <MapPin
                           size={17}
+                          aria-hidden="true"
                           className="absolute left-4 top-1/2 -translate-y-1/2 text-[#8A8178]"
                         />
 
@@ -933,7 +936,7 @@ export default function RequestPage() {
                           name="request-image"
                           type="file"
                           accept="image/jpeg,image/png,image/webp"
-                          disabled={uploading}
+                          disabled={uploading || loading}
                           onChange={handleImageUpload}
                           className="sr-only"
                         />
@@ -953,6 +956,7 @@ export default function RequestPage() {
                       <div className="relative">
                         <Phone
                           size={17}
+                          aria-hidden="true"
                           className="absolute left-4 top-1/2 -translate-y-1/2 text-[#9F2D18]"
                         />
 

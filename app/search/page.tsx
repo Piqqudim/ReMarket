@@ -104,6 +104,7 @@ type Product = {
  * Categories are string arrays in the current
  * /api/search response.
  */
+
 type BusinessLocation = {
   id?: string;
   area?: string | null;
@@ -436,9 +437,7 @@ function getSavedBusinessesServerSnapshot(): string {
  *
  * Filter changes remount the view.
  *
- * Changing only the page does not force another
- * API request because the currently loaded result
- * set is paginated locally in this version.
+ * Changing the page retains the applied filters.
  */
 
 function SearchPageContent() {
@@ -484,6 +483,7 @@ function SearchPageContent() {
   /**
    * Normalize invalid page values in the URL.
    */
+
   useEffect(() => {
     const rawPage =
       searchParams.get("page");
@@ -559,6 +559,7 @@ function SearchPageView({
   /**
    * Draft filter values.
    */
+
   const [query, setQuery] = useState(
     initialQuery
   );
@@ -610,6 +611,7 @@ function SearchPageView({
   /**
    * Applied filters are always sourced from the URL.
    */
+
   const appliedFilters: SearchFilterValues = {
     query: initialQuery,
     category: initialCategory,
@@ -667,6 +669,7 @@ function SearchPageView({
     /**
      * A new query or filter starts at page 1.
      */
+
     const queryString = params.toString();
 
     router.push(
@@ -777,11 +780,11 @@ function SearchPageView({
    * LOAD SEARCH RESULTS
    * -----------------------------------------
    *
-   * The current search API returns the complete
-   * ranked product and business result arrays.
+   * The current search API returns the ranked
+   * product and business result arrays.
    *
-   * This component slices those arrays locally
-   * for pagination.
+   * This component paginates the combined result
+   * collection locally.
    */
 
   useEffect(() => {
@@ -1041,37 +1044,48 @@ function SearchPageView({
 
   /**
    * -----------------------------------------
-   * CLIENT-SIDE PAGINATION
+   * COMBINED CLIENT-SIDE PAGINATION
    * -----------------------------------------
+   *
+   * Each page contains at most PAGE_SIZE results
+   * across both result collections.
+   *
+   * Products appear first, followed by additional
+   * businesses. This preserves their separate
+   * visual sections without showing up to 24
+   * results on a single page.
    */
 
-  const productTotalPages = Math.ceil(
-    products.length / PAGE_SIZE
-  );
+  const totalProductResults =
+    products.length;
 
-  const businessTotalPages = Math.ceil(
-    additionalBusinesses.length / PAGE_SIZE
-  );
+  const totalAdditionalBusinesses =
+    additionalBusinesses.length;
+
+  const totalResults =
+    totalProductResults +
+    totalAdditionalBusinesses;
 
   const totalPages = Math.max(
     1,
-    productTotalPages,
-    businessTotalPages
+    Math.ceil(totalResults / PAGE_SIZE)
   );
 
   /**
    * Keep the visible page within the result range.
    */
+
   const currentPage = Math.min(
     Math.max(1, initialPage),
     totalPages
   );
 
   /**
-   * If the filters change the available result
-   * count, move an invalid page back to the last
-   * valid page.
+   * If the available result count changes,
+   * move an invalid page back to the last valid
+   * page.
    */
+
   useEffect(() => {
     if (
       loading ||
@@ -1093,43 +1107,71 @@ function SearchPageView({
   const pageStart =
     (currentPage - 1) * PAGE_SIZE;
 
+  const pageEnd =
+    Math.min(
+      pageStart + PAGE_SIZE,
+      totalResults
+    );
+
+  /**
+   * Products occupy the beginning of the
+   * combined result collection.
+   */
+
   const displayedProducts = useMemo(
     () =>
       products.slice(
         pageStart,
-        pageStart + PAGE_SIZE
+        Math.min(
+          pageEnd,
+          totalProductResults
+        )
       ),
     [
       products,
       pageStart,
+      pageEnd,
+      totalProductResults,
     ]
   );
 
+  /**
+   * Additional businesses follow products
+   * in the combined result collection.
+   */
+
   const displayedBusinesses = useMemo(
-    () =>
-      additionalBusinesses.slice(
-        pageStart,
-        pageStart + PAGE_SIZE
-      ),
+    () => {
+      const businessStart = Math.max(
+        0,
+        pageStart - totalProductResults
+      );
+
+      const businessEnd = Math.max(
+        0,
+        pageEnd - totalProductResults
+      );
+
+      return additionalBusinesses.slice(
+        businessStart,
+        businessEnd
+      );
+    },
     [
       additionalBusinesses,
       pageStart,
+      pageEnd,
+      totalProductResults,
     ]
   );
 
-  const totalProductResults =
-    products.length;
-
-  const totalAdditionalBusinesses =
-    additionalBusinesses.length;
-
   const hasResults =
-    totalProductResults > 0 ||
-    totalAdditionalBusinesses > 0;
+    totalResults > 0;
 
   /**
    * Count applied filters, not draft changes.
    */
+
   const activeFilterCount =
     Number(Boolean(initialCategory)) +
     Number(Boolean(initialLocation)) +
@@ -1163,32 +1205,35 @@ function SearchPageView({
   }
 
   return (
-    <main className="min-h-dvh bg-[#FFF7ED]">
-      <div className="mx-auto min-h-dvh w-full max-w-[1500px] px-3 py-3 sm:px-5 sm:py-5">
-        <div className="min-h-[calc(100dvh-24px)] overflow-hidden rounded-[18px] border border-[#FF5A36] bg-[#FFFDFC] shadow-sm sm:min-h-[calc(100dvh-40px)] sm:rounded-[22px]">
+    <main className="min-h-dvh overflow-x-clip bg-[#FFF7ED]">
+      <div className="mx-auto min-h-dvh w-full min-w-0 max-w-[1500px] px-2 py-2 sm:px-5 sm:py-5">
+        <div className="min-h-[calc(100dvh-16px)] min-w-0 overflow-hidden rounded-[16px] border border-[#FF5A36] bg-[#FFFDFC] shadow-sm sm:min-h-[calc(100dvh-40px)] sm:rounded-[22px]">
 
           {/* HEADER */}
-          <header className="flex h-[64px] items-center justify-between border-b border-[#EAE6DF] bg-white px-4 sm:px-6 lg:h-[66px]">
+
+          <header className="flex h-[62px] min-w-0 items-center justify-between gap-2 border-b border-[#EAE6DF] bg-white px-3 sm:h-[66px] sm:px-6">
+
             <Link
               href="/"
-              className="flex shrink-0 items-center gap-2.5"
+              className="flex min-w-0 shrink-0 items-center gap-2 sm:gap-2.5"
             >
-              <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-[#FF5A36] text-white">
-                <Store className="h-5 w-5" />
+              <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-[#FF5A36] text-white sm:h-10 sm:w-10">
+                <Store className="h-4 w-4 sm:h-5 sm:w-5" />
               </div>
 
-              <div>
-                <p className="text-sm font-bold tracking-tight">
+              <div className="min-w-0">
+                <p className="truncate text-[13px] font-bold tracking-tight sm:text-sm">
                   ReMarket
                 </p>
 
-                <p className="text-[10px] leading-none text-muted">
+                <p className="text-[9px] leading-none text-muted sm:text-[10px]">
                   Find it nearby
                 </p>
               </div>
             </Link>
 
             {/* DESKTOP NAVIGATION */}
+
             <nav className="hidden items-center gap-1 lg:flex">
               {NAV_ITEMS.map((item) => (
                 <button
@@ -1213,15 +1258,21 @@ function SearchPageView({
               ))}
             </nav>
 
-            <div className="flex min-w-0 items-center gap-2 sm:gap-3">
+            <div className="flex min-w-0 shrink-0 items-center gap-1.5 sm:gap-3">
               <button
                 type="button"
                 onClick={() =>
                   router.push("/request")
                 }
-                className="rounded-xl bg-[#FF5A36] px-3 py-2.5 text-[10px] font-bold text-white shadow-sm transition hover:opacity-90 sm:px-4 sm:text-xs"
+                className="shrink-0 rounded-xl bg-[#FF5A36] px-2.5 py-2.5 text-[10px] font-bold text-white shadow-sm transition hover:opacity-90 sm:px-4 sm:text-xs"
               >
-                Request something
+                <span className="sm:hidden">
+                  Request
+                </span>
+
+                <span className="hidden sm:inline">
+                  Request something
+                </span>
               </button>
 
               <button
@@ -1234,9 +1285,10 @@ function SearchPageView({
             </div>
           </header>
 
-          <div className="flex">
+          <div className="flex min-w-0">
 
             {/* SIDEBAR */}
+
             <aside className="hidden w-[190px] shrink-0 border-r border-[#EAE6DF] bg-[#FCFAF6] px-3 py-5 lg:block">
               <nav className="space-y-1">
                 {NAV_ITEMS.map((item) => {
@@ -1255,7 +1307,7 @@ function SearchPageView({
                           : "text-gray-700"
                       }`}
                     >
-                      <Icon className="h-[18px] w-[18px]" />
+                      <Icon className="h-[18px] w-[18px] shrink-0" />
 
                       <span>{item.label}</span>
                     </button>
@@ -1288,7 +1340,7 @@ function SearchPageView({
                               : item.name,
                           })
                         }
-                        className={`flex w-full items-center gap-3 rounded-xl px-3 py-2 text-left transition hover:bg-white ${
+                        className={`flex w-full min-w-0 items-center gap-3 rounded-xl px-3 py-2 text-left transition hover:bg-white ${
                           active
                             ? "bg-white text-[#9F2D18]"
                             : "text-gray-700"
@@ -1317,7 +1369,7 @@ function SearchPageView({
                     }
                     className="flex w-full items-center gap-3 rounded-xl px-3 py-2 text-left transition hover:bg-white"
                   >
-                    <span className="flex h-7 w-7 items-center justify-center rounded-full bg-gray-100">
+                    <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-gray-100">
                       <MoreHorizontal className="h-4 w-4 text-gray-500" />
                     </span>
 
@@ -1330,17 +1382,19 @@ function SearchPageView({
             </aside>
 
             {/* MAIN CONTENT */}
+
             <div className="min-w-0 flex-1">
-              <div className="px-4 pb-24 pt-4 sm:px-6 sm:pt-6 lg:px-6 lg:pb-8">
+              <div className="min-w-0 px-3 pb-24 pt-3 sm:px-6 sm:pt-6 lg:px-6 lg:pb-8">
 
                 {/* HERO */}
-                <section className="rounded-[18px] bg-[#FF5A36] px-5 py-6 text-white shadow-soft sm:px-7 sm:py-7">
-                  <div className="max-w-[720px]">
+
+                <section className="min-w-0 rounded-[18px] bg-[#FF5A36] px-4 py-5 text-white shadow-soft sm:px-7 sm:py-7">
+                  <div className="min-w-0 max-w-[720px]">
                     <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-white/75">
                       Search ReMarket
                     </p>
 
-                    <h1 className="mt-2 text-[26px] font-bold leading-tight sm:text-[30px]">
+                    <h1 className="mt-2 text-[24px] font-bold leading-tight sm:text-[30px]">
                       Find what you need
                     </h1>
 
@@ -1350,9 +1404,9 @@ function SearchPageView({
 
                     <form
                       onSubmit={submitSearch}
-                      className="mt-5 flex h-[48px] w-full items-center rounded-full bg-white p-1.5 shadow-sm"
+                      className="mt-5 flex h-[48px] w-full min-w-0 items-center rounded-full bg-white p-1.5 shadow-sm"
                     >
-                      <Search className="ml-3 h-[18px] w-[18px] shrink-0 text-gray-500" />
+                      <Search className="ml-2 h-[18px] w-[18px] shrink-0 text-gray-500 sm:ml-3" />
 
                       <input
                         value={query}
@@ -1361,12 +1415,12 @@ function SearchPageView({
                         }
                         placeholder="What are you looking for?"
                         aria-label="Search products and businesses"
-                        className="min-w-0 flex-1 bg-transparent px-3 text-xs text-gray-800 outline-none placeholder:text-gray-400"
+                        className="min-w-0 flex-1 bg-transparent px-2 text-[11px] text-gray-800 outline-none placeholder:text-gray-400 sm:px-3 sm:text-xs"
                       />
 
                       <button
                         type="submit"
-                        className="flex h-[38px] shrink-0 items-center rounded-full bg-[#FF5A36] px-4 text-xs font-bold text-white transition hover:opacity-90 sm:px-5"
+                        className="flex h-[38px] shrink-0 items-center rounded-full bg-[#FF5A36] px-3 text-[11px] font-bold text-white transition hover:opacity-90 sm:px-5 sm:text-xs"
                       >
                         Search
                       </button>
@@ -1375,14 +1429,15 @@ function SearchPageView({
                 </section>
 
                 {/* RESULTS HEADER */}
-                <section className="mt-5">
-                  <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                    <div>
+
+                <section className="mt-5 min-w-0">
+                  <div className="flex min-w-0 flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                    <div className="min-w-0">
                       <h2 className="text-lg font-bold text-[#17202A]">
                         Search results
                       </h2>
 
-                      <p className="mt-0.5 text-xs text-muted">
+                      <p className="mt-0.5 break-words text-xs text-muted">
                         {loading
                           ? "Finding products and local businesses..."
                           : `${totalProductResults} ${
@@ -1407,7 +1462,7 @@ function SearchPageView({
                           ? `, ${activeFilterCount} active`
                           : ""
                       }`}
-                      className="flex items-center justify-center gap-2 rounded-xl border border-[#E8E4DE] bg-white px-4 py-2.5 text-xs font-semibold text-gray-700 transition hover:border-[#FFB09B] hover:text-[#9F2D18]"
+                      className="flex w-full shrink-0 items-center justify-center gap-2 rounded-xl border border-[#E8E4DE] bg-white px-4 py-2.5 text-xs font-semibold text-gray-700 transition hover:border-[#FFB09B] hover:text-[#9F2D18] sm:w-auto"
                     >
                       <SlidersHorizontal className="h-4 w-4" />
 
@@ -1422,8 +1477,9 @@ function SearchPageView({
                   </div>
 
                   {/* APPLIED FILTER CHIPS */}
+
                   {activeFilterCount > 0 && (
-                    <div className="mt-3 flex flex-wrap gap-2">
+                    <div className="mt-3 flex min-w-0 flex-wrap gap-2">
                       {initialCategory && (
                         <button
                           type="button"
@@ -1432,10 +1488,13 @@ function SearchPageView({
                               category: "",
                             })
                           }
-                          className="flex items-center gap-1.5 rounded-full bg-[#FFE0D6] px-3 py-1.5 text-[10px] font-semibold text-[#9F2D18]"
+                          className="flex max-w-full items-center gap-1.5 rounded-full bg-[#FFE0D6] px-3 py-1.5 text-[10px] font-semibold text-[#9F2D18]"
                         >
-                          {initialCategory}
-                          <X className="h-3 w-3" />
+                          <span className="truncate">
+                            {initialCategory}
+                          </span>
+
+                          <X className="h-3 w-3 shrink-0" />
                         </button>
                       )}
 
@@ -1447,10 +1506,13 @@ function SearchPageView({
                               location: "",
                             })
                           }
-                          className="flex items-center gap-1.5 rounded-full bg-[#E9EDF0] px-3 py-1.5 text-[10px] font-semibold text-gray-700"
+                          className="flex max-w-full items-center gap-1.5 rounded-full bg-[#E9EDF0] px-3 py-1.5 text-[10px] font-semibold text-gray-700"
                         >
-                          {initialLocation}
-                          <X className="h-3 w-3" />
+                          <span className="truncate">
+                            {initialLocation}
+                          </span>
+
+                          <X className="h-3 w-3 shrink-0" />
                         </button>
                       )}
 
@@ -1510,33 +1572,36 @@ function SearchPageView({
                 </section>
 
                 {/* RESULTS */}
-                <section className="mt-5">
+
+                <section className="mt-5 min-w-0">
 
                   {/* LOADING */}
+
                   {loading && (
-                    <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
+                    <div className="grid min-w-0 grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
                       {Array.from(
                         { length: 8 },
                         (_, index) => index
                       ).map((item) => (
                         <div
                           key={item}
-                          className="h-[280px] animate-pulse rounded-xl border border-[#E8E4DE] bg-white"
+                          className="h-[280px] min-w-0 animate-pulse rounded-xl border border-[#E8E4DE] bg-white"
                         />
                       ))}
                     </div>
                   )}
 
                   {/* ERROR */}
+
                   {!loading && error && (
-                    <div className="rounded-xl border border-[#E8E4DE] bg-white px-5 py-12 text-center">
+                    <div className="rounded-xl border border-[#E8E4DE] bg-white px-4 py-12 text-center sm:px-5">
                       <Search className="mx-auto h-8 w-8 text-gray-300" />
 
                       <p className="mt-3 text-sm font-semibold text-gray-700">
                         Search unavailable
                       </p>
 
-                      <p className="mt-1 text-xs text-gray-400">
+                      <p className="mt-1 break-words text-xs text-gray-400">
                         {error}
                       </p>
 
@@ -1553,10 +1618,11 @@ function SearchPageView({
                   )}
 
                   {/* EMPTY STATE */}
+
                   {!loading &&
                     !error &&
                     !hasResults && (
-                      <div className="rounded-xl border border-[#E8E4DE] bg-white px-5 py-12 text-center">
+                      <div className="rounded-xl border border-[#E8E4DE] bg-white px-4 py-12 text-center sm:px-5">
                         <Search className="mx-auto h-8 w-8 text-gray-300" />
 
                         <p className="mt-3 text-sm font-semibold text-gray-700">
@@ -1581,21 +1647,22 @@ function SearchPageView({
                     )}
 
                   {/* PRODUCT RESULTS */}
+
                   {!loading &&
                     !error &&
                     displayedProducts.length > 0 && (
-                      <div>
+                      <div className="min-w-0">
                         <div className="mb-3 flex items-center justify-between gap-3">
                           <h3 className="text-sm font-bold text-[#17202A]">
                             Products
                           </h3>
 
-                          <span className="text-[10px] text-gray-400">
+                          <span className="shrink-0 text-[10px] text-gray-400">
                             {totalProductResults} found
                           </span>
                         </div>
 
-                        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
+                        <div className="grid min-w-0 grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
                           {displayedProducts.map(
                             (product) => {
                               const business =
@@ -1633,9 +1700,10 @@ function SearchPageView({
                               return (
                                 <article
                                   key={product.id}
-                                  className="overflow-hidden rounded-xl border border-[#E8E4DE] bg-white transition hover:-translate-y-0.5 hover:shadow-md"
+                                  className="min-w-0 overflow-hidden rounded-xl border border-[#E8E4DE] bg-white transition hover:-translate-y-0.5 hover:shadow-md"
                                 >
                                   {/* PRODUCT IMAGE */}
+
                                   <div
                                     className="relative flex h-[175px] items-center justify-center overflow-hidden"
                                     style={{
@@ -1693,29 +1761,31 @@ function SearchPageView({
                                   </div>
 
                                   {/* PRODUCT DETAILS */}
-                                  <div className="p-3.5">
-                                    <p className="text-[10px] font-medium text-gray-500">
+
+                                  <div className="min-w-0 p-3.5">
+                                    <p className="truncate text-[10px] font-medium text-gray-500">
                                       {product.category?.name ??
                                         businessCategory}
                                     </p>
 
-                                    <h4 className="mt-1 line-clamp-2 min-h-[40px] text-sm font-bold text-[#17202A]">
+                                    <h4 className="mt-1 line-clamp-2 min-h-[40px] break-words text-sm font-bold text-[#17202A]">
                                       {product.name}
                                     </h4>
 
-                                    <p className="mt-2 text-sm font-bold text-[#9F2D18]">
+                                    <p className="mt-2 break-words text-sm font-bold text-[#9F2D18]">
                                       {formatPrice(product)}
                                     </p>
 
                                     {product.description && (
-                                      <p className="mt-1 line-clamp-2 text-[10px] leading-4 text-gray-500">
+                                      <p className="mt-1 line-clamp-2 break-words text-[10px] leading-4 text-gray-500">
                                         {product.description}
                                       </p>
                                     )}
 
                                     {/* SELLING BUSINESS */}
-                                    <div className="mt-3 border-t border-[#F0ECE6] pt-3">
-                                      <div className="flex items-center gap-2.5">
+
+                                    <div className="mt-3 min-w-0 border-t border-[#F0ECE6] pt-3">
+                                      <div className="flex min-w-0 items-center gap-2.5">
                                         <Link
                                           href={`/seller/${business.id}`}
                                           aria-label={`View ${business.name}`}
@@ -1780,14 +1850,15 @@ function SearchPageView({
                     )}
 
                   {/* ADDITIONAL BUSINESS RESULTS */}
+
                   {!loading &&
                     !error &&
                     displayedBusinesses.length > 0 && (
                       <div
                         className={
                           displayedProducts.length > 0
-                            ? "mt-8 border-t border-[#EAE6DF] pt-6"
-                            : ""
+                            ? "mt-8 min-w-0 border-t border-[#EAE6DF] pt-6"
+                            : "min-w-0"
                         }
                       >
                         <div className="mb-3 flex items-center justify-between gap-3">
@@ -1795,12 +1866,12 @@ function SearchPageView({
                             Businesses to explore
                           </h3>
 
-                          <span className="text-[10px] text-gray-400">
+                          <span className="shrink-0 text-[10px] text-gray-400">
                             {totalAdditionalBusinesses} found
                           </span>
                         </div>
 
-                        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
+                        <div className="grid min-w-0 grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
                           {displayedBusinesses.map(
                             (business) => {
                               const businessCategory =
@@ -1849,9 +1920,10 @@ function SearchPageView({
                               return (
                                 <article
                                   key={business.id}
-                                  className="overflow-hidden rounded-xl border border-[#E8E4DE] bg-white transition hover:-translate-y-0.5 hover:shadow-md"
+                                  className="min-w-0 overflow-hidden rounded-xl border border-[#E8E4DE] bg-white transition hover:-translate-y-0.5 hover:shadow-md"
                                 >
                                   {/* BUSINESS IMAGE */}
+
                                   <Link
                                     href={`/seller/${business.id}`}
                                     className="relative flex h-[120px] items-center justify-center overflow-hidden"
@@ -1881,8 +1953,9 @@ function SearchPageView({
                                   </Link>
 
                                   {/* BUSINESS DETAILS */}
-                                  <div className="p-3.5">
-                                    <div className="flex items-start justify-between gap-2">
+
+                                  <div className="min-w-0 p-3.5">
+                                    <div className="flex min-w-0 items-start justify-between gap-2">
                                       <div className="min-w-0 flex-1">
                                         <Link
                                           href={`/seller/${business.id}`}
@@ -1891,12 +1964,14 @@ function SearchPageView({
                                           {business.name}
                                         </Link>
 
-                                        <p className="mt-1 flex min-w-0 items-center gap-1 truncate text-[10px] text-muted">
-                                          <span className="truncate">
+                                        <p className="mt-1 flex min-w-0 items-center gap-1 text-[10px] text-muted">
+                                          <span className="shrink-0 truncate">
                                             {businessCategory}
                                           </span>
 
-                                          <span>·</span>
+                                          <span className="shrink-0">
+                                            ·
+                                          </span>
 
                                           <span className="flex min-w-0 items-center gap-1 truncate">
                                             <MapPin className="h-3 w-3 shrink-0" />
@@ -1940,7 +2015,8 @@ function SearchPageView({
                                     </div>
 
                                     {/* VERIFICATION + PRODUCTS */}
-                                    <div className="mt-3 flex items-center justify-between gap-2">
+
+                                    <div className="mt-3 flex min-w-0 items-center justify-between gap-2">
                                       <div
                                         className={`flex min-w-0 items-center gap-1 ${
                                           verified
@@ -1971,9 +2047,10 @@ function SearchPageView({
                                     </div>
 
                                     {/* FIRST PRODUCT PREVIEW */}
+
                                     {firstProduct && (
-                                      <div className="mt-3 border-t border-[#F0ECE6] pt-3">
-                                        <div className="flex items-center gap-2.5">
+                                      <div className="mt-3 min-w-0 border-t border-[#F0ECE6] pt-3">
+                                        <div className="flex min-w-0 items-center gap-2.5">
                                           {productImage ? (
                                             <div className="h-10 w-10 shrink-0 overflow-hidden rounded-lg border border-[#ECE7E0] bg-[#FCFAF6]">
                                               <img
@@ -1989,7 +2066,7 @@ function SearchPageView({
                                             </div>
                                           )}
 
-                                          <div className="min-w-0">
+                                          <div className="min-w-0 flex-1">
                                             <p className="truncate text-[10px] font-semibold text-gray-600">
                                               {firstProduct.name}
                                             </p>
@@ -2019,6 +2096,7 @@ function SearchPageView({
                     )}
 
                   {/* PAGINATION */}
+
                   {!loading &&
                     !error &&
                     hasResults &&
@@ -2068,6 +2146,7 @@ function SearchPageView({
                 </section>
 
                 {/* FOOTER */}
+
                 <footer className="mt-7 flex items-center justify-center gap-3 text-[10px] text-gray-400">
                   <span className="h-px w-10 bg-gray-200 sm:w-16" />
 
@@ -2082,9 +2161,12 @@ function SearchPageView({
           </div>
 
           {/* FILTER DRAWER */}
+
           {showFilters && (
             <div className="fixed inset-0 z-[60]">
+
               {/* BACKDROP */}
+
               <button
                 type="button"
                 aria-label="Close filters"
@@ -2093,10 +2175,13 @@ function SearchPageView({
               />
 
               {/* DRAWER */}
-              <div className="absolute bottom-0 left-0 right-0 max-h-[88dvh] overflow-y-auto rounded-t-[24px] border-t border-[#E8E4DE] bg-[#FFFDFC] p-5 pb-[max(20px,env(safe-area-inset-bottom))] shadow-2xl sm:bottom-4 sm:left-auto sm:right-4 sm:top-4 sm:max-h-none sm:w-[380px] sm:rounded-[22px] sm:border sm:pb-5">
+
+              <div className="absolute bottom-0 left-0 right-0 max-h-[88dvh] overflow-y-auto overscroll-contain rounded-t-[24px] border-t border-[#E8E4DE] bg-[#FFFDFC] p-4 pb-[max(16px,env(safe-area-inset-bottom))] shadow-2xl sm:bottom-4 sm:left-auto sm:right-4 sm:top-4 sm:max-h-none sm:w-[380px] sm:rounded-[22px] sm:border sm:p-5">
+
                 {/* DRAWER HEADER */}
-                <div className="flex items-center justify-between">
-                  <div>
+
+                <div className="flex items-center justify-between gap-3">
+                  <div className="min-w-0">
                     <h2 className="text-base font-bold text-[#17202A]">
                       Filters
                     </h2>
@@ -2109,7 +2194,7 @@ function SearchPageView({
                   <button
                     type="button"
                     onClick={closeFilters}
-                    className="flex h-9 w-9 items-center justify-center rounded-full bg-gray-100 text-gray-600"
+                    className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-gray-100 text-gray-600"
                     aria-label="Close filters"
                   >
                     <X className="h-4 w-4" />
@@ -2117,6 +2202,7 @@ function SearchPageView({
                 </div>
 
                 {/* CATEGORY */}
+
                 <div className="mt-6">
                   <label className="text-xs font-bold text-gray-700">
                     Category
@@ -2141,7 +2227,7 @@ function SearchPageView({
                                 : item.name
                             )
                           }
-                          className={`flex min-w-0 items-center gap-2 rounded-xl border px-3 py-2.5 text-left text-[11px] font-semibold transition ${
+                          className={`flex min-w-0 items-center gap-2 rounded-xl border px-2.5 py-2.5 text-left text-[11px] font-semibold transition sm:px-3 ${
                             active
                               ? "border-[#FFB09B] bg-[#FFF1ED] text-[#9F2D18]"
                               : "border-[#E8E4DE] bg-white text-gray-700 hover:bg-gray-50"
@@ -2171,6 +2257,7 @@ function SearchPageView({
                 </div>
 
                 {/* LOCATION */}
+
                 <div className="mt-5">
                   <label
                     htmlFor="search-location-filter"
@@ -2191,12 +2278,13 @@ function SearchPageView({
                         )
                       }
                       placeholder="e.g. Ikeja"
-                      className="h-11 w-full rounded-xl border border-[#E8E4DE] bg-white pl-10 pr-3 text-xs outline-none focus:border-[#FF9B82]"
+                      className="h-11 w-full min-w-0 rounded-xl border border-[#E8E4DE] bg-white pl-10 pr-3 text-xs outline-none focus:border-[#FF9B82]"
                     />
                   </div>
                 </div>
 
                 {/* PRICE RANGE */}
+
                 <div className="mt-5">
                   <label
                     htmlFor="search-min-price"
@@ -2217,7 +2305,7 @@ function SearchPageView({
                       inputMode="numeric"
                       placeholder="Min price"
                       aria-label="Minimum price"
-                      className="h-11 min-w-0 rounded-xl border border-[#E8E4DE] bg-white px-3 text-xs outline-none focus:border-[#FF9B82]"
+                      className="h-11 min-w-0 w-full rounded-xl border border-[#E8E4DE] bg-white px-3 text-xs outline-none focus:border-[#FF9B82]"
                     />
 
                     <input
@@ -2231,12 +2319,13 @@ function SearchPageView({
                       inputMode="numeric"
                       placeholder="Max price"
                       aria-label="Maximum price"
-                      className="h-11 min-w-0 rounded-xl border border-[#E8E4DE] bg-white px-3 text-xs outline-none focus:border-[#FF9B82]"
+                      className="h-11 min-w-0 w-full rounded-xl border border-[#E8E4DE] bg-white px-3 text-xs outline-none focus:border-[#FF9B82]"
                     />
                   </div>
                 </div>
 
                 {/* AVAILABILITY */}
+
                 <div className="mt-5">
                   <label
                     htmlFor="search-availability"
@@ -2278,13 +2367,14 @@ function SearchPageView({
                 </div>
 
                 {/* VERIFIED BUSINESS TOGGLE */}
+
                 <button
                   type="button"
                   aria-pressed={verified}
                   onClick={() =>
                     setVerified(!verified)
                   }
-                  className={`mt-5 flex w-full items-center justify-between gap-3 rounded-xl border px-4 py-3 ${
+                  className={`mt-5 flex w-full items-center justify-between gap-3 rounded-xl border px-3 py-3 sm:px-4 ${
                     verified
                       ? "border-[#BFE7D0] bg-[#F0FBF5]"
                       : "border-[#E8E4DE] bg-white"
@@ -2330,6 +2420,7 @@ function SearchPageView({
                 </button>
 
                 {/* DRAWER ACTIONS */}
+
                 <div className="mt-6 flex gap-2 border-t border-[#EAE6DF] pt-5">
                   <button
                     type="button"
@@ -2352,6 +2443,7 @@ function SearchPageView({
           )}
 
           {/* MOBILE / TABLET BOTTOM NAVIGATION */}
+
           <nav
             aria-label="Mobile navigation"
             className="fixed bottom-0 left-0 right-0 z-50 border-t border-gray-200 bg-white/95 px-2 pb-[max(6px,env(safe-area-inset-bottom))] pt-1.5 backdrop-blur lg:hidden"
@@ -2404,7 +2496,7 @@ export default function SearchPage() {
   return (
     <Suspense
       fallback={
-        <main className="min-h-dvh bg-[#FFF7ED]">
+        <main className="min-h-dvh overflow-x-clip bg-[#FFF7ED]">
           <div className="mx-auto flex min-h-dvh w-full max-w-[1500px] items-center justify-center px-3 py-3 sm:px-5 sm:py-5">
             <div className="rounded-xl border border-[#E8E4DE] bg-white px-5 py-4 text-xs text-gray-500 shadow-sm">
               Loading search...

@@ -599,8 +599,6 @@ type SellerBusiness = {
     id: string;
     area: string;
     address: string | null;
-    lat: number | null;
-    long: number | null;
     verification:
       | "VERIFIED"
       | "UNVERIFIED";
@@ -760,17 +758,6 @@ export default function SellerDashboard() {
       PHONE: "",
       DIRECTIONS: "",
     });
-
-  const [businessLatitude, setBusinessLatitude] =
-    useState("");
-  const [businessLongitude, setBusinessLongitude] =
-    useState("");
-  const [capturingLocation, setCapturingLocation] =
-    useState(false);
-  const [locationStatus, setLocationStatus] =
-    useState("");
-  const [locationError, setLocationError] =
-    useState("");
 
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
@@ -953,18 +940,6 @@ export default function SellerDashboard() {
                 ? String(loadedBusiness.priceMax)
                 : "",
           });
-
-          setBusinessLatitude(
-            loadedBusiness.location?.lat != null
-              ? String(loadedBusiness.location.lat)
-              : ""
-          );
-
-          setBusinessLongitude(
-            loadedBusiness.location?.long != null
-              ? String(loadedBusiness.location.long)
-              : ""
-          );
         }
 
         setDashboardLoadFailed(false);
@@ -1011,16 +986,6 @@ export default function SellerDashboard() {
 
     if (success) {
       setSuccess("");
-    }
-
-    if (
-      field === "area" ||
-      field === "houseNumber" ||
-      field === "street" ||
-      field === "city"
-    ) {
-      setLocationError("");
-      setLocationStatus("");
     }
   }
 
@@ -1153,49 +1118,6 @@ export default function SellerDashboard() {
       return false;
     }
 
-    const hasLatitude =
-      businessLatitude.trim() !== "";
-
-    const hasLongitude =
-      businessLongitude.trim() !== "";
-
-    if (hasLatitude !== hasLongitude) {
-      setError(
-        "Business coordinates must be captured as a complete location pair."
-      );
-      return false;
-    }
-
-    if (hasLatitude) {
-      const parsedLatitude =
-        Number(businessLatitude);
-
-      const parsedLongitude =
-        Number(businessLongitude);
-
-      if (
-        !Number.isFinite(parsedLatitude) ||
-        parsedLatitude < -90 ||
-        parsedLatitude > 90
-      ) {
-        setError(
-          "The captured business latitude is invalid."
-        );
-        return false;
-      }
-
-      if (
-        !Number.isFinite(parsedLongitude) ||
-        parsedLongitude < -180 ||
-        parsedLongitude > 180
-      ) {
-        setError(
-          "The captured business longitude is invalid."
-        );
-        return false;
-      }
-    }
-
     return true;
   }
 
@@ -1206,8 +1128,6 @@ export default function SellerDashboard() {
 
     setError("");
     setSuccess("");
-    setLocationError("");
-    setLocationStatus("");
 
     const parsedLocation =
       parseLocationAddress(
@@ -1243,18 +1163,6 @@ export default function SellerDashboard() {
           ? String(business.priceMax)
           : "",
     });
-
-    setBusinessLatitude(
-      business.location?.lat != null
-        ? String(business.location.lat)
-        : ""
-    );
-
-    setBusinessLongitude(
-      business.location?.long != null
-        ? String(business.location.long)
-        : ""
-    );
 
     setCategoryChanged(false);
     setEditingBusiness(true);
@@ -1273,8 +1181,6 @@ export default function SellerDashboard() {
 
     setError("");
     setSuccess("");
-    setLocationError("");
-    setLocationStatus("");
 
     setSocialValues(
       getSocialValues(
@@ -1305,135 +1211,21 @@ export default function SellerDashboard() {
           : "",
     });
 
-    setBusinessLatitude(
-      business.location?.lat != null
-        ? String(business.location.lat)
-        : ""
-    );
-
-    setBusinessLongitude(
-      business.location?.long != null
-        ? String(business.location.long)
-        : ""
-    );
-
     setCategoryChanged(false);
     setEditingBusiness(false);
   }
 
-  function captureCurrentLocation() {
-    if (capturingLocation) {
-      return;
-    }
-
-    setError("");
-    setSuccess("");
-    setLocationError("");
-    setLocationStatus("");
-
-    if (
-      typeof window === "undefined" ||
-      !navigator.geolocation
-    ) {
-      setLocationError(
-        "This device does not support location capture."
-      );
-      return;
-    }
-
-    setCapturingLocation(true);
-
-    navigator.geolocation.getCurrentPosition(
-      (position) => {
-        const latitude = position.coords.latitude;
-        const longitude = position.coords.longitude;
-
-        if (
-          !Number.isFinite(latitude) ||
-          latitude < -90 ||
-          latitude > 90
-        ) {
-          setLocationError(
-            "The device returned an invalid latitude."
-          );
-          setCapturingLocation(false);
-          return;
-        }
-
-        if (
-          !Number.isFinite(longitude) ||
-          longitude < -180 ||
-          longitude > 180
-        ) {
-          setLocationError(
-            "The device returned an invalid longitude."
-          );
-          setCapturingLocation(false);
-          return;
-        }
-
-        setBusinessLatitude(String(latitude));
-        setBusinessLongitude(String(longitude));
-
-        setLocationStatus(
-          "Business location captured from this device."
-        );
-
-        setCapturingLocation(false);
-      },
-      (geolocationError) => {
-        console.error(
-          "Seller business location capture error:",
-          geolocationError
-        );
-
-        let message =
-          "Unable to capture the business location.";
-
-        switch (geolocationError.code) {
-          case 1:
-            message =
-              "Location permission was denied. Allow location access and try again.";
-            break;
-
-          case 2:
-            message =
-              "The device could not determine its location. Try again from the business location.";
-            break;
-
-          case 3:
-            message =
-              "Location capture timed out. Please try again.";
-            break;
-        }
-
-        setLocationError(message);
-        setCapturingLocation(false);
-      },
-      {
-        enableHighAccuracy: true,
-        timeout: 15000,
-        maximumAge: 0,
-      }
-    );
-  }
-
+  /**
+   * Build the address payload using ReMarket's existing
+   * address fields. No browser location or coordinates
+   * are collected by the Seller Dashboard.
+   */
   function buildBusinessLocationPayload() {
-    const latitude = businessLatitude.trim()
-      ? Number(businessLatitude)
-      : null;
-
-    const longitude = businessLongitude.trim()
-      ? Number(businessLongitude)
-      : null;
-
     return {
       area: businessForm.area.trim(),
       houseNumber: businessForm.houseNumber.trim(),
       street: businessForm.street.trim(),
       city: businessForm.city.trim(),
-      lat: latitude,
-      long: longitude,
     };
   }
 
@@ -1531,18 +1323,6 @@ export default function SellerDashboard() {
           createdBusiness.location?.area ?? ""
         );
 
-      setBusinessLatitude(
-        createdBusiness.location?.lat != null
-          ? String(createdBusiness.location.lat)
-          : ""
-      );
-
-      setBusinessLongitude(
-        createdBusiness.location?.long != null
-          ? String(createdBusiness.location.long)
-          : ""
-      );
-
       setBusinessForm({
         name: createdBusiness.name ?? "",
         ownerName: createdBusiness.ownerName ?? "",
@@ -1572,9 +1352,6 @@ export default function SellerDashboard() {
           createdBusiness.phone
         )
       );
-
-      setLocationError("");
-      setLocationStatus("");
 
       setSuccess(
         "Your business has been created successfully."
@@ -1707,22 +1484,8 @@ export default function SellerDashboard() {
         )
       );
 
-      setBusinessLatitude(
-        updatedBusiness.location?.lat != null
-          ? String(updatedBusiness.location.lat)
-          : ""
-      );
-
-      setBusinessLongitude(
-        updatedBusiness.location?.long != null
-          ? String(updatedBusiness.location.long)
-          : ""
-      );
-
       setCategoryChanged(false);
       setEditingBusiness(false);
-      setLocationError("");
-      setLocationStatus("");
 
       setSuccess(
         "Your business has been updated successfully."
@@ -2331,80 +2094,80 @@ export default function SellerDashboard() {
     }
   }
 
+  /**
+   * Full-viewport loading state.
+   */
   if (loading || redirecting) {
     return (
-      <main className="min-h-screen bg-[#FFF7ED]">
-        <div className="mx-auto flex min-h-screen w-full max-w-[1500px] items-center justify-center px-4">
-          <div className="flex items-center gap-3 text-sm font-medium text-gray-600">
-            <LoaderCircle
-              aria-hidden="true"
-              className="h-5 w-5 animate-spin text-[#FF5A36]"
-            />
+      <main className="flex min-h-dvh w-full items-center justify-center bg-[#FFFDFC] px-4">
+        <div className="flex items-center gap-3 text-sm font-medium text-gray-600">
+          <LoaderCircle
+            aria-hidden="true"
+            className="h-5 w-5 animate-spin text-[#FF5A36]"
+          />
 
-            {redirecting
-              ? "Redirecting to login..."
-              : "Loading seller dashboard..."}
-          </div>
+          {redirecting
+            ? "Redirecting to login..."
+            : "Loading seller dashboard..."}
         </div>
       </main>
     );
   }
 
+  /**
+   * Full-viewport error state.
+   */
   if (dashboardLoadFailed) {
     return (
-      <main className="min-h-screen bg-[#FFF7ED]">
-        <div className="mx-auto flex min-h-screen w-full max-w-[1500px] items-center justify-center px-4 py-8">
-          <section className="w-full max-w-[480px] rounded-[22px] border border-[#E8E4DE] bg-white p-6 text-center shadow-sm sm:p-8">
-            <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-xl bg-[#FFF0EE] text-[#E33B22]">
-              <AlertCircle
-                aria-hidden="true"
-                className="h-6 w-6"
-              />
-            </div>
+      <main className="flex min-h-dvh w-full items-center justify-center bg-[#FFFDFC] px-4 py-8">
+        <section className="w-full max-w-[480px] rounded-[22px] border border-[#E8E4DE] bg-white p-6 text-center shadow-sm sm:p-8">
+          <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-xl bg-[#FFF0EE] text-[#E33B22]">
+            <AlertCircle
+              aria-hidden="true"
+              className="h-6 w-6"
+            />
+          </div>
 
-            <h1 className="mt-4 text-xl font-bold text-[#17202A]">
-              Unable to load your dashboard
-            </h1>
+          <h1 className="mt-4 text-xl font-bold text-[#17202A]">
+            Unable to load your dashboard
+          </h1>
 
-            <p
-              role="alert"
-              className="mt-2 text-sm leading-6 text-gray-500"
-            >
-              {error ||
-                "Your business information could not be loaded."}
-            </p>
+          <p
+            role="alert"
+            className="mt-2 text-sm leading-6 text-gray-500"
+          >
+            {error ||
+              "Your business information could not be loaded."}
+          </p>
 
-            <button
-              type="button"
-              onClick={() => {
-                setLoading(true);
-                setLoadAttempt((attempt) => attempt + 1);
-              }}
-              className="mt-5 inline-flex h-11 items-center justify-center gap-2 rounded-xl bg-[#FF5A36] px-5 text-sm font-bold text-white transition hover:opacity-90 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-[#FF5A36]/25"
-            >
-              <LoaderCircle
-                aria-hidden="true"
-                className="h-4 w-4"
-              />
-
-              Try again
-            </button>
-          </section>
-        </div>
+          <button
+            type="button"
+            onClick={() => {
+              setLoading(true);
+              setLoadAttempt((attempt) => attempt + 1);
+            }}
+            className="mt-5 inline-flex h-11 items-center justify-center gap-2 rounded-xl bg-[#FF5A36] px-5 text-sm font-bold text-white transition hover:opacity-90 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-[#FF5A36]/25"
+          >
+            Try again
+          </button>
+        </section>
       </main>
     );
   }
 
   return (
-    <main className="min-h-screen bg-[#FFF7ED]">
-      <div className="mx-auto min-h-screen w-full max-w-[1500px] px-3 py-3 sm:px-5 sm:py-5">
-        <div className="min-h-[calc(100vh-24px)] overflow-hidden rounded-[18px] border border-[#FF5A36] bg-[#FFFDFC] shadow-sm sm:rounded-[22px] lg:min-h-[calc(100vh-40px)]">
-          {/* Header */}
+    <main className="min-h-dvh w-full overflow-x-clip bg-[#FFFDFC]">
+      {/* Full viewport: no outer maximum-width container or page gutter. */}
 
-          <header className="flex min-h-[66px] items-center justify-between border-b border-[#EAE6DF] bg-white px-4 sm:px-6">
+      <div className="min-h-dvh w-full">
+        <div className="min-h-dvh w-full overflow-hidden bg-[#FFFDFC]">
+
+          {/* HEADER */}
+
+          <header className="flex min-h-[66px] w-full items-center justify-between gap-3 border-b border-[#EAE6DF] bg-white px-4 sm:px-6 lg:px-8">
             <Link
               href="/seller"
-              className="flex items-center gap-2.5"
+              className="flex shrink-0 items-center gap-2.5"
             >
               <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-[#FF5A36] text-white shadow-sm">
                 <Store className="h-5 w-5" />
@@ -2421,7 +2184,7 @@ export default function SellerDashboard() {
               </div>
             </Link>
 
-            {/* Seller navigation */}
+            {/* DESKTOP NAVIGATION */}
 
             <nav className="hidden items-center gap-2 lg:flex">
               <Link
@@ -2449,7 +2212,7 @@ export default function SellerDashboard() {
               </Link>
             </nav>
 
-            <div className="flex items-center gap-2">
+            <div className="flex shrink-0 items-center gap-2">
               <div className="hidden items-center gap-1.5 md:flex lg:hidden">
                 <Link
                   href="/seller/profile"
@@ -2484,11 +2247,12 @@ export default function SellerDashboard() {
             </div>
           </header>
 
-          {/* Content */}
+          {/* MAIN DASHBOARD CONTENT */}
 
-          <div className="px-4 py-6 sm:px-6 sm:py-8 lg:px-8">
-            <div className="mx-auto max-w-[1100px]">
-              {/* Heading */}
+          <div className="w-full min-w-0 px-4 py-6 sm:px-6 sm:py-8 lg:px-8 xl:px-10">
+            <div className="w-full min-w-0">
+
+              {/* DASHBOARD HEADING */}
 
               <div className="mb-7">
                 <p className="text-xs font-semibold uppercase tracking-[0.12em] text-[#FF5A36]">
@@ -2504,7 +2268,7 @@ export default function SellerDashboard() {
                 </p>
               </div>
 
-              {/* Feedback */}
+              {/* ERROR FEEDBACK */}
 
               {error && (
                 <div
@@ -2520,6 +2284,8 @@ export default function SellerDashboard() {
                 </div>
               )}
 
+              {/* SUCCESS FEEDBACK */}
+
               {success && (
                 <div
                   role="status"
@@ -2534,20 +2300,20 @@ export default function SellerDashboard() {
                 </div>
               )}
 
-              {/* Existing business */}
+              {/* EXISTING BUSINESS */}
 
               {business && !editingBusiness && (
-                <section>
-                  <div className="rounded-[22px] border border-[#E8E4DE] bg-white p-5 shadow-sm sm:p-6">
-                    <div className="flex flex-col gap-5 sm:flex-row sm:items-start sm:justify-between">
-                      <div className="flex items-start gap-4">
+                <section className="w-full min-w-0">
+                  <div className="w-full min-w-0 rounded-[22px] border border-[#E8E4DE] bg-white p-5 shadow-sm sm:p-6">
+                    <div className="flex min-w-0 flex-col gap-5 sm:flex-row sm:items-start sm:justify-between">
+                      <div className="flex min-w-0 items-start gap-4">
                         <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl bg-[#FFF0EB] text-[#FF5A36]">
                           <Store className="h-7 w-7" />
                         </div>
 
-                        <div>
+                        <div className="min-w-0">
                           <div className="flex flex-wrap items-center gap-2">
-                            <h2 className="text-xl font-bold text-[#17202A]">
+                            <h2 className="break-words text-xl font-bold text-[#17202A]">
                               {business.name}
                             </h2>
 
@@ -2567,7 +2333,7 @@ export default function SellerDashboard() {
                             )}
                           </div>
 
-                          <p className="mt-1 text-sm text-gray-500">
+                          <p className="mt-1 break-words text-sm text-gray-500">
                             {business.description ||
                               "Your ReMarket business profile."}
                           </p>
@@ -2594,48 +2360,46 @@ export default function SellerDashboard() {
                       </div>
                     </div>
 
-                    <div className="mt-6 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-                      <div className="rounded-2xl bg-[#FCFAF6] p-4">
+                    {/* BUSINESS SUMMARY CARDS */}
+
+                    <div className="mt-6 grid min-w-0 gap-3 sm:grid-cols-2 xl:grid-cols-4">
+                      <div className="min-w-0 rounded-2xl bg-[#FCFAF6] p-4">
                         <div className="flex items-center gap-2 text-gray-400">
-                          <MapPin className="h-4 w-4" />
+                          <MapPin className="h-4 w-4 shrink-0" />
+
                           <span className="text-[10px] font-semibold uppercase tracking-wide">
-                            Area
+                            Business address
                           </span>
                         </div>
 
-                        <p className="mt-2 text-sm font-semibold text-gray-800">
+                        <p className="mt-2 break-words text-sm font-semibold text-gray-800">
                           {business.location?.area || "Not set"}
                         </p>
 
-                        <p className="mt-1 truncate text-[10px] text-gray-400">
+                        <p className="mt-1 break-words text-[11px] leading-5 text-gray-500">
                           {business.location?.address ||
-                            "Address not set"}
-                        </p>
-
-                        <p className="mt-2 text-[10px] font-medium text-gray-400">
-                          {business.location?.lat != null &&
-                          business.location?.long != null
-                            ? "Exact location available"
-                            : "Precise location not yet set"}
+                            "Add your street address to help customers find your business."}
                         </p>
                       </div>
 
-                      <div className="rounded-2xl bg-[#FCFAF6] p-4">
+                      <div className="min-w-0 rounded-2xl bg-[#FCFAF6] p-4">
                         <div className="flex items-center gap-2 text-gray-400">
-                          <Phone className="h-4 w-4" />
+                          <Phone className="h-4 w-4 shrink-0" />
+
                           <span className="text-[10px] font-semibold uppercase tracking-wide">
                             Phone
                           </span>
                         </div>
 
-                        <p className="mt-2 truncate text-sm font-semibold text-gray-800">
+                        <p className="mt-2 break-words text-sm font-semibold text-gray-800">
                           {business.phone || "Not set"}
                         </p>
                       </div>
 
-                      <div className="rounded-2xl bg-[#FCFAF6] p-4">
+                      <div className="min-w-0 rounded-2xl bg-[#FCFAF6] p-4">
                         <div className="flex items-center gap-2 text-gray-400">
-                          <Package className="h-4 w-4" />
+                          <Package className="h-4 w-4 shrink-0" />
+
                           <span className="text-[10px] font-semibold uppercase tracking-wide">
                             Products
                           </span>
@@ -2646,19 +2410,22 @@ export default function SellerDashboard() {
                         </p>
                       </div>
 
-                      <div className="rounded-2xl bg-[#FCFAF6] p-4">
+                      <div className="min-w-0 rounded-2xl bg-[#FCFAF6] p-4">
                         <div className="flex items-center gap-2 text-gray-400">
-                          <Store className="h-4 w-4" />
+                          <Store className="h-4 w-4 shrink-0" />
+
                           <span className="text-[10px] font-semibold uppercase tracking-wide">
                             Availability
                           </span>
                         </div>
 
-                        <p className="mt-2 text-sm font-semibold text-gray-800">
+                        <p className="mt-2 break-words text-sm font-semibold text-gray-800">
                           {business.availability.replace("_", " ")}
                         </p>
                       </div>
                     </div>
+
+                    {/* BUSINESS CATEGORIES */}
 
                     {business.categories.length > 0 && (
                       <div className="mt-5">
@@ -2681,13 +2448,15 @@ export default function SellerDashboard() {
                       </div>
                     )}
 
+                    {/* CONTACT & SOCIAL LINKS */}
+
                     <div className="mt-5 border-t border-[#EAE6DF] pt-5">
                       <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-gray-400">
                         Contact & social links
                       </p>
 
                       {business.socialLinks.length > 0 ? (
-                        <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                        <div className="mt-3 grid min-w-0 gap-3 sm:grid-cols-2 xl:grid-cols-3">
                           {business.socialLinks.map((link) => {
                             const label =
                               SOCIAL_PLATFORMS.find(
@@ -2698,13 +2467,13 @@ export default function SellerDashboard() {
                             return (
                               <div
                                 key={link.id}
-                                className="rounded-2xl bg-[#FCFAF6] p-4"
+                                className="min-w-0 rounded-2xl bg-[#FCFAF6] p-4"
                               >
                                 <p className="text-[10px] font-semibold uppercase tracking-wide text-gray-400">
                                   {label}
                                 </p>
 
-                                <p className="mt-2 truncate text-sm font-semibold text-gray-800">
+                                <p className="mt-2 break-words text-sm font-semibold text-gray-800">
                                   {link.handle}
                                 </p>
                               </div>
@@ -2718,17 +2487,17 @@ export default function SellerDashboard() {
                       )}
                     </div>
 
-                    {/* Business deletion */}
+                    {/* BUSINESS DELETION */}
 
                     <div className="mt-6 border-t border-[#EAE6DF] pt-5">
                       <div className="rounded-2xl border border-[#F1D5D0] bg-[#FFF9F7] p-4">
-                        <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
-                          <div className="flex items-start gap-3">
+                        <div className="flex min-w-0 flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+                          <div className="flex min-w-0 items-start gap-3">
                             <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-[#FFF0EE] text-[#C5402D]">
                               <AlertTriangle className="h-5 w-5" />
                             </div>
 
-                            <div>
+                            <div className="min-w-0">
                               <h3 className="text-sm font-bold text-[#17202A]">
                                 Business deletion
                               </h3>
@@ -2850,11 +2619,11 @@ export default function SellerDashboard() {
                 </section>
               )}
 
-              {/* Edit business */}
+              {/* EDIT BUSINESS */}
 
               {business && editingBusiness && (
-                <section className="rounded-[22px] border border-[#E8E4DE] bg-white shadow-sm">
-                  <div className="flex flex-col gap-4 border-b border-[#EAE6DF] px-5 py-5 sm:flex-row sm:items-center sm:justify-between sm:px-6">
+                <section className="w-full min-w-0 rounded-[22px] border border-[#E8E4DE] bg-white shadow-sm">
+                  <div className="flex min-w-0 flex-col gap-4 border-b border-[#EAE6DF] px-5 py-5 sm:flex-row sm:items-center sm:justify-between sm:px-6">
                     <div>
                       <p className="text-xs font-semibold uppercase tracking-[0.12em] text-[#FF5A36]">
                         Business settings
@@ -2873,7 +2642,7 @@ export default function SellerDashboard() {
                       type="button"
                       onClick={cancelEditingBusiness}
                       disabled={savingBusiness}
-                      className="inline-flex items-center justify-center gap-2 rounded-xl border border-[#E8E4DE] bg-white px-4 py-2.5 text-xs font-semibold text-gray-700 transition hover:bg-[#FFF7ED] disabled:cursor-not-allowed disabled:opacity-60"
+                      className="inline-flex shrink-0 items-center justify-center gap-2 rounded-xl border border-[#E8E4DE] bg-white px-4 py-2.5 text-xs font-semibold text-gray-700 transition hover:bg-[#FFF7ED] disabled:cursor-not-allowed disabled:opacity-60"
                     >
                       <X className="h-4 w-4" />
                       Cancel
@@ -2882,10 +2651,10 @@ export default function SellerDashboard() {
 
                   <form
                     onSubmit={updateBusiness}
-                    className="space-y-5 px-5 py-6 sm:px-6"
+                    className="w-full min-w-0 space-y-5 px-5 py-6 sm:px-6"
                   >
-                    <div className="grid gap-5 sm:grid-cols-2">
-                      <div>
+                    <div className="grid min-w-0 gap-5 sm:grid-cols-2">
+                      <div className="min-w-0">
                         <label
                           htmlFor="edit-business-name"
                           className="mb-2 block text-xs font-bold text-gray-700"
@@ -2906,11 +2675,11 @@ export default function SellerDashboard() {
                           maxLength={150}
                           required
                           disabled={savingBusiness}
-                          className="h-12 w-full rounded-xl border border-[#D9DEE5] bg-white px-4 text-sm text-[#17202A] outline-none transition focus:border-[#FF694F] focus:ring-4 focus:ring-[#FF694F]/10 disabled:bg-gray-50"
+                          className="h-12 w-full min-w-0 rounded-xl border border-[#D9DEE5] bg-white px-4 text-sm text-[#17202A] outline-none transition focus:border-[#FF694F] focus:ring-4 focus:ring-[#FF694F]/10 disabled:bg-gray-50"
                         />
                       </div>
 
-                      <div>
+                      <div className="min-w-0">
                         <label
                           htmlFor="edit-owner-name"
                           className="mb-2 block text-xs font-bold text-gray-700"
@@ -2930,12 +2699,12 @@ export default function SellerDashboard() {
                           }
                           maxLength={100}
                           disabled={savingBusiness}
-                          className="h-12 w-full rounded-xl border border-[#D9DEE5] bg-white px-4 text-sm text-[#17202A] outline-none transition focus:border-[#FF694F] focus:ring-4 focus:ring-[#FF694F]/10 disabled:bg-gray-50"
+                          className="h-12 w-full min-w-0 rounded-xl border border-[#D9DEE5] bg-white px-4 text-sm text-[#17202A] outline-none transition focus:border-[#FF694F] focus:ring-4 focus:ring-[#FF694F]/10 disabled:bg-gray-50"
                         />
                       </div>
                     </div>
 
-                    <div>
+                    <div className="min-w-0">
                       <label
                         htmlFor="edit-description"
                         className="mb-2 block text-xs font-bold text-gray-700"
@@ -2955,12 +2724,14 @@ export default function SellerDashboard() {
                         rows={4}
                         maxLength={2000}
                         disabled={savingBusiness}
-                        className="w-full resize-none rounded-xl border border-[#D9DEE5] bg-white px-4 py-3 text-sm text-[#17202A] outline-none transition focus:border-[#FF694F] focus:ring-4 focus:ring-[#FF694F]/10 disabled:bg-gray-50"
+                        className="w-full min-w-0 resize-none rounded-xl border border-[#D9DEE5] bg-white px-4 py-3 text-sm text-[#17202A] outline-none transition focus:border-[#FF694F] focus:ring-4 focus:ring-[#FF694F]/10 disabled:bg-gray-50"
                       />
                     </div>
 
-                    <div className="grid gap-5 sm:grid-cols-2">
-                      <div>
+                    {/* ADDRESS FIELDS */}
+
+                    <div className="grid min-w-0 gap-5 sm:grid-cols-2">
+                      <div className="min-w-0">
                         <label
                           htmlFor="edit-area"
                           className="mb-2 block text-xs font-bold text-gray-700"
@@ -2979,7 +2750,7 @@ export default function SellerDashboard() {
                           }
                           required
                           disabled={savingBusiness}
-                          className="h-12 w-full rounded-xl border border-[#D9DEE5] bg-white px-4 text-sm text-[#17202A] outline-none transition focus:border-[#FF694F] focus:ring-4 focus:ring-[#FF5A36]/10 disabled:bg-gray-50"
+                          className="h-12 w-full min-w-0 rounded-xl border border-[#D9DEE5] bg-white px-4 text-sm text-[#17202A] outline-none transition focus:border-[#FF694F] focus:ring-4 focus:ring-[#FF5A36]/10 disabled:bg-gray-50"
                         >
                           <option value="">Select area</option>
 
@@ -3008,7 +2779,7 @@ export default function SellerDashboard() {
                         </select>
                       </div>
 
-                      <div>
+                      <div className="min-w-0">
                         <label
                           htmlFor="edit-city"
                           className="mb-2 block text-xs font-bold text-gray-700"
@@ -3029,13 +2800,13 @@ export default function SellerDashboard() {
                           placeholder="Lagos"
                           maxLength={100}
                           disabled={savingBusiness}
-                          className="h-12 w-full rounded-xl border border-[#D9DEE5] bg-white px-4 text-sm text-[#17202A] outline-none transition focus:border-[#FF694F] focus:ring-4 focus:ring-[#FF5A36]/10 disabled:bg-gray-50"
+                          className="h-12 w-full min-w-0 rounded-xl border border-[#D9DEE5] bg-white px-4 text-sm text-[#17202A] outline-none transition focus:border-[#FF694F] focus:ring-4 focus:ring-[#FF5A36]/10 disabled:bg-gray-50"
                         />
                       </div>
                     </div>
 
-                    <div className="grid gap-5 sm:grid-cols-2">
-                      <div>
+                    <div className="grid min-w-0 gap-5 sm:grid-cols-2">
+                      <div className="min-w-0">
                         <label
                           htmlFor="edit-house-number"
                           className="mb-2 block text-xs font-bold text-gray-700"
@@ -3056,11 +2827,11 @@ export default function SellerDashboard() {
                           placeholder="e.g. 12 or Shop 4"
                           maxLength={100}
                           disabled={savingBusiness}
-                          className="h-12 w-full rounded-xl border border-[#D9DEE5] bg-white px-4 text-sm text-[#17202A] outline-none transition focus:border-[#FF694F] focus:ring-4 focus:ring-[#FF5A36]/10 disabled:bg-gray-50"
+                          className="h-12 w-full min-w-0 rounded-xl border border-[#D9DEE5] bg-white px-4 text-sm text-[#17202A] outline-none transition focus:border-[#FF694F] focus:ring-4 focus:ring-[#FF5A36]/10 disabled:bg-gray-50"
                         />
                       </div>
 
-                      <div>
+                      <div className="min-w-0">
                         <label
                           htmlFor="edit-street"
                           className="mb-2 block text-xs font-bold text-gray-700"
@@ -3082,13 +2853,15 @@ export default function SellerDashboard() {
                           maxLength={200}
                           required
                           disabled={savingBusiness}
-                          className="h-12 w-full rounded-xl border border-[#D9DEE5] bg-white px-4 text-sm text-[#17202A] outline-none transition focus:border-[#FF694F] focus:ring-4 focus:ring-[#FF694F]/10 disabled:bg-gray-50"
+                          className="h-12 w-full min-w-0 rounded-xl border border-[#D9DEE5] bg-white px-4 text-sm text-[#17202A] outline-none transition focus:border-[#FF694F] focus:ring-4 focus:ring-[#FF5A36]/10 disabled:bg-gray-50"
                         />
                       </div>
                     </div>
 
-                    <div className="rounded-2xl border border-[#E8E4DE] bg-[#FCFAF6] p-4">
-                      <div className="flex items-start gap-3">
+                    {/* ADDRESS PREVIEW */}
+
+                    <div className="w-full min-w-0 rounded-2xl border border-[#E8E4DE] bg-[#FCFAF6] p-4">
+                      <div className="flex min-w-0 items-start gap-3">
                         <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-[#FFF0EB] text-[#FF5A36]">
                           <MapPin className="h-5 w-5" />
                         </div>
@@ -3098,7 +2871,7 @@ export default function SellerDashboard() {
                             Address preview
                           </p>
 
-                          <p className="mt-2 text-[11px] leading-5 text-gray-600">
+                          <p className="mt-2 break-words text-[11px] leading-5 text-gray-600">
                             {buildLocationAddressPreview(
                               businessForm.area,
                               businessForm.houseNumber,
@@ -3114,68 +2887,9 @@ export default function SellerDashboard() {
                       </div>
                     </div>
 
-                    <div className="rounded-2xl border border-[#E8E4DE] bg-[#FCFAF6] p-4">
-                      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-                        <div className="flex items-start gap-3">
-                          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-[#FFF0EB] text-[#FF5A36]">
-                            <MapPin className="h-5 w-5" />
-                          </div>
+                    {/* CONTACT & SOCIAL LINKS */}
 
-                          <div>
-                            <p className="text-xs font-bold text-[#17202A]">
-                              Exact business location
-                            </p>
-
-                            <p className="mt-1 text-[10px] leading-5 text-gray-500">
-                              Use this only when the device is physically at the business. You do not need to type latitude or longitude.
-                            </p>
-
-                            {locationStatus && (
-                              <p className="mt-2 text-[10px] font-semibold text-[#137A59]">
-                                {locationStatus}
-                              </p>
-                            )}
-
-                            {locationError && (
-                              <p className="mt-2 text-[10px] font-medium text-red-600">
-                                {locationError}
-                              </p>
-                            )}
-                          </div>
-                        </div>
-
-                        <button
-                          type="button"
-                          onClick={captureCurrentLocation}
-                          disabled={
-                            capturingLocation || savingBusiness
-                          }
-                          className="inline-flex shrink-0 items-center justify-center gap-2 rounded-xl bg-[#FF5A36] px-4 py-2.5 text-[11px] font-bold text-white transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60"
-                        >
-                          {capturingLocation ? (
-                            <LoaderCircle className="h-4 w-4 animate-spin" />
-                          ) : (
-                            <MapPin className="h-4 w-4" />
-                          )}
-
-                          {capturingLocation
-                            ? "Capturing..."
-                            : businessLatitude && businessLongitude
-                              ? "Recapture location"
-                              : "Use current location"}
-                        </button>
-                      </div>
-
-                      {businessLatitude && businessLongitude && (
-                        <div className="mt-3 rounded-xl border border-[#BDE8D8] bg-[#EFFBF6] px-3 py-2.5">
-                          <p className="text-[10px] font-semibold text-[#137A59]">
-                            Exact business coordinates are ready. ReMarket stores them internally for location and map use.
-                          </p>
-                        </div>
-                      )}
-                    </div>
-
-                    <div className="rounded-2xl border border-[#E8E4DE] bg-[#FCFAF6] p-4">
+                    <div className="w-full min-w-0 rounded-2xl border border-[#E8E4DE] bg-[#FCFAF6] p-4">
                       <div>
                         <p className="text-xs font-bold text-[#17202A]">
                           Contact & social links
@@ -3186,10 +2900,10 @@ export default function SellerDashboard() {
                         </p>
                       </div>
 
-                      <div className="mt-4 grid gap-4 sm:grid-cols-2">
+                      <div className="mt-4 grid min-w-0 gap-4 sm:grid-cols-2">
                         {SOCIAL_PLATFORMS.map(
                           ({ value, label }) => (
-                            <div key={value}>
+                            <div key={value} className="min-w-0">
                               <label
                                 htmlFor={`edit-social-${value.toLowerCase()}`}
                                 className="mb-2 block text-xs font-bold text-gray-700"
@@ -3220,7 +2934,7 @@ export default function SellerDashboard() {
                                       : "@username or URL"
                                 }
                                 disabled={savingBusiness}
-                                className="h-12 w-full rounded-xl border border-[#D9DEE5] bg-white px-4 text-sm text-[#17202A] outline-none transition focus:border-[#FF694F] focus:ring-4 focus:ring-[#FF694F]/10 disabled:bg-gray-50"
+                                className="h-12 w-full min-w-0 rounded-xl border border-[#D9DEE5] bg-white px-4 text-sm text-[#17202A] outline-none transition focus:border-[#FF694F] focus:ring-4 focus:ring-[#FF694F]/10 disabled:bg-gray-50"
                               />
                             </div>
                           )
@@ -3228,8 +2942,10 @@ export default function SellerDashboard() {
                       </div>
                     </div>
 
-                    <div className="grid gap-5 sm:grid-cols-3">
-                      <div>
+                    {/* CATEGORY, AVAILABILITY AND PRICE */}
+
+                    <div className="grid min-w-0 gap-5 sm:grid-cols-2 xl:grid-cols-3">
+                      <div className="min-w-0">
                         <label
                           htmlFor="edit-category"
                           className="mb-2 block text-xs font-bold text-gray-700"
@@ -3245,10 +2961,11 @@ export default function SellerDashboard() {
                               "categoryId",
                               event.target.value
                             );
+
                             setCategoryChanged(true);
                           }}
                           disabled={savingBusiness}
-                          className="h-12 w-full rounded-xl border border-[#D9DEE5] bg-white px-4 text-sm text-[#17202A] outline-none transition focus:border-[#FF694F] focus:ring-4 focus:ring-[#FF694F]/10 disabled:bg-gray-50"
+                          className="h-12 w-full min-w-0 rounded-xl border border-[#D9DEE5] bg-white px-4 text-sm text-[#17202A] outline-none transition focus:border-[#FF694F] focus:ring-4 focus:ring-[#FF694F]/10 disabled:bg-gray-50"
                         >
                           <option value="">Select category</option>
 
@@ -3263,7 +2980,7 @@ export default function SellerDashboard() {
                         </select>
                       </div>
 
-                      <div>
+                      <div className="min-w-0">
                         <label
                           htmlFor="edit-availability"
                           className="mb-2 block text-xs font-bold text-gray-700"
@@ -3281,22 +2998,24 @@ export default function SellerDashboard() {
                             )
                           }
                           disabled={savingBusiness}
-                          className="h-12 w-full rounded-xl border border-[#D9DEE5] bg-white px-4 text-sm text-[#17202A] outline-none transition focus:border-[#FF694F] focus:ring-4 focus:ring-[#FF694F]/10 disabled:bg-gray-50"
+                          className="h-12 w-full min-w-0 rounded-xl border border-[#D9DEE5] bg-white px-4 text-sm text-[#17202A] outline-none transition focus:border-[#FF694F] focus:ring-4 focus:ring-[#FF694F]/10 disabled:bg-gray-50"
                         >
                           <option value="ASK_SELLER">
                             Ask seller
                           </option>
+
                           <option value="AVAILABLE">
                             Available
                           </option>
+
                           <option value="UNAVAILABLE">
                             Unavailable
                           </option>
                         </select>
                       </div>
 
-                      <div className="grid grid-cols-2 gap-3">
-                        <div>
+                      <div className="grid min-w-0 grid-cols-2 gap-3">
+                        <div className="min-w-0">
                           <label
                             htmlFor="edit-price-min"
                             className="mb-2 block text-xs font-bold text-gray-700"
@@ -3317,11 +3036,11 @@ export default function SellerDashboard() {
                               )
                             }
                             disabled={savingBusiness}
-                            className="h-12 w-full rounded-xl border border-[#D9DEE5] bg-white px-3 text-sm text-[#17202A] outline-none transition focus:border-[#FF694F] focus:ring-4 focus:ring-[#FF694F]/10 disabled:bg-gray-50"
+                            className="h-12 w-full min-w-0 rounded-xl border border-[#D9DEE5] bg-white px-3 text-sm text-[#17202A] outline-none transition focus:border-[#FF694F] focus:ring-4 focus:ring-[#FF694F]/10 disabled:bg-gray-50"
                           />
                         </div>
 
-                        <div>
+                        <div className="min-w-0">
                           <label
                             htmlFor="edit-price-max"
                             className="mb-2 block text-xs font-bold text-gray-700"
@@ -3342,17 +3061,19 @@ export default function SellerDashboard() {
                               )
                             }
                             disabled={savingBusiness}
-                            className="h-12 w-full rounded-xl border border-[#D9DEE5] bg-white px-3 text-sm text-[#17202A] outline-none transition focus:border-[#FF694F] focus:ring-4 focus:ring-[#FF694F]/10 disabled:bg-gray-50"
+                            className="h-12 w-full min-w-0 rounded-xl border border-[#D9DEE5] bg-white px-3 text-sm text-[#17202A] outline-none transition focus:border-[#FF694F] focus:ring-4 focus:ring-[#FF694F]/10 disabled:bg-gray-50"
                           />
                         </div>
                       </div>
                     </div>
 
+                    {/* SAVE BUSINESS */}
+
                     <div className="flex justify-end border-t border-[#EAE6DF] pt-5">
                       <button
                         type="submit"
                         disabled={savingBusiness}
-                        className="flex h-12 items-center justify-center gap-2 rounded-xl bg-[#FF5A36] px-6 text-sm font-bold text-white shadow-sm transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60"
+                        className="flex h-12 w-full items-center justify-center gap-2 rounded-xl bg-[#FF5A36] px-6 text-sm font-bold text-white shadow-sm transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60 sm:w-auto"
                       >
                         {savingBusiness ? (
                           <>
@@ -3371,16 +3092,17 @@ export default function SellerDashboard() {
                 </section>
               )}
 
-              {/* Products */}
+              {/* PRODUCTS */}
 
               {business && !editingBusiness && (
-                <section className="mt-5">
-                  <div className="rounded-[22px] border border-[#E8E4DE] bg-white shadow-sm">
-                    {/* Products header */}
+                <section className="mt-5 w-full min-w-0">
+                  <div className="w-full min-w-0 rounded-[22px] border border-[#E8E4DE] bg-white shadow-sm">
 
-                    <div className="flex flex-col gap-4 border-b border-[#EAE6DF] px-5 py-5 sm:px-6">
-                      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-                        <div>
+                    {/* PRODUCTS HEADER */}
+
+                    <div className="flex min-w-0 flex-col gap-4 border-b border-[#EAE6DF] px-5 py-5 sm:px-6">
+                      <div className="flex min-w-0 flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+                        <div className="min-w-0">
                           <p className="text-xs font-semibold uppercase tracking-[0.12em] text-[#FF5A36]">
                             Product management
                           </p>
@@ -3405,7 +3127,7 @@ export default function SellerDashboard() {
                             reachedProductLimit &&
                             !showProductForm
                           }
-                          className={`inline-flex items-center justify-center gap-2 rounded-xl px-4 py-2.5 text-xs font-bold transition ${
+                          className={`inline-flex shrink-0 items-center justify-center gap-2 rounded-xl px-4 py-2.5 text-xs font-bold transition ${
                             reachedProductLimit &&
                             !showProductForm
                               ? "cursor-not-allowed bg-gray-200 text-gray-500"
@@ -3426,7 +3148,7 @@ export default function SellerDashboard() {
                         </button>
                       </div>
 
-                      {/* Product limit */}
+                      {/* PRODUCT LIMIT */}
 
                       <div className="rounded-2xl border border-[#E8E4DE] bg-[#FCFAF6] p-4">
                         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
@@ -3481,7 +3203,7 @@ export default function SellerDashboard() {
                       </div>
                     </div>
 
-                    {/* Add/Edit product form */}
+                    {/* ADD / EDIT PRODUCT FORM */}
 
                     {showProductForm && (
                       <form
@@ -3490,10 +3212,10 @@ export default function SellerDashboard() {
                             ? updateProduct
                             : createProduct
                         }
-                        className="space-y-5 border-b border-[#EAE6DF] bg-[#FCFAF6] px-5 py-6 sm:px-6"
+                        className="w-full min-w-0 space-y-5 border-b border-[#EAE6DF] bg-[#FCFAF6] px-5 py-6 sm:px-6"
                       >
-                        <div className="flex items-start justify-between gap-4">
-                          <div className="flex items-start gap-3">
+                        <div className="flex min-w-0 items-start justify-between gap-4">
+                          <div className="flex min-w-0 items-start gap-3">
                             <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-[#FFF0EB] text-[#FF5A36]">
                               {editingProductId ? (
                                 <Pencil className="h-5 w-5" />
@@ -3502,7 +3224,7 @@ export default function SellerDashboard() {
                               )}
                             </div>
 
-                            <div>
+                            <div className="min-w-0">
                               <h3 className="text-sm font-bold text-[#17202A]">
                                 {editingProductId
                                   ? "Edit product"
@@ -3524,15 +3246,15 @@ export default function SellerDashboard() {
                               creatingProduct ||
                               updatingProduct
                             }
-                            className="flex h-9 w-9 items-center justify-center rounded-full border border-[#E8E4DE] bg-white text-gray-500 transition hover:text-[#9F2D18] disabled:cursor-not-allowed disabled:opacity-50"
+                            className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-[#E8E4DE] bg-white text-gray-500 transition hover:text-[#9F2D18] disabled:cursor-not-allowed disabled:opacity-50"
                             aria-label="Close product form"
                           >
                             <X className="h-4 w-4" />
                           </button>
                         </div>
 
-                        <div className="grid gap-5 sm:grid-cols-2">
-                          <div>
+                        <div className="grid min-w-0 gap-5 sm:grid-cols-2">
+                          <div className="min-w-0">
                             <label
                               htmlFor="product-name"
                               className="mb-2 block text-xs font-bold text-gray-700"
@@ -3557,11 +3279,11 @@ export default function SellerDashboard() {
                                 creatingProduct ||
                                 updatingProduct
                               }
-                              className="h-12 w-full rounded-xl border border-[#D9DEE5] bg-white px-4 text-sm text-[#17202A] outline-none transition focus:border-[#FF694F] focus:ring-4 focus:ring-[#FF694F]/10 disabled:bg-gray-50"
+                              className="h-12 w-full min-w-0 rounded-xl border border-[#D9DEE5] bg-white px-4 text-sm text-[#17202A] outline-none transition focus:border-[#FF694F] focus:ring-4 focus:ring-[#FF694F]/10 disabled:bg-gray-50"
                             />
                           </div>
 
-                          <div>
+                          <div className="min-w-0">
                             <label
                               htmlFor="product-category"
                               className="mb-2 block text-xs font-bold text-gray-700"
@@ -3582,7 +3304,7 @@ export default function SellerDashboard() {
                                 creatingProduct ||
                                 updatingProduct
                               }
-                              className="h-12 w-full rounded-xl border border-[#D9DEE5] bg-white px-4 text-sm text-[#17202A] outline-none transition focus:border-[#FF694F] focus:ring-4 focus:ring-[#FF694F]/10 disabled:bg-gray-50"
+                              className="h-12 w-full min-w-0 rounded-xl border border-[#D9DEE5] bg-white px-4 text-sm text-[#17202A] outline-none transition focus:border-[#FF694F] focus:ring-4 focus:ring-[#FF694F]/10 disabled:bg-gray-50"
                             >
                               <option value="">
                                 Select category
@@ -3600,7 +3322,7 @@ export default function SellerDashboard() {
                           </div>
                         </div>
 
-                        <div>
+                        <div className="min-w-0">
                           <label
                             htmlFor="product-description"
                             className="mb-2 block text-xs font-bold text-gray-700"
@@ -3624,12 +3346,12 @@ export default function SellerDashboard() {
                               updatingProduct
                             }
                             placeholder="Describe the product"
-                            className="w-full resize-none rounded-xl border border-[#D9DEE5] bg-white px-4 py-3 text-sm text-[#17202A] outline-none transition focus:border-[#FF694F] focus:ring-4 focus:ring-[#FF694F]/10 disabled:bg-gray-50"
+                            className="w-full min-w-0 resize-none rounded-xl border border-[#D9DEE5] bg-white px-4 py-3 text-sm text-[#17202A] outline-none transition focus:border-[#FF694F] focus:ring-4 focus:ring-[#FF694F]/10 disabled:bg-gray-50"
                           />
                         </div>
 
-                        <div className="grid gap-5 sm:grid-cols-2">
-                          <div>
+                        <div className="grid min-w-0 gap-5 sm:grid-cols-2">
+                          <div className="min-w-0">
                             <label
                               htmlFor="product-price"
                               className="mb-2 block text-xs font-bold text-gray-700"
@@ -3654,11 +3376,11 @@ export default function SellerDashboard() {
                                 creatingProduct ||
                                 updatingProduct
                               }
-                              className="h-12 w-full rounded-xl border border-[#D9DEE5] bg-white px-4 text-sm text-[#17202A] outline-none transition focus:border-[#FF694F] focus:ring-4 focus:ring-[#FF694F]/10 disabled:bg-gray-50"
+                              className="h-12 w-full min-w-0 rounded-xl border border-[#D9DEE5] bg-white px-4 text-sm text-[#17202A] outline-none transition focus:border-[#FF694F] focus:ring-4 focus:ring-[#FF694F]/10 disabled:bg-gray-50"
                             />
                           </div>
 
-                          <div>
+                          <div className="min-w-0">
                             <label
                               htmlFor="product-availability"
                               className="mb-2 block text-xs font-bold text-gray-700"
@@ -3679,14 +3401,16 @@ export default function SellerDashboard() {
                                 creatingProduct ||
                                 updatingProduct
                               }
-                              className="h-12 w-full rounded-xl border border-[#D9DEE5] bg-white px-4 text-sm text-[#17202A] outline-none transition focus:border-[#FF694F] focus:ring-4 focus:ring-[#FF694F]/10 disabled:bg-gray-50"
+                              className="h-12 w-full min-w-0 rounded-xl border border-[#D9DEE5] bg-white px-4 text-sm text-[#17202A] outline-none transition focus:border-[#FF694F] focus:ring-4 focus:ring-[#FF694F]/10 disabled:bg-gray-50"
                             >
                               <option value="ASK_SELLER">
                                 Ask seller
                               </option>
+
                               <option value="AVAILABLE">
                                 Available
                               </option>
+
                               <option value="UNAVAILABLE">
                                 Unavailable
                               </option>
@@ -3694,9 +3418,9 @@ export default function SellerDashboard() {
                           </div>
                         </div>
 
-                        <div className="grid gap-5 sm:grid-cols-2">
-                          <div className="grid grid-cols-2 gap-3">
-                            <div>
+                        <div className="grid min-w-0 gap-5 xl:grid-cols-2">
+                          <div className="grid min-w-0 grid-cols-2 gap-3">
+                            <div className="min-w-0">
                               <label
                                 htmlFor="product-price-min"
                                 className="mb-2 block text-xs font-bold text-gray-700"
@@ -3721,11 +3445,11 @@ export default function SellerDashboard() {
                                   creatingProduct ||
                                   updatingProduct
                                 }
-                                className="h-12 w-full rounded-xl border border-[#D9DEE5] bg-white px-3 text-sm text-[#17202A] outline-none transition focus:border-[#FF694F] focus:ring-4 focus:ring-[#FF694F]/10 disabled:bg-gray-50"
+                                className="h-12 w-full min-w-0 rounded-xl border border-[#D9DEE5] bg-white px-3 text-sm text-[#17202A] outline-none transition focus:border-[#FF694F] focus:ring-4 focus:ring-[#FF694F]/10 disabled:bg-gray-50"
                               />
                             </div>
 
-                            <div>
+                            <div className="min-w-0">
                               <label
                                 htmlFor="product-price-max"
                                 className="mb-2 block text-xs font-bold text-gray-700"
@@ -3750,12 +3474,12 @@ export default function SellerDashboard() {
                                   creatingProduct ||
                                   updatingProduct
                                 }
-                                className="h-12 w-full rounded-xl border border-[#D9DEE5] bg-white px-3 text-sm text-[#17202A] outline-none transition focus:border-[#FF694F] focus:ring-4 focus:ring-[#FF694F]/10 disabled:bg-gray-50"
+                                className="h-12 w-full min-w-0 rounded-xl border border-[#D9DEE5] bg-white px-3 text-sm text-[#17202A] outline-none transition focus:border-[#FF694F] focus:ring-4 focus:ring-[#FF694F]/10 disabled:bg-gray-50"
                               />
                             </div>
                           </div>
 
-                          <div className="rounded-2xl border border-[#E8E4DE] bg-white p-4">
+                          <div className="min-w-0 rounded-2xl border border-[#E8E4DE] bg-white p-4">
                             <div>
                               <p className="text-xs font-bold text-[#17202A]">
                                 Product images
@@ -3766,7 +3490,7 @@ export default function SellerDashboard() {
                               </p>
                             </div>
 
-                            <div className="mt-3">
+                            <div className="mt-3 min-w-0">
                               <ProductImageUpload
                                 value={productForm.images}
                                 onChange={(images) =>
@@ -3784,7 +3508,7 @@ export default function SellerDashboard() {
                           </div>
                         </div>
 
-                        <div className="flex flex-col gap-3 border-t border-[#E5E0D8] pt-5 sm:flex-row sm:items-center sm:justify-between">
+                        <div className="flex min-w-0 flex-col gap-3 border-t border-[#E5E0D8] pt-5 sm:flex-row sm:items-center sm:justify-between">
                           <p className="text-xs leading-5 text-gray-500">
                             {editingProductId
                               ? "Changes update this existing product."
@@ -3801,12 +3525,13 @@ export default function SellerDashboard() {
                               creatingProduct ||
                               updatingProduct
                             }
-                            className="flex h-12 items-center justify-center gap-2 rounded-xl bg-[#FF5A36] px-6 text-sm font-bold text-white shadow-sm transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60"
+                            className="flex h-12 shrink-0 items-center justify-center gap-2 rounded-xl bg-[#FF5A36] px-6 text-sm font-bold text-white shadow-sm transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60"
                           >
                             {creatingProduct ||
                             updatingProduct ? (
                               <>
                                 <LoaderCircle className="h-4 w-4 animate-spin" />
+
                                 {editingProductId
                                   ? "Saving..."
                                   : "Adding..."}
@@ -3818,6 +3543,7 @@ export default function SellerDashboard() {
                                 ) : (
                                   <Plus className="h-4 w-4" />
                                 )}
+
                                 {editingProductId
                                   ? "Save changes"
                                   : "Add product"}
@@ -3828,9 +3554,9 @@ export default function SellerDashboard() {
                       </form>
                     )}
 
-                    {/* Product list */}
+                    {/* PRODUCT LIST */}
 
-                    <div className="p-5 sm:p-6">
+                    <div className="w-full min-w-0 p-5 sm:p-6">
                       {dashboardProducts.length === 0 ? (
                         <div className="rounded-2xl border border-dashed border-[#D9DEE5] bg-[#FCFAF6] px-5 py-10 text-center">
                           <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-2xl bg-white text-gray-400 shadow-sm">
@@ -3856,11 +3582,11 @@ export default function SellerDashboard() {
                           </button>
                         </div>
                       ) : (
-                        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                        <div className="grid min-w-0 gap-4 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
                           {dashboardProducts.map((product) => (
                             <article
                               key={product.id}
-                              className="overflow-hidden rounded-2xl border border-[#E8E4DE] bg-white"
+                              className="min-w-0 overflow-hidden rounded-2xl border border-[#E8E4DE] bg-white"
                             >
                               <div className="h-[150px] overflow-hidden bg-[#FCFAF6]">
                                 {product.images?.[0]?.url ||
@@ -3882,10 +3608,10 @@ export default function SellerDashboard() {
                                 )}
                               </div>
 
-                              <div className="p-4">
-                                <div className="flex items-start justify-between gap-3">
+                              <div className="min-w-0 p-4">
+                                <div className="flex min-w-0 items-start justify-between gap-3">
                                   <div className="min-w-0">
-                                    <h3 className="truncate text-sm font-bold text-[#17202A]">
+                                    <h3 className="break-words text-sm font-bold text-[#17202A]">
                                       {product.name}
                                     </h3>
 
@@ -3909,8 +3635,8 @@ export default function SellerDashboard() {
                                     "No description added."}
                                 </p>
 
-                                <div className="mt-3 flex items-center justify-between gap-3">
-                                  <div className="text-sm font-bold text-[#9F2D18]">
+                                <div className="mt-3 flex min-w-0 items-center justify-between gap-3">
+                                  <div className="break-words text-sm font-bold text-[#9F2D18]">
                                     {product.price !== null
                                       ? `₦${product.price.toLocaleString()}`
                                       : product.priceMin !== null &&
@@ -3919,7 +3645,7 @@ export default function SellerDashboard() {
                                         : "Ask seller"}
                                   </div>
 
-                                  <span className="text-right text-[10px] font-medium text-gray-400">
+                                  <span className="shrink-0 text-right text-[10px] font-medium text-gray-400">
                                     {product.availability.replace(
                                       "_",
                                       " "
@@ -3937,7 +3663,7 @@ export default function SellerDashboard() {
                                       deletingProductId ===
                                       product.id
                                     }
-                                    className="flex flex-1 items-center justify-center gap-2 rounded-xl border border-[#E8E4DE] px-3 py-2.5 text-xs font-semibold text-gray-700 transition hover:bg-[#FFF7ED] hover:text-[#9F2D18] disabled:cursor-not-allowed disabled:opacity-50"
+                                    className="flex min-w-0 flex-1 items-center justify-center gap-2 rounded-xl border border-[#E8E4DE] px-3 py-2.5 text-xs font-semibold text-gray-700 transition hover:bg-[#FFF7ED] hover:text-[#9F2D18] disabled:cursor-not-allowed disabled:opacity-50"
                                   >
                                     <Pencil className="h-3.5 w-3.5" />
                                     Edit
@@ -3952,7 +3678,7 @@ export default function SellerDashboard() {
                                       deletingProductId ===
                                       product.id
                                     }
-                                    className="flex items-center justify-center rounded-xl border border-[#F1D5D0] px-3 py-2.5 text-xs font-semibold text-[#C5402D] transition hover:bg-[#FFF0EE] disabled:cursor-not-allowed disabled:opacity-50"
+                                    className="flex shrink-0 items-center justify-center rounded-xl border border-[#F1D5D0] px-3 py-2.5 text-xs font-semibold text-[#C5402D] transition hover:bg-[#FFF0EE] disabled:cursor-not-allowed disabled:opacity-50"
                                     aria-label={`Delete ${product.name}`}
                                   >
                                     {deletingProductId ===
@@ -3973,10 +3699,10 @@ export default function SellerDashboard() {
                 </section>
               )}
 
-              {/* Create business */}
+              {/* CREATE BUSINESS */}
 
               {!business && (
-                <section className="rounded-[22px] border border-[#E8E4DE] bg-white shadow-sm">
+                <section className="w-full min-w-0 rounded-[22px] border border-[#E8E4DE] bg-white shadow-sm">
                   <div className="border-b border-[#EAE6DF] px-5 py-5 sm:px-6">
                     <div className="flex items-center gap-3">
                       <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-[#FFF0EB] text-[#FF5A36]">
@@ -3997,10 +3723,10 @@ export default function SellerDashboard() {
 
                   <form
                     onSubmit={createBusiness}
-                    className="space-y-5 px-5 py-6 sm:px-6"
+                    className="w-full min-w-0 space-y-5 px-5 py-6 sm:px-6"
                   >
-                    <div className="grid gap-5 sm:grid-cols-2">
-                      <div>
+                    <div className="grid min-w-0 gap-5 sm:grid-cols-2">
+                      <div className="min-w-0">
                         <label
                           htmlFor="create-business-name"
                           className="mb-2 block text-xs font-bold text-gray-700"
@@ -4022,11 +3748,11 @@ export default function SellerDashboard() {
                           placeholder="Your business name"
                           required
                           disabled={savingBusiness}
-                          className="h-12 w-full rounded-xl border border-[#D9DEE5] bg-white px-4 text-sm text-[#17202A] outline-none transition focus:border-[#FF694F] focus:ring-4 focus:ring-[#FF694F]/10 disabled:bg-gray-50"
+                          className="h-12 w-full min-w-0 rounded-xl border border-[#D9DEE5] bg-white px-4 text-sm text-[#17202A] outline-none transition focus:border-[#FF694F] focus:ring-4 focus:ring-[#FF694F]/10 disabled:bg-gray-50"
                         />
                       </div>
 
-                      <div>
+                      <div className="min-w-0">
                         <label
                           htmlFor="create-owner-name"
                           className="mb-2 block text-xs font-bold text-gray-700"
@@ -4047,12 +3773,12 @@ export default function SellerDashboard() {
                           maxLength={100}
                           placeholder="Your name"
                           disabled={savingBusiness}
-                          className="h-12 w-full rounded-xl border border-[#D9DEE5] bg-white px-4 text-sm text-[#17202A] outline-none transition focus:border-[#FF694F] focus:ring-4 focus:ring-[#FF5A36]/10 disabled:bg-gray-50"
+                          className="h-12 w-full min-w-0 rounded-xl border border-[#D9DEE5] bg-white px-4 text-sm text-[#17202A] outline-none transition focus:border-[#FF694F] focus:ring-4 focus:ring-[#FF5A36]/10 disabled:bg-gray-50"
                         />
                       </div>
                     </div>
 
-                    <div>
+                    <div className="min-w-0">
                       <label
                         htmlFor="create-description"
                         className="mb-2 block text-xs font-bold text-gray-700"
@@ -4073,12 +3799,14 @@ export default function SellerDashboard() {
                         rows={4}
                         maxLength={2000}
                         disabled={savingBusiness}
-                        className="w-full resize-none rounded-xl border border-[#D9DEE5] bg-white px-4 py-3 text-sm text-[#17202A] outline-none transition focus:border-[#FF694F] focus:ring-4 focus:ring-[#FF694F]/10 disabled:bg-gray-50"
+                        className="w-full min-w-0 resize-none rounded-xl border border-[#D9DEE5] bg-white px-4 py-3 text-sm text-[#17202A] outline-none transition focus:border-[#FF694F] focus:ring-4 focus:ring-[#FF694F]/10 disabled:bg-gray-50"
                       />
                     </div>
 
-                    <div className="grid gap-5 sm:grid-cols-2">
-                      <div>
+                    {/* ADDRESS FIELDS */}
+
+                    <div className="grid min-w-0 gap-5 sm:grid-cols-2">
+                      <div className="min-w-0">
                         <label
                           htmlFor="create-area"
                           className="mb-2 block text-xs font-bold text-gray-700"
@@ -4097,7 +3825,7 @@ export default function SellerDashboard() {
                           }
                           required
                           disabled={savingBusiness}
-                          className="h-12 w-full rounded-xl border border-[#D9DEE5] bg-white px-4 text-sm text-[#17202A] outline-none transition focus:border-[#FF694F] focus:ring-4 focus:ring-[#FF5A36]/10 disabled:bg-gray-50"
+                          className="h-12 w-full min-w-0 rounded-xl border border-[#D9DEE5] bg-white px-4 text-sm text-[#17202A] outline-none transition focus:border-[#FF694F] focus:ring-4 focus:ring-[#FF5A36]/10 disabled:bg-gray-50"
                         >
                           <option value="">Select area</option>
 
@@ -4119,7 +3847,7 @@ export default function SellerDashboard() {
                         </select>
                       </div>
 
-                      <div>
+                      <div className="min-w-0">
                         <label
                           htmlFor="create-city"
                           className="mb-2 block text-xs font-bold text-gray-700"
@@ -4140,13 +3868,13 @@ export default function SellerDashboard() {
                           placeholder="Lagos"
                           maxLength={100}
                           disabled={savingBusiness}
-                          className="h-12 w-full rounded-xl border border-[#D9DEE5] bg-white px-4 text-sm text-[#17202A] outline-none transition focus:border-[#FF694F] focus:ring-4 focus:ring-[#FF5A36]/10 disabled:bg-gray-50"
+                          className="h-12 w-full min-w-0 rounded-xl border border-[#D9DEE5] bg-white px-4 text-sm text-[#17202A] outline-none transition focus:border-[#FF694F] focus:ring-4 focus:ring-[#FF5A36]/10 disabled:bg-gray-50"
                         />
                       </div>
                     </div>
 
-                    <div className="grid gap-5 sm:grid-cols-2">
-                      <div>
+                    <div className="grid min-w-0 gap-5 sm:grid-cols-2">
+                      <div className="min-w-0">
                         <label
                           htmlFor="create-house-number"
                           className="mb-2 block text-xs font-bold text-gray-700"
@@ -4167,11 +3895,11 @@ export default function SellerDashboard() {
                           placeholder="e.g. 12 or Shop 4"
                           maxLength={100}
                           disabled={savingBusiness}
-                          className="h-12 w-full rounded-xl border border-[#D9DEE5] bg-white px-4 text-sm text-[#17202A] outline-none transition focus:border-[#FF694F] focus:ring-4 focus:ring-[#FF5A36]/10 disabled:bg-gray-50"
+                          className="h-12 w-full min-w-0 rounded-xl border border-[#D9DEE5] bg-white px-4 text-sm text-[#17202A] outline-none transition focus:border-[#FF694F] focus:ring-4 focus:ring-[#FF5A36]/10 disabled:bg-gray-50"
                         />
                       </div>
 
-                      <div>
+                      <div className="min-w-0">
                         <label
                           htmlFor="create-street"
                           className="mb-2 block text-xs font-bold text-gray-700"
@@ -4193,13 +3921,15 @@ export default function SellerDashboard() {
                           maxLength={200}
                           required
                           disabled={savingBusiness}
-                          className="h-12 w-full rounded-xl border border-[#D9DEE5] bg-white px-4 py-3 text-sm text-[#17202A] outline-none transition focus:border-[#FF694F] focus:ring-4 focus:ring-[#FF5A36]/10 disabled:bg-gray-50"
+                          className="h-12 w-full min-w-0 rounded-xl border border-[#D9DEE5] bg-white px-4 text-sm text-[#17202A] outline-none transition focus:border-[#FF694F] focus:ring-4 focus:ring-[#FF5A36]/10 disabled:bg-gray-50"
                         />
                       </div>
                     </div>
 
-                    <div className="rounded-2xl border border-[#E8E4DE] bg-[#FCFAF6] p-4">
-                      <div className="flex items-start gap-3">
+                    {/* ADDRESS PREVIEW */}
+
+                    <div className="w-full min-w-0 rounded-2xl border border-[#E8E4DE] bg-[#FCFAF6] p-4">
+                      <div className="flex min-w-0 items-start gap-3">
                         <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-[#FFF0EB] text-[#FF5A36]">
                           <MapPin className="h-5 w-5" />
                         </div>
@@ -4209,7 +3939,7 @@ export default function SellerDashboard() {
                             Address preview
                           </p>
 
-                          <p className="mt-2 text-[11px] leading-5 text-gray-600">
+                          <p className="mt-2 break-words text-[11px] leading-5 text-gray-600">
                             {buildLocationAddressPreview(
                               businessForm.area,
                               businessForm.houseNumber,
@@ -4225,68 +3955,9 @@ export default function SellerDashboard() {
                       </div>
                     </div>
 
-                    <div className="rounded-2xl border border-[#E8E4DE] bg-[#FCFAF6] p-4">
-                      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-                        <div className="flex items-start gap-3">
-                          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-[#FFF0EB] text-[#FF5A36]">
-                            <MapPin className="h-5 w-5" />
-                          </div>
+                    {/* CONTACT & SOCIAL LINKS */}
 
-                          <div>
-                            <p className="text-xs font-bold text-[#17202A]">
-                              Exact business location
-                            </p>
-
-                            <p className="mt-1 text-[10px] leading-5 text-gray-500">
-                              Optional. Use this when the device is physically at the business. ReMarket stores the coordinates automatically; you do not type latitude or longitude.
-                            </p>
-
-                            {locationStatus && (
-                              <p className="mt-2 text-[10px] font-semibold text-[#137A59]">
-                                {locationStatus}
-                              </p>
-                            )}
-
-                            {locationError && (
-                              <p className="mt-2 text-[10px] font-medium text-red-600">
-                                {locationError}
-                              </p>
-                            )}
-                          </div>
-                        </div>
-
-                        <button
-                          type="button"
-                          onClick={captureCurrentLocation}
-                          disabled={
-                            capturingLocation || savingBusiness
-                          }
-                          className="inline-flex shrink-0 items-center justify-center gap-2 rounded-xl bg-[#FF5A36] px-4 py-2.5 text-[11px] font-bold text-white transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60"
-                        >
-                          {capturingLocation ? (
-                            <LoaderCircle className="h-4 w-4 animate-spin" />
-                          ) : (
-                            <MapPin className="h-4 w-4" />
-                          )}
-
-                          {capturingLocation
-                            ? "Capturing..."
-                            : businessLatitude && businessLongitude
-                              ? "Recapture location"
-                              : "Use current location"}
-                        </button>
-                      </div>
-
-                      {businessLatitude && businessLongitude && (
-                        <div className="mt-3 rounded-xl border border-[#BDE8D8] bg-[#EFFBF6] px-3 py-2.5">
-                          <p className="text-[10px] font-semibold text-[#137A59]">
-                            Exact business location is ready to save.
-                          </p>
-                        </div>
-                      )}
-                    </div>
-
-                    <div className="rounded-2xl border border-[#E8E4DE] bg-[#FCFAF6] p-4">
+                    <div className="w-full min-w-0 rounded-2xl border border-[#E8E4DE] bg-[#FCFAF6] p-4">
                       <div>
                         <p className="text-xs font-bold text-[#17202A]">
                           Contact & social links
@@ -4297,10 +3968,10 @@ export default function SellerDashboard() {
                         </p>
                       </div>
 
-                      <div className="mt-4 grid gap-4 sm:grid-cols-2">
+                      <div className="mt-4 grid min-w-0 gap-4 sm:grid-cols-2">
                         {SOCIAL_PLATFORMS.map(
                           ({ value, label }) => (
-                            <div key={value}>
+                            <div key={value} className="min-w-0">
                               <label
                                 htmlFor={`create-social-${value.toLowerCase()}`}
                                 className="mb-2 block text-xs font-bold text-gray-700"
@@ -4331,7 +4002,7 @@ export default function SellerDashboard() {
                                       : "@username or URL"
                                 }
                                 disabled={savingBusiness}
-                                className="h-12 w-full rounded-xl border border-[#D9DEE5] bg-white px-4 text-sm text-[#17202A] outline-none transition focus:border-[#FF694F] focus:ring-4 focus:ring-[#FF694F]/10 disabled:bg-gray-50"
+                                className="h-12 w-full min-w-0 rounded-xl border border-[#D9DEE5] bg-white px-4 text-sm text-[#17202A] outline-none transition focus:border-[#FF694F] focus:ring-4 focus:ring-[#FF694F]/10 disabled:bg-gray-50"
                               />
                             </div>
                           )
@@ -4339,8 +4010,10 @@ export default function SellerDashboard() {
                       </div>
                     </div>
 
-                    <div className="grid gap-5 sm:grid-cols-3">
-                      <div>
+                    {/* CATEGORY, AVAILABILITY AND PRICE */}
+
+                    <div className="grid min-w-0 gap-5 sm:grid-cols-2 xl:grid-cols-3">
+                      <div className="min-w-0">
                         <label
                           htmlFor="create-category"
                           className="mb-2 block text-xs font-bold text-gray-700"
@@ -4358,7 +4031,7 @@ export default function SellerDashboard() {
                             )
                           }
                           disabled={savingBusiness}
-                          className="h-12 w-full rounded-xl border border-[#D9DEE5] bg-white px-4 text-sm text-[#17202A] outline-none transition focus:border-[#FF694F] focus:ring-4 focus:ring-[#FF694F]/10 disabled:bg-gray-50"
+                          className="h-12 w-full min-w-0 rounded-xl border border-[#D9DEE5] bg-white px-4 text-sm text-[#17202A] outline-none transition focus:border-[#FF694F] focus:ring-4 focus:ring-[#FF694F]/10 disabled:bg-gray-50"
                         >
                           <option value="">Select category</option>
 
@@ -4373,7 +4046,7 @@ export default function SellerDashboard() {
                         </select>
                       </div>
 
-                      <div>
+                      <div className="min-w-0">
                         <label
                           htmlFor="create-availability"
                           className="mb-2 block text-xs font-bold text-gray-700"
@@ -4391,22 +4064,24 @@ export default function SellerDashboard() {
                             )
                           }
                           disabled={savingBusiness}
-                          className="h-12 w-full rounded-xl border border-[#D9DEE5] bg-white px-4 text-sm text-[#17202A] outline-none transition focus:border-[#FF694F] focus:ring-4 focus:ring-[#FF5A36]/10 disabled:bg-gray-50"
+                          className="h-12 w-full min-w-0 rounded-xl border border-[#D9DEE5] bg-white px-4 text-sm text-[#17202A] outline-none transition focus:border-[#FF694F] focus:ring-4 focus:ring-[#FF5A36]/10 disabled:bg-gray-50"
                         >
                           <option value="ASK_SELLER">
                             Ask seller
                           </option>
+
                           <option value="AVAILABLE">
                             Available
                           </option>
+
                           <option value="UNAVAILABLE">
                             Unavailable
                           </option>
                         </select>
                       </div>
 
-                      <div className="grid grid-cols-2 gap-3">
-                        <div>
+                      <div className="grid min-w-0 grid-cols-2 gap-3">
+                        <div className="min-w-0">
                           <label
                             htmlFor="create-price-min"
                             className="mb-2 block text-xs font-bold text-gray-700"
@@ -4428,11 +4103,11 @@ export default function SellerDashboard() {
                             }
                             placeholder="0"
                             disabled={savingBusiness}
-                            className="h-12 w-full rounded-xl border border-[#D9DEE5] bg-white px-3 text-sm text-[#17202A] outline-none transition focus:border-[#FF694F] focus:ring-4 focus:ring-[#FF5A36]/10 disabled:bg-gray-50"
+                            className="h-12 w-full min-w-0 rounded-xl border border-[#D9DEE5] bg-white px-3 text-sm text-[#17202A] outline-none transition focus:border-[#FF694F] focus:ring-4 focus:ring-[#FF5A36]/10 disabled:bg-gray-50"
                           />
                         </div>
 
-                        <div>
+                        <div className="min-w-0">
                           <label
                             htmlFor="create-price-max"
                             className="mb-2 block text-xs font-bold text-gray-700"
@@ -4454,13 +4129,15 @@ export default function SellerDashboard() {
                             }
                             placeholder="0"
                             disabled={savingBusiness}
-                            className="h-12 w-full rounded-xl border border-[#D9DEE5] bg-white px-3 text-sm text-[#17202A] outline-none transition focus:border-[#FF694F] focus:ring-4 focus:ring-[#FF5A36]/10 disabled:bg-gray-50"
+                            className="h-12 w-full min-w-0 rounded-xl border border-[#D9DEE5] bg-white px-3 text-sm text-[#17202A] outline-none transition focus:border-[#FF694F] focus:ring-4 focus:ring-[#FF5A36]/10 disabled:bg-gray-50"
                           />
                         </div>
                       </div>
                     </div>
 
-                    <div className="flex flex-col gap-3 border-t border-[#EAE6DF] pt-5 sm:flex-row sm:items-center sm:justify-between">
+                    {/* CREATE BUSINESS */}
+
+                    <div className="flex min-w-0 flex-col gap-3 border-t border-[#EAE6DF] pt-5 sm:flex-row sm:items-center sm:justify-between">
                       <p className="text-xs leading-5 text-gray-500">
                         Your business will be linked to this seller account automatically.
                       </p>
@@ -4468,7 +4145,7 @@ export default function SellerDashboard() {
                       <button
                         type="submit"
                         disabled={savingBusiness}
-                        className="flex h-12 items-center justify-center gap-2 rounded-xl bg-[#FF5A36] px-6 text-sm font-bold text-white shadow-sm transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60"
+                        className="flex h-12 w-full shrink-0 items-center justify-center gap-2 rounded-xl bg-[#FF5A36] px-6 text-sm font-bold text-white shadow-sm transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60 sm:w-auto"
                       >
                         {savingBusiness ? (
                           <>
