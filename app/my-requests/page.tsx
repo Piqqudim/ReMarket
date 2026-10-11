@@ -282,6 +282,7 @@ export default function MyRequestsPage() {
      * Clear stale results before starting another
      * lookup, including when the new input is empty.
      */
+
     setError("");
     setSearched(false);
     setRequests([]);
@@ -375,8 +376,8 @@ export default function MyRequestsPage() {
   }
 
   return (
-    <div className="min-h-screen bg-[#FFF7ED] px-3 py-3 sm:px-5 sm:py-5">
-      <div className="mx-auto flex min-h-[calc(100vh-24px)] max-w-[1500px] flex-col overflow-hidden rounded-[22px] border border-[#FF5A36] bg-[#FFFDFC] shadow-sm sm:min-h-[calc(100vh-40px)]">
+    <div className="min-h-dvh w-full overflow-x-clip bg-[#FFF7ED] sm:px-5 sm:py-5">
+      <div className="mx-auto flex min-h-dvh w-full max-w-[1500px] flex-col overflow-hidden rounded-none border-0 bg-[#FFFDFC] shadow-none sm:min-h-[calc(100dvh-40px)] sm:rounded-[22px] sm:border sm:border-[#FF5A36] sm:shadow-sm">
 
         {/* HEADER */}
 
@@ -678,7 +679,7 @@ export default function MyRequestsPage() {
                   }
                   className={`flex min-w-[60px] flex-col items-center gap-1 rounded-xl px-3 py-2 text-[10px] font-semibold transition ${
                     active
-                      ? "bg-[#FFE0D6] text-[#FF5A5A]"
+                      ? "bg-[#FFE0D6] text-[#FF5A36]"
                       : "text-[#8A8178] hover:bg-[#FCFAF6]"
                   }`}
                 >
