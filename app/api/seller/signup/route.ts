@@ -1,48 +1,60 @@
-import { NextResponse } from "next/server";
 
+import { NextResponse } from "next/server";
 import bcrypt from "bcryptjs";
 
 import { prisma } from "@/lib/prisma";
+import {
+  attachReferralAtSignup,
+  ReferralServiceError,
+} from "@/lib/referrals";
 
-function cleanString(
-  value: unknown
-): string {
+function cleanString(value: unknown): string {
   return typeof value === "string"
     ? value.trim()
     : "";
 }
 
-function isValidEmail(
-  email: string
-): boolean {
-  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(
-    email
-  );
+function isValidEmail(email: string): boolean {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
 }
 
 function jsonHeaders() {
   return {
     "Content-Type": "application/json",
+    "Cache-Control": "no-store",
   };
 }
 
-export async function POST(
-  request: Request
-) {
-  try {
-    const body: unknown =
-      await request.json();
+function isRecord(
+  value: unknown
+): value is Record<string, unknown> {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    !Array.isArray(value)
+  );
+}
 
-    if (
-      !body ||
-      typeof body !== "object" ||
-      Array.isArray(body)
-    ) {
+function isPrismaUniqueConstraintError(
+  error: unknown
+): boolean {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    "code" in error &&
+    error.code === "P2002"
+  );
+}
+
+export async function POST(request: Request) {
+  try {
+    let body: unknown;
+
+    try {
+      body = await request.json();
+    } catch {
       return NextResponse.json(
-        {
-          error:
-            "Invalid request body.",
-        },
+        { error: "Invalid JSON body." },
         {
           status: 400,
           headers: jsonHeaders(),
@@ -50,26 +62,22 @@ export async function POST(
       );
     }
 
-    const payload =
-      body as Record<
-        string,
-        unknown
-      >;
-
-    const name =
-      cleanString(
-        payload.name
+    if (!isRecord(body)) {
+      return NextResponse.json(
+        { error: "Invalid request body." },
+        {
+          status: 400,
+          headers: jsonHeaders(),
+        }
       );
+    }
 
-    const email =
-      cleanString(
-        payload.email
-      ).toLowerCase();
+    const name = cleanString(body.name);
+    const email = cleanString(body.email).toLowerCase();
 
     const password =
-      typeof payload.password ===
-      "string"
-        ? payload.password
+      typeof body.password === "string"
+        ? body.password
         : "";
 
     /*
@@ -80,10 +88,7 @@ export async function POST(
 
     if (!name) {
       return NextResponse.json(
-        {
-          error:
-            "Name is required.",
-        },
+        { error: "Name is required." },
         {
           status: 400,
           headers: jsonHeaders(),
@@ -91,15 +96,9 @@ export async function POST(
       );
     }
 
-    if (
-      name.length >
-      200
-    ) {
+    if (name.length > 200) {
       return NextResponse.json(
-        {
-          error:
-            "Name is too long.",
-        },
+        { error: "Name is too long." },
         {
           status: 400,
           headers: jsonHeaders(),
@@ -109,10 +108,7 @@ export async function POST(
 
     if (!email) {
       return NextResponse.json(
-        {
-          error:
-            "Email is required.",
-        },
+        { error: "Email is required." },
         {
           status: 400,
           headers: jsonHeaders(),
@@ -122,10 +118,7 @@ export async function POST(
 
     if (!isValidEmail(email)) {
       return NextResponse.json(
-        {
-          error:
-            "Enter a valid email address.",
-        },
+        { error: "Enter a valid email address." },
         {
           status: 400,
           headers: jsonHeaders(),
@@ -133,15 +126,9 @@ export async function POST(
       );
     }
 
-    if (
-      email.length >
-      320
-    ) {
+    if (email.length > 320) {
       return NextResponse.json(
-        {
-          error:
-            "Email address is too long.",
-        },
+        { error: "Email address is too long." },
         {
           status: 400,
           headers: jsonHeaders(),
@@ -151,10 +138,7 @@ export async function POST(
 
     if (!password) {
       return NextResponse.json(
-        {
-          error:
-            "Password is required.",
-        },
+        { error: "Password is required." },
         {
           status: 400,
           headers: jsonHeaders(),
@@ -162,10 +146,7 @@ export async function POST(
       );
     }
 
-    if (
-      password.length <
-      8
-    ) {
+    if (password.length < 8) {
       return NextResponse.json(
         {
           error:
@@ -178,14 +159,8 @@ export async function POST(
       );
     }
 
-    /*
-     * Prevent unnecessarily large passwords
-     * from being processed by bcrypt.
-     */
-    if (
-      password.length >
-      72
-    ) {
+    // bcrypt only safely processes up to 72 password bytes.
+    if (password.length > 72) {
       return NextResponse.json(
         {
           error:
@@ -204,15 +179,10 @@ export async function POST(
      * -----------------------------------------
      */
 
-    const existingUser =
-      await prisma.user.findUnique({
-        where: {
-          email,
-        },
-        select: {
-          id: true,
-        },
-      });
+    const existingUser = await prisma.user.findUnique({
+      where: { email },
+      select: { id: true },
+    });
 
     if (existingUser) {
       return NextResponse.json(
@@ -231,32 +201,32 @@ export async function POST(
      * -----------------------------------------
      * HASH PASSWORD
      * -----------------------------------------
-     *
-     * Only the hash is stored in the database.
      */
 
-    const passwordHash =
-      await bcrypt.hash(
-        password,
-        12
-      );
+    const passwordHash = await bcrypt.hash(password, 12);
 
     /*
      * -----------------------------------------
-     * CREATE SELLER
+     * CREATE SELLER AND ATTRIBUTE REFERRAL
      * -----------------------------------------
+     *
+     * Both operations use the same transaction.
+     *
+     * If referral validation or attribution fails,
+     * user creation rolls back too.
+     *
+     * Without a referralCode, registration continues
+     * normally.
      */
 
-    try {
-      const user =
-        await prisma.user.create({
+    const user = await prisma.$transaction(
+      async (tx) => {
+        const createdUser = await tx.user.create({
           data: {
             name,
             email,
-            password:
-              passwordHash,
-            role:
-              "SELLER",
+            password: passwordHash,
+            role: "SELLER",
           },
           select: {
             id: true,
@@ -266,56 +236,65 @@ export async function POST(
           },
         });
 
+        await attachReferralAtSignup(
+          tx,
+          body.referralCode,
+          {
+            id: createdUser.id,
+            role: createdUser.role,
+          }
+        );
+
+        return createdUser;
+      }
+    );
+
+    return NextResponse.json(
+      {
+        message:
+          "Seller account created successfully.",
+        user,
+      },
+      {
+        status: 201,
+        headers: jsonHeaders(),
+      }
+    );
+  } catch (error) {
+    /*
+     * A referral error rolls back the complete transaction.
+     */
+    if (error instanceof ReferralServiceError) {
       return NextResponse.json(
         {
-          message:
-            "Seller account created successfully.",
-          user,
+          error: error.message,
+          code: error.code,
         },
         {
-          status: 201,
+          status: 400,
           headers: jsonHeaders(),
         }
       );
-    } catch (
-      error
-    ) {
-      /*
-       * The email column is unique in Prisma.
-       *
-       * If two signup requests race, the
-       * database unique constraint wins.
-       */
-
-      if (
-        typeof error ===
-          "object" &&
-        error !== null &&
-        "code" in error &&
-        error.code ===
-          "P2002"
-      ) {
-        return NextResponse.json(
-          {
-            error:
-              "An account with this email already exists.",
-          },
-          {
-            status: 409,
-            headers: jsonHeaders(),
-          }
-        );
-      }
-
-      throw error;
     }
-  } catch (
-    error
-  ) {
-    console.error(
-      "Seller signup error:",
-      error
-    );
+
+    /*
+     * The database unique constraint is authoritative
+     * if concurrent signup requests use the same email.
+     */
+    if (isPrismaUniqueConstraintError(error)) {
+      return NextResponse.json(
+        {
+          error:
+            "An account with this email already exists.",
+        },
+        {
+          status: 409,
+          headers: jsonHeaders(),
+        }
+      );
+    }
+
+    console.error("Seller signup error:", error);
 
     return NextResponse.json(
       {

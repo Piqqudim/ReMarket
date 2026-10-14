@@ -108,6 +108,21 @@ export default function BuyerSignup() {
     setLoading(true);
 
     try {
+      /*
+       * Referral codes are optional.
+       *
+       * Example:
+       * /buyer/signup?ref=AB12CD34
+       *
+       * Read the current URL when submitting so the
+       * existing page does not need a Suspense wrapper
+       * or a useSearchParams dependency.
+       */
+      const referralCode =
+        new URLSearchParams(
+          window.location.search
+        ).get("ref")?.trim() ?? "";
+
       const response = await fetch(
         "/api/buyer/signup",
         {
@@ -119,6 +134,11 @@ export default function BuyerSignup() {
             name: trimmedName,
             email: trimmedEmail,
             password,
+
+            // Send the referral code only when provided.
+            ...(referralCode
+              ? { referralCode }
+              : {}),
           }),
         }
       );
@@ -223,6 +243,7 @@ export default function BuyerSignup() {
         <div className="mb-7 flex flex-col items-center text-center sm:mb-10">
           <div className="mb-5 flex h-20 w-20 items-center justify-center rounded-[24px] bg-[#FF563F] shadow-[0_12px_30px_rgba(255,86,63,0.25)] sm:h-28 sm:w-28 sm:rounded-[26px]">
             <Store
+              aria-hidden="true"
               className="h-11 w-11 text-white sm:h-16 sm:w-16"
               strokeWidth={1.8}
             />
@@ -398,11 +419,13 @@ export default function BuyerSignup() {
                 >
                   {showPassword ? (
                     <EyeOff
+                      aria-hidden="true"
                       className="h-5 w-5"
                       strokeWidth={2}
                     />
                   ) : (
                     <Eye
+                      aria-hidden="true"
                       className="h-5 w-5"
                       strokeWidth={2}
                     />
@@ -474,11 +497,13 @@ export default function BuyerSignup() {
                 >
                   {showConfirmPassword ? (
                     <EyeOff
+                      aria-hidden="true"
                       className="h-5 w-5"
                       strokeWidth={2}
                     />
                   ) : (
                     <Eye
+                      aria-hidden="true"
                       className="h-5 w-5"
                       strokeWidth={2}
                     />
@@ -497,6 +522,7 @@ export default function BuyerSignup() {
               >
                 <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[#EF3F3F] text-white">
                   <CircleAlert
+                    aria-hidden="true"
                     className="h-4 w-4"
                     strokeWidth={2.3}
                   />
@@ -518,6 +544,7 @@ export default function BuyerSignup() {
               {loading ? (
                 <>
                   <LoaderCircle
+                    aria-hidden="true"
                     className="h-6 w-6 animate-spin"
                     strokeWidth={2}
                   />
@@ -529,6 +556,7 @@ export default function BuyerSignup() {
                   Create account
 
                   <ArrowRight
+                    aria-hidden="true"
                     className="h-6 w-6"
                     strokeWidth={2}
                   />

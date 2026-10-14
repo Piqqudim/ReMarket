@@ -1,4 +1,3 @@
-
 "use client";
 
 import {
@@ -38,9 +37,7 @@ import {
  * External destinations and paths outside the seller
  * portal fall back to /seller.
  */
-function getSafeCallbackUrl(
-  value: string | null
-): string {
+function getSafeCallbackUrl(value: string | null): string {
   const fallback = "/seller";
   const baseUrl = "https://remarket.invalid";
 
@@ -55,19 +52,13 @@ function getSafeCallbackUrl(
   }
 
   try {
-    const parsedUrl = new URL(
-      value,
-      baseUrl
-    );
+    const parsedUrl = new URL(value, baseUrl);
 
     const isSellerRoute =
       parsedUrl.pathname === "/seller" ||
       parsedUrl.pathname.startsWith("/seller/");
 
-    if (
-      parsedUrl.origin !== baseUrl ||
-      !isSellerRoute
-    ) {
+    if (parsedUrl.origin !== baseUrl || !isSellerRoute) {
       return fallback;
     }
 
@@ -89,8 +80,7 @@ function SellerSignupContent() {
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [confirmPassword, setConfirmPassword] =
-    useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
 
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
@@ -98,8 +88,7 @@ function SellerSignupContent() {
   const [loading, setLoading] = useState(false);
   const [completed, setCompleted] = useState(false);
 
-  const [showPassword, setShowPassword] =
-    useState(false);
+  const [showPassword, setShowPassword] = useState(false);
 
   const [
     showConfirmPassword,
@@ -120,6 +109,18 @@ function SellerSignupContent() {
   );
 
   /**
+   * Optional referral code.
+   *
+   * Example:
+   * /seller/signup?ref=AB12CD34
+   *
+   * This code is submitted to the signup API so the
+   * backend can validate and record the referral.
+   */
+  const referralCode =
+    searchParams.get("ref")?.trim() ?? "";
+
+  /**
    * After successful registration, send the seller
    * to login and preserve their original destination.
    */
@@ -128,16 +129,12 @@ function SellerSignupContent() {
       callbackUrl
     )}`;
 
-  const redirectTimer = useRef<number | null>(
-    null
-  );
+  const redirectTimer = useRef<number | null>(null);
 
   useEffect(() => {
     return () => {
       if (redirectTimer.current !== null) {
-        window.clearTimeout(
-          redirectTimer.current
-        );
+        window.clearTimeout(redirectTimer.current);
       }
     };
   }, []);
@@ -199,6 +196,11 @@ function SellerSignupContent() {
             name: cleanName,
             email: cleanEmail,
             password,
+
+            // Include the referral code only when provided.
+            ...(referralCode
+              ? { referralCode }
+              : {}),
           }),
         }
       );
@@ -229,12 +231,9 @@ function SellerSignupContent() {
         "Your seller account has been created. Redirecting to login..."
       );
 
-      redirectTimer.current = window.setTimeout(
-        () => {
-          router.push(loginUrl);
-        },
-        800
-      );
+      redirectTimer.current = window.setTimeout(() => {
+        router.push(loginUrl);
+      }, 800);
     } catch (signupError) {
       console.error(
         "Seller signup error:",

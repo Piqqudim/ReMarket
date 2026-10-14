@@ -66,6 +66,22 @@ enum ClaimRequestStatus {
   REJECTED
 }
 
+enum ReferralStatus {
+  PENDING
+  QUALIFIED
+  REJECTED
+}
+
+enum ReferralRewardType {
+  PRODUCT_SLOTS
+  BUYER_MILESTONE
+}
+
+enum ReferralRewardStatus {
+  GRANTED
+  REVOKED
+}
+
 /**
  * Notification priority.
  */
@@ -78,8 +94,6 @@ enum NotificationPriority {
 
 /**
  * Notification delivery channels.
- * IN_APP is the first channel we will implement.
- * PUSH, EMAIL, WHATSAPP and SMS can be added later.
  */
 enum NotificationChannel {
   IN_APP
@@ -165,6 +179,25 @@ model User {
   name      String?
   createdAt DateTime @default(now())
 
+  /**
+   * REFERRALS
+   * Nullable so existing users do not require
+   * a referral code during the schema migration.
+   * The referral service should generate a code
+   * when an eligible account first needs one.
+   */
+  referralCode String? @unique
+
+  // Referrals made by this user.
+  referralsMade Referral[] @relation("ReferralReferrer")
+
+  // Referral through which this user joined.
+  // Unique referredUserId allows at most one referral.
+  referralReceived Referral? @relation("ReferralReferredUser")
+
+  // Rewards granted to this user.
+  referralRewards ReferralReward[] @relation("ReferralRewardOwner")
+
   // Seller-owned business.
   // ownerId on Business is unique, so V1 supports one business per seller.
   business Business?
@@ -195,7 +228,117 @@ model User {
 
   // Admin-created notification announcements.
   notificationAnnouncements NotificationAnnouncement[] @relation("NotificationAnnouncementCreatedBy")
+
+  // Business views attributed to this authenticated user.
+  // Anonymous business-view tracking remains supported.
+  businessViewEvents BusinessViewEvent[]
 }
+
+/**
+ * REFERRAL ATTRIBUTION
+ * Each record represents one account referred
+ * by another ReMarket account.
+ * The application service must validate:
+ * - The referrer exists and is eligible.
+ * - The referrer is not an ADMIN.
+ * - The referrer is not the referred user.
+ * - Attribution cannot be changed after creation.
+ * - The correct qualification rules have been met.
+ */
+model Referral {
+  id String @id @default(cuid())
+
+  // User who referred the new account.
+  referrerId String
+
+  referrer User @relation("ReferralReferrer", fields: [referrerId], references: [id], onDelete: Restrict)
+
+  // The referred account can have only one referrer.
+  referredUserId String @unique
+
+  referredUser User @relation("ReferralReferredUser", fields: [referredUserId], references: [id], onDelete: Cascade)
+
+  // Role snapshots retained for reporting and audit.
+  referrerRole Role
+  referredRole Role
+
+  status ReferralStatus @default(PENDING)
+
+  qualifiedAt     DateTime?
+  rejectedAt      DateTime?
+  rejectionReason String?
+
+  rewards ReferralReward[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([referrerId, status])
+  @@index([status, createdAt])
+  @@index([referredRole, status])
+}
+
+/**
+ * REFERRAL REWARD LEDGER
+ * Rewards must be created by trusted server-side
+ * code after qualification.
+ * PRODUCT_SLOTS represents additional seller product
+ * capacity and must be included by the existing
+ * product-capacity calculation.
+ * BUYER_MILESTONE represents a non-cash buyer benefit.
+ * rewardKey is an application-generated idempotency key.
+ * Use a deterministic value for each intended reward so
+ * retries cannot grant the same benefit twice.
+ * Example keys:
+ * referral:<referralId>:PRODUCT_SLOTS
+ * user:<userId>:BUYER_MILESTONE:<milestoneNumber>
+ */
+model ReferralReward {
+  id String @id @default(cuid())
+
+  // User receiving the reward.
+  userId String
+
+  user User @relation("ReferralRewardOwner", fields: [userId], references: [id], onDelete: Restrict)
+
+  // Referral responsible for the reward, if applicable.
+  referralId String?
+
+  referral Referral? @relation(fields: [referralId], references: [id], onDelete: SetNull)
+
+  type ReferralRewardType
+
+  status ReferralRewardStatus @default(GRANTED)
+
+  // For example, 3 additional product slots.
+  quantity Int @default(1)
+
+  // Buyer referral milestone, such as milestone 3.
+  // Nullable for reward types that do not use milestones.
+  milestone Int?
+
+  // Prevents duplicate grants when the service retries.
+  rewardKey String @unique
+
+  grantedAt DateTime @default(now())
+  createdAt DateTime @default(now())
+
+  // One reward of a given type per referral.
+  // PostgreSQL allows multiple NULL referralId values.
+  @@unique([referralId, type])
+  // Prevents the same non-null buyer milestone
+  // from being granted more than once to a user.
+  @@unique([userId, type, milestone])
+  @@index([userId, status])
+  @@index([type, status])
+  @@index([referralId])
+}
+
+/**
+ * ============================================================
+ * LOCATIONS
+ * ============================================================
+ */
 
 model Location {
   id String @id @default(cuid())
@@ -206,10 +349,6 @@ model Location {
 
   // Canonical street/road name used by the
   // ReMarket Near Me street-ranking system.
-  //
-  // Nullable for backwards compatibility with
-  // existing locations created before street
-  // storage was introduced.
   street String?
 
   // Human-readable business location/address.
@@ -277,6 +416,12 @@ model BusinessCategory {
   @@id([businessId, categoryId])
   @@index([categoryId])
 }
+
+/**
+ * ============================================================
+ * BUSINESSES
+ * ============================================================
+ */
 
 model Business {
   id String @id @default(cuid())
@@ -358,13 +503,18 @@ model BusinessReview {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  // One buyer can have only one review
-  // for a particular business.
+  // One buyer can have only one review for a business.
   @@unique([businessId, userId])
   @@index([businessId])
   @@index([userId])
   @@index([createdAt])
 }
+
+/**
+ * ============================================================
+ * PRODUCTS
+ * ============================================================
+ */
 
 model Product {
   id String @id @default(cuid())
@@ -429,6 +579,12 @@ model ProductImage {
   @@index([productId, sortOrder])
 }
 
+/**
+ * ============================================================
+ * BUYER REQUESTS AND MATCHES
+ * ============================================================
+ */
+
 model BuyerRequest {
   id String @id @default(cuid())
 
@@ -480,6 +636,12 @@ model Match {
   @@index([businessId])
 }
 
+/**
+ * ============================================================
+ * ANALYTICS EVENTS
+ * ============================================================
+ */
+
 model ContactEvent {
   id String @id @default(cuid())
 
@@ -526,12 +688,24 @@ model BusinessViewEvent {
   // This is not the user's email or phone number.
   visitorId String
 
+  /**
+   * Optional authenticated user association.
+   * Existing anonymous events remain valid because userId is nullable.
+   * The server must populate this field from the authenticated session,
+   * never from a userId submitted by the browser.
+   */
+  userId String?
+
+  user User? @relation(fields: [userId], references: [id], onDelete: SetNull)
+
   createdAt DateTime @default(now())
 
   @@index([businessId])
   @@index([businessId, createdAt])
   @@index([businessId, visitorId])
   @@index([visitorId, createdAt])
+  @@index([userId, createdAt])
+  @@index([userId, businessId, createdAt])
 }
 
 model AdminNote {
@@ -546,6 +720,12 @@ model AdminNote {
   @@index([businessId])
   @@index([requestId])
 }
+
+/**
+ * ============================================================
+ * BUSINESS DELETION REQUESTS
+ * ============================================================
+ */
 
 model BusinessDeletionRequest {
   id String @id @default(cuid())
@@ -580,6 +760,12 @@ model BusinessDeletionRequest {
   @@index([reviewedById])
   @@index([status])
 }
+
+/**
+ * ============================================================
+ * BUSINESS CLAIM REQUESTS
+ * ============================================================
+ */
 
 model BusinessClaimRequest {
   id String @id @default(cuid())
@@ -616,17 +802,13 @@ model BusinessClaimRequest {
 
 /**
  * ============================================================
- * RE-MARKET NOTIFICATION SYSTEM
+ * REMARKET NOTIFICATION SYSTEM
  * ============================================================
  */
 
 /**
  * Stores one notification for one recipient.
- * Example:
- * User A receives notification X
- * User B receives notification X
- * These are stored as separate Notification records so each
- * user has independent read/unread state.
+ * Each user has independent read/unread state.
  */
 model Notification {
   id String @id @default(cuid())
@@ -642,12 +824,6 @@ model Notification {
 
   /**
    * Structured contextual information.
-   * Example:
-   * {
-   * "businessId": "...",
-   * "reviewId": "...",
-   * "requestId": "..."
-   * }
    */
   data Json?
 
@@ -659,8 +835,6 @@ model Notification {
 
   /**
    * Prevents accidental duplicate notifications.
-   * Example:
-   * REQUEST_MATCHED:request_123:user_456
    */
   dedupeKey String? @unique
 
@@ -702,7 +876,6 @@ model NotificationDelivery {
 
   /**
    * Provider-specific message/reference ID.
-   * Useful later for email, push, WhatsApp and SMS.
    */
   providerMessageId String?
 
@@ -775,11 +948,6 @@ model NotificationAnnouncement {
 
   /**
    * Optional structured metadata.
-   * Example:
-   * {
-   * "action": "OPEN_BUSINESS",
-   * "businessId": "..."
-   * }
    */
   data Json?
 

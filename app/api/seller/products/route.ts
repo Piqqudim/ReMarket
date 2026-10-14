@@ -1,3 +1,4 @@
+
 import { Prisma } from "@prisma/client";
 import { NextResponse } from "next/server";
 
@@ -9,6 +10,10 @@ import {
 import { prisma } from "@/lib/prisma";
 import { requireSeller } from "@/lib/seller-auth";
 import { createNotification } from "@/lib/notifications";
+import {
+  getGrantedProductSlotBonus,
+  qualifyReferralForUser,
+} from "@/lib/referrals";
 
 const MAX_ACTIVE_PRODUCTS = 10;
 
@@ -117,34 +122,22 @@ function parseKeywords(
 
   const normalized: string[] = [];
 
-  for (
-    const item of values
-  ) {
-    if (
-      typeof item !==
-      "string"
-    ) {
+  for (const item of values) {
+    if (typeof item !== "string") {
       return {
         valid: false,
         value: [],
       };
     }
 
-    const cleaned =
-      item.trim();
+    const cleaned = item.trim();
 
     if (!cleaned) {
       continue;
     }
 
-    if (
-      !normalized.includes(
-        cleaned
-      )
-    ) {
-      normalized.push(
-        cleaned
-      );
+    if (!normalized.includes(cleaned)) {
+      normalized.push(cleaned);
     }
   }
 
@@ -177,16 +170,9 @@ function isAvailability(
  *   }
  * ]
  *
- * `url` is the uploaded image URL returned by
- * the existing image-upload system.
- *
  * ProductImage is the primary image record.
- *
- * Product.imageUrl is only maintained as a
- * compatibility mirror of the first image.
- *
- * We intentionally do NOT require `imageUrl`
- * for new product creation.
+ * Product.imageUrl remains a compatibility mirror
+ * of the first image.
  * --------------------------------------------------
  */
 
@@ -196,57 +182,41 @@ function parseProductImages(
   valid: boolean;
   value: ParsedProductImage[];
 } {
-  if (
-    value === undefined
-  ) {
+  if (value === undefined) {
     return {
       valid: true,
       value: [],
     };
   }
 
-  if (
-    !Array.isArray(value)
-  ) {
+  if (!Array.isArray(value)) {
     return {
       valid: false,
       value: [],
     };
   }
 
-  const images:
-    ParsedProductImage[] = [];
+  const images: ParsedProductImage[] = [];
 
   for (
     let index = 0;
     index < value.length;
     index += 1
   ) {
-    const item =
-      value[index];
+    const item = value[index];
 
     /*
-     * Also accept a plain string as a
-     * backwards-compatible image entry.
-     *
-     * The new Seller UI will use the object
-     * form produced by the upload workflow.
+     * Support string entries for backwards
+     * compatibility with existing callers.
      */
-    if (
-      typeof item ===
-      "string"
-    ) {
-      const url =
-        item.trim();
+    if (typeof item === "string") {
+      const url = item.trim();
 
       if (!url) {
         continue;
       }
 
-      if (
-        url.length >
-        2000
-      ) {
+      if (url.length > 2000) {
         return {
           valid: false,
           value: [],
@@ -256,87 +226,62 @@ function parseProductImages(
       images.push({
         url,
         publicId: null,
-        sortOrder:
-          index,
+        sortOrder: index,
       });
 
       continue;
     }
 
-    if (
-      !isRecord(item)
-    ) {
+    if (!isRecord(item)) {
       return {
         valid: false,
         value: [],
       };
     }
 
-    const url =
-      cleanString(
-        item.url
-      );
+    const url = cleanString(item.url);
 
     if (!url) {
       continue;
     }
 
-    if (
-      url.length >
-      2000
-    ) {
+    if (url.length > 2000) {
       return {
         valid: false,
         value: [],
       };
     }
 
-    let publicId:
-      string | null = null;
+    let publicId: string | null = null;
 
     if (
-      item.publicId !==
-      undefined &&
-      item.publicId !==
-      null
+      item.publicId !== undefined &&
+      item.publicId !== null
     ) {
-      if (
-        typeof item.publicId !==
-        "string"
-      ) {
+      if (typeof item.publicId !== "string") {
         return {
           valid: false,
           value: [],
         };
       }
 
-      publicId =
-        item.publicId.trim() ||
-        null;
+      publicId = item.publicId.trim() || null;
     }
 
-    let sortOrder =
-      index;
+    let sortOrder = index;
 
     if (
-      item.sortOrder !==
-        undefined &&
-      item.sortOrder !==
-        null &&
-      item.sortOrder !==
-        ""
+      item.sortOrder !== undefined &&
+      item.sortOrder !== null &&
+      item.sortOrder !== ""
     ) {
       const parsedSortOrder =
-        parseOptionalInteger(
-          item.sortOrder
-        );
+        parseOptionalInteger(item.sortOrder);
 
       if (
         !parsedSortOrder.valid ||
-        parsedSortOrder.value ===
-          null ||
-        parsedSortOrder.value <
-          0
+        parsedSortOrder.value === null ||
+        parsedSortOrder.value < 0
       ) {
         return {
           valid: false,
@@ -344,8 +289,7 @@ function parseProductImages(
         };
       }
 
-      sortOrder =
-        parsedSortOrder.value;
+      sortOrder = parsedSortOrder.value;
     }
 
     images.push({
@@ -355,55 +299,75 @@ function parseProductImages(
     });
   }
 
-  /*
-   * Normalize ordering after parsing.
-   *
-   * The database then receives stable,
-   * predictable sortOrder values.
-   */
   images.sort(
-    (a, b) =>
-      a.sortOrder -
-      b.sortOrder
+    (a, b) => a.sortOrder - b.sortOrder
   );
 
   return {
     valid: true,
-    value: images.map(
-      (
-        image,
-        index
-      ) => ({
-        ...image,
-        sortOrder:
-          index,
-      })
-    ),
+    value: images.map((image, index) => ({
+      ...image,
+      sortOrder: index,
+    })),
   };
 }
 
 function getCompatibilityImageUrl(
   images: ParsedProductImage[]
 ): string | null {
+  return images[0]?.url ?? null;
+}
+
+/*
+ * --------------------------------------------------
+ * EFFECTIVE PRODUCT LIMIT
+ * --------------------------------------------------
+ *
+ * Every seller gets the base allowance.
+ * Granted referral rewards add extra slots.
+ *
+ * Do not calculate referral rewards from client
+ * input. Always read them from the database.
+ * --------------------------------------------------
+ */
+
+function calculateMaxActiveProducts(
+  referralBonusSlots: number
+): number {
   return (
-    images[0]?.url ??
-    null
+    MAX_ACTIVE_PRODUCTS +
+    Math.max(0, referralBonusSlots)
   );
 }
 
 class ActiveProductLimitError extends Error {
-  constructor() {
+  constructor(
+    public readonly maxActiveProducts: number
+  ) {
     super(
-      `You have reached the maximum of ${MAX_ACTIVE_PRODUCTS} active products.`
+      `You have reached the maximum of ${maxActiveProducts} active products.`
     );
 
-    this.name =
-      "ActiveProductLimitError";
+    this.name = "ActiveProductLimitError";
   }
 }
 
+/*
+ * --------------------------------------------------
+ * CREATE PRODUCT WITH EFFECTIVE LIMIT
+ * --------------------------------------------------
+ *
+ * The product count and referral bonus are read
+ * inside the transaction used to enforce the limit.
+ *
+ * Serializable isolation and retries preserve the
+ * existing concurrency protection.
+ * --------------------------------------------------
+ */
+
 async function createProductWithLimit(
   businessId: string,
+  sellerUserId: string,
   data: Prisma.ProductCreateInput
 ) {
   const MAX_RETRIES = 3;
@@ -425,26 +389,44 @@ async function createProductWithLimit(
               },
             });
 
+          const referralBonusSlots =
+            await getGrantedProductSlotBonus(
+              sellerUserId,
+              tx
+            );
+
+          const maxActiveProducts =
+            calculateMaxActiveProducts(
+              referralBonusSlots
+            );
+
           if (
             activeCount >=
-            MAX_ACTIVE_PRODUCTS
+            maxActiveProducts
           ) {
-            throw new ActiveProductLimitError();
+            throw new ActiveProductLimitError(
+              maxActiveProducts
+            );
           }
 
-          return tx.product.create({
-            data,
-            include: {
-              category: true,
-
-              images: {
-                orderBy: {
-                  sortOrder:
-                    "asc",
+          const product =
+            await tx.product.create({
+              data,
+              include: {
+                category: true,
+                images: {
+                  orderBy: {
+                    sortOrder: "asc",
+                  },
                 },
               },
-            },
-          });
+            });
+
+          return {
+            product,
+            maxActiveProducts,
+            referralBonusSlots,
+          };
         },
         {
           isolationLevel:
@@ -453,8 +435,7 @@ async function createProductWithLimit(
       );
     } catch (error) {
       if (
-        error instanceof
-        ActiveProductLimitError
+        error instanceof ActiveProductLimitError
       ) {
         throw error;
       }
@@ -462,13 +443,9 @@ async function createProductWithLimit(
       if (
         error instanceof
           Prisma.PrismaClientKnownRequestError &&
-        error.code ===
-          "P2034"
+        error.code === "P2034"
       ) {
-        if (
-          attempt ===
-          MAX_RETRIES - 1
-        ) {
+        if (attempt === MAX_RETRIES - 1) {
           throw new Error(
             "The product could not be created safely. Please try again."
           );
@@ -481,9 +458,7 @@ async function createProductWithLimit(
     }
   }
 
-  throw new Error(
-    "Unable to create product."
-  );
+  throw new Error("Unable to create product.");
 }
 
 /* --------------------------------------------------
@@ -493,8 +468,7 @@ async function createProductWithLimit(
  * -------------------------------------------------- */
 
 export async function GET() {
-  const auth =
-    await requireSeller();
+  const auth = await requireSeller();
 
   if (!auth.authorized) {
     return auth.response;
@@ -504,10 +478,8 @@ export async function GET() {
     const business =
       await prisma.business.findUnique({
         where: {
-          ownerId:
-            auth.user.id,
+          ownerId: auth.user.id,
         },
-
         select: {
           id: true,
           name: true,
@@ -523,24 +495,19 @@ export async function GET() {
         },
         {
           status: 404,
-          headers:
-            jsonHeaders(),
+          headers: jsonHeaders(),
         }
       );
     }
 
-    if (
-      business.deletedAt
-    ) {
+    if (business.deletedAt) {
       return NextResponse.json(
         {
-          error:
-            "This business has been deleted.",
+          error: "This business has been deleted.",
         },
         {
           status: 410,
-          headers:
-            jsonHeaders(),
+          headers: jsonHeaders(),
         }
       );
     }
@@ -548,37 +515,25 @@ export async function GET() {
     const [
       products,
       activeCount,
+      referralBonusSlots,
     ] = await Promise.all([
       prisma.product.findMany({
         where: {
-          businessId:
-            business.id,
-
-          deletedAt:
-            null,
+          businessId: business.id,
+          deletedAt: null,
         },
-
         orderBy: {
-          updatedAt:
-            "desc",
+          updatedAt: "desc",
         },
-
         include: {
           category: true,
-
-          /*
-           * ProductImage is the primary image
-           * source for seller products.
-           */
           images: {
             orderBy: [
               {
-                sortOrder:
-                  "asc",
+                sortOrder: "asc",
               },
               {
-                createdAt:
-                  "asc",
+                createdAt: "asc",
               },
             ],
           },
@@ -587,47 +542,47 @@ export async function GET() {
 
       prisma.product.count({
         where: {
-          businessId:
-            business.id,
-
+          businessId: business.id,
           status: "ACTIVE",
-
-          deletedAt:
-            null,
+          deletedAt: null,
         },
       }),
+
+      getGrantedProductSlotBonus(auth.user.id),
     ]);
+
+    const maxActiveProducts =
+      calculateMaxActiveProducts(
+        referralBonusSlots
+      );
 
     return NextResponse.json(
       {
         business: {
-          id:
-            business.id,
-
-          name:
-            business.name,
+          id: business.id,
+          name: business.name,
         },
 
         products,
-
-        total:
-          products.length,
-
+        total: products.length,
         activeCount,
 
-        maxActiveProducts:
+        // Existing field, now reflects the effective limit.
+        maxActiveProducts,
+
+        // Additional fields for seller-facing display.
+        baseMaxActiveProducts:
           MAX_ACTIVE_PRODUCTS,
 
-        remainingSlots:
-          Math.max(
-            0,
-            MAX_ACTIVE_PRODUCTS -
-              activeCount
-          ),
+        referralBonusSlots,
+
+        remainingSlots: Math.max(
+          0,
+          maxActiveProducts - activeCount
+        ),
       },
       {
-        headers:
-          jsonHeaders(),
+        headers: jsonHeaders(),
       }
     );
   } catch (error) {
@@ -638,13 +593,11 @@ export async function GET() {
 
     return NextResponse.json(
       {
-        error:
-          "Unable to load your products.",
+        error: "Unable to load your products.",
       },
       {
         status: 500,
-        headers:
-          jsonHeaders(),
+        headers: jsonHeaders(),
       }
     );
   }
@@ -654,7 +607,7 @@ export async function GET() {
  * POST
  *
  * Creates an active product for the seller's business.
- * Seller cannot choose status.
+ * The seller cannot choose its status.
  *
  * Images are supplied through ProductImage records.
  * -------------------------------------------------- */
@@ -662,103 +615,64 @@ export async function GET() {
 export async function POST(
   request: Request
 ) {
-  const auth =
-    await requireSeller();
+  const auth = await requireSeller();
 
   if (!auth.authorized) {
     return auth.response;
   }
 
   try {
-    const body: unknown =
-      await request.json();
+    const body: unknown = await request.json();
 
     if (!isRecord(body)) {
       return NextResponse.json(
         {
-          error:
-            "Invalid request body.",
+          error: "Invalid request body.",
         },
         {
           status: 400,
-          headers:
-            jsonHeaders(),
+          headers: jsonHeaders(),
         }
       );
     }
 
-    const name =
-      cleanString(
-        body.name
-      );
-
-    const description =
-      cleanString(
-        body.description
-      );
-
-    const categoryId =
-      cleanString(
-        body.categoryId
-      );
+    const name = cleanString(body.name);
+    const description = cleanString(body.description);
+    const categoryId = cleanString(body.categoryId);
 
     const availabilityValue =
-      cleanString(
-        body.availability
-      );
+      cleanString(body.availability);
 
     const keywordsResult =
-      parseKeywords(
-        body.keywords
-      );
+      parseKeywords(body.keywords);
 
     const priceResult =
-      parseOptionalInteger(
-        body.price
-      );
+      parseOptionalInteger(body.price);
 
     const priceMinResult =
-      parseOptionalInteger(
-        body.priceMin
-      );
+      parseOptionalInteger(body.priceMin);
 
     const priceMaxResult =
-      parseOptionalInteger(
-        body.priceMax
-      );
+      parseOptionalInteger(body.priceMax);
 
-    /*
-     * Primary image input.
-     */
     const imagesResult =
-      parseProductImages(
-        body.images
-      );
+      parseProductImages(body.images);
 
     /*
-     * Existing callers may still send
-     * imageUrl. We convert that one image
-     * into a ProductImage when no new image
-     * array was supplied.
+     * Compatibility for existing callers that
+     * still supply imageUrl.
      */
     const legacyImageUrl =
-      cleanString(
-        body.imageUrl
-      );
+      cleanString(body.imageUrl);
 
-    if (
-      legacyImageUrl.length >
-      2000
-    ) {
+    if (legacyImageUrl.length > 2000) {
       return NextResponse.json(
         {
-          error:
-            "Legacy image URL is too long.",
+          error: "Legacy image URL is too long.",
         },
         {
           status: 400,
-          headers:
-            jsonHeaders(),
+          headers: jsonHeaders(),
         }
       );
     }
@@ -771,41 +685,27 @@ export async function POST(
         },
         {
           status: 400,
-          headers:
-            jsonHeaders(),
+          headers: jsonHeaders(),
         }
       );
     }
 
-    let images =
-      imagesResult.value;
+    let images = imagesResult.value;
 
     /*
-     * Backward compatibility only:
-     *
-     * If the new `images` field was not supplied
-     * and an older caller still supplied
-     * `imageUrl`, convert it into ProductImage.
-     *
-     * The new Seller UI will never need to
-     * submit imageUrl.
+     * If the new images field was not supplied,
+     * convert a legacy imageUrl into one image record.
      */
     if (
-      body.images ===
-        undefined &&
+      body.images === undefined &&
       !images.length &&
       legacyImageUrl
     ) {
       images = [
         {
-          url:
-            legacyImageUrl,
-
-          publicId:
-            null,
-
-          sortOrder:
-            0,
+          url: legacyImageUrl,
+          publicId: null,
+          sortOrder: 0,
         },
       ];
     }
@@ -813,54 +713,40 @@ export async function POST(
     if (!name) {
       return NextResponse.json(
         {
-          error:
-            "Product name is required.",
+          error: "Product name is required.",
         },
         {
           status: 400,
-          headers:
-            jsonHeaders(),
+          headers: jsonHeaders(),
         }
       );
     }
 
-    if (
-      name.length >
-      200
-    ) {
+    if (name.length > 200) {
       return NextResponse.json(
         {
-          error:
-            "Product name is too long.",
+          error: "Product name is too long.",
         },
         {
           status: 400,
-          headers:
-            jsonHeaders(),
+          headers: jsonHeaders(),
         }
       );
     }
 
-    if (
-      description.length >
-      2000
-    ) {
+    if (description.length > 2000) {
       return NextResponse.json(
         {
-          error:
-            "Product description is too long.",
+          error: "Product description is too long.",
         },
         {
           status: 400,
-          headers:
-            jsonHeaders(),
+          headers: jsonHeaders(),
         }
       );
     }
 
-    if (
-      !keywordsResult.valid
-    ) {
+    if (!keywordsResult.valid) {
       return NextResponse.json(
         {
           error:
@@ -868,8 +754,7 @@ export async function POST(
         },
         {
           status: 400,
-          headers:
-            jsonHeaders(),
+          headers: jsonHeaders(),
         }
       );
     }
@@ -881,73 +766,51 @@ export async function POST(
     ) {
       return NextResponse.json(
         {
-          error:
-            "Prices must be valid whole numbers.",
+          error: "Prices must be valid whole numbers.",
         },
         {
           status: 400,
-          headers:
-            jsonHeaders(),
+          headers: jsonHeaders(),
         }
       );
     }
 
-    const price =
-      priceResult.value;
+    const price = priceResult.value;
+    const priceMin = priceMinResult.value;
+    const priceMax = priceMaxResult.value;
 
-    const priceMin =
-      priceMinResult.value;
-
-    const priceMax =
-      priceMaxResult.value;
-
-    if (
-      price !== null &&
-      price < 0
-    ) {
+    if (price !== null && price < 0) {
       return NextResponse.json(
         {
-          error:
-            "Price cannot be negative.",
+          error: "Price cannot be negative.",
         },
         {
           status: 400,
-          headers:
-            jsonHeaders(),
+          headers: jsonHeaders(),
         }
       );
     }
 
-    if (
-      priceMin !== null &&
-      priceMin < 0
-    ) {
+    if (priceMin !== null && priceMin < 0) {
       return NextResponse.json(
         {
-          error:
-            "Minimum price cannot be negative.",
+          error: "Minimum price cannot be negative.",
         },
         {
           status: 400,
-          headers:
-            jsonHeaders(),
+          headers: jsonHeaders(),
         }
       );
     }
 
-    if (
-      priceMax !== null &&
-      priceMax < 0
-    ) {
+    if (priceMax !== null && priceMax < 0) {
       return NextResponse.json(
         {
-          error:
-            "Maximum price cannot be negative.",
+          error: "Maximum price cannot be negative.",
         },
         {
           status: 400,
-          headers:
-            jsonHeaders(),
+          headers: jsonHeaders(),
         }
       );
     }
@@ -955,8 +818,7 @@ export async function POST(
     if (
       priceMin !== null &&
       priceMax !== null &&
-      priceMin >
-        priceMax
+      priceMin > priceMax
     ) {
       return NextResponse.json(
         {
@@ -965,44 +827,35 @@ export async function POST(
         },
         {
           status: 400,
-          headers:
-            jsonHeaders(),
+          headers: jsonHeaders(),
         }
       );
     }
 
     if (
       availabilityValue &&
-      !isAvailability(
-        availabilityValue
-      )
+      !isAvailability(availabilityValue)
     ) {
       return NextResponse.json(
         {
-          error:
-            "Invalid availability value.",
+          error: "Invalid availability value.",
         },
         {
           status: 400,
-          headers:
-            jsonHeaders(),
+          headers: jsonHeaders(),
         }
       );
     }
 
     /*
-     * -----------------------------------------
      * SELLER BUSINESS
-     * -----------------------------------------
      */
 
     const business =
       await prisma.business.findUnique({
         where: {
-          ownerId:
-            auth.user.id,
+          ownerId: auth.user.id,
         },
-
         select: {
           id: true,
           name: true,
@@ -1018,49 +871,36 @@ export async function POST(
         },
         {
           status: 404,
-          headers:
-            jsonHeaders(),
+          headers: jsonHeaders(),
         }
       );
     }
 
-    if (
-      business.deletedAt
-    ) {
+    if (business.deletedAt) {
       return NextResponse.json(
         {
-          error:
-            "This business has been deleted.",
+          error: "This business has been deleted.",
         },
         {
           status: 410,
-          headers:
-            jsonHeaders(),
+          headers: jsonHeaders(),
         }
       );
     }
 
     /*
-     * -----------------------------------------
      * CATEGORY
-     * -----------------------------------------
      */
 
-    let validatedCategoryId:
-      | string
-      | null = null;
+    let validatedCategoryId: string | null = null;
 
     if (categoryId) {
       const category =
         await prisma.category.findFirst({
           where: {
-            id:
-              categoryId,
-
-            isActive:
-              true,
+            id: categoryId,
+            isActive: true,
           },
-
           select: {
             id: true,
           },
@@ -1074,121 +914,107 @@ export async function POST(
           },
           {
             status: 400,
-            headers:
-              jsonHeaders(),
+            headers: jsonHeaders(),
           }
         );
       }
 
-      validatedCategoryId =
-        category.id;
+      validatedCategoryId = category.id;
     }
 
     /*
-     * -----------------------------------------
-     * CREATE DATA
-     * -----------------------------------------
+     * CREATE PRODUCT
      *
-     * ProductImage is the actual image
-     * relationship.
-     *
-     * imageUrl is only mirrored to the first
-     * image for compatibility with existing
-     * code that still reads Product.imageUrl.
+     * The effective active-product limit is checked
+     * inside the serializable transaction.
      */
 
     const compatibilityImageUrl =
-      getCompatibilityImageUrl(
-        images
-      );
+      getCompatibilityImageUrl(images);
 
-    const product =
-      await createProductWithLimit(
-        business.id,
-        {
-          business: {
-            connect: {
-              id:
-                business.id,
-            },
+    const {
+      product,
+      maxActiveProducts: enforcedMaxActiveProducts,
+    } = await createProductWithLimit(
+      business.id,
+      auth.user.id,
+      {
+        business: {
+          connect: {
+            id: business.id,
           },
+        },
 
-          name,
+        name,
 
-          description:
-            description ||
-            null,
+        description: description || null,
 
-          category:
-            validatedCategoryId
-              ? {
-                  connect: {
-                    id:
-                      validatedCategoryId,
-                  },
-                }
-              : undefined,
+        category: validatedCategoryId
+          ? {
+              connect: {
+                id: validatedCategoryId,
+              },
+            }
+          : undefined,
 
-          price,
+        price,
+        priceMin,
+        priceMax,
 
-          priceMin,
+        availability: (
+          availabilityValue || "ASK_SELLER"
+        ) as Availability,
 
-          priceMax,
+        keywords: keywordsResult.value,
 
-          availability:
-            (availabilityValue ||
-              "ASK_SELLER") as Availability,
+        // Compatibility mirror of the first image.
+        imageUrl: compatibilityImageUrl,
 
-          keywords:
-            keywordsResult.value,
+        images:
+          images.length > 0
+            ? {
+                create: images.map((image) => ({
+                  url: image.url,
+                  publicId: image.publicId,
+                  sortOrder: image.sortOrder,
+                })),
+              }
+            : undefined,
 
-          /*
-           * Compatibility mirror only.
-           */
-          imageUrl:
-            compatibilityImageUrl,
-
-          images:
-            images.length >
-            0
-              ? {
-                  create:
-                    images.map(
-                      (
-                        image
-                      ) => ({
-                        url:
-                          image.url,
-
-                        publicId:
-                          image.publicId,
-
-                        sortOrder:
-                          image.sortOrder,
-                      })
-                    ),
-                }
-              : undefined,
-
-          status:
-            "ACTIVE",
-        }
-      );
+        status: "ACTIVE",
+      }
+    );
 
     /*
-     * -----------------------------------------
+     * QUALIFY SELLER REFERRAL
+     *
+     * Creating an active product can be the action
+     * that makes a referred seller eligible.
+     *
+     * The referral service must verify the actual
+     * business/product state and prevent duplicate
+     * qualification and reward grants.
+     *
+     * A qualification failure must not undo the
+     * product that was already created.
+     */
+
+    try {
+      await qualifyReferralForUser(
+        auth.user.id,
+        "SELLER"
+      );
+    } catch (qualificationError) {
+      console.error(
+        "Seller referral qualification error:",
+        qualificationError
+      );
+    }
+
+    /*
      * NOTIFY ADMINS
-     * -----------------------------------------
      *
-     * The seller should not receive a notification
-     * for their own product creation.
-     *
-     * Every admin is affected because the product
-     * was added to ReMarket by a seller.
-     *
-     * Notification failure must not undo the
-     * successful product creation.
-     * -----------------------------------------
+     * Notification failures do not undo product creation.
      */
 
     try {
@@ -1197,123 +1023,121 @@ export async function POST(
           where: {
             role: "ADMIN",
           },
-
           select: {
             id: true,
           },
         });
 
-      for (
-        const admin of admins
-      ) {
+      for (const admin of admins) {
         try {
           await createNotification({
-            userId:
-              admin.id,
+            userId: admin.id,
 
-            type:
-              NotificationType.PRODUCT_ADDED,
+            type: NotificationType.PRODUCT_ADDED,
 
-            title:
-              "New product added",
+            title: "New product added",
 
             message:
               `A new product, "${product.name}", was added to ${business.name}.`,
 
-            priority:
-              NotificationPriority.NORMAL,
+            priority: NotificationPriority.NORMAL,
 
             data: {
-              productId:
-                product.id,
-
-              businessId:
-                business.id,
-
-              href:
-                `/admin/products`,
+              productId: product.id,
+              businessId: business.id,
+              href: "/admin/products",
             },
 
             dedupeKey:
               `product:${product.id}:added:admin:${admin.id}`,
           });
-        } catch (
-          notificationError
-        ) {
+        } catch (notificationError) {
           console.error(
             "Seller product admin notification error:",
             notificationError
           );
         }
       }
-    } catch (
-      notificationLookupError
-    ) {
+    } catch (notificationLookupError) {
       console.error(
         "Seller product admin lookup error:",
         notificationLookupError
       );
     }
 
-    const activeCount =
-      await prisma.product.count({
+    /*
+     * RETURN CURRENT PRODUCT CAPACITY
+     */
+
+    const [
+      activeCount,
+      referralBonusSlots,
+    ] = await Promise.all([
+      prisma.product.count({
         where: {
-          businessId:
-            business.id,
-
-          status:
-            "ACTIVE",
-
-          deletedAt:
-            null,
+          businessId: business.id,
+          status: "ACTIVE",
+          deletedAt: null,
         },
-      });
+      }),
+
+      getGrantedProductSlotBonus(auth.user.id),
+    ]);
+
+    const currentMaxActiveProducts =
+      calculateMaxActiveProducts(
+        referralBonusSlots
+      );
 
     return NextResponse.json(
       {
-        message:
-          "Product created successfully.",
+        message: "Product created successfully.",
 
         product,
 
         activeCount,
 
         maxActiveProducts:
+          currentMaxActiveProducts,
+
+        baseMaxActiveProducts:
           MAX_ACTIVE_PRODUCTS,
 
-        remainingSlots:
-          Math.max(
-            0,
-            MAX_ACTIVE_PRODUCTS -
-              activeCount
-          ),
+        referralBonusSlots,
+
+        remainingSlots: Math.max(
+          0,
+          currentMaxActiveProducts - activeCount
+        ),
       },
       {
         status: 201,
-        headers:
-          jsonHeaders(),
+        headers: jsonHeaders(),
       }
     );
   } catch (error) {
-    if (
-      error instanceof
-      ActiveProductLimitError
-    ) {
+    if (error instanceof ActiveProductLimitError) {
       return NextResponse.json(
         {
-          error:
-            error.message,
+          error: error.message,
 
-          code:
-            "ACTIVE_PRODUCT_LIMIT",
+          code: "ACTIVE_PRODUCT_LIMIT",
 
           maxActiveProducts:
+            error.maxActiveProducts,
+
+          baseMaxActiveProducts:
             MAX_ACTIVE_PRODUCTS,
+
+          referralBonusSlots: Math.max(
+            0,
+            error.maxActiveProducts -
+              MAX_ACTIVE_PRODUCTS
+          ),
         },
         {
           status: 409,
-          headers:
-            jsonHeaders(),
+          headers: jsonHeaders(),
         }
       );
     }
@@ -1325,13 +1149,11 @@ export async function POST(
 
     return NextResponse.json(
       {
-        error:
-          "Unable to create product.",
+        error: "Unable to create product.",
       },
       {
         status: 500,
-        headers:
-          jsonHeaders(),
+        headers: jsonHeaders(),
       }
     );
   }

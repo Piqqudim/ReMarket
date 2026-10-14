@@ -1,3 +1,4 @@
+
 "use client";
 
 import {
@@ -27,6 +28,7 @@ import {
   Bookmark,
   Store,
   Loader2,
+  Gift,
 } from "lucide-react";
 
 import Link from "next/link";
@@ -252,6 +254,15 @@ export default function HomePage() {
     nearbyError,
     setNearbyError,
   ] = useState("");
+
+  /*
+   * Account menu state.
+   *
+   * The profile button opens the menu containing
+   * the referral dashboard link.
+   */
+  const [accountMenuOpen, setAccountMenuOpen] =
+    useState(false);
 
   const router = useRouter();
 
@@ -653,15 +664,70 @@ export default function HomePage() {
               <NotificationBell />
             </div>
 
-            {/* Profile */}
+            {/* Account / Referral Menu */}
 
-            <button
-              type="button"
-              className="hidden h-9 w-9 items-center justify-center rounded-full bg-gray-100 sm:flex"
-              aria-label="Profile"
-            >
-              <UserCircle className="h-6 w-6 text-gray-700" />
-            </button>
+            <div className="relative">
+              <button
+                type="button"
+                onClick={() =>
+                  setAccountMenuOpen((open) => !open)
+                }
+                className="flex h-9 w-9 items-center justify-center rounded-full bg-gray-100 transition hover:bg-orange-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#FF5A36] focus-visible:ring-offset-2"
+                aria-label="Account menu"
+                aria-expanded={accountMenuOpen}
+                aria-controls="buyer-account-menu"
+                title="Account and referrals"
+              >
+                <UserCircle className="h-6 w-6 text-gray-700" />
+              </button>
+
+              {accountMenuOpen && (
+                <div
+                  id="buyer-account-menu"
+                  className="absolute right-0 top-full z-[70] mt-2 w-[min(288px,calc(100vw-24px))] overflow-hidden rounded-2xl border border-[#EAE6DF] bg-white shadow-[0_12px_35px_rgba(23,32,42,0.16)]"
+                >
+                  <div className="border-b border-[#EAE6DF] px-4 py-4">
+                    <p className="text-sm font-bold text-[#17202A]">
+                      Your account
+                    </p>
+
+                    <p className="mt-1 text-xs leading-5 text-gray-500">
+                      Manage your ReMarket referrals and rewards.
+                    </p>
+                  </div>
+
+                  <Link
+                    href="/referrals"
+                    onClick={() =>
+                      setAccountMenuOpen(false)
+                    }
+                    className="flex items-center gap-3 px-4 py-4 transition hover:bg-[#FFF7ED] focus-visible:bg-[#FFF7ED] focus-visible:outline-none"
+                  >
+                    <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-[#FFF0EB] text-[#FF5A36]">
+                      <Gift
+                        aria-hidden="true"
+                        className="h-5 w-5"
+                      />
+                    </span>
+
+                    <span className="min-w-0 flex-1">
+                      <span className="block text-sm font-bold text-[#17202A]">
+                        Refer &amp; Earn
+                      </span>
+
+                      <span className="mt-1 block text-xs leading-5 text-gray-500">
+                        Share your referral link and track rewards.
+                      </span>
+                    </span>
+
+                    <ArrowRight
+                      aria-hidden="true"
+                      className="h-4 w-4 shrink-0 text-[#9F2D18]"
+                    />
+                  </Link>
+                </div>
+              )}
+            </div>
 
             {/* Request */}
 
@@ -929,7 +995,7 @@ export default function HomePage() {
 
                   <div>
                     <h2 className="text-sm font-bold text-gray-800">
-                      Can't find what you need?
+                      Can&apos;t find what you need?
                     </h2>
 
                     <p className="mt-0.5 text-[11px] text-gray-600">

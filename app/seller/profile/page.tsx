@@ -21,6 +21,7 @@ import {
   CheckCircle2,
   CircleAlert,
   Save,
+  Gift,
 } from "lucide-react";
 
 type SellerProfile = {
@@ -639,6 +640,32 @@ export default function SellerProfilePage() {
                       <p className="mt-1 text-xs leading-5 text-gray-500">
                         View and submit ownership claims.
                       </p>
+                    </Link>
+
+                    {/* New referral navigation */}
+
+                    <Link
+                      href="/referrals"
+                      className="group rounded-2xl border border-[#E8E4DE] bg-white p-4 transition hover:border-[#FF5A36]/40 hover:bg-[#FFF7ED] focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-[#FF5A36]/20"
+                    >
+                      <div className="flex items-start gap-3">
+                        <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-[#FFF0EB] text-[#FF5A36] transition group-hover:bg-[#FFE3D8]">
+                          <Gift
+                            aria-hidden="true"
+                            className="h-5 w-5"
+                          />
+                        </div>
+
+                        <div>
+                          <p className="text-sm font-bold text-[#17202A]">
+                            Refer &amp; Earn
+                          </p>
+
+                          <p className="mt-1 text-xs leading-5 text-gray-500">
+                            Share your referral link, track invited sellers, and view your earned product-slot rewards.
+                          </p>
+                        </div>
+                      </div>
                     </Link>
                   </div>
                 </>
