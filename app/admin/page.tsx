@@ -583,7 +583,7 @@ export default function AdminPage() {
         {/* Main */}
 
         <main className="min-w-0 flex-1">
-          <div className="mx-auto max-w-7xl px-4 py-6 sm:px-6 lg:px-8 lg:py-8">
+          <div className="mx-auto max-w-7xl px-4 pt-6 pb-32 sm:px-6 lg:px-8 lg:py-8">
 
             {/* Header */}
 
@@ -1218,6 +1218,39 @@ export default function AdminPage() {
           </div>
         </main>
       </div>
+
+      {/* Mobile admin navigation */}
+      <nav
+        className="fixed inset-x-0 bottom-0 z-50 border-t border-[#E8DED3] bg-[#FFFDFC]/95 px-2 py-2 shadow-[0_-4px_18px_rgba(46,36,31,0.08)] backdrop-blur lg:hidden"
+        aria-label="Mobile admin navigation"
+      >
+        <div className="mx-auto grid max-w-3xl grid-cols-4 gap-1">
+          {ADMIN_NAV.map((item) => {
+            const Icon = item.icon;
+            const active =
+              item.href === "/admin"
+                ? pathname === "/admin"
+                : pathname === item.href ||
+                  pathname.startsWith(`${item.href}/`);
+
+            return (
+              <Link
+                key={item.href}
+                href={item.href}
+                aria-current={active ? "page" : undefined}
+                className={`flex min-h-[48px] flex-col items-center justify-center gap-1 rounded-xl px-1 py-1 text-center text-[10px] font-semibold transition ${
+                  active
+                    ? "bg-[#FFF0E8] text-[#9F2D18]"
+                    : "text-[#6F675F] hover:bg-[#F7F1EB]"
+                }`}
+              >
+                <Icon className="h-4 w-4 shrink-0" />
+                <span className="leading-tight">{item.label}</span>
+              </Link>
+            );
+          })}
+        </div>
+      </nav>
     </div>
   );
 }

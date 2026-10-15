@@ -749,7 +749,7 @@ export default function AdminBusinessesPage() {
               />
             </div>
 
-            <div className="mb-5 flex gap-2 overflow-x-auto lg:hidden">
+            <div className="mb-5 grid grid-cols-4 gap-1 lg:hidden">
               {NAV_ITEMS.map(
                 (item) => {
                   const Icon =
@@ -767,17 +767,14 @@ export default function AdminBusinessesPage() {
                       href={
                         item.href
                       }
-                      className={`flex shrink-0 items-center gap-2 rounded-xl px-3 py-2 text-xs font-bold ${
+                      className={`flex min-h-[48px] flex-col items-center justify-center gap-1 rounded-xl px-1 py-2 text-center text-[10px] font-bold ${
                         active
                           ? "bg-[#FF5A36] text-white"
                           : "bg-[#FCFAF6] text-[#6F675F]"
                       }`}
                     >
                       <Icon size={15} />
-
-                      {
-                        item.label
-                      }
+                      <span className="leading-tight">{item.label}</span>
                     </Link>
                   );
                 }

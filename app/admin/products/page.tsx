@@ -308,7 +308,7 @@ export default function AdminProductsPage() {
 
           <div className="p-4 sm:p-6">
             {/* Mobile nav */}
-            <div className="mb-5 flex gap-2 overflow-x-auto lg:hidden">
+            <div className="mb-5 grid grid-cols-4 gap-1 lg:hidden">
               {NAV_ITEMS.map((item) => {
                 const Icon = item.icon;
 
@@ -316,7 +316,7 @@ export default function AdminProductsPage() {
                   <Link
                     key={item.href}
                     href={item.href}
-                    className={`flex shrink-0 items-center gap-2 rounded-xl px-3 py-2 text-xs font-bold ${
+                    className={`flex min-h-[48px] flex-col items-center justify-center gap-1 rounded-xl px-1 py-2 text-center text-[10px] font-bold ${
                       item.href ===
                       "/admin/products"
                         ? "bg-[#FF5A36] text-white"
@@ -324,7 +324,7 @@ export default function AdminProductsPage() {
                     }`}
                   >
                     <Icon size={15} />
-                    {item.label}
+                    <span className="leading-tight">{item.label}</span>
                   </Link>
                 );
               })}
