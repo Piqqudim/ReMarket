@@ -10,6 +10,7 @@ import {
 
 import {
   Archive,
+  Bell,
   Check,
   ChevronLeft,
   ChevronRight,
@@ -111,6 +112,11 @@ const NAV_ITEMS = [
     label: "Content",
     href: "/admin/content",
     icon: Megaphone,
+  },
+  {
+    label: "Announcements",
+    href: "/admin/announcements",
+    icon: Bell,
   },
   {
     label: "Deletion requests",
