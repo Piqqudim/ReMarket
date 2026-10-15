@@ -10,6 +10,7 @@ import {
   ClipboardList,
   Eye,
   LayoutDashboard,
+  Megaphone,
   Package,
   PackagePlus,
   Plus,
@@ -78,6 +79,11 @@ const NAV_ITEMS = [
     label: "Requests",
     href: "/admin/requests",
     icon: ClipboardList,
+  },
+  {
+    label: "Content",
+    href: "/admin/content",
+    icon: Megaphone,
   },
   {
     label: "Deletion requests",

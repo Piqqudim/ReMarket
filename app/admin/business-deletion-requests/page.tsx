@@ -8,6 +8,7 @@ import {
   ClipboardList,
   LayoutDashboard,
   Loader2,
+  Megaphone,
   Package,
   RefreshCw,
   Store,
@@ -120,6 +121,11 @@ const NAV_ITEMS = [
     label: "Requests",
     href: "/admin/requests",
     icon: ClipboardList,
+  },
+  {
+    label: "Content",
+    href: "/admin/content",
+    icon: Megaphone,
   },
   {
     label: "Deletion requests",

@@ -8,6 +8,7 @@ import {
   Clock3,
   LoaderCircle,
   MapPin,
+  Megaphone,
   RefreshCw,
   Store,
   UserRound,
@@ -466,6 +467,14 @@ export default function AdminClaimsPage() {
                 >
                   <Store className="h-4 w-4" />
                   <span>Requests</span>
+                </Link>
+
+                <Link
+                  href="/admin/content"
+                  className="flex items-center gap-3 rounded-xl px-3 py-3 text-sm font-medium text-[#6F675F] transition hover:bg-[#F7F1EB] hover:text-[#2E241F]"
+                >
+                  <Megaphone className="h-4 w-4" />
+                  <span>Content</span>
                 </Link>
 
                 <Link

@@ -3,6 +3,7 @@
 import {
   ClipboardList,
   LayoutDashboard,
+  Megaphone,
   Package,
   Search,
   Store,
@@ -98,6 +99,11 @@ const NAV_ITEMS = [
     label: "Requests",
     href: "/admin/requests",
     icon: ClipboardList,
+  },
+  {
+    label: "Content",
+    href: "/admin/content",
+    icon: Megaphone,
   },
   {
     label: "Deletion requests",
@@ -898,9 +904,7 @@ export default function AdminRequestsPage() {
                                 .verified && (
                                 <span className="inline-flex items-center gap-1 text-green-600">
                                   <CheckCircle2
-                                    size={
-                                      12
-                                    }
+                                    size={12}
                                   />
                                   Verified
                                 </span>

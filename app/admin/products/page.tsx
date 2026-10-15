@@ -7,6 +7,7 @@ import {
   ChevronDown,
   ClipboardList,
   LayoutDashboard,
+  Megaphone,
   Package,
   Pencil,
   Search,
@@ -70,6 +71,11 @@ const NAV_ITEMS = [
     label: "Requests",
     href: "/admin/requests",
     icon: ClipboardList,
+  },
+  {
+    label: "Content",
+    href: "/admin/content",
+    icon: Megaphone,
   },
   {
     label: "Deletion requests",

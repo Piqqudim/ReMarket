@@ -8,6 +8,7 @@ import {
   Contact,
   LayoutDashboard,
   MapPin,
+  Megaphone,
   Package,
   Phone,
   Store,
@@ -118,6 +119,11 @@ const ADMIN_NAV = [
     label: "Requests",
     href: "/admin/requests",
     icon: ClipboardList,
+  },
+  {
+    label: "Content",
+    href: "/admin/content",
+    icon: Megaphone,
   },
   {
     label: "Claims",
