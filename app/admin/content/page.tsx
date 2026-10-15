@@ -1,4 +1,3 @@
-
 "use client";
 
 import Link from "next/link";
@@ -15,6 +14,9 @@ import {
   ChevronLeft,
   ChevronRight,
   ClipboardList,
+  Copy,
+  Download,
+  ExternalLink,
   FileText,
   ImagePlus,
   LayoutDashboard,
@@ -25,11 +27,14 @@ import {
   Plus,
   RotateCcw,
   Search,
+  Share2,
   Store,
   Trash2,
   Upload,
   X,
 } from "lucide-react";
+
+import FlyerStudio from "./FlyerStudio";
 
 type ContentPlatform =
   | "WHATSAPP"
@@ -213,6 +218,8 @@ export default function AdminContentPage() {
   const [saving, setSaving] = useState(false);
   const [uploadingImage, setUploadingImage] = useState(false);
   const [changingStatusId, setChangingStatusId] =
+    useState<string | null>(null);
+  const [sharingContentId, setSharingContentId] =
     useState<string | null>(null);
 
   const loadContents = useCallback(
@@ -590,6 +597,155 @@ export default function AdminContentPage() {
     }
   }
 
+  function getSharingText(content: AdminContent): string {
+    const caption = content.caption.trim();
+    const destination = content.linkUrl?.trim();
+
+    if (!destination || caption.includes(destination)) {
+      return caption;
+    }
+
+    return `${caption}\n\n${destination}`;
+  }
+
+  async function copyTextToClipboard(value: string) {
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(value);
+      return;
+    }
+
+    const textarea = document.createElement("textarea");
+    textarea.value = value;
+    textarea.setAttribute("readonly", "");
+    textarea.style.position = "fixed";
+    textarea.style.opacity = "0";
+    textarea.style.pointerEvents = "none";
+    document.body.appendChild(textarea);
+    textarea.select();
+
+    const copied = document.execCommand("copy");
+    document.body.removeChild(textarea);
+
+    if (!copied) {
+      throw new Error("Copying is not supported by this browser. Select and copy the caption manually.");
+    }
+  }
+
+  async function copyContentCaption(content: AdminContent) {
+    clearMessages();
+
+    try {
+      await copyTextToClipboard(getSharingText(content));
+      setSuccess("Caption copied, including the destination link when provided.");
+    } catch (copyError) {
+      setError(
+        copyError instanceof Error
+          ? copyError.message
+          : "Unable to copy the caption."
+      );
+    }
+  }
+
+  async function downloadContentImage(content: AdminContent) {
+    clearMessages();
+
+    if (!content.imageUrl) {
+      setError("This content does not have an image to download.");
+      return;
+    }
+
+    try {
+      const response = await fetch(content.imageUrl);
+      if (!response.ok) {
+        throw new Error("The image host did not allow the download.");
+      }
+
+      const blob = await response.blob();
+      const objectUrl = URL.createObjectURL(blob);
+      const anchor = document.createElement("a");
+      const safeTitle = content.title
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, "-")
+        .replace(/^-|-$/g, "") || "remarket-content";
+      const extension = blob.type === "image/png"
+        ? "png"
+        : blob.type === "image/webp"
+          ? "webp"
+          : "jpg";
+
+      anchor.href = objectUrl;
+      anchor.download = `${safeTitle}.${extension}`;
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      window.setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
+
+      setSuccess("Image download started.");
+    } catch (downloadError) {
+      console.error("Content image download error:", downloadError);
+      setError(
+        "The image could not be downloaded directly. Use Open image below, then save it from your browser."
+      );
+    }
+  }
+
+  async function openPlatformShare(
+    content: AdminContent,
+    platform: ContentPlatform
+  ) {
+    clearMessages();
+
+    const sharingText = getSharingText(content);
+    const rawDestination = content.linkUrl?.trim();
+    const destination = rawDestination
+      ? new URL(rawDestination, window.location.origin).toString()
+      : null;
+
+    let shareUrl: string;
+    switch (platform) {
+      case "WHATSAPP":
+        shareUrl = `https://wa.me/?text=${encodeURIComponent(sharingText)}`;
+        break;
+      case "FACEBOOK":
+        shareUrl = destination
+          ? `https://www.facebook.com/sharer/sharer.php?u=${encodeURIComponent(destination)}`
+          : "https://www.facebook.com/";
+        break;
+      case "LINKEDIN":
+        shareUrl = destination
+          ? `https://www.linkedin.com/sharing/share-offsite/?url=${encodeURIComponent(destination)}`
+          : "https://www.linkedin.com/";
+        break;
+      case "INSTAGRAM":
+        shareUrl = "https://www.instagram.com/";
+        break;
+      case "TIKTOK":
+        shareUrl = "https://www.tiktok.com/upload";
+        break;
+    }
+
+    // Open the platform directly in the click handler to reduce popup blocking.
+    window.open(shareUrl, "_blank", "noopener,noreferrer");
+
+    try {
+      await copyTextToClipboard(sharingText);
+      if (platform === "WHATSAPP") {
+        setSuccess("WhatsApp opened with your caption and link. Attach the flyer separately if you want to send the image too.");
+      } else if ((platform === "FACEBOOK" || platform === "LINKEDIN") && destination) {
+        setSuccess(`${platform === "FACEBOOK" ? "Facebook" : "LinkedIn"} opened for link sharing. Your caption was copied; paste it into the post and attach the flyer if needed.`);
+      } else if (platform === "INSTAGRAM") {
+        setSuccess("Instagram opened and your caption was copied. Download the flyer and attach it to your post or Story.");
+      } else if (platform === "TIKTOK") {
+        setSuccess("TikTok's upload page opened and your caption was copied. Attach your image or video in TikTok.");
+      } else {
+        setSuccess(`${platform === "FACEBOOK" ? "Facebook" : "LinkedIn"} opened and your caption was copied. Add a destination link in Edit content to enable direct link sharing.`);
+      }
+    } catch (copyError) {
+      console.error("Copy caption during platform sharing failed:", copyError);
+      setSuccess("The platform opened, but your caption could not be copied automatically. Use Copy caption, then paste it into your post.");
+    }
+  }
+
   return (
     <main className="min-h-screen bg-[#FFF7ED] px-3 py-3 sm:px-5 sm:py-5">
       <div className="mx-auto flex min-h-[calc(100vh-24px)] max-w-[1500px] overflow-hidden rounded-[22px] border border-[#FF5A36] bg-[#FFFDFC] shadow-sm sm:min-h-[calc(100vh-40px)]">
@@ -831,12 +987,27 @@ export default function AdminContentPage() {
 
                   <div className="space-y-5">
                     <div>
-                      <p className="mb-2 text-xs font-bold text-[#6F675F]">
-                        Image{" "}
-                        <span className="font-medium text-[#A39A91]">
-                          (optional)
-                        </span>
-                      </p>
+                      <div className="mb-2 flex flex-col items-start gap-2 sm:flex-row sm:items-center sm:justify-between">
+                        <p className="text-xs font-bold text-[#6F675F]">
+                          Image{" "}
+                          <span className="font-medium text-[#A39A91]">
+                            (optional)
+                          </span>
+                        </p>
+                        <FlyerStudio
+                          onUseImage={({ url, publicId }) => {
+                            setForm((current) => ({
+                              ...current,
+                              imageUrl: url,
+                              imagePublicId: publicId ?? "",
+                            }));
+                            setError("");
+                            setSuccess(
+                              "Flyer attached. Add a caption, select platforms, and save the content."
+                            );
+                          }}
+                        />
+                      </div>
 
                       <div className="rounded-2xl border border-dashed border-[#D9D1C8] bg-[#FCFAF6] p-4">
                         {form.imageUrl ? (
@@ -1242,6 +1413,21 @@ export default function AdminContentPage() {
                           Edit
                         </button>
 
+                        <button
+                          type="button"
+                          aria-expanded={sharingContentId === content.id}
+                          onClick={() => {
+                            clearMessages();
+                            setSharingContentId((current) =>
+                              current === content.id ? null : content.id
+                            );
+                          }}
+                          className="inline-flex h-9 flex-1 items-center justify-center gap-2 rounded-xl border border-[#FFB49F] bg-[#FFF0ED] px-3 text-xs font-extrabold text-[#9F2D18] transition hover:bg-[#FFE0D6] sm:flex-none"
+                        >
+                          <Share2 size={14} />
+                          {sharingContentId === content.id ? "Close share tools" : "Share"}
+                        </button>
+
                         {content.status === "ARCHIVED" ? (
                           <button
                             type="button"
@@ -1293,6 +1479,90 @@ export default function AdminContentPage() {
                         )}
                       </div>
                     </div>
+
+                    {sharingContentId === content.id && (
+                      <div className="border-t border-[#EAE6DF] bg-[#FCFAF6] p-4 sm:px-5">
+                        <div className="mb-3 flex items-start gap-3">
+                          <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-[#FFE0D6] text-[#9F2D18]">
+                            <Share2 size={17} />
+                          </div>
+                          <div className="min-w-0">
+                            <h4 className="text-sm font-black text-[#17202A]">Manual sharing tools</h4>
+                            <p className="mt-1 text-xs leading-5 text-[#81776F]">
+                              Copy the caption, download the flyer, then open a platform. ReMarket does not publish this post automatically.
+                              {content.status !== "READY" && " This item is not marked Ready to share yet."}
+                            </p>
+                          </div>
+                        </div>
+
+                        <div className="flex flex-wrap gap-2">
+                          <button
+                            type="button"
+                            onClick={() => void copyContentCaption(content)}
+                            className="inline-flex h-10 items-center justify-center gap-2 rounded-xl bg-[#FF5A36] px-3.5 text-xs font-extrabold text-white transition hover:bg-[#E94B29]"
+                          >
+                            <Copy size={15} />
+                            Copy caption + link
+                          </button>
+
+                          <button
+                            type="button"
+                            disabled={!content.imageUrl}
+                            onClick={() => void downloadContentImage(content)}
+                            className="inline-flex h-10 items-center justify-center gap-2 rounded-xl border border-[#EAE6DF] bg-white px-3.5 text-xs font-bold text-[#6F675F] transition hover:bg-[#FFF0D9] disabled:cursor-not-allowed disabled:opacity-40"
+                          >
+                            <Download size={15} />
+                            Download image
+                          </button>
+
+                          {content.imageUrl && (
+                            <a
+                              href={content.imageUrl}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="inline-flex h-10 items-center justify-center gap-2 rounded-xl border border-[#EAE6DF] bg-white px-3.5 text-xs font-bold text-[#6F675F] transition hover:bg-[#FFF0D9]"
+                            >
+                              <ExternalLink size={15} />
+                              Open image
+                            </a>
+                          )}
+                        </div>
+
+                        <div className="mt-4">
+                          <p className="mb-2 text-[11px] font-extrabold uppercase tracking-wide text-[#A39A91]">
+                            Open a selected platform
+                          </p>
+                          {content.platforms.length > 0 ? (
+                            <div className="flex flex-wrap gap-2">
+                              {content.platforms.map((platform) => {
+                                const label = PLATFORMS.find((item) => item.value === platform)?.label ?? platform;
+                                return (
+                                  <button
+                                    key={platform}
+                                    type="button"
+                                    onClick={() => void openPlatformShare(content, platform)}
+                                    className="inline-flex h-10 items-center justify-center gap-2 rounded-xl border border-[#EAE6DF] bg-white px-3.5 text-xs font-bold text-[#17202A] transition hover:border-[#FF5A36] hover:bg-[#FFF0ED]"
+                                  >
+                                    <ExternalLink size={14} />
+                                    {platform === "WHATSAPP" ? "Share on" : "Open"} {label}
+                                  </button>
+                                );
+                              })}
+                            </div>
+                          ) : (
+                            <p className="rounded-xl border border-dashed border-[#D9D1C8] bg-white px-3 py-3 text-xs leading-5 text-[#81776F]">
+                              No platforms are selected. Choose Edit, select the intended platforms, and save the content to add platform shortcuts here.
+                            </p>
+                          )}
+                        </div>
+
+                        {(content.platforms.includes("FACEBOOK") || content.platforms.includes("LINKEDIN")) && !content.linkUrl && (
+                          <p className="mt-3 text-[11px] leading-5 text-[#8A8178]">
+                            Tip: add a public destination link using Edit content for Facebook and LinkedIn to open their link-sharing dialogs. Without one, those buttons open the platform home page.
+                          </p>
+                        )}
+                      </div>
+                    )}
                   </article>
                 ))}
               </div>
