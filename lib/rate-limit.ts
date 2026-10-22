@@ -1,3 +1,4 @@
+
 import { NextRequest } from "next/server";
 
 type RateLimitConfig = {
@@ -15,6 +16,7 @@ export type PublicRateLimitScope =
   | "featured"
   | "search"
   | "near-me"
+  | "recent-products"
   | "request-read"
   | "request-create"
   | "upload"
@@ -34,38 +36,57 @@ const PUBLIC_RATE_LIMITS: Record<
   PublicRateLimitScope,
   RateLimitConfig
 > = {
+  // Lightweight public reads.
   categories: {
     limit: 60,
     windowMs: 60_000,
   },
+
   featured: {
     limit: 30,
     windowMs: 60_000,
   },
+
   search: {
     limit: 60,
     windowMs: 60_000,
   },
+
   "near-me": {
     limit: 30,
     windowMs: 60_000,
   },
+
+  // Recently added products: lightweight public read.
+  "recent-products": {
+    limit: 60,
+    windowMs: 60_000,
+  },
+
+  // Request lookup may expose buyer request information.
   "request-read": {
     limit: 20,
     windowMs: 60_000,
   },
+
+  // Request creation performs database writes and matching.
   "request-create": {
     limit: 5,
     windowMs: 60_000,
   },
+
+  // Uploads consume server and media-provider resources.
   upload: {
     limit: 10,
     windowMs: 5 * 60_000,
   },
+
+  // Analytics writes should not be easy to inflate artificially.
   "contact-event": {
     limit: 30,
     windowMs: 60_000,
   },
+
   "business-view-event": {
     limit: 60,
     windowMs: 60_000,

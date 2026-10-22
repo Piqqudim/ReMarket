@@ -578,12 +578,18 @@ model Product {
 
   deletedBy User? @relation("ProductDeletedBy", fields: [deletedById], references: [id], onDelete: SetNull)
 
+  // New: original listing timestamp, supplied by the database.
+  // This allows the public Recently Added feed to sort by listing date
+  // instead of updatedAt, which changes whenever a product is edited.
+  createdAt DateTime @default(now())
+
   updatedAt DateTime @updatedAt
 
   @@index([businessId])
   @@index([businessId, deletedAt])
   @@index([categoryId])
   @@index([deletedAt])
+  @@index([status, deletedAt, createdAt])
 }
 
 model ProductImage {

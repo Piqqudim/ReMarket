@@ -1,4 +1,6 @@
+
 "use client";
+
 import {
   type FormEvent,
   type MouseEvent,
@@ -7,7 +9,7 @@ import {
   useState,
   useSyncExternalStore,
 } from "react";
-import {useRouter} from "next/navigation";
+import { useRouter } from "next/navigation";
 import {
   Home,
   ShoppingBag,
@@ -29,6 +31,7 @@ import {
   Loader2,
 } from "lucide-react";
 import Link from "next/link";
+
 import NotificationBell from "@/components/NotificationBell";
 import {
   getSavedBusinesses,
@@ -41,6 +44,7 @@ import {
   mergeCategories,
   type ReMarketCategory,
 } from "@/lib/categories";
+
 type FeaturedBusiness = {
   id: string;
   name: string;
@@ -48,13 +52,8 @@ type FeaturedBusiness = {
   description?: string | null;
   imageUrl?: string | null;
   area: string;
-  availability:
-  | "AVAILABLE"
-  | "ASK_SELLER"
-  | "UNAVAILABLE";
-  verification:
-  | "VERIFIED"
-  | "UNVERIFIED";
+  availability: "AVAILABLE" | "ASK_SELLER" | "UNAVAILABLE";
+  verification: "VERIFIED" | "UNVERIFIED";
   category: string;
   categories: string[];
   productCount: number;
@@ -65,10 +64,7 @@ type FeaturedBusiness = {
     price: number | null;
     priceMin: number | null;
     priceMax: number | null;
-    availability:
-    | "AVAILABLE"
-    | "ASK_SELLER"
-    | "UNAVAILABLE";
+    availability: "AVAILABLE" | "ASK_SELLER" | "UNAVAILABLE";
     imageUrl: string | null;
   }[];
   socialLinks: {
@@ -76,6 +72,7 @@ type FeaturedBusiness = {
     handle: string;
   }[];
 };
+
 type NearbyBusiness = {
   id: string;
   name: string;
@@ -87,20 +84,30 @@ type NearbyBusiness = {
   availability?: string;
   imageUrl?: string | null;
 };
-/*
- * -----------------------------------------
- * DISTANCE PRESENTATION
- * -----------------------------------------
- *
- * The Near Me API uses Haversine distance
- * for first-stage nearby filtering.
- *
- * This formatter keeps that distinction clear
- * and presents the value in a user-friendly way.
- *
- * It does NOT describe the value as driving
- * distance.
- */
+
+type RecentProduct = {
+  id: string;
+  name: string;
+  description: string | null;
+  price: number | null;
+  priceMin: number | null;
+  priceMax: number | null;
+  availability: "AVAILABLE" | "ASK_SELLER" | "UNAVAILABLE";
+  imageUrl: string | null;
+  createdAt: string;
+  category: { id: string; name: string } | null;
+  business: {
+    id: string;
+    name: string;
+    availability: "AVAILABLE" | "ASK_SELLER" | "UNAVAILABLE";
+    verification: "VERIFIED" | "UNVERIFIED";
+    location: {
+      area: string;
+      street: string | null;
+    } | null;
+  };
+};
+
 function getDistanceLabel(
   distanceKm: number | null
 ): string | null {
@@ -111,70 +118,74 @@ function getDistanceLabel(
   ) {
     return null;
   }
+
   if (distanceKm < 1) {
-    const distanceMetres =
-      Math.round(
-        distanceKm * 1000
-      );
+    const distanceMetres = Math.round(distanceKm * 1000);
+
     if (distanceMetres < 1) {
       return "Less than 1 m away";
     }
+
     return `${distanceMetres.toLocaleString()} m away`;
   }
+
   if (distanceKm < 10) {
     return `${distanceKm.toFixed(1)} km away`;
   }
-  return `${Math.round(
-    distanceKm
-  ).toLocaleString()} km away`;
+
+  return `${Math.round(distanceKm).toLocaleString()} km away`;
 }
-const NAV_ITEMS = [
-  {
-    label: "Home",
-    href: "/",
-    icon: Home,
-  },
-  {
-    label: "Shop",
-    href: "/shop",
-    icon: ShoppingBag,
-  },
-  {
-    label: "Requests",
-    href: "/my-requests",
-    icon: ClipboardList,
-  },
-  {
-    label: "Saved",
-    href: "/saved",
-    icon: Heart,
-  },
-];
-/*
- * -----------------------------------------
- * SAVED BUSINESS STORE
- * -----------------------------------------
- *
- * The snapshot is represented as a stable
- * primitive string so useSyncExternalStore
- * can safely detect changes.
- */
-function getSavedBusinessIdsSnapshot(): string {
+
+function formatRecentProductPrice(
+  product: RecentProduct
+): string {
+  const formatNaira = (amount: number) =>
+    `₦${amount.toLocaleString("en-NG")}`;
+
+  if (product.price !== null) {
+    return formatNaira(product.price);
+  }
+
   if (
-    typeof window === "undefined"
+    product.priceMin !== null &&
+    product.priceMax !== null
   ) {
+    if (product.priceMin === product.priceMax) {
+      return formatNaira(product.priceMin);
+    }
+
+    return `${formatNaira(product.priceMin)} – ${formatNaira(product.priceMax)}`;
+  }
+
+  if (product.priceMin !== null) {
+    return `From ${formatNaira(product.priceMin)}`;
+  }
+
+  if (product.priceMax !== null) {
+    return `Up to ${formatNaira(product.priceMax)}`;
+  }
+
+  return "Ask seller for price";
+}
+
+const NAV_ITEMS = [
+  { label: "Home", href: "/", icon: Home },
+  { label: "Shop", href: "/shop", icon: ShoppingBag },
+  { label: "Requests", href: "/my-requests", icon: ClipboardList },
+  { label: "Saved", href: "/saved", icon: Heart },
+];
+
+function getSavedBusinessIdsSnapshot(): string {
+  if (typeof window === "undefined") {
     return "";
   }
-  const saved =
-    getSavedBusinesses();
-  return saved
-    .map(
-      (business) =>
-        business.id
-    )
+
+  return getSavedBusinesses()
+    .map((business) => business.id)
     .sort()
     .join("|");
 }
+
 function subscribeSavedBusinesses(
   onStoreChange: () => void
 ) {
@@ -182,242 +193,236 @@ function subscribeSavedBusinesses(
     SAVED_BUSINESSES_CHANGED_EVENT,
     onStoreChange
   );
-  window.addEventListener(
-    "storage",
-    onStoreChange
-  );
+  window.addEventListener("storage", onStoreChange);
+
   return () => {
     window.removeEventListener(
       SAVED_BUSINESSES_CHANGED_EVENT,
       onStoreChange
     );
-    window.removeEventListener(
-      "storage",
-      onStoreChange
-    );
+    window.removeEventListener("storage", onStoreChange);
   };
 }
+
 export default function HomePage() {
-  const [q, setQ] =
-    useState("");
-  const [
-    categories,
-    setCategories,
-  ] =
-    useState<ReMarketCategory[]>(
-      DEFAULT_CATEGORIES
-    );
-  const [
-    featuredBusinesses,
-    setFeaturedBusinesses,
-  ] =
-    useState<FeaturedBusiness[]>(
-      []
-    );
-  const [
-    businessLoading,
-    setBusinessLoading,
-  ] =
+  const [q, setQ] = useState("");
+
+  const [categories, setCategories] =
+    useState<ReMarketCategory[]>(DEFAULT_CATEGORIES);
+
+  const [featuredBusinesses, setFeaturedBusinesses] =
+    useState<FeaturedBusiness[]>([]);
+
+  const [recentProducts, setRecentProducts] =
+    useState<RecentProduct[]>([]);
+
+  const [recentProductsLoading, setRecentProductsLoading] =
     useState(true);
+
+  const [businessLoading, setBusinessLoading] =
+    useState(true);
+
   const [activeFeaturedIndex, setActiveFeaturedIndex] =
     useState(0);
+
   const [featuredAutoplayPaused, setFeaturedAutoplayPaused] =
     useState(false);
+
   const [featuredHovered, setFeaturedHovered] =
     useState(false);
-  const [
-    nearbyBusinesses,
-    setNearbyBusiness,
-  ] =
-    useState<NearbyBusiness[]>(
-      []
-    );
-  const [
-    nearbyLoading,
-    setNearbyLoading,
-  ] =
+
+  const [nearbyBusinesses, setNearbyBusiness] =
+    useState<NearbyBusiness[]>([]);
+
+  const [nearbyLoading, setNearbyLoading] =
     useState(false);
-  const [
-    nearbyLocationRequested,
-    setNearbyLocationRequested,
-  ] =
+
+  const [nearbyLocationRequested, setNearbyLocationRequested] =
     useState(false);
-  const [
-    nearbyError,
-    setNearbyError,
-  ] =
-    useState("");
-  const router =
-    useRouter();
+
+  const [nearbyError, setNearbyError] = useState("");
+
+  const router = useRouter();
+
   /*
-   * -----------------------------------------
-   * SAVED BUSINESSES
-   * -----------------------------------------
+   * Saved businesses
    */
-  const savedBusinessIdsSnapshot =
-    useSyncExternalStore(
-      subscribeSavedBusinesses,
-      getSavedBusinessIdsSnapshot,
-      () => ""
-    );
-  const savedBusinessIds =
-    useMemo(
-      () =>
-        new Set(
-          savedBusinessIdsSnapshot
-            ? savedBusinessIdsSnapshot.split(
-              "|"
-            )
-            : []
-        ),
-      [savedBusinessIdsSnapshot]
-    );
+  const savedBusinessIdsSnapshot = useSyncExternalStore(
+    subscribeSavedBusinesses,
+    getSavedBusinessIdsSnapshot,
+    () => ""
+  );
+
+  const savedBusinessIds = useMemo(
+    () =>
+      new Set(
+        savedBusinessIdsSnapshot
+          ? savedBusinessIdsSnapshot.split("|")
+          : []
+      ),
+    [savedBusinessIdsSnapshot]
+  );
+
   /*
-   * -----------------------------------------
-   * CATEGORY VISUAL
-   * -----------------------------------------
+   * Category visuals
    */
-  function getCategoryVisual(
-    name: string
-  ) {
-    const category =
-      categories.find(
-        (item) =>
-          item.name
-            .trim()
-            .toLowerCase() ===
-          name
-            .trim()
-            .toLowerCase()
-      );
+  function getCategoryVisual(name: string) {
+    const category = categories.find(
+      (item) =>
+        item.name.trim().toLowerCase() ===
+        name.trim().toLowerCase()
+    );
+
     if (!category) {
       return {
         bg: "#EEF1F4",
-        icon: (
-          <MoreHorizontal className="h-6 w-6" />
-        ),
+        icon: <MoreHorizontal className="h-6 w-6" />,
       };
     }
-    const Icon =
-      category.icon;
+
+    const Icon = category.icon;
+
     return {
       bg: category.bg,
-      icon: (
-        <Icon className="h-6 w-6" />
-      ),
+      icon: <Icon className="h-6 w-6" />,
     };
   }
+
   /*
-   * -----------------------------------------
-   * LOAD HOMEPAGE DATA
-   * -----------------------------------------
+   * Load categories and featured businesses.
+   * These requests remain separate from the recent-products feed,
+   * so failure of one feed will not block the others.
    */
   useEffect(() => {
-    let cancelled =
-      false;
+    let cancelled = false;
+
     async function loadHomeData() {
       try {
-        const [
-          categoriesResponse,
-          featuredResponse,
-        ] =
+        const [categoriesResponse, featuredResponse] =
           await Promise.all([
-            fetch(
-              "/api/categories",
-              {
-                cache:
-                  "no-store",
-              }
-            ),
-            fetch(
-              "/api/featured",
-              {
-                cache:
-                  "no-store",
-              }
-            ),
+            fetch("/api/categories", {
+              cache: "no-store",
+            }),
+            fetch("/api/featured", {
+              cache: "no-store",
+            }),
           ]);
-        /*
-         * Categories
-         */
-        if (
-          categoriesResponse.ok
-        ) {
+
+        if (categoriesResponse.ok) {
           const categoryData =
             await categoriesResponse.json();
+
           const backendCategories =
-            Array.isArray(
-              categoryData.categories
-            )
+            Array.isArray(categoryData.categories)
               ? categoryData.categories
               : [];
+
           const mergedCategories =
-            mergeCategories(
-              backendCategories
-            );
+            mergeCategories(backendCategories);
+
           if (
-            mergedCategories.length >
-            0 &&
+            mergedCategories.length > 0 &&
             !cancelled
           ) {
-            setCategories(
-              mergedCategories
-            );
+            setCategories(mergedCategories);
           }
         }
-        /*
-         * Featured businesses
-         */
-        if (
-          featuredResponse.ok
-        ) {
+
+        if (featuredResponse.ok) {
           const featuredData =
             await featuredResponse.json();
+
           if (!cancelled) {
             setFeaturedBusinesses(
-              Array.isArray(
-                featuredData.businesses
-              )
-                ? featuredData.businesses.slice(
-                  0,
-                  5
-                )
+              Array.isArray(featuredData.businesses)
+                ? featuredData.businesses.slice(0, 5)
                 : []
             );
           }
         }
-      } catch (
-      error
-      ) {
+      } catch (error) {
         console.error(
           "Failed to load homepage data",
           error
         );
       } finally {
         if (!cancelled) {
-          setBusinessLoading(
-            false
-          );
+          setBusinessLoading(false);
         }
       }
     }
+
     void loadHomeData();
+
     return () => {
       cancelled = true;
     };
   }, []);
+
   /*
-   * -----------------------------------------
-   * FEATURED BUSINESS SLIDESHOW
-   * -----------------------------------------
-   * Auto-advances gently, pauses while hovered or
-   * manually paused, and respects reduced-motion settings.
+   * Recently added products.
+   */
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadRecentProducts() {
+      try {
+        const response = await fetch(
+          "/api/recent-products?page=1&pageSize=8",
+          { cache: "no-store" }
+        );
+
+        if (!response.ok) {
+          throw new Error(
+            "Failed to load recently added products."
+          );
+        }
+
+        const data: unknown = await response.json();
+
+        const products =
+          typeof data === "object" &&
+          data !== null &&
+          "products" in data &&
+          Array.isArray(data.products)
+            ? (data.products as RecentProduct[])
+            : [];
+
+        if (!cancelled) {
+          setRecentProducts(products.slice(0, 8));
+        }
+      } catch (error) {
+        console.error(
+          "Failed to load recently added products",
+          error
+        );
+
+        if (!cancelled) {
+          setRecentProducts([]);
+        }
+      } finally {
+        if (!cancelled) {
+          setRecentProductsLoading(false);
+        }
+      }
+    }
+
+    void loadRecentProducts();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  /*
+   * Featured business slideshow.
    */
   useEffect(() => {
     if (featuredBusinesses.length === 0) {
       setActiveFeaturedIndex(0);
       return;
     }
+
     if (activeFeaturedIndex >= featuredBusinesses.length) {
       setActiveFeaturedIndex(0);
     }
@@ -428,37 +433,38 @@ export default function HomePage() {
       featuredBusinesses.length < 2 ||
       featuredAutoplayPaused ||
       featuredHovered ||
-      window.matchMedia("(prefers-reduced-motion: reduce)").matches
+      window.matchMedia(
+        "(prefers-reduced-motion: reduce)"
+      ).matches
     ) {
       return;
     }
 
     const intervalId = window.setInterval(() => {
-      setActiveFeaturedIndex((currentIndex) =>
-        (currentIndex + 1) % featuredBusinesses.length
+      setActiveFeaturedIndex(
+        (currentIndex) =>
+          (currentIndex + 1) % featuredBusinesses.length
       );
     }, 5500);
 
     return () => window.clearInterval(intervalId);
-  }, [featuredBusinesses.length, featuredAutoplayPaused, featuredHovered]);
+  }, [
+    featuredBusinesses.length,
+    featuredAutoplayPaused,
+    featuredHovered,
+  ]);
+
   /*
-   * -----------------------------------------
-   * CATEGORY
-   * -----------------------------------------
+   * Category search
    */
-  function handleCategory(
-    category: string
-  ) {
+  function handleCategory(category: string) {
     router.push(
-      `/shop?category=${encodeURIComponent(
-        category
-      )}`
+      `/shop?category=${encodeURIComponent(category)}`
     );
   }
+
   /*
-   * -----------------------------------------
-   * SAVE / UNSAVE BUSINESS
-   * -----------------------------------------
+   * Save and unsave businesses
    */
   function handleSaveBusiness(
     event: MouseEvent<HTMLButtonElement>,
@@ -468,161 +474,113 @@ export default function HomePage() {
   ) {
     event.preventDefault();
     event.stopPropagation();
+
     const alreadySaved =
-      savedBusinessIds.has(
-        business.id
-      );
+      savedBusinessIds.has(business.id);
+
     if (alreadySaved) {
-      removeSavedBusiness(
-        business.id
-      );
+      removeSavedBusiness(business.id);
       return;
     }
+
     saveBusiness({
       id: business.id,
       name: business.name,
       area: location,
       category,
-      verified:
-        business.verification ===
-        "VERIFIED",
-      availability:
-        business.availability,
-      imageUrl:
-        business.imageUrl ??
-        null,
+      verified: business.verification === "VERIFIED",
+      availability: business.availability,
+      imageUrl: business.imageUrl ?? null,
     });
   }
+
   /*
-   * -----------------------------------------
-   * FIND NEARBY BUSINESSES
-   * -----------------------------------------
+   * Find nearby businesses.
    */
-  const loadNearbyBusinesses =
-    () => {
-      if (
-        !navigator.geolocation
-      ) {
-        setNearbyError(
-          "Location is not supported by this browser"
-        );
-        setNearbyLocationRequested(
-          true
-        );
-        return;
-      }
-      setNearbyLocationRequested(
-        true
+  const loadNearbyBusinesses = () => {
+    if (!navigator.geolocation) {
+      setNearbyError(
+        "Location is not supported by this browser"
       );
-      setNearbyLoading(
-        true
-      );
-      setNearbyError("");
-      /*
-       * Clear previous nearby results
-       * before starting a new search.
-       */
-      setNearbyBusiness([]);
-      navigator.geolocation.getCurrentPosition(
-        async (
-          position
-        ) => {
-          try {
-            const {
-              latitude,
-              longitude,
-            } =
-              position.coords;
-            const response =
-              await fetch(
-                `/api/near-me?lat=${latitude}&lng=${longitude}`,
-                {
-                  cache:
-                    "no-store",
-                }
-              );
-            if (!response.ok) {
-              throw new Error(
-                "Failed to load nearby businesses"
-              );
-            }
-            const data =
-              await response.json();
-            /*
-             * GPS can succeed even when
-             * there are no businesses nearby.
-             *
-             * An empty array is therefore
-             * not treated as an error.
-             */
-            setNearbyBusiness(
-              Array.isArray(
-                data.businesses
-              )
-                ? data.businesses.slice(
-                  0,
-                  4
-                )
-                : []
-            );
-          } catch (
-          error
-          ) {
-            console.error(
-              "Failed to load nearby businesses:",
-              error
-            );
-            setNearbyError(
-              "We couldn't load nearby sellers right now"
-            );
-          } finally {
-            setNearbyLoading(
-              false
+      setNearbyLocationRequested(true);
+      return;
+    }
+
+    setNearbyLocationRequested(true);
+    setNearbyLoading(true);
+    setNearbyError("");
+    setNearbyBusiness([]);
+
+    navigator.geolocation.getCurrentPosition(
+      async (position) => {
+        try {
+          const { latitude, longitude } =
+            position.coords;
+
+          const response = await fetch(
+            `/api/near-me?lat=${latitude}&lng=${longitude}`,
+            { cache: "no-store" }
+          );
+
+          if (!response.ok) {
+            throw new Error(
+              "Failed to load nearby businesses"
             );
           }
-        },
-        (
-          error
-        ) => {
+
+          const data = await response.json();
+
+          setNearbyBusiness(
+            Array.isArray(data.businesses)
+              ? data.businesses.slice(0, 4)
+              : []
+          );
+        } catch (error) {
           console.error(
-            "Geolocation error:",
+            "Failed to load nearby businesses:",
             error
           );
+
           setNearbyError(
-            "Allow location access to discover sellers near you"
+            "We couldn't load nearby sellers right now"
           );
-          setNearbyLoading(
-            false
-          );
-        },
-        {
-          enableHighAccuracy:
-            false,
-          timeout: 100000,
-          maximumAge: 300000,
+        } finally {
+          setNearbyLoading(false);
         }
-      );
-    };
+      },
+      (error) => {
+        console.error("Geolocation error:", error);
+
+        setNearbyError(
+          "Allow location access to discover sellers near you"
+        );
+        setNearbyLoading(false);
+      },
+      {
+        enableHighAccuracy: false,
+        timeout: 100000,
+        maximumAge: 300000,
+      }
+    );
+  };
+
   /*
-   * -----------------------------------------
-   * SEARCH
-   * -----------------------------------------
+   * Homepage search
    */
-  const submit = (
-    event: FormEvent<HTMLFormElement>
-  ) => {
+  const submit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    const query =
-      q.trim();
+
+    const query = q.trim();
+
     if (!query) {
       return;
     }
+
     router.push(
-      `/search?q=${encodeURIComponent(
-        query
-      )}`
+      `/search?q=${encodeURIComponent(query)}`
     );
   };
+
   return (
     <main className="min-h-dvh w-full overflow-x-clip bg-[#FFFDFC]">
       <div className="min-h-dvh w-full">
@@ -633,179 +591,141 @@ export default function HomePage() {
               <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-[#FF5A36] text-white shadow-sm">
                 <Store className="h-5 w-5" />
               </div>
+
               <div className="min-w-0">
                 <p className="truncate text-sm font-bold tracking-tight text-[#17202A]">
                   ReMarket
                 </p>
-                <p className="truncate text-[10px] leading-none text-muted sm:text-[10px]">
+                <p className="truncate text-[10px] leading-none text-muted">
                   Find it nearby
                 </p>
               </div>
             </div>
-            {/* Desktop Navigation */}
+
+            {/* Desktop navigation */}
             <nav className="hidden items-center gap-1 xl:flex">
-              {NAV_ITEMS.map(
-                (item) => (
-                  <button
-                    key={
-                      item.label
-                    }
-                    type="button"
-                    onClick={() =>
-                      router.push(
-                        item.href
-                      )
-                    }
-                    className="rounded-xl px-4 py-2 text-xs font-semibold text-gray-700 transition hover:bg-gray-50"
-                  >
-                    {
-                      item.label
-                    }
-                  </button>
-                )
-              )}
+              {NAV_ITEMS.map((item) => (
+                <button
+                  key={item.label}
+                  type="button"
+                  onClick={() => router.push(item.href)}
+                  className="rounded-xl px-4 py-2 text-xs font-semibold text-gray-700 transition hover:bg-gray-50"
+                >
+                  {item.label}
+                </button>
+              ))}
             </nav>
-            {/* Right Action */}
+
+            {/* Header actions */}
             <div className="flex shrink-0 items-center gap-1.5 sm:gap-3">
-              {/* Search */}
               <button
                 type="button"
                 onClick={() => {
-                  const input =
-                    document.getElementById(
-                      "homepage-search"
-                    );
-                  input?.focus();
+                  document
+                    .getElementById("homepage-search")
+                    ?.focus();
                 }}
                 className="hidden h-9 w-9 items-center justify-center rounded-full hover:bg-gray-50 sm:flex"
                 aria-label="Search"
               >
                 <Search className="h-[19px] w-[19px] text-gray-700" />
               </button>
-              {/* Saved */}
+
               <button
                 type="button"
-                onClick={() =>
-                  router.push(
-                    "/saved"
-                  )
-                }
+                onClick={() => router.push("/saved")}
                 className="hidden h-9 w-9 items-center justify-center rounded-full hover:bg-gray-50 sm:flex"
                 aria-label="Saved"
               >
                 <Heart className="h-[19px] w-[19px] text-gray-700" />
               </button>
-              {/* Notifications */}
+
               <div className="shrink-0">
                 <NotificationBell />
               </div>
-              {/* Profile */}
+
               <button
                 type="button"
+                onClick={() => router.push("/profile")}
                 className="hidden h-9 w-9 items-center justify-center rounded-full bg-gray-100 sm:flex"
                 aria-label="Profile"
               >
                 <UserCircle className="h-6 w-6 text-gray-700" />
               </button>
-              {/* Request */}
+
               <button
                 type="button"
-                onClick={() =>
-                  router.push(
-                    "/request"
-                  )
-                }
+                onClick={() => router.push("/request")}
                 className="shrink-0 whitespace-nowrap rounded-xl bg-[#FF5A36] px-2.5 py-2.5 text-[10px] font-bold text-white shadow-sm transition hover:opacity-90 sm:px-4 sm:text-xs"
               >
-                <span className="sm:hidden">
-                  Request
-                </span>
+                <span className="sm:hidden">Request</span>
                 <span className="hidden sm:inline">
                   Request something
                 </span>
               </button>
             </div>
           </header>
-          {/* Left Sidebar */}
+
+          {/* Sidebar and page content */}
           <div className="flex">
             <aside className="hidden w-[190px] shrink-0 border-r border-[#EAE6DF] bg-[#FCFAF6] px-3 py-5 lg:block">
               <nav className="space-y-1">
-                {NAV_ITEMS.map(
-                  (item) => {
-                    const Icon =
-                      item.icon;
-                    return (
-                      <button
-                        key={
-                          item.label
-                        }
-                        type="button"
-                        onClick={() =>
-                          router.push(
-                            item.href
-                          )
-                        }
-                        className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-sm font-medium text-gray-700 transition hover:bg-white"
-                      >
-                        <Icon className="h-[18px] w-[18px]" />
-                        <span>
-                          {
-                            item.label
-                          }
-                        </span>
-                      </button>
-                    );
-                  }
-                )}
+                {NAV_ITEMS.map((item) => {
+                  const Icon = item.icon;
+
+                  return (
+                    <button
+                      key={item.label}
+                      type="button"
+                      onClick={() => router.push(item.href)}
+                      className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-sm font-medium text-gray-700 transition hover:bg-white"
+                    >
+                      <Icon className="h-[18px] w-[18px]" />
+                      <span>{item.label}</span>
+                    </button>
+                  );
+                })}
               </nav>
+
               <div className="my-5 h-px bg-[#E7E2DB]" />
+
               <div>
                 <p className="px-3 text-[10px] font-bold uppercase tracking-[0.12em] text-gray-400">
                   Categories
                 </p>
+
                 <div className="mt-3 space-y-1">
-                  {categories.map(
-                    (category) => {
-                      const Icon =
-                        category.icon;
-                      return (
-                        <button
-                          key={
-                            category.id
-                          }
-                          type="button"
-                          onClick={() =>
-                            handleCategory(
-                              category.name
-                            )
-                          }
-                          className="flex w-full items-center gap-3 rounded-xl px-3 py-2 text-left transition hover:bg-white"
+                  {categories.map((category) => {
+                    const Icon = category.icon;
+
+                    return (
+                      <button
+                        key={category.id}
+                        type="button"
+                        onClick={() =>
+                          handleCategory(category.name)
+                        }
+                        className="flex w-full items-center gap-3 rounded-xl px-3 py-2 text-left transition hover:bg-white"
+                      >
+                        <span
+                          className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full"
+                          style={{
+                            backgroundColor: category.bg,
+                          }}
                         >
-                          <span
-                            className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full"
-                            style={{
-                              backgroundColor:
-                                category.bg,
-                            }}
-                          >
-                            <Icon className="h-4 w-4 text-[#9F2D18]" />
-                          </span>
-                          <span className="truncate text-xs font-medium text-gray-700">
-                            {
-                              category.name
-                            }
-                          </span>
-                        </button>
-                      );
-                    }
-                  )}
+                          <Icon className="h-4 w-4 text-[#9F2D18]" />
+                        </span>
+
+                        <span className="truncate text-xs font-medium text-gray-700">
+                          {category.name}
+                        </span>
+                      </button>
+                    );
+                  })}
+
                   <button
                     type="button"
-                    onClick={() =>
-                      router.push(
-                        "/shop"
-                      )
-                    }
+                    onClick={() => router.push("/shop")}
                     className="flex w-full items-center gap-3 rounded-xl px-3 py-2 text-left transition hover:bg-white"
                   >
                     <span className="flex h-7 w-7 items-center justify-center rounded-full bg-gray-100">
@@ -818,12 +738,12 @@ export default function HomePage() {
                 </div>
               </div>
             </aside>
-            {/* Page Content */}
+
+            {/* Page content */}
             <div className="min-w-0 flex-1">
               <div className="px-4 pb-24 pt-4 sm:px-6 sm:pt-6 lg:px-6 lg:pb-8">
                 {/* Hero */}
-                <section className="relative min-h-[260px] overflow-hidden rounded-[18px] bg-[#FF5A36] px-6 py-7 text-white shadow-soft sm:min-h-[275px] sm:px-8 sm:py-9 lg:min-h-[275px] lg:px-8">
-                  {/* Seller entry point */}
+                <section className="relative min-h-[260px] overflow-hidden rounded-[18px] bg-[#FF5A36] px-6 py-7 text-white shadow-soft sm:min-h-[275px] sm:px-8 sm:py-9">
                   <Link
                     href="/seller/login"
                     aria-label="Seller login"
@@ -832,6 +752,7 @@ export default function HomePage() {
                   >
                     <Store className="h-5 w-5" />
                   </Link>
+
                   <div className="absolute -right-16 -top-24 h-[260px] w-[260px] rounded-full bg-white/5">
                     <div className="pointer-events-none absolute right-6 top-7 hidden opacity-90 md:block lg:right-12">
                       <div className="relative h-[190px] w-[220px]">
@@ -848,39 +769,38 @@ export default function HomePage() {
                       </div>
                     </div>
                   </div>
+
                   <div className="relative z-10 max-w-[600px]">
                     <div className="mb-4 inline-flex items-center rounded-full bg-white px-4 py-2 text-[10px] font-medium text-[#9F2D18]">
                       Your local marketplace
                     </div>
+
                     <h1 className="max-w-[520px] text-[29px] font-bold leading-[1.1] tracking-tight sm:text-[34px] lg:text-[36px]">
                       Find what you need,
                       <br />
                       right around you
                     </h1>
+
                     <p className="mt-3 max-w-[470px] text-xs leading-5 text-white/85 sm:text-sm">
                       Search sellers, discover products and connect with people nearby without the hassle.
                     </p>
+
                     <form
-                      onSubmit={
-                        submit
-                      }
+                      onSubmit={submit}
                       className="mt-5 flex h-[48px] w-full max-w-[455px] items-center rounded-full bg-white p-1.5 shadow-sm"
                     >
                       <Search className="ml-3 h-[18px] w-[18px] shrink-0 text-gray-500" />
+
                       <input
                         id="homepage-search"
                         value={q}
-                        onChange={(
-                          event
-                        ) =>
-                          setQ(
-                            event.target
-                              .value
-                          )
+                        onChange={(event) =>
+                          setQ(event.target.value)
                         }
                         placeholder="What are you looking for?"
                         className="min-w-0 flex-1 bg-transparent px-3 text-xs text-gray-800 outline-none placeholder:text-gray-400"
                       />
+
                       <button
                         type="submit"
                         className="flex h-[38px] items-center rounded-full bg-[#FF5A36] px-5 text-xs font-bold text-white transition hover:opacity-90"
@@ -890,6 +810,7 @@ export default function HomePage() {
                     </form>
                   </div>
                 </section>
+
                 {/* Categories */}
                 <section className="mt-5 sm:mt-6">
                   <div className="mb-3 flex items-end justify-between">
@@ -901,62 +822,49 @@ export default function HomePage() {
                         Start with something you need
                       </p>
                     </div>
+
                     <button
                       type="button"
-                      onClick={() =>
-                        router.push(
-                          "/shop"
-                        )
-                      }
+                      onClick={() => router.push("/shop")}
                       className="flex items-center gap-1 text-xs font-medium text-[#9F2D18]"
                     >
                       View all
                       <ArrowRight className="h-3.5 w-3.5" />
                     </button>
                   </div>
+
                   <div className="grid grid-cols-3 gap-2.5 sm:grid-cols-3 lg:grid-cols-6">
-                    {categories.map(
-                      (category) => {
-                        const Icon =
-                          category.icon;
-                        return (
-                          <button
-                            key={
-                              category.id
-                            }
-                            type="button"
-                            onClick={() =>
-                              handleCategory(
-                                category.name
-                              )
-                            }
-                            className="group flex min-h-[112px] flex-col items-center justify-center rounded-xl border border-[#E8E4DE] bg-white px-2 py-2 transition hover:-translate-y-0.5 hover:shadow-md"
+                    {categories.map((category) => {
+                      const Icon = category.icon;
+
+                      return (
+                        <button
+                          key={category.id}
+                          type="button"
+                          onClick={() =>
+                            handleCategory(category.name)
+                          }
+                          className="group flex min-h-[112px] flex-col items-center justify-center rounded-xl border border-[#E8E4DE] bg-white px-2 py-2 transition hover:-translate-y-0.5 hover:shadow-md"
+                        >
+                          <span
+                            className="flex h-[58px] w-[58px] items-center justify-center rounded-full transition group-hover:scale-105"
+                            style={{
+                              background: category.bg,
+                            }}
                           >
-                            <span
-                              className="flex h-[58px] w-[58px] items-center justify-center rounded-full transition group-hover:scale-105"
-                              style={{
-                                background:
-                                  category.bg,
-                              }}
-                            >
-                              <Icon className="h-6 w-6" />
-                            </span>
-                            <span className="mt-3 max-w-full truncate text-xs font-medium text-gray-800">
-                              {
-                                category.name
-                              }
-                            </span>
-                          </button>
-                        );
-                      }
-                    )}
+                            <Icon className="h-6 w-6" />
+                          </span>
+
+                          <span className="mt-3 max-w-full truncate text-xs font-medium text-gray-800">
+                            {category.name}
+                          </span>
+                        </button>
+                      );
+                    })}
+
                     <button
                       type="button"
-                      onClick={() =>
-                        router.push(
-                          "/shop"
-                        )
-                      }
+                      onClick={() => router.push("/shop")}
                       className="group flex min-h-[112px] flex-col items-center justify-center rounded-xl border border-[#E8E4DE] bg-white px-2 py-3 transition hover:-translate-y-0.5 hover:shadow-md"
                     >
                       <span className="flex h-[58px] w-[58px] items-center justify-center rounded-full bg-[#E9EDF0] transition group-hover:scale-105">
@@ -968,12 +876,14 @@ export default function HomePage() {
                     </button>
                   </div>
                 </section>
-                {/* Request Banner */}
+
+                {/* Request banner */}
                 <section className="mt-5 flex flex-col gap-4 rounded-xl border border-[#F4DFC3] bg-[#FFF0D9] px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
                   <div className="flex items-center gap-3">
                     <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-[#FFE0AD]">
                       <ClipboardList className="h-5 w-5 text-[#A76013]" />
                     </div>
+
                     <div>
                       <h2 className="text-sm font-bold text-gray-800">
                         Can&apos;t find what you need?
@@ -983,20 +893,18 @@ export default function HomePage() {
                       </p>
                     </div>
                   </div>
+
                   <button
                     type="button"
-                    onClick={() =>
-                      router.push(
-                        "/request"
-                      )
-                    }
+                    onClick={() => router.push("/request")}
                     className="flex shrink-0 items-center justify-center gap-2 rounded-xl bg-[#FF5A36] px-5 py-3 text-xs font-bold text-white transition hover:opacity-90"
                   >
                     Submit a request
                     <ArrowRight className="h-3.5 w-3.5" />
                   </button>
                 </section>
-                {/* Nearby Businesses */}
+
+                {/* Nearby businesses */}
                 <section className="mt-8">
                   <div className="flex items-end justify-between">
                     <div>
@@ -1008,10 +916,12 @@ export default function HomePage() {
                           Near you
                         </h2>
                       </div>
+
                       <p className="mt-1 text-xs text-muted">
                         Discover businesses closest to you
                       </p>
                     </div>
+
                     <Link
                       href="/near-me"
                       className="flex shrink-0 items-center gap-1 text-xs font-semibold text-[#9F2D18]"
@@ -1020,33 +930,34 @@ export default function HomePage() {
                       <ArrowRight size={14} />
                     </Link>
                   </div>
-                  {!nearbyLocationRequested &&
-                    !nearbyLoading && (
-                      <div className="mt-4 rounded-2xl border border-orange-100 bg-white p-5 shadow-card">
-                        <div className="flex flex-col items-center text-center sm:flex-row sm:text-left">
-                          <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-orange-50 text-[#FF5A36]">
-                            <Navigation size={21} />
-                          </div>
-                          <div className="mt-3 sm:ml-4 sm:mt-0">
-                            <p className="text-sm font-bold">
-                              Find businesses near you
-                            </p>
-                            <p className="mt-1 text-xs leading-5 text-muted">
-                              Allow location access to see local sellers closest to you.
-                            </p>
-                          </div>
-                          <button
-                            type="button"
-                            onClick={
-                              loadNearbyBusinesses
-                            }
-                            className="mt-4 w-full rounded-xl bg-[#FF5A36] px-4 py-3 text-xs font-semibold text-white transition hover:opacity-90 sm:ml-auto sm:mt-0 sm:w-auto"
-                          >
-                            Find near me
-                          </button>
+
+                  {!nearbyLocationRequested && !nearbyLoading && (
+                    <div className="mt-4 rounded-2xl border border-orange-100 bg-white p-5 shadow-card">
+                      <div className="flex flex-col items-center text-center sm:flex-row sm:text-left">
+                        <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-orange-50 text-[#FF5A36]">
+                          <Navigation size={21} />
                         </div>
+
+                        <div className="mt-3 sm:ml-4 sm:mt-0">
+                          <p className="text-sm font-bold">
+                            Find businesses near you
+                          </p>
+                          <p className="mt-1 text-xs leading-5 text-muted">
+                            Allow location access to see local sellers closest to you.
+                          </p>
+                        </div>
+
+                        <button
+                          type="button"
+                          onClick={loadNearbyBusinesses}
+                          className="mt-4 w-full rounded-xl bg-[#FF5A36] px-4 py-3 text-xs font-semibold text-white transition hover:opacity-90 sm:ml-auto sm:mt-0 sm:w-auto"
+                        >
+                          Find near me
+                        </button>
                       </div>
-                    )}
+                    </div>
+                  )}
+
                   {nearbyLoading && (
                     <div className="mt-4 flex min-h-[150px] items-center justify-center rounded-2xl border border-orange-100 bg-white shadow-card">
                       <div className="flex items-center gap-2 text-sm text-muted">
@@ -1058,45 +969,46 @@ export default function HomePage() {
                       </div>
                     </div>
                   )}
-                  {!!nearbyError &&
-                    !nearbyLoading && (
-                      <div className="mt-4 rounded-2xl border border-orange-100 bg-white p-5 text-center shadow-card">
-                        <MapPin
-                          size={22}
-                          className="mx-auto text-[#FF5A36]"
-                        />
-                        <p className="mt-3 text-sm font-semibold">
-                          We couldn&apos;t find your location
-                        </p>
-                        <p className="mt-1 text-xs text-muted">
-                          {
-                            nearbyError
-                          }
-                        </p>
-                        <Link
-                          href="/near-me"
-                          className="mt-4 inline-flex items-center gap-2 rounded-xl bg-[#FF5A36] px-4 py-2.5 text-xs font-semibold text-white"
-                        >
-                          Open Near Me
-                          <ArrowRight size={14} />
-                        </Link>
-                      </div>
-                    )}
+
+                  {!!nearbyError && !nearbyLoading && (
+                    <div className="mt-4 rounded-2xl border border-orange-100 bg-white p-5 text-center shadow-card">
+                      <MapPin
+                        size={22}
+                        className="mx-auto text-[#FF5A36]"
+                      />
+                      <p className="mt-3 text-sm font-semibold">
+                        We couldn&apos;t find your location
+                      </p>
+                      <p className="mt-1 text-xs text-muted">
+                        {nearbyError}
+                      </p>
+                      <Link
+                        href="/near-me"
+                        className="mt-4 inline-flex items-center gap-2 rounded-xl bg-[#FF5A36] px-4 py-2.5 text-xs font-semibold text-white"
+                      >
+                        Open Near Me
+                        <ArrowRight size={14} />
+                      </Link>
+                    </div>
+                  )}
+
                   {!nearbyLoading &&
                     nearbyLocationRequested &&
                     !nearbyError &&
-                    nearbyBusinesses.length ===
-                    0 && (
+                    nearbyBusinesses.length === 0 && (
                       <div className="mt-4 rounded-2xl border border-orange-100 bg-white p-6 text-center shadow-card">
                         <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-2xl bg-orange-50 text-[#FF5A36]">
                           <MapPin size={21} />
                         </div>
+
                         <p className="mt-3 text-sm font-bold">
                           No businesses found near you yet
                         </p>
+
                         <p className="mx-auto mt-1 max-w-[380px] text-xs leading-5 text-muted">
                           We don&apos;t have businesses registered around your current location yet. You can explore all businesses or search for another area.
                         </p>
+
                         <div className="mt-4 flex flex-col justify-center gap-2 sm:flex-row">
                           <Link
                             href="/near-me"
@@ -1105,120 +1017,104 @@ export default function HomePage() {
                             Open Near Me
                             <ArrowRight size={14} />
                           </Link>
+
                           <Link
                             href="/shop"
                             className="inline-flex items-center justify-center gap-2 rounded-xl border border-[#E8E4DE] bg-white px-4 py-2.5 text-xs font-semibold text-[#9F2D18] transition hover:bg-orange-50"
                           >
                             Browse all businesses
                           </Link>
+
+                          <Link
+                            href="#recent-products"
+                            className="inline-flex items-center justify-center gap-2 rounded-xl border border-[#E8E4DE] bg-white px-4 py-2.5 text-xs font-semibold text-[#9F2D18] transition hover:bg-orange-50"
+                          >
+                            See recently added products
+                          </Link>
                         </div>
                       </div>
                     )}
+
                   {!nearbyLoading &&
-                    nearbyBusinesses.length >
-                    0 && (
+                    nearbyBusinesses.length > 0 && (
                       <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-                        {nearbyBusinesses.map(
-                          (
-                            business
-                          ) => {
-                            const distanceLabel =
-                              getDistanceLabel(
-                                business.distanceKm
-                              );
-                            return (
-                              <Link
-                                key={
-                                  business.id
-                                }
-                                href={`/seller/${business.id}`}
-                                className="group rounded-2xl border border-orange-100 bg-white p-4 shadow-card transition hover:-translate-y-0.5 hover:shadow-soft"
-                              >
-                                <div className="flex items-start justify-between gap-3">
-                                  <div className="flex min-w-0 items-center gap-3">
-                                    <div className="h-10 w-10 shrink-0 overflow-hidden rounded-full bg-orange-100">
-                                      {business.imageUrl ? (
-                                        <img
-                                          src={
-                                            business.imageUrl
-                                          }
-                                          alt={
-                                            business.name
-                                          }
-                                          className="h-full w-full object-cover"
-                                        />
-                                      ) : (
-                                        <div className="flex h-full w-full items-center justify-center text-xs font-bold text-[#9F2D18]">
-                                          {business.name
-                                            .slice(
-                                              0,
-                                              2
-                                            )
-                                            .toUpperCase()}
-                                        </div>
-                                      )}
-                                    </div>
-                                    <div className="min-w-0">
-                                      <p className="truncate text-sm font-bold">
-                                        {
-                                          business.name
-                                        }
-                                      </p>
-                                      <p className="mt-0.5 truncate text-[11px] text-muted">
-                                        {
-                                          business.category ??
-                                          "Local business"
-                                        }
-                                      </p>
-                                    </div>
-                                  </div>
-                                  <Store
-                                    size={16}
-                                    className="shrink-0 text-gray-400 transition group-hover:text-[#FF5A36]"
-                                  />
-                                </div>
-                                <div className="mt-4 flex items-center gap-2 text-xs text-gray-600">
-                                  {business.area && (
-                                    <span className="truncate">
-                                      {
-                                        business.area
-                                      }
-                                    </span>
-                                  )}
-                                  {distanceLabel !==
-                                    null && (
-                                      <>
-                                        {business.area && (
-                                          <span className="text-gray-300">
-                                            ·
-                                          </span>
-                                        )}
-                                        <span className="shrink-0">
-                                          {
-                                            distanceLabel
-                                          }
-                                        </span>
-                                      </>
+                        {nearbyBusinesses.map((business) => {
+                          const distanceLabel =
+                            getDistanceLabel(business.distanceKm);
+
+                          return (
+                            <Link
+                              key={business.id}
+                              href={`/seller/${business.id}`}
+                              className="group rounded-2xl border border-orange-100 bg-white p-4 shadow-card transition hover:-translate-y-0.5 hover:shadow-soft"
+                            >
+                              <div className="flex items-start justify-between gap-3">
+                                <div className="flex min-w-0 items-center gap-3">
+                                  <div className="h-10 w-10 shrink-0 overflow-hidden rounded-full bg-orange-100">
+                                    {business.imageUrl ? (
+                                      <img
+                                        src={business.imageUrl}
+                                        alt={business.name}
+                                        className="h-full w-full object-cover"
+                                      />
+                                    ) : (
+                                      <div className="flex h-full w-full items-center justify-center text-xs font-bold text-[#9F2D18]">
+                                        {business.name
+                                          .slice(0, 2)
+                                          .toUpperCase()}
+                                      </div>
                                     )}
+                                  </div>
+
+                                  <div className="min-w-0">
+                                    <p className="truncate text-sm font-bold">
+                                      {business.name}
+                                    </p>
+                                    <p className="mt-0.5 truncate text-[11px] text-muted">
+                                      {business.category ?? "Local business"}
+                                    </p>
+                                  </div>
                                 </div>
-                                <div className="mt-2 text-[11px] text-muted">
-                                  {
-                                    business.productCount
-                                  }{" "}
-                                  {business.productCount ===
-                                    1
-                                    ? "product"
-                                    : "products"}
-                                </div>
-                              </Link>
-                            );
-                          }
-                        )}
+
+                                <Store
+                                  size={16}
+                                  className="shrink-0 text-gray-400 transition group-hover:text-[#FF5A36]"
+                                />
+                              </div>
+
+                              <div className="mt-4 flex items-center gap-2 text-xs text-gray-600">
+                                {business.area && (
+                                  <span className="truncate">
+                                    {business.area}
+                                  </span>
+                                )}
+
+                                {distanceLabel !== null && (
+                                  <>
+                                    {business.area && (
+                                      <span className="text-gray-300">·</span>
+                                    )}
+                                    <span className="shrink-0">
+                                      {distanceLabel}
+                                    </span>
+                                  </>
+                                )}
+                              </div>
+
+                              <div className="mt-2 text-[11px] text-muted">
+                                {business.productCount}{" "}
+                                {business.productCount === 1
+                                  ? "product"
+                                  : "products"}
+                              </div>
+                            </Link>
+                          );
+                        })}
                       </div>
                     )}
+
                   {!nearbyLoading &&
-                    nearbyBusinesses.length >
-                    0 && (
+                    nearbyBusinesses.length > 0 && (
                       <Link
                         href="/near-me"
                         className="mt-4 flex items-center justify-center gap-2 rounded-xl border border-orange-100 bg-white py-3 text-xs font-semibold text-[#9F2D18] transition hover:bg-orange-50"
@@ -1228,7 +1124,163 @@ export default function HomePage() {
                       </Link>
                     )}
                 </section>
-                {/* Featured Businesses Slideshow */}
+
+                {/* Recently added products */}
+                <section
+                  id="recent-products"
+                  className="mt-8 scroll-mt-5"
+                  aria-labelledby="recent-products-heading"
+                >
+                  <div className="mb-4 flex items-end justify-between gap-3">
+                    <div>
+                      <div className="mb-1.5 inline-flex items-center gap-1.5 rounded-full border border-[#FFD9CE] bg-[#FFF1ED] px-2.5 py-1 text-[9px] font-bold uppercase tracking-[0.14em] text-[#9F2D18]">
+                        <span className="h-1.5 w-1.5 rounded-full bg-[#FF5A36]" />
+                        Fresh listings
+                      </div>
+
+                      <h2
+                        id="recent-products-heading"
+                        className="text-lg font-bold tracking-tight text-[#17202A] sm:text-xl"
+                      >
+                        Recently added products
+                      </h2>
+
+                      <p className="mt-1 text-xs text-gray-500 sm:text-sm">
+                        See what local businesses have listed recently.
+                      </p>
+                    </div>
+
+                    <Link
+                      href="/shop"
+                      className="inline-flex shrink-0 items-center gap-1.5 rounded-full border border-[#EAE6DF] bg-white px-3 py-2 text-[11px] font-semibold text-[#9F2D18] transition hover:border-[#FFB9A7] hover:bg-[#FFF7F4] sm:px-4 sm:text-xs"
+                    >
+                      Browse products
+                      <ArrowRight className="h-3.5 w-3.5" />
+                    </Link>
+                  </div>
+
+                  {recentProductsLoading && (
+                    <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
+                      {Array.from({ length: 4 }).map((_, index) => (
+                        <div
+                          key={`recent-product-skeleton-${index}`}
+                          className="overflow-hidden rounded-2xl border border-[#EAE6DF] bg-white"
+                          aria-hidden="true"
+                        >
+                          <div className="aspect-square animate-pulse bg-[#F2EEE9]" />
+
+                          <div className="space-y-2 p-3">
+                            <div className="h-3 w-4/5 animate-pulse rounded bg-[#F2EEE9]" />
+                            <div className="h-3 w-2/5 animate-pulse rounded bg-[#F2EEE9]" />
+                            <div className="h-2.5 w-3/5 animate-pulse rounded bg-[#F2EEE9]" />
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  {!recentProductsLoading &&
+                    recentProducts.length > 0 && (
+                      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
+                        {recentProducts.map((product) => {
+                          const productArea =
+                            product.business.location?.area;
+
+                          const availabilityLabel =
+                            product.availability === "AVAILABLE"
+                              ? "Available"
+                              : product.availability === "UNAVAILABLE"
+                                ? "Unavailable"
+                                : "Ask seller";
+
+                          return (
+                            <Link
+                              key={product.id}
+                              href={`/seller/${product.business.id}`}
+                              aria-label={`View ${product.name} from ${product.business.name}`}
+                              className="group min-w-0 overflow-hidden rounded-2xl border border-[#EAE6DF] bg-white shadow-[0_4px_18px_rgba(23,32,42,0.04)] transition hover:-translate-y-0.5 hover:border-[#FFD0C3] hover:shadow-[0_10px_28px_rgba(23,32,42,0.08)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#FF5A36]"
+                            >
+                              <div className="relative aspect-square overflow-hidden bg-[#FCFAF6]">
+                                {product.imageUrl ? (
+                                  <img
+                                    src={product.imageUrl}
+                                    alt={product.name}
+                                    loading="lazy"
+                                    className="h-full w-full object-cover transition-transform duration-300 group-hover:scale-[1.03]"
+                                  />
+                                ) : (
+                                  <div className="flex h-full w-full items-center justify-center text-[#C3B9AE]">
+                                    <Package className="h-10 w-10" />
+                                  </div>
+                                )}
+
+                                <span className="absolute left-2 top-2 rounded-full border border-white/80 bg-white/95 px-2 py-1 text-[9px] font-bold text-[#9F2D18] shadow-sm">
+                                  New listing
+                                </span>
+                              </div>
+
+                              <div className="p-3 sm:p-3.5">
+                                <p className="line-clamp-2 min-h-9 text-xs font-bold leading-4 text-[#17202A] transition group-hover:text-[#9F2D18] sm:text-sm">
+                                  {product.name}
+                                </p>
+
+                                <p className="mt-2 line-clamp-1 text-[11px] font-bold text-[#9F2D18] sm:text-xs">
+                                  {formatRecentProductPrice(product)}
+                                </p>
+
+                                <div className="mt-3 border-t border-[#F0ECE7] pt-2.5">
+                                  <p className="truncate text-[10px] font-semibold text-[#4C5560] sm:text-[11px]">
+                                    {product.business.name}
+                                  </p>
+
+                                  <p className="mt-1 flex items-center gap-1 truncate text-[10px] text-gray-500">
+                                    <MapPin className="h-3 w-3 shrink-0 text-[#FF5A36]" />
+                                    <span className="truncate">
+                                      {productArea || "Location not added"}
+                                    </span>
+                                  </p>
+
+                                  <p className="mt-2 text-[9px] font-medium text-gray-500">
+                                    {availabilityLabel}
+                                    {product.category?.name
+                                      ? ` · ${product.category.name}`
+                                      : ""}
+                                  </p>
+                                </div>
+                              </div>
+                            </Link>
+                          );
+                        })}
+                      </div>
+                    )}
+
+                  {!recentProductsLoading &&
+                    recentProducts.length === 0 && (
+                      <div className="rounded-2xl border border-dashed border-[#E8E4DE] bg-[#FCFAF6] px-5 py-7 text-center">
+                        <div className="mx-auto flex h-11 w-11 items-center justify-center rounded-2xl bg-white text-[#FF5A36] shadow-sm">
+                          <Package className="h-5 w-5" />
+                        </div>
+
+                        <p className="mt-3 text-sm font-bold text-[#17202A]">
+                          New products are coming
+                        </p>
+
+                        <p className="mx-auto mt-1 max-w-md text-xs leading-5 text-gray-500">
+                          As local businesses add listings, they will appear here. You can still browse businesses or search for a product.
+                        </p>
+
+                        <Link
+                          href="/shop"
+                          className="mt-4 inline-flex min-h-10 items-center justify-center gap-2 rounded-xl bg-[#FF5A36] px-4 py-2.5 text-xs font-bold text-white transition hover:bg-[#E94A28]"
+                        >
+                          Browse ReMarket
+                          <ArrowRight className="h-3.5 w-3.5" />
+                        </Link>
+                      </div>
+                    )}
+                </section>
+
+                {/* Featured businesses slideshow */}
                 <section
                   className="mt-7"
                   aria-label="Featured businesses"
@@ -1242,13 +1294,16 @@ export default function HomePage() {
                         <span className="h-1.5 w-1.5 rounded-full bg-[#FF5A36]" />
                         Local spotlight
                       </div>
+
                       <h2 className="text-lg font-bold tracking-tight text-[#17202A] sm:text-xl">
                         Featured businesses
                       </h2>
+
                       <p className="mt-1 text-xs text-gray-500 sm:text-sm">
                         Get to know local businesses and what they offer.
                       </p>
                     </div>
+
                     <button
                       type="button"
                       onClick={() => router.push("/shop")}
@@ -1274,222 +1329,327 @@ export default function HomePage() {
                     </div>
                   )}
 
-                  {!businessLoading && featuredBusinesses.length === 0 && (
-                    <div className="rounded-2xl border border-dashed border-[#E8E4DE] bg-white px-5 py-10 text-center sm:py-12">
-                      <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-[#FFF1ED] text-[#FF5A36]">
-                        <Store className="h-7 w-7" />
+                  {!businessLoading &&
+                    featuredBusinesses.length === 0 && (
+                      <div className="rounded-2xl border border-dashed border-[#E8E4DE] bg-white px-5 py-10 text-center sm:py-12">
+                        <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-[#FFF1ED] text-[#FF5A36]">
+                          <Store className="h-7 w-7" />
+                        </div>
+
+                        <p className="mt-4 text-sm font-semibold text-[#17202A]">
+                          No businesses to feature yet
+                        </p>
+
+                        <p className="mx-auto mt-1 max-w-sm text-xs leading-5 text-gray-500">
+                          Local businesses will appear here as their profiles are added to ReMarket.
+                        </p>
                       </div>
-                      <p className="mt-4 text-sm font-semibold text-[#17202A]">
-                        No businesses to feature yet
-                      </p>
-                      <p className="mx-auto mt-1 max-w-sm text-xs leading-5 text-gray-500">
-                        Local businesses will appear here as their profiles are added to ReMarket.
-                      </p>
-                    </div>
-                  )}
+                    )}
 
-                  {!businessLoading && featuredBusinesses.length > 0 && (() => {
-                    const business = featuredBusinesses[activeFeaturedIndex] ?? featuredBusinesses[0];
-                    const category = business.category || business.categories?.[0] || "Services";
-                    const style = getCategoryVisual(category);
-                    const location = business.area || "Local";
-                    const isSaved = savedBusinessIds.has(business.id);
-                    const availabilityLabel = business.availability === "AVAILABLE"
-                      ? "Available"
-                      : business.availability === "UNAVAILABLE"
-                        ? "Check later"
-                        : "Ask the seller";
+                  {!businessLoading &&
+                    featuredBusinesses.length > 0 &&
+                    (() => {
+                      const business =
+                        featuredBusinesses[activeFeaturedIndex] ??
+                        featuredBusinesses[0];
 
-                    return (
-                      <div className="overflow-hidden rounded-2xl border border-[#EAE6DF] bg-white shadow-[0_10px_35px_rgba(23,32,42,0.06)] transition-shadow duration-300 hover:shadow-[0_14px_42px_rgba(23,32,42,0.09)]">
-                        <div className="grid md:grid-cols-[0.95fr_1.05fr]">
-                          <Link
-                            href={`/seller/${business.id}`}
-                            aria-label={`View ${business.name}`}
-                            className="group relative isolate flex min-h-[220px] items-center justify-center overflow-hidden sm:min-h-[280px] md:min-h-[318px]"
-                            style={{ backgroundColor: style.bg }}
-                          >
-                            {business.imageUrl ? (
-                              <img
-                                src={business.imageUrl}
-                                alt={business.name}
-                                className="absolute inset-0 h-full w-full object-cover transition-transform duration-700 group-hover:scale-[1.04]"
-                              />
-                            ) : (
-                              <div className="flex h-24 w-24 items-center justify-center rounded-[28px] border border-white/70 bg-white/75 text-[#17202A]/70 shadow-lg backdrop-blur-sm sm:h-28 sm:w-28">
-                                <Store className="h-11 w-11 sm:h-12 sm:w-12" />
+                      const category =
+                        business.category ||
+                        business.categories?.[0] ||
+                        "Services";
+
+                      const style = getCategoryVisual(category);
+                      const location = business.area || "Local";
+
+                      const isSaved =
+                        savedBusinessIds.has(business.id);
+
+                      const availabilityLabel =
+                        business.availability === "AVAILABLE"
+                          ? "Available"
+                          : business.availability === "UNAVAILABLE"
+                            ? "Check later"
+                            : "Ask the seller";
+
+                      return (
+                        <div className="overflow-hidden rounded-2xl border border-[#EAE6DF] bg-white shadow-[0_10px_35px_rgba(23,32,42,0.06)] transition-shadow duration-300 hover:shadow-[0_14px_42px_rgba(23,32,42,0.09)]">
+                          <div className="grid md:grid-cols-[0.95fr_1.05fr]">
+                            <Link
+                              href={`/seller/${business.id}`}
+                              aria-label={`View ${business.name}`}
+                              className="group relative isolate flex min-h-[220px] items-center justify-center overflow-hidden sm:min-h-[280px] md:min-h-[318px]"
+                              style={{ backgroundColor: style.bg }}
+                            >
+                              {business.imageUrl ? (
+                                <img
+                                  src={business.imageUrl}
+                                  alt={business.name}
+                                  className="absolute inset-0 h-full w-full object-cover transition-transform duration-700 group-hover:scale-[1.04]"
+                                />
+                              ) : (
+                                <div className="flex h-24 w-24 items-center justify-center rounded-[28px] border border-white/70 bg-white/75 text-[#17202A]/70 shadow-lg backdrop-blur-sm sm:h-28 sm:w-28">
+                                  <Store className="h-11 w-11 sm:h-12 sm:w-12" />
+                                </div>
+                              )}
+
+                              <div className="absolute inset-0 bg-gradient-to-t from-[#17202A]/65 via-[#17202A]/10 to-[#17202A]/5" />
+
+                              <div className="absolute left-4 top-4 flex items-center gap-1.5 rounded-full border border-white/40 bg-white/90 px-3 py-1.5 text-[9px] font-bold uppercase tracking-[0.12em] text-[#17202A] shadow-sm backdrop-blur-sm sm:left-5 sm:top-5">
+                                <span className="h-1.5 w-1.5 rounded-full bg-[#FF5A36]" />
+                                Business spotlight
                               </div>
-                            )}
-                            <div className="absolute inset-0 bg-gradient-to-t from-[#17202A]/65 via-[#17202A]/10 to-[#17202A]/5" />
-                            <div className="absolute left-4 top-4 flex items-center gap-1.5 rounded-full border border-white/40 bg-white/90 px-3 py-1.5 text-[9px] font-bold uppercase tracking-[0.12em] text-[#17202A] shadow-sm backdrop-blur-sm sm:left-5 sm:top-5">
-                              <span className="h-1.5 w-1.5 rounded-full bg-[#FF5A36]" />
-                              Business spotlight
-                            </div>
-                            <div className="absolute inset-x-4 bottom-4 text-left sm:inset-x-5 sm:bottom-5">
-                              <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-white/80">Discover around you</p>
-                              <p className="mt-1 line-clamp-1 text-xl font-bold tracking-tight text-white drop-shadow sm:text-2xl">
-                                {business.name}
-                              </p>
-                            </div>
-                          </Link>
 
-                          <div className="flex min-w-0 flex-col justify-between p-5 sm:p-7 lg:p-8">
-                            <div>
-                              <div className="flex flex-wrap items-center gap-2">
-                                <span className="rounded-full px-3 py-1 text-[10px] font-semibold text-[#17202A]" style={{ backgroundColor: style.bg }}>
-                                  {category}
-                                </span>
-                                {business.verification === "VERIFIED" && (
-                                  <span className="inline-flex items-center gap-1 rounded-full bg-[#DDF5EA] px-2.5 py-1 text-[10px] font-semibold text-[#137A59]">
-                                    <span aria-hidden="true">✓</span> Verified
+                              <div className="absolute inset-x-4 bottom-4 text-left sm:inset-x-5 sm:bottom-5">
+                                <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-white/80">
+                                  Discover around you
+                                </p>
+
+                                <p className="mt-1 line-clamp-1 text-xl font-bold tracking-tight text-white drop-shadow sm:text-2xl">
+                                  {business.name}
+                                </p>
+                              </div>
+                            </Link>
+
+                            <div className="flex min-w-0 flex-col justify-between p-5 sm:p-7 lg:p-8">
+                              <div>
+                                <div className="flex flex-wrap items-center gap-2">
+                                  <span
+                                    className="rounded-full px-3 py-1 text-[10px] font-semibold text-[#17202A]"
+                                    style={{ backgroundColor: style.bg }}
+                                  >
+                                    {category}
                                   </span>
-                                )}
-                              </div>
-                              <Link
-                                href={`/seller/${business.id}`}
-                                className="mt-4 block text-xl font-bold leading-tight tracking-tight text-[#17202A] transition hover:text-[#9F2D18] sm:text-2xl lg:text-[28px]"
-                              >
-                                {business.name}
-                              </Link>
-                              <p className="mt-2 flex items-center gap-1.5 text-xs font-medium text-gray-500">
-                                <MapPin className="h-3.5 w-3.5 shrink-0 text-[#FF5A36]" />
-                                <span className="truncate">{location}</span>
-                              </p>
-                              <p className="mt-4 line-clamp-3 text-sm leading-6 text-gray-600">
-                                {business.description?.trim() || `Discover products and services from ${business.name} on ReMarket. Contact the business directly to confirm details and availability.`}
-                              </p>
-                            </div>
 
-                            <div className="mt-6">
-                              <div className="flex flex-wrap items-center gap-x-4 gap-y-2 border-t border-[#F0ECE7] pt-4 text-[11px] text-gray-500">
-                                <span className="inline-flex items-center gap-1.5">
-                                  <Package className="h-3.5 w-3.5 text-[#FF5A36]" />
-                                  <strong className="font-semibold text-[#17202A]">{business.productCount}</strong>
-                                  {business.productCount === 1 ? "listing" : "listings"}
-                                </span>
-                                <span className="inline-flex items-center gap-1.5">
-                                  <span className={`h-1.5 w-1.5 rounded-full ${business.availability === "AVAILABLE" ? "bg-[#1B9A6C]" : business.availability === "UNAVAILABLE" ? "bg-gray-400" : "bg-[#E2A32B]"}`} />
-                                  {availabilityLabel}
-                                </span>
-                              </div>
-                              <div className="mt-4 flex items-center gap-3">
+                                  {business.verification === "VERIFIED" && (
+                                    <span className="inline-flex items-center gap-1 rounded-full bg-[#DDF5EA] px-2.5 py-1 text-[10px] font-semibold text-[#137A59]">
+                                      <span aria-hidden="true">✓</span>
+                                      Verified
+                                    </span>
+                                  )}
+                                </div>
+
                                 <Link
                                   href={`/seller/${business.id}`}
-                                  className="inline-flex min-h-11 flex-1 items-center justify-center gap-2 rounded-xl bg-[#FF5A36] px-4 py-3 text-xs font-bold text-white shadow-sm transition hover:bg-[#E94A28] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#FF5A36] focus-visible:ring-offset-2 sm:flex-none sm:min-w-[170px]"
+                                  className="mt-4 block text-xl font-bold leading-tight tracking-tight text-[#17202A] transition hover:text-[#9F2D18] sm:text-2xl lg:text-[28px]"
                                 >
-                                  Explore business
-                                  <ArrowRight className="h-4 w-4" />
+                                  {business.name}
                                 </Link>
+
+                                <p className="mt-2 flex items-center gap-1.5 text-xs font-medium text-gray-500">
+                                  <MapPin className="h-3.5 w-3.5 shrink-0 text-[#FF5A36]" />
+                                  <span className="truncate">
+                                    {location}
+                                  </span>
+                                </p>
+
+                                <p className="mt-4 line-clamp-3 text-sm leading-6 text-gray-600">
+                                  {business.description?.trim() ||
+                                    `Discover products and services from ${business.name} on ReMarket. Contact the business directly to confirm details and availability.`}
+                                </p>
+                              </div>
+
+                              <div className="mt-6">
+                                <div className="flex flex-wrap items-center gap-x-4 gap-y-2 border-t border-[#F0ECE7] pt-4 text-[11px] text-gray-500">
+                                  <span className="inline-flex items-center gap-1.5">
+                                    <Package className="h-3.5 w-3.5 text-[#FF5A36]" />
+                                    <strong className="font-semibold text-[#17202A]">
+                                      {business.productCount}
+                                    </strong>
+                                    {business.productCount === 1
+                                      ? "listing"
+                                      : "listings"}
+                                  </span>
+
+                                  <span className="inline-flex items-center gap-1.5">
+                                    <span
+                                      className={`h-1.5 w-1.5 rounded-full ${
+                                        business.availability === "AVAILABLE"
+                                          ? "bg-[#1B9A6C]"
+                                          : business.availability === "UNAVAILABLE"
+                                            ? "bg-gray-400"
+                                            : "bg-[#E2A32B]"
+                                      }`}
+                                    />
+                                    {availabilityLabel}
+                                  </span>
+                                </div>
+
+                                <div className="mt-4 flex items-center gap-3">
+                                  <Link
+                                    href={`/seller/${business.id}`}
+                                    className="inline-flex min-h-11 flex-1 items-center justify-center gap-2 rounded-xl bg-[#FF5A36] px-4 py-3 text-xs font-bold text-white shadow-sm transition hover:bg-[#E94A28] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#FF5A36] focus-visible:ring-offset-2 sm:min-w-[170px] sm:flex-none"
+                                  >
+                                    Explore business
+                                    <ArrowRight className="h-4 w-4" />
+                                  </Link>
+
+                                  <button
+                                    type="button"
+                                    aria-label={
+                                      isSaved
+                                        ? `Remove ${business.name} from saved`
+                                        : `Save ${business.name}`
+                                    }
+                                    aria-pressed={isSaved}
+                                    onClick={(event) =>
+                                      handleSaveBusiness(
+                                        event,
+                                        business,
+                                        category,
+                                        location
+                                      )
+                                    }
+                                    className={`inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#FF5A36] focus-visible:ring-offset-2 ${
+                                      isSaved
+                                        ? "border-[#FFD1C5] bg-[#FFF1ED] text-[#FF5A36]"
+                                        : "border-[#EAE6DF] bg-white text-gray-500 hover:border-[#FFB9A7] hover:text-[#9F2D18]"
+                                    }`}
+                                  >
+                                    <Bookmark
+                                      className="h-4 w-4"
+                                      fill={isSaved ? "currentColor" : "none"}
+                                    />
+                                  </button>
+                                </div>
+                              </div>
+                            </div>
+                          </div>
+
+                          {featuredBusinesses.length > 1 && (
+                            <div className="flex flex-wrap items-center justify-between gap-3 border-t border-[#F0ECE7] bg-[#FCFAF6] px-4 py-3 sm:px-5">
+                              <div
+                                className="flex items-center gap-2"
+                                aria-label={`Slide ${activeFeaturedIndex + 1} of ${featuredBusinesses.length}`}
+                              >
+                                <span className="font-mono text-xs font-bold tabular-nums text-[#9F2D18]">
+                                  {String(activeFeaturedIndex + 1).padStart(2, "0")}
+                                </span>
+
+                                <span className="text-xs text-gray-400">
+                                  / {String(featuredBusinesses.length).padStart(2, "0")}
+                                </span>
+
+                                <div
+                                  className="ml-2 flex items-center gap-1.5"
+                                  aria-label="Choose featured business"
+                                >
+                                  {featuredBusinesses.map((item, index) => (
+                                    <button
+                                      key={item.id}
+                                      type="button"
+                                      aria-label={`Show featured business ${index + 1}: ${item.name}`}
+                                      aria-current={
+                                        index === activeFeaturedIndex
+                                          ? "true"
+                                          : undefined
+                                      }
+                                      onClick={() =>
+                                        setActiveFeaturedIndex(index)
+                                      }
+                                      className={`h-1.5 rounded-full transition-all duration-300 ${
+                                        index === activeFeaturedIndex
+                                          ? "w-7 bg-[#FF5A36]"
+                                          : "w-1.5 bg-[#D8D2CA] hover:bg-[#B7ADA1]"
+                                      }`}
+                                    />
+                                  ))}
+                                </div>
+                              </div>
+
+                              <div className="flex items-center gap-2">
                                 <button
                                   type="button"
-                                  aria-label={isSaved ? `Remove ${business.name} from saved` : `Save ${business.name}`}
-                                  aria-pressed={isSaved}
-                                  onClick={(event) => handleSaveBusiness(event, business, category, location)}
-                                  className={`inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#FF5A36] focus-visible:ring-offset-2 ${isSaved ? "border-[#FFD1C5] bg-[#FFF1ED] text-[#FF5A36]" : "border-[#EAE6DF] bg-white text-gray-500 hover:border-[#FFB9A7] hover:text-[#9F2D18]"}`}
+                                  aria-label={
+                                    featuredAutoplayPaused
+                                      ? "Resume slideshow"
+                                      : "Pause slideshow"
+                                  }
+                                  aria-pressed={featuredAutoplayPaused}
+                                  onClick={() =>
+                                    setFeaturedAutoplayPaused(
+                                      (paused) => !paused
+                                    )
+                                  }
+                                  className="inline-flex h-9 w-9 items-center justify-center rounded-full border border-[#EAE6DF] bg-white text-gray-600 transition hover:border-[#FFB9A7] hover:text-[#9F2D18] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#FF5A36]"
                                 >
-                                  <Bookmark className="h-4 w-4" fill={isSaved ? "currentColor" : "none"} />
+                                  {featuredAutoplayPaused ? (
+                                    <Play className="h-3.5 w-3.5" />
+                                  ) : (
+                                    <Pause className="h-3.5 w-3.5" />
+                                  )}
+                                </button>
+
+                                <button
+                                  type="button"
+                                  aria-label="Previous featured business"
+                                  onClick={() =>
+                                    setActiveFeaturedIndex(
+                                      (index) =>
+                                        (index - 1 + featuredBusinesses.length) %
+                                        featuredBusinesses.length
+                                    )
+                                  }
+                                  className="inline-flex h-9 w-9 items-center justify-center rounded-full border border-[#EAE6DF] bg-white text-[#17202A] transition hover:border-[#FFB9A7] hover:bg-[#FFF1ED] hover:text-[#9F2D18] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#FF5A36]"
+                                >
+                                  <ChevronLeft className="h-4 w-4" />
+                                </button>
+
+                                <button
+                                  type="button"
+                                  aria-label="Next featured business"
+                                  onClick={() =>
+                                    setActiveFeaturedIndex(
+                                      (index) =>
+                                        (index + 1) %
+                                        featuredBusinesses.length
+                                    )
+                                  }
+                                  className="inline-flex h-9 w-9 items-center justify-center rounded-full border border-[#EAE6DF] bg-white text-[#17202A] transition hover:border-[#FFB9A7] hover:bg-[#FFF1ED] hover:text-[#9F2D18] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#FF5A36]"
+                                >
+                                  <ChevronRight className="h-4 w-4" />
                                 </button>
                               </div>
                             </div>
-                          </div>
+                          )}
                         </div>
-
-                        {featuredBusinesses.length > 1 && (
-                          <div className="flex flex-wrap items-center justify-between gap-3 border-t border-[#F0ECE7] bg-[#FCFAF6] px-4 py-3 sm:px-5">
-                            <div className="flex items-center gap-2" aria-label={`Slide ${activeFeaturedIndex + 1} of ${featuredBusinesses.length}`}>
-                              <span className="font-mono text-xs font-bold tabular-nums text-[#9F2D18]">{String(activeFeaturedIndex + 1).padStart(2, "0")}</span>
-                              <span className="text-xs text-gray-400">/ {String(featuredBusinesses.length).padStart(2, "0")}</span>
-                              <div className="ml-2 flex items-center gap-1.5" aria-label="Choose featured business">
-                                {featuredBusinesses.map((item, index) => (
-                                  <button
-                                    key={item.id}
-                                    type="button"
-                                    aria-label={`Show featured business ${index + 1}: ${item.name}`}
-                                    aria-current={index === activeFeaturedIndex ? "true" : undefined}
-                                    onClick={() => setActiveFeaturedIndex(index)}
-                                    className={`h-1.5 rounded-full transition-all duration-300 ${index === activeFeaturedIndex ? "w-7 bg-[#FF5A36]" : "w-1.5 bg-[#D8D2CA] hover:bg-[#B7ADA1]"}`}
-                                  />
-                                ))}
-                              </div>
-                            </div>
-                            <div className="flex items-center gap-2">
-                              <button
-                                type="button"
-                                aria-label={featuredAutoplayPaused ? "Resume slideshow" : "Pause slideshow"}
-                                aria-pressed={featuredAutoplayPaused}
-                                onClick={() => setFeaturedAutoplayPaused((paused) => !paused)}
-                                className="inline-flex h-9 w-9 items-center justify-center rounded-full border border-[#EAE6DF] bg-white text-gray-600 transition hover:border-[#FFB9A7] hover:text-[#9F2D18] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#FF5A36]"
-                              >
-                                {featuredAutoplayPaused ? <Play className="h-3.5 w-3.5" /> : <Pause className="h-3.5 w-3.5" />}
-                              </button>
-                              <button
-                                type="button"
-                                aria-label="Previous featured business"
-                                onClick={() => setActiveFeaturedIndex((index) => (index - 1 + featuredBusinesses.length) % featuredBusinesses.length)}
-                                className="inline-flex h-9 w-9 items-center justify-center rounded-full border border-[#EAE6DF] bg-white text-[#17202A] transition hover:border-[#FFB9A7] hover:bg-[#FFF1ED] hover:text-[#9F2D18] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#FF5A36]"
-                              >
-                                <ChevronLeft className="h-4 w-4" />
-                              </button>
-                              <button
-                                type="button"
-                                aria-label="Next featured business"
-                                onClick={() => setActiveFeaturedIndex((index) => (index + 1) % featuredBusinesses.length)}
-                                className="inline-flex h-9 w-9 items-center justify-center rounded-full border border-[#EAE6DF] bg-white text-[#17202A] transition hover:border-[#FFB9A7] hover:bg-[#FFF1ED] hover:text-[#9F2D18] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#FF5A36]"
-                              >
-                                <ChevronRight className="h-4 w-4" />
-                              </button>
-                            </div>
-                          </div>
-                        )}
-                      </div>
-                    );
-                  })()}
+                      );
+                    })()}
                 </section>
+
                 {/* Footer */}
                 <footer className="mt-7 flex items-center justify-center gap-3 text-[10px] text-gray-400">
                   <span className="h-px w-16 bg-gray-200" />
-                  <span>
-                    ReMarket · Find it nearby
-                  </span>
+                  <span>ReMarket · Find it nearby</span>
                   <span className="h-px w-16 bg-gray-200" />
                 </footer>
               </div>
             </div>
           </div>
-          {/* Mobile Navigation */}
+
+          {/* Mobile navigation */}
           <nav className="fixed inset-x-0 bottom-0 z-50 border-t border-gray-200 bg-white/95 px-2 pb-[max(6px,env(safe-area-inset-bottom))] pt-1.5 backdrop-blur lg:hidden">
             <div className="grid w-full grid-cols-4">
-              {NAV_ITEMS.map(
-                (item) => {
-                  const Icon =
-                    item.icon;
-                  return (
-                    <button
-                      key={
-                        item.label
-                      }
-                      type="button"
-                      onClick={() =>
-                        router.push(
-                          item.href
-                        )
-                      }
-                      className={`flex flex-col items-center justify-center gap-1 rounded-xl py-2 ${item.label ===
-                        "Home"
+              {NAV_ITEMS.map((item) => {
+                const Icon = item.icon;
+
+                return (
+                  <button
+                    key={item.label}
+                    type="button"
+                    onClick={() => router.push(item.href)}
+                    className={`flex flex-col items-center justify-center gap-1 rounded-xl py-2 ${
+                      item.label === "Home"
                         ? "text-[#9F2D18]"
                         : "text-gray-500"
-                        }`}
-                    >
-                      <Icon className="h-[19px] w-[19px]" />
-                      <span className="text-[9px] font-medium">
-                        {
-                          item.label
-                        }
-                      </span>
-                    </button>
-                  );
-                }
-              )}
+                    }`}
+                  >
+                    <Icon className="h-[19px] w-[19px]" />
+                    <span className="text-[9px] font-medium">
+                      {item.label}
+                    </span>
+                  </button>
+                );
+              })}
             </div>
           </nav>
         </div>
