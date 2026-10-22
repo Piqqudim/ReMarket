@@ -379,9 +379,9 @@ export default function SellerClaimsPage() {
   }
 
   return (
-    <main className="min-h-dvh bg-[#FFF7ED]">
-      <div className="mx-auto min-h-dvh w-full max-w-[1500px] px-2 py-2 sm:px-5 sm:py-5">
-        <div className="min-h-[calc(100dvh-16px)] overflow-hidden rounded-[18px] border border-[#FF5A36]/80 bg-[#FFFDFC] shadow-sm sm:min-h-[calc(100dvh-40px)] sm:rounded-[22px]">
+    <main className="min-h-dvh w-full min-w-0 overflow-x-clip bg-[#FFF7ED]">
+      <div className="mx-auto min-h-dvh w-full min-w-0 max-w-[1500px] px-2 py-2 sm:px-4 sm:py-4 lg:px-5 lg:py-5">
+        <div className="min-h-[calc(100dvh-16px)] w-full min-w-0 overflow-hidden rounded-[18px] border border-[#FF5A36]/80 bg-[#FFFDFC] shadow-sm sm:min-h-[calc(100dvh-32px)] sm:rounded-[22px] lg:min-h-[calc(100dvh-40px)]">
           <header className="flex min-h-[66px] items-center justify-between gap-3 border-b border-[#EAE6DF] bg-white px-3 sm:px-6">
             <Link href="/seller" className="flex min-w-0 items-center gap-2.5 rounded-lg focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-[#FF5A36]/20">
               <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-[#FF5A36] text-white shadow-sm">
@@ -405,8 +405,8 @@ export default function SellerClaimsPage() {
             </div>
           </header>
 
-          <div className="px-3 py-5 sm:px-6 sm:py-8 lg:px-8 xl:px-10">
-            <div className="mx-auto max-w-[1180px]">
+          <div className="w-full min-w-0 px-3 py-5 sm:px-5 sm:py-7 lg:px-8 lg:py-8 xl:px-10">
+            <div className="mx-auto w-full min-w-0 max-w-[1180px]">
               {/* Intro */}
               <section className="relative mb-6 overflow-hidden rounded-[24px] border border-[#F2D8CB] bg-white p-5 shadow-sm sm:p-7 lg:p-8">
                 <div aria-hidden="true" className="pointer-events-none absolute -right-10 -top-16 h-52 w-52 rounded-full bg-[#FFF0E8] sm:h-64 sm:w-64" />
@@ -461,9 +461,9 @@ export default function SellerClaimsPage() {
                 </div>
               )}
 
-              <div className="grid items-start gap-5 lg:grid-cols-[minmax(0,1.04fr)_minmax(360px,0.96fr)]">
+              <div className="grid min-w-0 items-start gap-5 xl:grid-cols-[minmax(0,1.04fr)_minmax(0,0.96fr)]">
                 {/* Claim form */}
-                <section className="min-w-0 overflow-hidden rounded-[22px] border border-[#E8E4DE] bg-white shadow-sm">
+                <section className="min-w-0 max-w-full overflow-hidden rounded-[22px] border border-[#E8E4DE] bg-white shadow-sm">
                   <div className="border-b border-[#EAE6DF] px-5 py-5 sm:px-6">
                     <div className="flex items-start gap-3">
                       <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-[#FFF0EB] text-[#FF5A36]">
