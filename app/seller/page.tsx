@@ -17,7 +17,6 @@ import NotificationBell from "@/components/NotificationBell";
 import {
   Store,
   MapPin,
-  Bell,
   ChevronDown,
   Phone,
   Package,
@@ -885,18 +884,14 @@ export default function SellerDashboard() {
             <Link href="/seller/profile" aria-label="Seller profile" className="flex h-9 w-9 items-center justify-center rounded-xl border border-[#E8E4DE] bg-white text-gray-600 hover:bg-[#FFF7ED]"><UserRound className="h-4 w-4" /></Link>
             <Link href="/seller/claims" aria-label="Business claims" className="flex h-9 w-9 items-center justify-center rounded-xl border border-[#E8E4DE] bg-white text-gray-600 hover:bg-[#FFF7ED]"><ShieldCheck className="h-4 w-4" /></Link>
           </div>
-          <div
-            className="relative z-50 flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-[#E8E4DE] bg-white shadow-sm [&_button]:!visible [&_button]:!flex [&_button]:!h-9 [&_button]:!w-9 [&_button]:!items-center [&_button]:!justify-center [&_button]:!rounded-lg [&_button]:!text-[#17202A] [&_button]:!opacity-100"
-            aria-label="Notifications"
-            title="Notifications"
-          >
-            {/* Visible fallback glyph; pointer events pass through to the real notification control. */}
-            <span className="pointer-events-none absolute inset-0 z-0 flex items-center justify-center">
-              <Bell aria-hidden="true" className="h-5 w-5 text-[#17202A]" />
-            </span>
-            <span className="relative z-10 flex h-9 w-9 items-center justify-center">
-              <NotificationBell />
-            </span>
+          {/*
+            Keep the notification component in its own positioning context.
+            Do not force styles onto every descendant button: NotificationBell
+            contains both its trigger and the notification-panel controls.
+            Styling all of them as 36px buttons can collapse or distort the panel.
+          */}
+          <div className="relative z-[100] shrink-0">
+            <NotificationBell />
           </div>
           <button type="button" onClick={logout} className={`${secondaryButtonClass} !px-3`}><LogOut className="h-4 w-4" /><span className="hidden sm:inline">Log out</span></button>
           <button type="button" onClick={() => setMobileNavOpen((open) => !open)} aria-expanded={mobileNavOpen} aria-label={mobileNavOpen ? "Close navigation" : "Open navigation"} className="flex h-10 w-10 items-center justify-center rounded-xl border border-[#E8E4DE] text-gray-600 md:hidden"><span className="text-lg leading-none">{mobileNavOpen ? "×" : "☰"}</span></button>
