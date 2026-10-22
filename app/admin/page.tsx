@@ -20,6 +20,9 @@ import {
   Eye,
   AlertCircle,
   LogOut,
+  ChevronLeft,
+  ChevronRight,
+  RefreshCw,
 } from "lucide-react";
 
 import {
@@ -99,6 +102,77 @@ type Overview = {
   }[];
 };
 
+type RegisteredBusiness = {
+  id: string;
+  name: string;
+  verification: string;
+  status: string;
+  availability?: string | null;
+  area: string | null;
+  onboardedAt: string;
+  deletedAt: string | null;
+};
+
+const REGISTERED_BUSINESSES_PAGE_SIZE = 6;
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function normalizeRegisteredBusiness(value: unknown): RegisteredBusiness | null {
+  if (!isRecord(value)) return null;
+
+  const id = value.id;
+  const name = value.name;
+  const status = value.status;
+  const verification = value.verification;
+  const onboardedAt =
+    typeof value.onboardedAt === "string"
+      ? value.onboardedAt
+      : typeof value.createdAt === "string"
+        ? value.createdAt
+        : null;
+
+  if (
+    typeof id !== "string" ||
+    typeof name !== "string" ||
+    typeof status !== "string" ||
+    typeof verification !== "string" ||
+    onboardedAt === null
+  ) {
+    return null;
+  }
+
+  return {
+    id,
+    name,
+    status,
+    verification,
+    availability: typeof value.availability === "string" ? value.availability : null,
+    area:
+      typeof value.area === "string"
+        ? value.area
+        : isRecord(value.location) && typeof value.location.area === "string"
+          ? value.location.area
+          : null,
+    onboardedAt,
+    deletedAt: typeof value.deletedAt === "string" ? value.deletedAt : null,
+  };
+}
+
+function businessStatusClass(status: string): string {
+  switch (status) {
+    case "ACTIVE":
+      return "bg-[#E7F7EF] text-[#287A4B]";
+    case "PENDING":
+      return "bg-[#FFF0D9] text-[#9F5A18]";
+    case "INACTIVE":
+      return "bg-[#F0ECE7] text-[#6F675F]";
+    default:
+      return "bg-[#F0ECE7] text-[#6F675F]";
+  }
+}
+
 const ADMIN_NAV = [
   {
     label: "Overview",
@@ -138,16 +212,17 @@ const ADMIN_NAV = [
 ];
 
 function formatDate(value: string) {
-  return new Date(
-    value
-  ).toLocaleDateString(
-    "en-NG",
-    {
-      day: "numeric",
-      month: "short",
-      year: "numeric",
-    }
-  );
+  const date = new Date(value);
+
+  if (Number.isNaN(date.getTime())) {
+    return "Date unavailable";
+  }
+
+  return date.toLocaleDateString("en-NG", {
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+  });
 }
 
 function statusClass(
@@ -371,6 +446,17 @@ export default function AdminPage() {
   ] =
     useState("");
 
+  const [registeredBusinesses, setRegisteredBusinesses] =
+    useState<RegisteredBusiness[]>([]);
+  const [businessDirectoryLoading, setBusinessDirectoryLoading] =
+    useState(true);
+  const [businessDirectoryError, setBusinessDirectoryError] =
+    useState("");
+  const [businessPage, setBusinessPage] = useState(1);
+  const [businessDirectoryTotal, setBusinessDirectoryTotal] = useState(0);
+  const [businessDirectoryTotalPages, setBusinessDirectoryTotalPages] = useState(0);
+  const [businessReloadKey, setBusinessReloadKey] = useState(0);
+
   async function handleLogout() {
     try {
       await signOut({
@@ -456,14 +542,126 @@ export default function AdminPage() {
     };
   }, []);
 
+  /*
+   * Load one page of the registered-business directory from the server.
+   * Pagination, record counts and newest-first ordering are provided by the
+   * protected admin API; the browser never downloads the full directory.
+   */
+  useEffect(() => {
+    let cancelled = false;
+    const controller = new AbortController();
+
+    async function loadRegisteredBusinesses() {
+      setBusinessDirectoryLoading(true);
+      setBusinessDirectoryError("");
+
+      try {
+        const params = new URLSearchParams({
+          deleted: "ALL",
+          page: String(businessPage),
+          pageSize: String(REGISTERED_BUSINESSES_PAGE_SIZE),
+          sort: "onboardedAt",
+        });
+
+        const response = await fetch(
+          `/api/admin/businesses?${params.toString()}`,
+          { method: "GET", cache: "no-store", signal: controller.signal }
+        );
+
+        const result: unknown = await response.json().catch(() => null);
+
+        if (!response.ok) {
+          const message =
+            isRecord(result) && typeof result.error === "string"
+              ? result.error
+              : "Unable to load registered businesses.";
+          throw new Error(message);
+        }
+
+        if (
+          !isRecord(result) ||
+          !Array.isArray(result.businesses) ||
+          !isRecord(result.pagination)
+        ) {
+          throw new Error("The registered-business response did not include valid pagination information.");
+        }
+
+        const pagination = result.pagination;
+        if (
+          typeof pagination.page !== "number" ||
+          typeof pagination.total !== "number" ||
+          typeof pagination.totalPages !== "number" ||
+          !Number.isInteger(pagination.page) ||
+          !Number.isInteger(pagination.total) ||
+          !Number.isInteger(pagination.totalPages) ||
+          pagination.total < 0 ||
+          pagination.totalPages < 0
+        ) {
+          throw new Error("The registered-business pagination response was invalid.");
+        }
+
+        const businesses = result.businesses
+          .map(normalizeRegisteredBusiness)
+          .filter((business): business is RegisteredBusiness => business !== null);
+
+        if (cancelled) return;
+
+        setRegisteredBusinesses(businesses);
+        setBusinessDirectoryTotal(pagination.total);
+        setBusinessDirectoryTotalPages(pagination.totalPages);
+
+        // If the directory shrank while on a later page, return to a valid page.
+        if (pagination.totalPages > 0 && businessPage > pagination.totalPages) {
+          setBusinessPage(pagination.totalPages);
+        } else if (pagination.totalPages === 0 && businessPage !== 1) {
+          setBusinessPage(1);
+        }
+      } catch (loadError) {
+        if (controller.signal.aborted) return;
+        console.error("Load registered businesses error:", loadError);
+
+        if (!cancelled) {
+          setRegisteredBusinesses([]);
+          setBusinessDirectoryTotal(0);
+          setBusinessDirectoryTotalPages(0);
+          setBusinessDirectoryError(
+            loadError instanceof Error
+              ? loadError.message
+              : "We couldn't load registered businesses."
+          );
+        }
+      } finally {
+        if (!cancelled) setBusinessDirectoryLoading(false);
+      }
+    }
+
+    void loadRegisteredBusinesses();
+
+    return () => {
+      cancelled = true;
+      controller.abort();
+    };
+  }, [businessReloadKey, businessPage]);
+
+  const businessTotalPages = Math.max(1, businessDirectoryTotalPages);
+  const safeBusinessPage = Math.min(businessPage, businessTotalPages);
+  const businessStartIndex = businessDirectoryTotal === 0
+    ? 0
+    : (safeBusinessPage - 1) * REGISTERED_BUSINESSES_PAGE_SIZE;
+  const businessEndIndex = Math.min(
+    safeBusinessPage * REGISTERED_BUSINESSES_PAGE_SIZE,
+    businessDirectoryTotal
+  );
+  const pagedRegisteredBusinesses = registeredBusinesses;
+
   return (
-    <div className="min-h-screen bg-[#FAF6EF] text-[#2E241F]">
-      <div className="flex min-h-screen">
+    <div className="min-h-dvh w-full overflow-x-hidden bg-[#FAF6EF] text-[#2E241F]">
+      <div className="flex min-h-dvh w-full">
 
         {/* Sidebar */}
 
         <aside className="hidden w-64 shrink-0 border-r border-[#E8DED3] bg-[#FFFDFC] lg:block">
-          <div className="sticky top-0 flex h-screen flex-col">
+          <div className="sticky top-0 flex h-dvh flex-col">
 
             <div className="border-b border-[#E8DED3] px-6 py-6">
               <Link
@@ -583,7 +781,7 @@ export default function AdminPage() {
         {/* Main */}
 
         <main className="min-w-0 flex-1">
-          <div className="mx-auto max-w-7xl px-4 pt-6 pb-32 sm:px-6 lg:px-8 lg:py-8">
+          <div className="mx-auto w-full max-w-7xl px-3 pt-5 pb-36 sm:px-6 sm:pt-6 lg:px-8 lg:py-8 lg:pb-8">
 
             {/* Header */}
 
@@ -1112,104 +1310,139 @@ export default function AdminPage() {
                     </div>
                   </div>
 
-                  {/* Recent Businesses */}
+                  {/* Registered businesses: paged directory */}
 
-                  <div className="rounded-2xl border border-[#E8DED3] bg-white">
-                    <div className="flex items-center justify-between border-b border-[#E8DED3] px-5 py-4">
-                      <div>
-                        <h2 className="font-semibold text-[#2E241F]">
-                          Recent businesses
-                        </h2>
-
-                        <p className="mt-1 text-xs text-[#8B8178]">
-                          Latest onboarded
-                          sellers
+                  <div className="min-w-0 rounded-2xl border border-[#E8DED3] bg-white xl:col-span-1">
+                    <div className="flex flex-col gap-3 border-b border-[#E8DED3] px-4 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-5">
+                      <div className="min-w-0">
+                        <h2 className="font-semibold text-[#2E241F]">Registered businesses</h2>
+                        <p className="mt-1 text-xs leading-5 text-[#8B8178]">
+                          Browse all businesses registered on ReMarket, newest first.
                         </p>
                       </div>
-
-                      <Link
-                        href="/admin/businesses"
-                        className="flex items-center gap-1 text-xs font-medium text-[#9F2D18] hover:underline"
-                      >
-                        View all
-                        <ArrowRight className="h-3.5 w-3.5" />
-                      </Link>
+                      <div className="flex shrink-0 items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() => setBusinessReloadKey((key) => key + 1)}
+                          disabled={businessDirectoryLoading}
+                          className="inline-flex h-9 items-center justify-center gap-2 rounded-xl border border-[#E8DED3] bg-white px-3 text-xs font-semibold text-[#6F675F] transition hover:bg-[#FFF0E8] hover:text-[#9F2D18] disabled:cursor-not-allowed disabled:opacity-60"
+                        >
+                          <RefreshCw className={`h-3.5 w-3.5 ${businessDirectoryLoading ? "animate-spin" : ""}`} />
+                          Refresh
+                        </button>
+                        <Link
+                          href="/admin/businesses"
+                          className="inline-flex h-9 items-center gap-1 rounded-xl bg-[#FFF0E8] px-3 text-xs font-semibold text-[#9F2D18] hover:bg-[#FFE3D7]"
+                        >
+                          Manage all
+                          <ArrowRight className="h-3.5 w-3.5" />
+                        </Link>
+                      </div>
                     </div>
 
-                    <div className="divide-y divide-[#E8DED3]">
-                      {data
-                        .recentBusinesses
-                        .length ===
-                      0 ? (
-                        <div className="px-5 py-10 text-center">
-                          <Store className="mx-auto h-8 w-8 text-[#B8AEA5]" />
-
-                          <p className="mt-3 text-sm font-medium text-[#6F675F]">
-                            No businesses
-                            yet
-                          </p>
+                    {businessDirectoryLoading ? (
+                      <div className="space-y-3 p-4 sm:p-5" aria-label="Loading registered businesses">
+                        {Array.from({ length: 4 }).map((_, index) => (
+                          <div key={index} className="h-[68px] animate-pulse rounded-xl bg-[#F7F1EB]" />
+                        ))}
+                      </div>
+                    ) : businessDirectoryError ? (
+                      <div className="p-5">
+                        <div className="rounded-xl border border-[#F1C5BF] bg-[#FFF4F2] p-4">
+                          <p className="text-sm font-semibold text-[#B42318]">Unable to load the business directory</p>
+                          <p className="mt-1 text-xs leading-5 text-[#8B8178]">{businessDirectoryError}</p>
+                          <button
+                            type="button"
+                            onClick={() => setBusinessReloadKey((key) => key + 1)}
+                            className="mt-3 inline-flex items-center gap-2 rounded-lg bg-white px-3 py-2 text-xs font-semibold text-[#9F2D18] ring-1 ring-[#F1C5BF] hover:bg-[#FFF0E8]"
+                          >
+                            <RefreshCw className="h-3.5 w-3.5" />
+                            Try again
+                          </button>
                         </div>
-                      ) : (
-                        data.recentBusinesses.map(
-                          (
-                            business
-                          ) => (
-                            <div
-                              key={
-                                business.id
-                              }
-                              className="px-5 py-4"
-                            >
-                              <div className="flex items-start justify-between gap-4">
-                                <div className="min-w-0">
-                                  <p className="truncate text-sm font-semibold text-[#2E241F]">
-                                    {
-                                      business.name
-                                    }
-                                  </p>
-
-                                  <p className="mt-1 text-xs text-[#8B8178]">
-                                    {
-                                      business.area ??
-                                      "Area not provided"
-                                    }
+                      </div>
+                    ) : registeredBusinesses.length === 0 ? (
+                      <div className="px-5 py-10 text-center">
+                        <Store className="mx-auto h-8 w-8 text-[#B8AEA5]" />
+                        <p className="mt-3 text-sm font-medium text-[#6F675F]">No registered businesses yet</p>
+                        <p className="mt-1 text-xs leading-5 text-[#8B8178]">Businesses will appear here after they are registered.</p>
+                      </div>
+                    ) : (
+                      <>
+                        <div className="divide-y divide-[#E8DED3]">
+                          {pagedRegisteredBusinesses.map((business) => (
+                            <div key={business.id} className="min-w-0 px-4 py-4 sm:px-5">
+                              <div className="flex min-w-0 items-start justify-between gap-3">
+                                <div className="min-w-0 flex-1">
+                                  <Link
+                                    href={`/admin/businesses/${encodeURIComponent(business.id)}`}
+                                    className="block truncate text-sm font-semibold text-[#2E241F] hover:text-[#9F2D18] hover:underline"
+                                    title={business.name}
+                                  >
+                                    {business.name}
+                                  </Link>
+                                  <p className="mt-1 truncate text-xs text-[#8B8178]">
+                                    {business.area || "Area not provided"}
+                                    <span className="px-1.5">·</span>
+                                    {formatDate(business.onboardedAt)}
                                   </p>
                                 </div>
-
-                                <div className="flex shrink-0 flex-col items-end gap-1.5">
-                                  <span
-                                    className={`rounded-full px-2.5 py-1 text-[11px] font-semibold ${verificationClass(
-                                      business.verification
-                                    )}`}
-                                  >
-                                    {
-                                      business.verification
-                                    }
-                                  </span>
-
-                                  <span
-                                    className={`rounded-full px-2.5 py-1 text-[11px] font-semibold ${statusClass(
-                                      business.status
-                                    )}`}
-                                  >
-                                    {
-                                      business.status
-                                    }
-                                  </span>
-                                </div>
+                                <Link
+                                  href={`/admin/businesses/${encodeURIComponent(business.id)}`}
+                                  aria-label={`View ${business.name}`}
+                                  title="View business"
+                                  className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-[#E8DED3] text-[#6F675F] hover:border-[#D8C9BC] hover:bg-[#FFF0E8] hover:text-[#9F2D18]"
+                                >
+                                  <ExternalLink className="h-3.5 w-3.5" />
+                                </Link>
                               </div>
-
-                              <p className="mt-2 text-xs text-[#9A9087]">
-                                Onboarded{" "}
-                                {formatDate(
-                                  business.onboardedAt
+                              <div className="mt-2 flex flex-wrap items-center gap-1.5">
+                                <span className={`rounded-full px-2 py-1 text-[10px] font-semibold ${verificationClass(business.verification)}`}>
+                                  {business.verification}
+                                </span>
+                                <span className={`rounded-full px-2 py-1 text-[10px] font-semibold ${businessStatusClass(business.status)}`}>
+                                  {business.status}
+                                </span>
+                                {business.deletedAt && (
+                                  <span className="rounded-full bg-[#FCE8E6] px-2 py-1 text-[10px] font-semibold text-[#B42318]">
+                                    Deleted
+                                  </span>
                                 )}
-                              </p>
+                              </div>
                             </div>
-                          )
-                        )
-                      )}
-                    </div>
+                          ))}
+                        </div>
+
+                        <div className="flex flex-col gap-3 border-t border-[#E8DED3] px-4 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-5">
+                          <p className="text-xs text-[#8B8178]" aria-live="polite">
+                            Showing {businessStartIndex === 0 && businessDirectoryTotal === 0 ? 0 : businessStartIndex + 1}–{businessEndIndex} of {businessDirectoryTotal} businesses
+                          </p>
+                          <div className="flex items-center justify-between gap-2 sm:justify-end">
+                            <button
+                              type="button"
+                              onClick={() => setBusinessPage((page) => Math.max(1, page - 1))}
+                              disabled={safeBusinessPage <= 1}
+                              className="inline-flex h-9 items-center gap-1 rounded-xl border border-[#E8DED3] bg-white px-3 text-xs font-semibold text-[#6F675F] transition hover:bg-[#FFF0E8] hover:text-[#9F2D18] disabled:cursor-not-allowed disabled:opacity-40"
+                            >
+                              <ChevronLeft className="h-4 w-4" />
+                              Previous
+                            </button>
+                            <span className="whitespace-nowrap text-xs font-semibold tabular-nums text-[#6F675F]">
+                              Page {safeBusinessPage} of {businessTotalPages}
+                            </span>
+                            <button
+                              type="button"
+                              onClick={() => setBusinessPage((page) => Math.min(businessTotalPages, page + 1))}
+                              disabled={safeBusinessPage >= businessTotalPages}
+                              className="inline-flex h-9 items-center gap-1 rounded-xl border border-[#E8DED3] bg-white px-3 text-xs font-semibold text-[#6F675F] transition hover:bg-[#FFF0E8] hover:text-[#9F2D18] disabled:cursor-not-allowed disabled:opacity-40"
+                            >
+                              Next
+                              <ChevronRight className="h-4 w-4" />
+                            </button>
+                          </div>
+                        </div>
+                      </>
+                    )}
                   </div>
 
                 </section>
@@ -1221,10 +1454,10 @@ export default function AdminPage() {
 
       {/* Mobile admin navigation */}
       <nav
-        className="fixed inset-x-0 bottom-0 z-50 border-t border-[#E8DED3] bg-[#FFFDFC]/95 px-2 py-2 shadow-[0_-4px_18px_rgba(46,36,31,0.08)] backdrop-blur lg:hidden"
+        className="fixed inset-x-0 bottom-0 z-50 border-t border-[#E8DED3] bg-[#FFFDFC]/95 px-2 pt-2 pb-[max(8px,env(safe-area-inset-bottom))] shadow-[0_-4px_18px_rgba(46,36,31,0.08)] backdrop-blur lg:hidden"
         aria-label="Mobile admin navigation"
       >
-        <div className="mx-auto grid max-w-3xl grid-cols-4 gap-1">
+        <div className="mx-auto grid w-full max-w-3xl grid-cols-4 gap-1">
           {ADMIN_NAV.map((item) => {
             const Icon = item.icon;
             const active =

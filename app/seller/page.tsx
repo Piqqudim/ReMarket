@@ -4,8 +4,10 @@ import {
   useCallback,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type FormEvent,
+  type KeyboardEvent as ReactKeyboardEvent,
 } from "react";
 import Link from "next/link";
 import { signOut } from "next-auth/react";
@@ -15,6 +17,8 @@ import NotificationBell from "@/components/NotificationBell";
 import {
   Store,
   MapPin,
+  Bell,
+  ChevronDown,
   Phone,
   Package,
   LogOut,
@@ -866,7 +870,7 @@ export default function SellerDashboard() {
 
   return (
     <main className="min-h-dvh w-full overflow-x-clip bg-[#FFFDFC] text-[#17202A]">
-      <header className="sticky top-0 z-30 flex min-h-[66px] w-full items-center justify-between gap-3 border-b border-[#EAE6DF] bg-white/95 px-4 backdrop-blur sm:px-6 lg:px-8">
+      <header className="sticky top-0 z-50 flex min-h-[66px] w-full items-center justify-between gap-3 border-b border-[#EAE6DF] bg-white/95 px-4 backdrop-blur sm:px-6 lg:px-8">
         <Link href="/seller" className="flex shrink-0 items-center gap-2.5" aria-label="ReMarket Seller Portal home">
           <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-[#FF5A36] text-white shadow-sm"><Store className="h-5 w-5" /></span>
           <span><span className="block text-sm font-bold tracking-tight">ReMarket</span><span className="block text-[10px] leading-none text-gray-400">Seller Portal</span></span>
@@ -881,7 +885,19 @@ export default function SellerDashboard() {
             <Link href="/seller/profile" aria-label="Seller profile" className="flex h-9 w-9 items-center justify-center rounded-xl border border-[#E8E4DE] bg-white text-gray-600 hover:bg-[#FFF7ED]"><UserRound className="h-4 w-4" /></Link>
             <Link href="/seller/claims" aria-label="Business claims" className="flex h-9 w-9 items-center justify-center rounded-xl border border-[#E8E4DE] bg-white text-gray-600 hover:bg-[#FFF7ED]"><ShieldCheck className="h-4 w-4" /></Link>
           </div>
-          <NotificationBell />
+          <div
+            className="relative z-50 flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-[#E8E4DE] bg-white shadow-sm [&_button]:!visible [&_button]:!flex [&_button]:!h-9 [&_button]:!w-9 [&_button]:!items-center [&_button]:!justify-center [&_button]:!rounded-lg [&_button]:!text-[#17202A] [&_button]:!opacity-100"
+            aria-label="Notifications"
+            title="Notifications"
+          >
+            {/* Visible fallback glyph; pointer events pass through to the real notification control. */}
+            <span className="pointer-events-none absolute inset-0 z-0 flex items-center justify-center">
+              <Bell aria-hidden="true" className="h-5 w-5 text-[#17202A]" />
+            </span>
+            <span className="relative z-10 flex h-9 w-9 items-center justify-center">
+              <NotificationBell />
+            </span>
+          </div>
           <button type="button" onClick={logout} className={`${secondaryButtonClass} !px-3`}><LogOut className="h-4 w-4" /><span className="hidden sm:inline">Log out</span></button>
           <button type="button" onClick={() => setMobileNavOpen((open) => !open)} aria-expanded={mobileNavOpen} aria-label={mobileNavOpen ? "Close navigation" : "Open navigation"} className="flex h-10 w-10 items-center justify-center rounded-xl border border-[#E8E4DE] text-gray-600 md:hidden"><span className="text-lg leading-none">{mobileNavOpen ? "×" : "☰"}</span></button>
         </div>
@@ -933,7 +949,7 @@ export default function SellerDashboard() {
             <details className="group rounded-2xl border border-[#E8E4DE] bg-[#FCFAF6] p-4" open>
               <summary className="cursor-pointer list-none text-sm font-bold"><span className="flex items-center justify-between gap-3">Location details <span className="text-[11px] font-medium text-gray-400">Area and street are required<ArrowRight className="inline h-4 w-4 rotate-90" /></span></span></summary>
               <div className="mt-4 grid gap-4 sm:grid-cols-2">
-                <div><label htmlFor="create-area" className={labelClass}>Area <span className="text-[#FF5A36]">*</span></label><input id="create-area" list="remarket-area-options" className={inputClass} value={businessForm.area} onChange={(event) => updateBusinessField("area", event.target.value)} placeholder="Start typing your area" required disabled={savingBusiness} /><datalist id="remarket-area-options">{LAGOS_AREA_GROUPS.map((group) => group.areas.map((area) => <option key={`${group.lga}-${area}`} value={area} label={group.lga} />))}</datalist><p className="mt-1.5 text-[10px] leading-4 text-gray-500">Choose a suggested area or enter the supported area for your business.</p></div>
+                <div><label htmlFor="create-area" className={labelClass}>Area <span className="text-[#FF5A36]">*</span></label><AreaCombobox id="create-area" value={businessForm.area} onChange={(value) => updateBusinessField("area", value)} placeholder="Type or choose a Lagos area" required disabled={savingBusiness} /><p className="mt-1.5 text-[10px] leading-4 text-gray-500">Open the list to browse areas by LGA, or type to filter suggestions. A custom value is also allowed.</p></div>
                 <div><label htmlFor="create-city" className={labelClass}>City</label><input id="create-city" className={inputClass} value={businessForm.city} onChange={(event) => updateBusinessField("city", event.target.value)} placeholder="e.g. Lagos or Epe" maxLength={100} disabled={savingBusiness} /></div>
                 <div><label htmlFor="create-house-number" className={labelClass}>House / shop number</label><input id="create-house-number" className={inputClass} value={businessForm.houseNumber} onChange={(event) => updateBusinessField("houseNumber", event.target.value)} placeholder="e.g. 12 or Shop 4" maxLength={100} disabled={savingBusiness} /></div>
                 <div><label htmlFor="create-street" className={labelClass}>Street / road / close <span className="text-[#FF5A36]">*</span></label><input id="create-street" className={inputClass} value={businessForm.street} onChange={(event) => updateBusinessField("street", event.target.value)} placeholder="e.g. Agidingbi Road" maxLength={200} required disabled={savingBusiness} /></div>
@@ -987,7 +1003,7 @@ export default function SellerDashboard() {
           {editingBusiness && <section className="mt-5 rounded-[22px] border border-[#E8E4DE] bg-white shadow-sm"><div className="flex flex-col gap-3 border-b border-[#EAE6DF] px-5 py-5 sm:flex-row sm:items-center sm:justify-between sm:px-6"><div><p className="text-xs font-semibold uppercase tracking-[0.12em] text-[#FF5A36]">Business settings</p><h2 className="mt-1 text-lg font-bold">Edit your business</h2><p className="mt-1 text-xs text-gray-500">Update the information customers see on ReMarket.</p></div><button type="button" onClick={cancelEditingBusiness} disabled={savingBusiness} className={secondaryButtonClass}><X className="h-4 w-4" />Cancel</button></div>
             <form onSubmit={updateBusiness} className="space-y-5 px-5 py-6 sm:px-6"><div className="grid gap-5 sm:grid-cols-2"><div><label htmlFor="edit-business-name" className={labelClass}>Business name</label><input id="edit-business-name" className={inputClass} value={businessForm.name} onChange={(event) => updateBusinessField("name", event.target.value)} maxLength={150} required disabled={savingBusiness} /></div><div><label htmlFor="edit-owner-name" className={labelClass}>Owner name</label><input id="edit-owner-name" className={inputClass} value={businessForm.ownerName} onChange={(event) => updateBusinessField("ownerName", event.target.value)} maxLength={100} disabled={savingBusiness} /></div></div>
               <div><label htmlFor="edit-description" className={labelClass}>Description</label><textarea id="edit-description" className="w-full resize-y rounded-xl border border-[#D9DEE5] px-4 py-3 text-sm outline-none focus:border-[#FF694F] focus:ring-4 focus:ring-[#FF694F]/10 disabled:bg-gray-50" value={businessForm.description} onChange={(event) => updateBusinessField("description", event.target.value)} rows={3} maxLength={2000} disabled={savingBusiness} /></div>
-              <div className="grid gap-5 sm:grid-cols-2"><div><label htmlFor="edit-area" className={labelClass}>Business area</label><input id="edit-area" list="remarket-edit-area-options" className={inputClass} value={businessForm.area} onChange={(event) => updateBusinessField("area", event.target.value)} required disabled={savingBusiness} /><datalist id="remarket-edit-area-options">{LAGOS_AREA_GROUPS.map((group) => group.areas.map((area) => <option key={`${group.lga}-${area}`} value={area} label={group.lga} />))}</datalist></div><div><label htmlFor="edit-city" className={labelClass}>City</label><input id="edit-city" className={inputClass} value={businessForm.city} onChange={(event) => updateBusinessField("city", event.target.value)} placeholder="Lagos or Epe" maxLength={100} disabled={savingBusiness} /></div><div><label htmlFor="edit-house-number" className={labelClass}>House / shop number</label><input id="edit-house-number" className={inputClass} value={businessForm.houseNumber} onChange={(event) => updateBusinessField("houseNumber", event.target.value)} placeholder="e.g. 12 or Shop 4" maxLength={100} disabled={savingBusiness} /></div><div><label htmlFor="edit-street" className={labelClass}>Street / road / close</label><input id="edit-street" className={inputClass} value={businessForm.street} onChange={(event) => updateBusinessField("street", event.target.value)} placeholder="e.g. Agidingbi Road" maxLength={200} required disabled={savingBusiness} /></div></div>
+              <div className="grid gap-5 sm:grid-cols-2"><div><label htmlFor="edit-area" className={labelClass}>Business area</label><AreaCombobox id="edit-area" value={businessForm.area} onChange={(value) => updateBusinessField("area", value)} placeholder="Type or choose a Lagos area" required disabled={savingBusiness} /><p className="mt-1.5 text-[10px] leading-4 text-gray-500">Browse areas by LGA or type to filter the list.</p></div><div><label htmlFor="edit-city" className={labelClass}>City</label><input id="edit-city" className={inputClass} value={businessForm.city} onChange={(event) => updateBusinessField("city", event.target.value)} placeholder="Lagos or Epe" maxLength={100} disabled={savingBusiness} /></div><div><label htmlFor="edit-house-number" className={labelClass}>House / shop number</label><input id="edit-house-number" className={inputClass} value={businessForm.houseNumber} onChange={(event) => updateBusinessField("houseNumber", event.target.value)} placeholder="e.g. 12 or Shop 4" maxLength={100} disabled={savingBusiness} /></div><div><label htmlFor="edit-street" className={labelClass}>Street / road / close</label><input id="edit-street" className={inputClass} value={businessForm.street} onChange={(event) => updateBusinessField("street", event.target.value)} placeholder="e.g. Agidingbi Road" maxLength={200} required disabled={savingBusiness} /></div></div>
               <div className="rounded-2xl border border-[#E8E4DE] bg-[#FCFAF6] p-4"><div className="flex items-start gap-3"><MapPin className="mt-0.5 h-5 w-5 shrink-0 text-[#FF5A36]" /><div><p className="text-xs font-bold">Address preview</p><p className="mt-2 break-words text-xs leading-5 text-gray-600">{buildLocationAddressPreview(businessForm.area, businessForm.houseNumber, businessForm.street, businessForm.city)}</p><p className="mt-1 text-[10px] text-gray-400">Country: Nigeria</p></div></div></div>
               <div className="rounded-2xl border border-[#E8E4DE] bg-[#FCFAF6] p-4"><p className="text-xs font-bold">Contact & social links</p><p className="mt-1 text-[10px] leading-5 text-gray-500">Add useful ways for customers to reach your business.</p><div className="mt-4 grid gap-4 sm:grid-cols-2 xl:grid-cols-3">{SOCIAL_PLATFORMS.map(({ value, label }) => <div key={value}><label htmlFor={`edit-social-${value.toLowerCase()}`} className={labelClass}>{label}</label><input id={`edit-social-${value.toLowerCase()}`} className={inputClass} type={value === "PHONE" ? "tel" : "text"} value={socialValues[value]} onChange={(event) => updateSocial(value, event.target.value)} placeholder={value === "PHONE" || value === "WHATSAPP" ? "080..." : value === "DIRECTIONS" ? "https://maps.google.com/..." : "@username or URL"} disabled={savingBusiness} /></div>)}</div></div>
               <div className="grid gap-5 sm:grid-cols-2 xl:grid-cols-4"><div><label htmlFor="edit-category" className={labelClass}>Category</label><select id="edit-category" className={inputClass} value={businessForm.categoryId} onChange={(event) => { updateBusinessField("categoryId", event.target.value); setCategoryChanged(true); }} disabled={savingBusiness}><option value="">Select category</option>{categories.map((category) => <option key={category.id} value={category.id}>{category.name}</option>)}</select></div><div><label htmlFor="edit-availability" className={labelClass}>Availability</label><select id="edit-availability" className={inputClass} value={businessForm.availability} onChange={(event) => updateBusinessField("availability", event.target.value as Availability)} disabled={savingBusiness}><option value="ASK_SELLER">Ask seller</option><option value="AVAILABLE">Available</option><option value="UNAVAILABLE">Unavailable</option></select></div><div><label htmlFor="edit-price-min" className={labelClass}>Minimum price (₦)</label><input id="edit-price-min" type="number" min="0" step="1" className={inputClass} value={businessForm.priceMin} onChange={(event) => updateBusinessField("priceMin", event.target.value)} disabled={savingBusiness} /></div><div><label htmlFor="edit-price-max" className={labelClass}>Maximum price (₦)</label><input id="edit-price-max" type="number" min="0" step="1" className={inputClass} value={businessForm.priceMax} onChange={(event) => updateBusinessField("priceMax", event.target.value)} disabled={savingBusiness} /></div></div>
@@ -1016,3 +1032,244 @@ export default function SellerDashboard() {
     </main>
   );
 }
+
+type AreaComboboxProps = {
+  id: string;
+  value: string;
+  onChange: (value: string) => void;
+  placeholder?: string;
+  required?: boolean;
+  disabled?: boolean;
+};
+
+/**
+ * Searchable area dropdown used by both create and edit business forms.
+ * It intentionally allows a custom typed value, matching the previous
+ * datalist behavior while also showing options on click/focus.
+ */
+function AreaCombobox({
+  id,
+  value,
+  onChange,
+  placeholder = "Type or choose an area",
+  required = false,
+  disabled = false,
+}: AreaComboboxProps) {
+  const [open, setOpen] = useState(false);
+  const [searchTerm, setSearchTerm] = useState("");
+  const [activeIndex, setActiveIndex] = useState(0);
+  const wrapperRef = useRef<HTMLDivElement | null>(null);
+  const inputRef = useRef<HTMLInputElement | null>(null);
+
+  const filteredGroups = useMemo(() => {
+    const query = searchTerm.trim().toLocaleLowerCase();
+
+    return LAGOS_AREA_GROUPS
+      .map((group) => ({
+        lga: group.lga,
+        areas: group.areas.filter((area) => {
+          if (!query) return true;
+          return (
+            area.toLocaleLowerCase().includes(query) ||
+            group.lga.toLocaleLowerCase().includes(query)
+          );
+        }),
+      }))
+      .filter((group) => group.areas.length > 0);
+  }, [searchTerm]);
+
+  const suggestions = useMemo(
+    () => filteredGroups.flatMap((group) =>
+      group.areas.map((area) => ({ lga: group.lga, area }))
+    ),
+    [filteredGroups]
+  );
+
+  useEffect(() => {
+    if (!open) return;
+
+    function handleOutsidePointerDown(event: PointerEvent) {
+      if (
+        wrapperRef.current &&
+        event.target instanceof Node &&
+        !wrapperRef.current.contains(event.target)
+      ) {
+        setOpen(false);
+      }
+    }
+
+    document.addEventListener("pointerdown", handleOutsidePointerDown);
+    return () => {
+      document.removeEventListener("pointerdown", handleOutsidePointerDown);
+    };
+  }, [open]);
+
+  function showOptions(showAll = true) {
+    if (showAll) setSearchTerm("");
+    else setSearchTerm(value);
+    setActiveIndex(0);
+    setOpen(true);
+  }
+
+  function selectArea(area: string) {
+    onChange(area);
+    setSearchTerm("");
+    setActiveIndex(0);
+    setOpen(false);
+  }
+
+  function handleKeyDown(event: ReactKeyboardEvent<HTMLInputElement>) {
+    if (event.key === "Escape") {
+      setOpen(false);
+      return;
+    }
+
+    if (event.key === "ArrowDown") {
+      event.preventDefault();
+      if (!open) {
+        showOptions(true);
+        return;
+      }
+      setActiveIndex((current) =>
+        Math.min(current + 1, Math.max(0, suggestions.length - 1))
+      );
+      return;
+    }
+
+    if (event.key === "ArrowUp") {
+      event.preventDefault();
+      setActiveIndex((current) => Math.max(0, current - 1));
+      return;
+    }
+
+    if (event.key === "Enter" && open && suggestions.length > 0) {
+      event.preventDefault();
+      selectArea(suggestions[activeIndex]?.area ?? suggestions[0].area);
+    }
+  }
+
+  let optionIndex = 0;
+
+  return (
+    <div ref={wrapperRef} className="relative z-40 min-w-0">
+      <div className="relative min-w-0">
+        <input
+          ref={inputRef}
+          id={id}
+          role="combobox"
+          aria-autocomplete="list"
+          aria-expanded={open}
+          aria-controls={`${id}-options`}
+          aria-required={required}
+          autoComplete="off"
+          className={inputClass.replace("px-4", "pl-4 pr-12")}
+          value={value}
+          onFocus={() => showOptions(true)}
+          onClick={() => {
+            if (!open) showOptions(true);
+          }}
+          onChange={(event) => {
+            onChange(event.target.value);
+            setSearchTerm(event.target.value);
+            setActiveIndex(0);
+            setOpen(true);
+          }}
+          onKeyDown={handleKeyDown}
+          placeholder={placeholder}
+          required={required}
+          disabled={disabled}
+          aria-label="Business area"
+        />
+        <button
+          type="button"
+          tabIndex={-1}
+          disabled={disabled}
+          aria-label={open ? "Close area suggestions" : "Open area suggestions"}
+          aria-controls={`${id}-options`}
+          aria-expanded={open}
+          onMouseDown={(event) => event.preventDefault()}
+          onClick={() => {
+            if (open) {
+              setOpen(false);
+            } else {
+              showOptions(true);
+              inputRef.current?.focus();
+            }
+          }}
+          className="absolute right-2 top-1/2 flex h-8 w-8 -translate-y-1/2 items-center justify-center rounded-lg text-gray-500 transition hover:bg-[#FFF0E9] hover:text-[#9F2D18] disabled:cursor-not-allowed disabled:opacity-40"
+        >
+          <ChevronDown className={`h-4 w-4 transition-transform ${open ? "rotate-180" : ""}`} />
+        </button>
+      </div>
+
+      {open && !disabled && (
+        <div
+          id={`${id}-options`}
+          role="listbox"
+          aria-label="Suggested business areas by local government area"
+          className="absolute left-0 right-0 top-full z-[60] mt-2 max-h-72 overflow-y-auto overscroll-contain rounded-2xl border border-[#E8E4DE] bg-white p-2 shadow-[0_18px_45px_rgba(23,32,42,0.16)]"
+        >
+          <div className="sticky top-0 z-10 mb-1 flex items-center justify-between gap-2 rounded-lg bg-white px-2 py-2">
+            <span className="text-[10px] font-bold uppercase tracking-[0.1em] text-gray-400">
+              {searchTerm.trim() ? "Matching areas" : "Browse by local government area"}
+            </span>
+            <span className="shrink-0 text-[10px] font-semibold text-[#9F2D18]">
+              {suggestions.length} options
+            </span>
+          </div>
+
+          {filteredGroups.length > 0 ? filteredGroups.map((group) => (
+            <div key={group.lga} className="mb-2 last:mb-0">
+              <p className="sticky top-9 z-[5] rounded-md bg-[#FCFAF6] px-2.5 py-1.5 text-[10px] font-bold uppercase tracking-[0.08em] text-gray-500">
+                {group.lga}
+              </p>
+              <div className="mt-1 grid grid-cols-1 gap-0.5 sm:grid-cols-2">
+                {group.areas.map((area) => {
+                  const currentIndex = optionIndex;
+                  optionIndex += 1;
+                  const selected = value.trim().toLocaleLowerCase() === area.toLocaleLowerCase();
+                  const highlighted = currentIndex === activeIndex;
+
+                  return (
+                    <button
+                      key={`${group.lga}-${area}`}
+                      type="button"
+                      role="option"
+                      aria-selected={selected}
+                      onMouseEnter={() => setActiveIndex(currentIndex)}
+                      onMouseDown={(event) => event.preventDefault()}
+                      onClick={() => selectArea(area)}
+                      className={`flex min-w-0 items-center justify-between gap-2 rounded-lg px-3 py-2.5 text-left text-xs transition ${
+                        highlighted
+                          ? "bg-[#FFF0E9] text-[#9F2D18]"
+                          : selected
+                            ? "bg-[#F1FBF6] font-bold text-[#137A59]"
+                            : "text-gray-700 hover:bg-[#FCFAF6]"
+                      }`}
+                    >
+                      <span className="min-w-0 break-words">{area}</span>
+                      {selected && <CheckCircle2 className="h-3.5 w-3.5 shrink-0" />}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          )) : (
+            <div className="px-3 py-5 text-center">
+              <MapPin className="mx-auto h-5 w-5 text-gray-300" />
+              <p className="mt-2 text-xs font-semibold text-gray-700">No suggested areas match</p>
+              <p className="mt-1 text-[11px] leading-5 text-gray-500">
+                You can keep “{value.trim() || searchTerm.trim()}” as a custom area.
+              </p>
+            </div>
+          )}
+
+          <div className="mt-2 border-t border-[#F0ECE6] px-2 py-2 text-[10px] leading-4 text-gray-400">
+            Choose a suggestion or keep typing a custom area. Use ↑ and ↓ to move through suggestions and Enter to select.
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+

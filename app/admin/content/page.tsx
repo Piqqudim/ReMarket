@@ -24,6 +24,9 @@ import {
   Loader2,
   Megaphone,
   Package,
+  Palette,
+  RefreshCw,
+  Sparkles,
   Pencil,
   Plus,
   RotateCcw,
@@ -280,11 +283,13 @@ export default function AdminContentPage() {
           );
         }
 
-        const paginationData =
-          data.pagination as Pagination;
+        const responseData = data as {
+          contents: AdminContent[];
+          pagination: Pagination;
+        };
 
-        setContents(data.contents as AdminContent[]);
-        setPagination(paginationData);
+        setContents(responseData.contents);
+        setPagination(responseData.pagination);
       } catch (loadError) {
         console.error("Admin content load error:", loadError);
 
@@ -318,6 +323,12 @@ export default function AdminContentPage() {
     setEditingId(null);
     setForm(emptyForm());
     setFormOpen(true);
+    window.setTimeout(() => {
+      document.getElementById("content-composer")?.scrollIntoView({
+        behavior: "smooth",
+        block: "start",
+      });
+    }, 60);
   }
 
   function startEdit(content: AdminContent) {
@@ -336,10 +347,12 @@ export default function AdminContentPage() {
 
     setFormOpen(true);
 
-    window.scrollTo({
-      top: 0,
-      behavior: "smooth",
-    });
+    window.setTimeout(() => {
+      document.getElementById("content-composer")?.scrollIntoView({
+        behavior: "smooth",
+        block: "start",
+      });
+    }, 60);
   }
 
   function closeForm() {
@@ -521,11 +534,11 @@ export default function AdminContentPage() {
           : "Content created successfully."
       );
 
-      if (!wasEditing) {
+      if (!wasEditing && pagination.page !== 1) {
         setPageToFirstPage();
+      } else {
+        await loadContents(wasEditing ? pagination.page : 1);
       }
-
-      await loadContents(wasEditing ? pagination.page : 1);
     } catch (saveError) {
       console.error("Admin content save error:", saveError);
 
@@ -752,49 +765,55 @@ export default function AdminContentPage() {
     }
   }
 
+
   return (
-    <main className="min-h-screen bg-[#FFF7ED] px-3 py-3 sm:px-5 sm:py-5">
-      <div className="mx-auto flex min-h-[calc(100vh-24px)] max-w-[1500px] overflow-hidden rounded-[22px] border border-[#FF5A36] bg-[#FFFDFC] shadow-sm sm:min-h-[calc(100vh-40px)]">
-        <aside className="hidden w-[190px] shrink-0 border-r border-[#EAE6DF] bg-[#FCFAF6] lg:block">
-          <div className="flex h-[66px] items-center border-b border-[#EAE6DF] px-5">
-            <Link
-              href="/admin"
-              className="text-xl font-black tracking-tight"
-            >
-              <span className="text-[#FF5A36]">Re</span>
-              <span className="text-[#17202A]">Market</span>
+    <main className="min-h-dvh w-full overflow-x-clip bg-[#F5F0EA] text-[#17202A]">
+      <div className="flex min-h-dvh w-full">
+        <aside className="sticky top-0 hidden h-dvh w-[232px] shrink-0 flex-col border-r border-white/10 bg-[#17202A] text-white lg:flex">
+          <div className="border-b border-white/10 px-5 py-6">
+            <Link href="/admin" className="flex items-center gap-3" aria-label="ReMarket admin home">
+              <span className="flex h-11 w-11 items-center justify-center rounded-2xl bg-[#FF5A36] text-lg font-black text-white shadow-[0_10px_30px_rgba(255,90,54,0.25)]">R</span>
+              <span className="min-w-0">
+                <span className="block text-lg font-black tracking-tight text-white">ReMarket</span>
+                <span className="mt-0.5 block text-[10px] font-bold uppercase tracking-[0.18em] text-white/45">Content studio</span>
+              </span>
             </Link>
           </div>
 
-          <nav className="space-y-1 p-3">
-            <p className="mb-3 px-3 pt-2 text-[11px] font-bold uppercase tracking-wider text-[#A39A91]">
-              Admin
-            </p>
-
+          <nav className="min-h-0 flex-1 space-y-1 overflow-y-auto px-3 py-5" aria-label="Admin navigation">
+            <p className="mb-3 px-3 text-[10px] font-extrabold uppercase tracking-[0.18em] text-white/35">Workspace</p>
             {NAV_ITEMS.map((item) => {
               const Icon = item.icon;
               const active = item.href === "/admin/content";
-
               return (
                 <Link
                   key={item.href}
                   href={item.href}
-                  className={`flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-semibold transition ${
+                  aria-current={active ? "page" : undefined}
+                  className={`flex items-center gap-3 rounded-xl px-3 py-3 text-sm font-semibold transition ${
                     active
-                      ? "bg-[#FFE0D6] text-[#9F2D18]"
-                      : "text-[#6F675F] hover:bg-[#FFF0D9]"
+                      ? "bg-[#FF5A36] text-white shadow-[0_10px_24px_rgba(255,90,54,0.2)]"
+                      : "text-white/65 hover:bg-white/[0.08] hover:text-white"
                   }`}
                 >
                   <Icon size={18} />
-                  {item.label}
+                  <span>{item.label}</span>
+                  {active && <span className="ml-auto h-1.5 w-1.5 rounded-full bg-white" />}
                 </Link>
               );
             })}
           </nav>
+
+          <div className="m-3 rounded-2xl border border-white/10 bg-white/5 p-4">
+            <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-white/10 text-[#FFB49F]"><Palette size={17} /></div>
+            <p className="mt-3 text-sm font-bold text-white">Make the message count.</p>
+            <p className="mt-1 text-xs leading-5 text-white/50">Create, prepare and share ReMarket stories from one place.</p>
+            <div className="mt-4 flex items-center gap-2 text-[10px] font-bold uppercase tracking-wider text-white/35"><span className="h-1.5 w-1.5 rounded-full bg-[#68D6A2]" /> Manual publishing workflow</div>
+          </div>
         </aside>
 
-        <section className="min-w-0 flex-1">
-          <header className="flex h-[66px] items-center justify-between border-b border-[#EAE6DF] px-4 sm:px-6">
+        <section className="min-h-dvh min-w-0 flex-1">
+          <header className="sticky top-0 z-30 flex min-h-[70px] items-center justify-between gap-3 border-b border-[#EAE6DF] bg-[#FFFDFC]/95 px-4 backdrop-blur-xl sm:px-6 xl:px-8">
             <div className="flex min-w-0 items-center gap-3">
               <Link
                 href="/admin"
@@ -804,46 +823,66 @@ export default function AdminContentPage() {
                 <ChevronLeft size={18} />
               </Link>
 
-              <div>
-                <p className="text-xs font-medium text-[#8A8178]">
-                  Admin
-                </p>
-                <h1 className="text-lg font-black text-[#17202A]">
-                  Content Creation
-                </h1>
+              <div className="min-w-0">
+                <p className="text-[10px] font-extrabold uppercase tracking-[0.18em] text-[#9F2D18]">Admin workspace</p>
+                <h1 className="truncate text-base font-black tracking-tight text-[#17202A] sm:text-lg">Content Studio</h1>
               </div>
             </div>
 
-            <Link
-              href="/"
-              className="rounded-xl border border-[#EAE6DF] bg-white px-3 py-2 text-xs font-bold text-[#6F675F] transition hover:bg-[#FCFAF6]"
-            >
-              Marketplace
-            </Link>
+            <div className="flex shrink-0 items-center gap-2">
+              <span className="hidden items-center gap-1.5 rounded-full border border-[#E8DED3] bg-white px-3 py-2 text-[11px] font-bold text-[#6F675F] sm:inline-flex"><span className="h-1.5 w-1.5 rounded-full bg-[#68B58C]" /> Studio ready</span>
+              <Link href="/" className="inline-flex items-center gap-2 rounded-xl border border-[#E8DED3] bg-white px-3 py-2.5 text-xs font-bold text-[#6F675F] transition hover:border-[#FFB49F] hover:text-[#9F2D18] sm:px-4">
+                <ExternalLink size={14} />
+                <span className="hidden sm:inline">Marketplace</span>
+                <span className="sm:hidden">Visit</span>
+              </Link>
+            </div>
           </header>
 
-          <div className="p-4 sm:p-6">
-            <div className="mb-6 flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
-              <div>
-                <h2 className="text-2xl font-black tracking-tight text-[#17202A] sm:text-3xl">
-                  Social content
-                </h2>
-                <p className="mt-1 max-w-2xl text-sm leading-6 text-[#81776F]">
-                  Prepare captions and images for ReMarket&apos;s
-                  social channels. Content is saved here for manual
-                  sharing; it is not published automatically.
-                </p>
-              </div>
-
-              <button
-                type="button"
-                onClick={startCreate}
-                className="inline-flex h-10 shrink-0 items-center justify-center gap-2 rounded-xl bg-[#FF5A36] px-4 text-sm font-extrabold text-white shadow-sm transition hover:bg-[#E94B29]"
-              >
-                <Plus size={17} />
-                Create content
-              </button>
+          <nav className="sticky top-[70px] z-20 border-b border-[#EAE6DF] bg-[#FFFDFC]/95 px-3 py-2 backdrop-blur-xl lg:hidden" aria-label="Admin navigation">
+            <div className="flex gap-2 overflow-x-auto pb-0.5 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+              {NAV_ITEMS.map((item) => {
+                const Icon = item.icon;
+                const active = item.href === "/admin/content";
+                return (
+                  <Link key={item.href} href={item.href} aria-current={active ? "page" : undefined} className={`inline-flex shrink-0 items-center gap-2 rounded-xl px-3 py-2.5 text-xs font-bold transition ${active ? "bg-[#FF5A36] text-white shadow-sm" : "bg-[#F5F0EA] text-[#6F675F] hover:bg-[#FFE0D6]"}`}>
+                    <Icon size={15} />{item.label}
+                  </Link>
+                );
+              })}
             </div>
+          </nav>
+
+          <div className="mx-auto w-full max-w-[1760px] min-w-0 px-3 py-5 pb-24 sm:px-5 sm:py-6 md:px-7 xl:px-9 xl:py-8">
+            <section className="relative mb-6 overflow-hidden rounded-[28px] bg-[#17202A] text-white shadow-[0_22px_70px_rgba(23,32,42,0.13)]">
+              <div aria-hidden="true" className="pointer-events-none absolute -right-16 -top-24 h-72 w-72 rounded-full border-[36px] border-[#FF5A36]/20" />
+              <div aria-hidden="true" className="pointer-events-none absolute -bottom-28 right-[24%] h-52 w-52 rounded-full bg-[#FF5A36]/10 blur-2xl" />
+              <div className="relative grid min-w-0 gap-6 p-5 sm:p-7 xl:grid-cols-[minmax(0,1fr)_340px] xl:items-center xl:p-8">
+                <div className="min-w-0">
+                  <span className="inline-flex items-center gap-2 rounded-full border border-white/15 bg-white/[0.08] px-3 py-1.5 text-[10px] font-extrabold uppercase tracking-[0.17em] text-[#FFC1AD]"><Sparkles size={13} /> Content lab / ReMarket</span>
+                  <h2 className="mt-4 max-w-3xl text-3xl font-black leading-[1.05] tracking-tight sm:text-4xl xl:text-5xl">Make the scroll <span className="text-[#FF815F]">stop.</span></h2>
+                  <p className="mt-3 max-w-2xl text-sm leading-6 text-white/65 sm:text-base">Design a flyer, shape the message, and prepare a post that gives people a reason to discover what is nearby.</p>
+                  <div className="mt-5 flex flex-wrap gap-2">
+                    <span className="inline-flex items-center gap-2 rounded-xl bg-white/[0.08] px-3 py-2 text-[11px] font-bold text-white/80"><span className="text-[#FF8D70]">01</span> Design</span>
+                    <span className="inline-flex items-center gap-2 rounded-xl bg-white/[0.08] px-3 py-2 text-[11px] font-bold text-white/80"><span className="text-[#FF8D70]">02</span> Write</span>
+                    <span className="inline-flex items-center gap-2 rounded-xl bg-white/[0.08] px-3 py-2 text-[11px] font-bold text-white/80"><span className="text-[#FF8D70]">03</span> Share manually</span>
+                  </div>
+                </div>
+                <div className="min-w-0 rounded-[22px] border border-white/10 bg-white/[0.06] p-4 sm:p-5">
+                  <div className="flex items-center justify-between gap-3">
+                    <div><p className="text-[10px] font-extrabold uppercase tracking-[0.16em] text-white/45">Studio snapshot</p><p className="mt-1 text-sm font-bold text-white">Your content library</p></div>
+                    <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-[#FF5A36] text-white"><Palette size={18} /></div>
+                  </div>
+                  <div className="mt-4 grid grid-cols-2 gap-3">
+                    <div className="rounded-2xl bg-black/15 p-3"><p className="text-[10px] font-bold text-white/45">Library total</p><p className="mt-1 text-2xl font-black tabular-nums">{pagination.total}</p><p className="mt-1 text-[10px] text-white/45">Saved content items</p></div>
+                    <div className="rounded-2xl bg-black/15 p-3"><p className="text-[10px] font-bold text-white/45">On this page</p><p className="mt-1 text-2xl font-black tabular-nums">{contents.length}</p><p className="mt-1 text-[10px] text-white/45">Up to {PAGE_SIZE} items</p></div>
+                  </div>
+                  <button type="button" onClick={startCreate} className="mt-4 inline-flex min-h-11 w-full items-center justify-center gap-2 rounded-xl bg-[#FF5A36] px-4 py-3 text-sm font-extrabold text-white transition hover:bg-[#FF704F] focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-[#FF5A36]/30"><Plus size={17} /> Create a new post <ChevronRight size={16} /></button>
+                  <p className="mt-3 text-center text-[10px] leading-5 text-white/40">Manual publishing · No automatic social posting</p>
+                </div>
+              </div>
+            </section>
+
 
             {success && (
               <div className="mb-5 flex items-center gap-3 rounded-2xl border border-[#BFE3CE] bg-[#EEF9F2] px-4 py-3">
@@ -882,19 +921,20 @@ export default function AdminContentPage() {
 
             {formOpen && (
               <form
+                id="content-composer"
                 onSubmit={submitContent}
-                className="mb-6 rounded-2xl border border-[#EAE6DF] bg-white p-4 sm:p-6"
+                className="mb-8 scroll-mt-28 overflow-hidden rounded-[26px] border border-[#E6D8CC] bg-white p-4 shadow-[0_18px_50px_rgba(23,32,42,0.07)] sm:p-6 xl:p-7"
               >
-                <div className="mb-5 flex items-start justify-between gap-3">
-                  <div>
-                    <h3 className="text-lg font-black text-[#17202A]">
+                <div className="mb-6 flex items-start justify-between gap-3 rounded-2xl bg-[#17202A] p-4 text-white sm:p-5">
+                  <div className="min-w-0">
+                    <span className="inline-flex items-center gap-1.5 text-[10px] font-extrabold uppercase tracking-[0.16em] text-[#FFB49F]"><Sparkles size={12} /> Composer workspace</span>
+                    <h3 className="mt-1 text-lg font-black text-white">
                       {editingId
                         ? "Edit content"
                         : "Create content"}
                     </h3>
-                    <p className="mt-1 text-sm text-[#81776F]">
-                      Write once and select the channels you intend
-                      to share it on.
+                    <p className="mt-1 max-w-2xl text-sm leading-5 text-white/60">
+                      {editingId ? "Refine your existing content and keep its sharing setup in sync." : "Create the visual, write the message, then select where you plan to share it."}
                     </p>
                   </div>
 
@@ -903,13 +943,13 @@ export default function AdminContentPage() {
                     onClick={closeForm}
                     disabled={saving || uploadingImage}
                     aria-label="Close content form"
-                    className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-[#EAE6DF] text-[#6F675F] hover:bg-[#FCFAF6] disabled:opacity-50"
+                    className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-white/15 bg-white/5 text-white/70 transition hover:bg-white/10 hover:text-white disabled:opacity-50"
                   >
                     <X size={17} />
                   </button>
                 </div>
 
-                <div className="grid gap-5 lg:grid-cols-2">
+                <div className="grid min-w-0 gap-6 xl:grid-cols-[minmax(0,1fr)_minmax(0,0.95fr)]">
                   <div className="space-y-4">
                     <div>
                       <label
@@ -957,7 +997,7 @@ export default function AdminContentPage() {
                           }))
                         }
                         placeholder="Write the message to share with your audience..."
-                        className="w-full resize-y rounded-xl border border-[#EAE6DF] bg-[#FCFAF6] px-3.5 py-3 text-sm leading-6 text-[#17202A] outline-none focus:border-[#FF5A36]"
+                        className="w-full resize-y rounded-2xl border border-[#EAE6DF] bg-[#FCFAF6] px-3.5 py-3 text-sm leading-6 text-[#17202A] outline-none transition focus:border-[#FF5A36] focus:bg-white focus:ring-4 focus:ring-[#FF5A36]/10"
                       />
                       <p className="mt-1 text-right text-[11px] text-[#A39A91]">
                         {form.caption.length}/5000
@@ -1220,30 +1260,13 @@ export default function AdminContentPage() {
               </form>
             )}
 
-            <div className="mb-5 flex gap-2 overflow-x-auto lg:hidden">
-              {NAV_ITEMS.map((item) => {
-                const Icon = item.icon;
-                const active = item.href === "/admin/content";
 
-                return (
-                  <Link
-                    key={item.href}
-                    href={item.href}
-                    className={`flex shrink-0 items-center gap-2 rounded-xl px-3 py-2 text-xs font-bold ${
-                      active
-                        ? "bg-[#FF5A36] text-white"
-                        : "bg-[#FCFAF6] text-[#6F675F]"
-                    }`}
-                  >
-                    <Icon size={15} />
-                    {item.label}
-                  </Link>
-                );
-              })}
-            </div>
-
-            <div className="mb-5 rounded-2xl border border-[#EAE6DF] bg-white p-3">
-              <div className="flex flex-col gap-3 sm:flex-row">
+            <section className="mb-5 rounded-[22px] border border-[#E8DED3] bg-white p-3 shadow-sm sm:p-4">
+              <div className="mb-3 flex flex-wrap items-center justify-between gap-2 px-1">
+                <div className="flex items-center gap-2"><span className="flex h-8 w-8 items-center justify-center rounded-xl bg-[#FFF0ED] text-[#9F2D18]"><Search size={15} /></span><div><h3 className="text-sm font-black text-[#17202A]">Content library</h3><p className="mt-0.5 text-[10px] text-[#8A8178]">Search, filter and prepare saved posts</p></div></div>
+                <button type="button" onClick={() => void loadContents(pagination.page)} disabled={loading} className="inline-flex h-9 items-center justify-center gap-2 rounded-xl border border-[#EAE6DF] bg-[#FCFAF6] px-3 text-xs font-bold text-[#6F675F] transition hover:border-[#FFB49F] hover:text-[#9F2D18] disabled:opacity-50"><RefreshCw size={13} className={loading ? "animate-spin" : ""} /> Refresh</button>
+              </div>
+              <div className="flex min-w-0 flex-col gap-3 sm:flex-row">
                 <div className="relative min-w-0 flex-1">
                   <Search
                     size={17}
@@ -1283,16 +1306,10 @@ export default function AdminContentPage() {
                   <option value="ARCHIVED">Archived</option>
                 </select>
               </div>
-            </div>
+            </section>
 
             <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
-              <p className="text-sm text-[#81776F]">
-                {loading
-                  ? "Loading content..."
-                  : `${pagination.total} item${
-                      pagination.total === 1 ? "" : "s"
-                    } found`}
-              </p>
+              <div><p className="text-sm font-bold text-[#17202A]">{query.trim() || statusFilter ? "Filtered results" : "Recent work"}</p><p className="mt-0.5 text-xs text-[#81776F]">{loading ? "Loading content..." : `${pagination.total} item${pagination.total === 1 ? "" : "s"} in the library`}</p></div>
 
               {pagination.totalPages > 1 && (
                 <p className="text-xs text-[#8A8178]">
@@ -1338,40 +1355,36 @@ export default function AdminContentPage() {
                 )}
               </div>
             ) : (
-              <div className="space-y-3">
+              <div className="grid min-w-0 grid-cols-1 gap-4 xl:grid-cols-2 2xl:gap-5">
                 {contents.map((content) => (
                   <article
                     key={content.id}
-                    className="overflow-hidden rounded-2xl border border-[#EAE6DF] bg-white"
+                    className="group min-w-0 overflow-hidden rounded-[24px] border border-[#E7DCD2] bg-white shadow-[0_4px_18px_rgba(23,32,42,0.035)] transition duration-200 hover:-translate-y-0.5 hover:border-[#F1B6A5] hover:shadow-[0_18px_42px_rgba(23,32,42,0.09)]"
                   >
-                    <div className="flex flex-col gap-4 p-4 sm:flex-row sm:p-5">
-                      <div className="h-28 w-full shrink-0 overflow-hidden rounded-xl bg-[#FCFAF6] sm:h-28 sm:w-36">
+                    <div className="flex min-w-0 flex-col gap-4 p-3 sm:p-4">
+                      <div className="relative h-[190px] w-full shrink-0 overflow-hidden rounded-[18px] border border-[#EAE6DF] bg-[#F6F1EA] sm:h-[230px]">
                         {content.imageUrl ? (
                           <img
                             src={content.imageUrl}
                             alt=""
-                            className="h-full w-full object-cover"
+                            className="h-full w-full object-contain p-2 transition duration-300 group-hover:scale-[1.01]"
                           />
                         ) : (
-                          <div className="flex h-full items-center justify-center text-[#C0B6AC]">
-                            <ImagePlus size={28} />
+                          <div className="flex h-full flex-col items-center justify-center gap-2 text-[#C0B6AC]">
+                            <span className="flex h-12 w-12 items-center justify-center rounded-2xl bg-white text-[#FF5A36] shadow-sm"><ImagePlus size={23} /></span>
+                            <span className="text-xs font-semibold text-[#8A8178]">No artwork attached yet</span>
                           </div>
                         )}
+                        <span className="absolute left-3 top-3 inline-flex items-center gap-1.5 rounded-full border border-white/60 bg-white/90 px-2.5 py-1 text-[10px] font-extrabold uppercase tracking-wider text-[#5F544B] shadow-sm backdrop-blur"><span className={`h-1.5 w-1.5 rounded-full ${content.status === "READY" ? "bg-[#279768]" : content.status === "ARCHIVED" ? "bg-[#8B8178]" : "bg-[#E5A52D]"}`} />{content.status === "READY" ? "Ready to share" : content.status === "ARCHIVED" ? "Archived" : "Draft"}</span>
+                        <span className="absolute bottom-3 right-3 rounded-lg bg-[#17202A]/85 px-2 py-1 text-[9px] font-extrabold tracking-wider text-white backdrop-blur">REMARKET STUDIO</span>
                       </div>
 
-                      <div className="min-w-0 flex-1">
+                      <div className="min-w-0">
                         <div className="flex flex-wrap items-center gap-2">
-                          <h3 className="break-words text-base font-black text-[#17202A]">
+                          <h3 className="min-w-0 break-words text-lg font-black leading-snug tracking-tight text-[#17202A]">
                             {content.title}
                           </h3>
 
-                          <span
-                            className={`rounded-full px-2.5 py-1 text-[10px] font-extrabold ${getStatusStyle(
-                              content.status
-                            )}`}
-                          >
-                            {getStatusLabel(content.status)}
-                          </span>
                         </div>
 
                         <p className="mt-2 whitespace-pre-wrap break-words text-sm leading-6 text-[#6F675F]">
@@ -1407,17 +1420,19 @@ export default function AdminContentPage() {
                         <p className="mt-3 text-[11px] text-[#A39A91]">
                           Updated {formatDate(content.updatedAt)}
                         </p>
+
                       </div>
 
-                      <div className="flex shrink-0 flex-row flex-wrap gap-2 sm:w-36 sm:flex-col">
+                      <div className="flex min-w-0 flex-row flex-wrap gap-2 border-t border-[#F0E7DF] pt-3 sm:pt-4">
                         <button
                           type="button"
                           onClick={() => startEdit(content)}
-                          className="inline-flex h-9 flex-1 items-center justify-center gap-2 rounded-xl border border-[#EAE6DF] bg-white px-3 text-xs font-bold text-[#6F675F] transition hover:bg-[#FCFAF6] sm:flex-none"
+                          className="inline-flex h-10 min-w-0 flex-1 items-center justify-center gap-2 rounded-xl border border-[#EAE6DF] bg-white px-3 text-xs font-bold text-[#6F675F] transition hover:bg-[#FCFAF6]"
                         >
                           <Pencil size={14} />
                           Edit
                         </button>
+
 
                         <button
                           type="button"
@@ -1428,7 +1443,7 @@ export default function AdminContentPage() {
                               current === content.id ? null : content.id
                             );
                           }}
-                          className="inline-flex h-9 flex-1 items-center justify-center gap-2 rounded-xl border border-[#FFB49F] bg-[#FFF0ED] px-3 text-xs font-extrabold text-[#9F2D18] transition hover:bg-[#FFE0D6] sm:flex-none"
+                          className="inline-flex h-10 min-w-0 flex-1 items-center justify-center gap-2 rounded-xl border border-[#FFB49F] bg-[#FFF0ED] px-3 text-xs font-extrabold text-[#9F2D18] transition hover:bg-[#FFE0D6]"
                         >
                           <Share2 size={14} />
                           {sharingContentId === content.id ? "Close share tools" : "Share"}
@@ -1446,7 +1461,7 @@ export default function AdminContentPage() {
                                 "DRAFT"
                               )
                             }
-                            className="inline-flex h-9 flex-1 items-center justify-center gap-2 rounded-xl border border-[#EAE6DF] bg-[#FCFAF6] px-3 text-xs font-bold text-[#6F675F] transition hover:bg-[#FFF0D9] disabled:opacity-50 sm:flex-none"
+                            className="inline-flex h-10 min-w-0 flex-1 items-center justify-center gap-2 rounded-xl border border-[#EAE6DF] bg-[#FCFAF6] px-3 text-xs font-bold text-[#6F675F] transition hover:bg-[#FFF0D9] disabled:opacity-50"
                           >
                             {changingStatusId === content.id ? (
                               <Loader2
@@ -1470,7 +1485,7 @@ export default function AdminContentPage() {
                                 "ARCHIVED"
                               )
                             }
-                            className="inline-flex h-9 flex-1 items-center justify-center gap-2 rounded-xl border border-[#EAE6DF] bg-[#FCFAF6] px-3 text-xs font-bold text-[#6F675F] transition hover:bg-[#FFF0D9] disabled:opacity-50 sm:flex-none"
+                            className="inline-flex h-10 min-w-0 flex-1 items-center justify-center gap-2 rounded-xl border border-[#EAE6DF] bg-[#FCFAF6] px-3 text-xs font-bold text-[#6F675F] transition hover:bg-[#FFF0D9] disabled:opacity-50"
                           >
                             {changingStatusId === content.id ? (
                               <Loader2
@@ -1487,7 +1502,7 @@ export default function AdminContentPage() {
                     </div>
 
                     {sharingContentId === content.id && (
-                      <div className="border-t border-[#EAE6DF] bg-[#FCFAF6] p-4 sm:px-5">
+                      <div className="border-t border-[#EAE6DF] bg-gradient-to-br from-[#FFF7ED] to-white p-4 sm:p-5">
                         <div className="mb-3 flex items-start gap-3">
                           <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-[#FFE0D6] text-[#9F2D18]">
                             <Share2 size={17} />
@@ -1575,7 +1590,7 @@ export default function AdminContentPage() {
             )}
 
             {!loading && pagination.totalPages > 1 && (
-              <div className="mt-5 flex items-center justify-between gap-3 rounded-2xl border border-[#EAE6DF] bg-white p-3">
+              <div className="mt-5 flex items-center justify-between gap-2 rounded-2xl border border-[#EAE6DF] bg-white p-3 shadow-sm sm:gap-3 sm:p-4">
                 <button
                   type="button"
                   disabled={pagination.page <= 1}
@@ -1585,7 +1600,6 @@ export default function AdminContentPage() {
                       ...current,
                       page: nextPage,
                     }));
-                    void loadContents(nextPage);
                   }}
                   className="inline-flex h-10 items-center gap-2 rounded-xl border border-[#EAE6DF] px-3 text-xs font-bold text-[#6F675F] hover:bg-[#FCFAF6] disabled:cursor-not-allowed disabled:opacity-40"
                 >
@@ -1608,7 +1622,6 @@ export default function AdminContentPage() {
                       ...current,
                       page: nextPage,
                     }));
-                    void loadContents(nextPage);
                   }}
                   className="inline-flex h-10 items-center gap-2 rounded-xl border border-[#EAE6DF] px-3 text-xs font-bold text-[#6F675F] hover:bg-[#FCFAF6] disabled:cursor-not-allowed disabled:opacity-40"
                 >
