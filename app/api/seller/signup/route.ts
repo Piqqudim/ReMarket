@@ -1,4 +1,3 @@
-
 import { NextResponse } from "next/server";
 import bcrypt from "bcryptjs";
 
@@ -8,12 +7,23 @@ import {
   ReferralServiceError,
 } from "@/lib/referrals";
 
+const MIN_PASSWORD_LENGTH = 8;
+const MAX_BCRYPT_PASSWORD_BYTES = 72;
+const MAX_NAME_LENGTH = 200;
+const MAX_EMAIL_LENGTH = 320;
+
 function cleanString(value: unknown): string {
   return typeof value === "string"
     ? value.trim()
     : "";
 }
 
+/**
+ * Basic email validation.
+ *
+ * The database unique constraint remains the
+ * authoritative protection against duplicate accounts.
+ */
 function isValidEmail(email: string): boolean {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
 }
@@ -46,15 +56,61 @@ function isPrismaUniqueConstraintError(
   );
 }
 
+function isRequestTooLarge(request: Request): boolean {
+  const contentLength = request.headers.get("content-length");
+
+  if (contentLength === null) {
+    return false;
+  }
+
+  const parsedLength = Number(contentLength);
+
+  /*
+   * Reject malformed or unsafe Content-Length values.
+   */
+  if (
+    !Number.isSafeInteger(parsedLength) ||
+    parsedLength < 0
+  ) {
+    return true;
+  }
+
+  /*
+   * Signup JSON should be small. This limit also helps
+   * prevent unnecessarily large signup request bodies.
+   */
+  return parsedLength > 32 * 1024;
+}
+
 export async function POST(request: Request) {
   try {
+    if (isRequestTooLarge(request)) {
+      return NextResponse.json(
+        {
+          error: "Request body is too large.",
+        },
+        {
+          status: 413,
+          headers: jsonHeaders(),
+        }
+      );
+    }
+
+    /*
+     * -----------------------------------------
+     * PARSE REQUEST BODY
+     * -----------------------------------------
+     */
+
     let body: unknown;
 
     try {
       body = await request.json();
     } catch {
       return NextResponse.json(
-        { error: "Invalid JSON body." },
+        {
+          error: "Invalid JSON body.",
+        },
         {
           status: 400,
           headers: jsonHeaders(),
@@ -64,7 +120,9 @@ export async function POST(request: Request) {
 
     if (!isRecord(body)) {
       return NextResponse.json(
-        { error: "Invalid request body." },
+        {
+          error: "Invalid request body.",
+        },
         {
           status: 400,
           headers: jsonHeaders(),
@@ -72,9 +130,20 @@ export async function POST(request: Request) {
       );
     }
 
+    /*
+     * -----------------------------------------
+     * READ INPUTS
+     * -----------------------------------------
+     */
+
     const name = cleanString(body.name);
+
     const email = cleanString(body.email).toLowerCase();
 
+    /*
+     * Do not trim passwords. Spaces may be an
+     * intentional part of a user's password.
+     */
     const password =
       typeof body.password === "string"
         ? body.password
@@ -82,13 +151,15 @@ export async function POST(request: Request) {
 
     /*
      * -----------------------------------------
-     * VALIDATION
+     * VALIDATE NAME
      * -----------------------------------------
      */
 
     if (!name) {
       return NextResponse.json(
-        { error: "Name is required." },
+        {
+          error: "Name is required.",
+        },
         {
           status: 400,
           headers: jsonHeaders(),
@@ -96,19 +167,41 @@ export async function POST(request: Request) {
       );
     }
 
-    if (name.length > 200) {
+    if (name.length > MAX_NAME_LENGTH) {
       return NextResponse.json(
-        { error: "Name is too long." },
+        {
+          error: "Name is too long.",
+        },
         {
           status: 400,
           headers: jsonHeaders(),
         }
       );
     }
+
+    /*
+     * -----------------------------------------
+     * VALIDATE EMAIL
+     * -----------------------------------------
+     */
 
     if (!email) {
       return NextResponse.json(
-        { error: "Email is required." },
+        {
+          error: "Email is required.",
+        },
+        {
+          status: 400,
+          headers: jsonHeaders(),
+        }
+      );
+    }
+
+    if (email.length > MAX_EMAIL_LENGTH) {
+      return NextResponse.json(
+        {
+          error: "Email address is too long.",
+        },
         {
           status: 400,
           headers: jsonHeaders(),
@@ -118,39 +211,8 @@ export async function POST(request: Request) {
 
     if (!isValidEmail(email)) {
       return NextResponse.json(
-        { error: "Enter a valid email address." },
         {
-          status: 400,
-          headers: jsonHeaders(),
-        }
-      );
-    }
-
-    if (email.length > 320) {
-      return NextResponse.json(
-        { error: "Email address is too long." },
-        {
-          status: 400,
-          headers: jsonHeaders(),
-        }
-      );
-    }
-
-    if (!password) {
-      return NextResponse.json(
-        { error: "Password is required." },
-        {
-          status: 400,
-          headers: jsonHeaders(),
-        }
-      );
-    }
-
-    if (password.length < 8) {
-      return NextResponse.json(
-        {
-          error:
-            "Password must be at least 8 characters.",
+          error: "Enter a valid email address.",
         },
         {
           status: 400,
@@ -159,12 +221,52 @@ export async function POST(request: Request) {
       );
     }
 
-    // bcrypt only safely processes up to 72 password bytes.
-    if (password.length > 72) {
+    /*
+     * -----------------------------------------
+     * VALIDATE PASSWORD
+     * -----------------------------------------
+     */
+
+    if (!password) {
+      return NextResponse.json(
+        {
+          error: "Password is required.",
+        },
+        {
+          status: 400,
+          headers: jsonHeaders(),
+        }
+      );
+    }
+
+    if (password.length < MIN_PASSWORD_LENGTH) {
       return NextResponse.json(
         {
           error:
-            "Password must not exceed 72 characters.",
+            `Password must be at least ${MIN_PASSWORD_LENGTH} characters.`,
+        },
+        {
+          status: 400,
+          headers: jsonHeaders(),
+        }
+      );
+    }
+
+    /*
+     * Bcrypt's input limit is measured in bytes.
+     * Non-ASCII characters can use multiple UTF-8 bytes,
+     * so checking password.length alone is insufficient.
+     */
+    const passwordBytes = Buffer.byteLength(
+      password,
+      "utf8"
+    );
+
+    if (passwordBytes > MAX_BCRYPT_PASSWORD_BYTES) {
+      return NextResponse.json(
+        {
+          error:
+            "Password is too long. It must not exceed 72 UTF-8 bytes.",
         },
         {
           status: 400,
@@ -177,11 +279,20 @@ export async function POST(request: Request) {
      * -----------------------------------------
      * CHECK EXISTING ACCOUNT
      * -----------------------------------------
+     *
+     * This check provides a friendly response.
+     * The database unique constraint still handles
+     * simultaneous signup attempts safely.
      */
 
     const existingUser = await prisma.user.findUnique({
-      where: { email },
-      select: { id: true },
+      where: {
+        email,
+      },
+
+      select: {
+        id: true,
+      },
     });
 
     if (existingUser) {
@@ -203,20 +314,29 @@ export async function POST(request: Request) {
      * -----------------------------------------
      */
 
-    const passwordHash = await bcrypt.hash(password, 12);
+    const passwordHash = await bcrypt.hash(
+      password,
+      12
+    );
 
     /*
      * -----------------------------------------
      * CREATE SELLER AND ATTRIBUTE REFERRAL
      * -----------------------------------------
      *
-     * Both operations use the same transaction.
+     * Both operations take place in one transaction.
      *
-     * If referral validation or attribution fails,
-     * user creation rolls back too.
+     * If the supplied referral code is invalid,
+     * attachReferralAtSignup throws a
+     * ReferralServiceError and the new account
+     * is rolled back too.
      *
-     * Without a referralCode, registration continues
-     * normally.
+     * Referral codes are optional. Without one,
+     * seller registration proceeds normally.
+     *
+     * The role is deliberately assigned on the server:
+     * the client cannot use this endpoint to create
+     * an ADMIN account by supplying a different role.
      */
 
     const user = await prisma.$transaction(
@@ -228,6 +348,7 @@ export async function POST(request: Request) {
             password: passwordHash,
             role: "SELLER",
           },
+
           select: {
             id: true,
             name: true,
@@ -249,10 +370,12 @@ export async function POST(request: Request) {
       }
     );
 
+    /*
+     * Never return the password or password hash.
+     */
     return NextResponse.json(
       {
-        message:
-          "Seller account created successfully.",
+        message: "Seller account created successfully.",
         user,
       },
       {
@@ -262,8 +385,13 @@ export async function POST(request: Request) {
     );
   } catch (error) {
     /*
-     * A referral error rolls back the complete transaction.
+     * -----------------------------------------
+     * REFERRAL VALIDATION ERRORS
+     * -----------------------------------------
+     *
+     * The signup transaction has rolled back.
      */
+
     if (error instanceof ReferralServiceError) {
       return NextResponse.json(
         {
@@ -278,9 +406,14 @@ export async function POST(request: Request) {
     }
 
     /*
-     * The database unique constraint is authoritative
-     * if concurrent signup requests use the same email.
+     * -----------------------------------------
+     * UNIQUE CONSTRAINT
+     * -----------------------------------------
+     *
+     * Handles a duplicate email created by a
+     * concurrent signup request.
      */
+
     if (isPrismaUniqueConstraintError(error)) {
       return NextResponse.json(
         {
@@ -294,12 +427,14 @@ export async function POST(request: Request) {
       );
     }
 
-    console.error("Seller signup error:", error);
+    console.error(
+      "Seller signup error:",
+      error
+    );
 
     return NextResponse.json(
       {
-        error:
-          "Unable to create seller account.",
+        error: "Unable to create seller account.",
       },
       {
         status: 500,

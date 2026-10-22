@@ -1,4 +1,3 @@
-
 import {
   NextRequest,
   NextResponse,
@@ -50,6 +49,30 @@ const MAX_SOCIAL_HANDLE_LENGTH = 2000;
 
 const MAX_REQUEST_BODY_SIZE = 100 * 1024;
 
+const SUPPORTED_PATCH_FIELDS = new Set([
+  "name",
+  "ownerName",
+  "description",
+  "phone",
+  "imageUrl",
+  "availability",
+  "status",
+  "verification",
+  "locationVerification",
+  "priceMin",
+  "priceMax",
+  "area",
+  "address",
+  "street",
+  "houseNumber",
+  "city",
+  "lat",
+  "lng",
+  "long",
+  "categoryIds",
+  "socialLinks",
+]);
+
 function getNoStoreHeaders(): Headers {
   const headers = new Headers();
 
@@ -59,9 +82,7 @@ function getNoStoreHeaders(): Headers {
   return headers;
 }
 
-function cleanString(
-  value: unknown
-): string {
+function cleanString(value: unknown): string {
   return typeof value === "string"
     ? value.trim()
     : "";
@@ -75,6 +96,14 @@ function nullableString(
   return cleaned || null;
 }
 
+/**
+ * Accept numbers and numeric strings, but not booleans,
+ * arrays, objects, whitespace-only strings, decimals,
+ * negative prices, or values outside Prisma Int range.
+ *
+ * null means that the value is intentionally cleared.
+ * undefined means that the supplied value is invalid.
+ */
 function parseOptionalInt(
   value: unknown
 ): number | null | undefined {
@@ -86,13 +115,27 @@ function parseOptionalInt(
     return null;
   }
 
-  const parsed = Number(value);
-
-  if (!Number.isInteger(parsed)) {
+  if (
+    typeof value !== "number" &&
+    typeof value !== "string"
+  ) {
     return undefined;
   }
 
   if (
+    typeof value === "string" &&
+    value.trim() === ""
+  ) {
+    return undefined;
+  }
+
+  const parsed =
+    typeof value === "number"
+      ? value
+      : Number(value.trim());
+
+  if (
+    !Number.isSafeInteger(parsed) ||
     parsed < 0 ||
     parsed > MAX_PRISMA_INT
   ) {
@@ -102,6 +145,11 @@ function parseOptionalInt(
   return parsed;
 }
 
+/**
+ * Accept finite numbers and non-empty numeric strings.
+ * Coordinate range and coordinate-pair checks are
+ * enforced separately by the location handler.
+ */
 function parseOptionalFloat(
   value: unknown
 ): number | null | undefined {
@@ -113,22 +161,37 @@ function parseOptionalFloat(
     return null;
   }
 
-  const parsed = Number(value);
-
-  if (!Number.isFinite(parsed)) {
+  if (
+    typeof value !== "number" &&
+    typeof value !== "string"
+  ) {
     return undefined;
   }
 
-  return parsed;
+  if (
+    typeof value === "string" &&
+    value.trim() === ""
+  ) {
+    return undefined;
+  }
+
+  const parsed =
+    typeof value === "number"
+      ? value
+      : Number(value.trim());
+
+  return Number.isFinite(parsed)
+    ? parsed
+    : undefined;
 }
 
 function isAvailability(
   value: unknown
 ): value is Availability {
   return (
-    value === "AVAILABLE" ||
-    value === "ASK_SELLER" ||
-    value === "UNAVAILABLE"
+    value === Availability.AVAILABLE ||
+    value === Availability.ASK_SELLER ||
+    value === Availability.UNAVAILABLE
   );
 }
 
@@ -136,9 +199,9 @@ function isBusinessStatus(
   value: unknown
 ): value is BusinessStatus {
   return (
-    value === "ACTIVE" ||
-    value === "INACTIVE" ||
-    value === "PENDING"
+    value === BusinessStatus.ACTIVE ||
+    value === BusinessStatus.INACTIVE ||
+    value === BusinessStatus.PENDING
   );
 }
 
@@ -146,8 +209,8 @@ function isVerificationStatus(
   value: unknown
 ): value is VerificationStatus {
   return (
-    value === "VERIFIED" ||
-    value === "UNVERIFIED"
+    value === VerificationStatus.VERIFIED ||
+    value === VerificationStatus.UNVERIFIED
   );
 }
 
@@ -155,8 +218,8 @@ function isLocationVerificationStatus(
   value: unknown
 ): value is LocationVerificationStatus {
   return (
-    value === "VERIFIED" ||
-    value === "UNVERIFIED"
+    value === LocationVerificationStatus.VERIFIED ||
+    value === LocationVerificationStatus.UNVERIFIED
   );
 }
 
@@ -164,12 +227,12 @@ function isSocialPlatform(
   value: unknown
 ): value is SocialPlatform {
   return (
-    value === "WHATSAPP" ||
-    value === "INSTAGRAM" ||
-    value === "TIKTOK" ||
-    value === "FACEBOOK" ||
-    value === "PHONE" ||
-    value === "DIRECTIONS"
+    value === SocialPlatform.WHATSAPP ||
+    value === SocialPlatform.INSTAGRAM ||
+    value === SocialPlatform.TIKTOK ||
+    value === SocialPlatform.FACEBOOK ||
+    value === SocialPlatform.PHONE ||
+    value === SocialPlatform.DIRECTIONS
   );
 }
 
@@ -209,7 +272,7 @@ function normalizeWhatsApp(
 type ParsedSocialLink = {
   platform: SocialPlatform;
   handle: string;
-};
+}
 
 function parseSocialLinks(
   value: unknown
@@ -234,7 +297,8 @@ function parseSocialLinks(
       return null;
     }
 
-    const record = item as Record<string, unknown>;
+    const record =
+      item as Record<string, unknown>;
 
     if (!isSocialPlatform(record.platform)) {
       return null;
@@ -246,7 +310,9 @@ function parseSocialLinks(
       return null;
     }
 
-    if (record.platform === SocialPlatform.WHATSAPP) {
+    if (
+      record.platform === SocialPlatform.WHATSAPP
+    ) {
       handle = normalizeWhatsApp(handle);
     }
 
@@ -383,7 +449,7 @@ function parseStoredLocationAddress(
   }
 
   /*
-   * Remove Nigeria.
+   * Remove the country suffix.
    */
   if (
     parts[parts.length - 1].toLowerCase() ===
@@ -401,10 +467,11 @@ function parseStoredLocationAddress(
   }
 
   /*
-   * Remove the known Area wherever it appears
+   * Remove the stored area when it appears
    * as its own address component.
    */
-  const normalizedArea = area.trim().toLowerCase();
+  const normalizedArea =
+    area.trim().toLowerCase();
 
   if (normalizedArea) {
     const areaIndex = parts.findIndex(
@@ -438,6 +505,9 @@ function parseStoredLocationAddress(
 
     const looksLikeHouseNumber =
       /^\d+[A-Za-z]?(?:\s*[/-]\s*[\w-]+)?$/.test(
+        firstPart
+      ) ||
+      /^(?:shop|suite|unit|plot|house|block)\s*[\w-]+$/i.test(
         firstPart
       );
 
@@ -494,7 +564,11 @@ async function loadBusiness(id: string) {
         },
       },
 
-      socialLinks: true,
+      socialLinks: {
+        orderBy: {
+          platform: "asc",
+        },
+      },
     },
   });
 
@@ -523,10 +597,18 @@ function bodyTooLarge(
 
   const contentLength = Number(contentLengthHeader);
 
-  return (
-    Number.isFinite(contentLength) &&
-    contentLength > MAX_REQUEST_BODY_SIZE
-  );
+  /*
+   * Reject malformed or unsafe Content-Length values
+   * rather than assuming that an invalid value is safe.
+   */
+  if (
+    !Number.isSafeInteger(contentLength) ||
+    contentLength < 0
+  ) {
+    return true;
+  }
+
+  return contentLength > MAX_REQUEST_BODY_SIZE;
 }
 
 /*
@@ -534,23 +616,18 @@ function bodyTooLarge(
  * NOTIFICATIONS
  * ------------------------------------------------
  *
- * Notification failures must never cause a
- * successful business update to become a failed
- * request.
- *
- * Notifications are therefore sent only after
- * the database operation has completed.
+ * Notifications are sent only after the database
+ * operation succeeds. Notification failures must
+ * never reverse a successful business operation.
  */
 
-async function notifyBusinessOwner(
-  input: {
-    ownerId: string | null;
-    businessId: string;
-    type: NotificationType;
-    title: string;
-    message: string;
-  }
-): Promise<void> {
+async function notifyBusinessOwner(input: {
+  ownerId: string | null;
+  businessId: string;
+  type: NotificationType;
+  title: string;
+  message: string;
+}): Promise<void> {
   const ownerId = cleanString(input.ownerId);
 
   if (!ownerId) {
@@ -572,6 +649,40 @@ async function notifyBusinessOwner(
   } catch (error) {
     console.error(
       "Business owner notification error:",
+      error
+    );
+  }
+}
+
+/*
+ * ------------------------------------------------
+ * REFERRAL QUALIFICATION
+ * ------------------------------------------------
+ *
+ * This route does not calculate or directly create
+ * referral rewards. The referral service verifies
+ * eligibility and handles reward idempotency.
+ *
+ * Qualification errors must not reverse a successful
+ * business status change or restoration.
+ */
+
+async function tryQualifySellerReferral(
+  ownerId: string | null,
+  context: string
+): Promise<void> {
+  if (!ownerId) {
+    return;
+  }
+
+  try {
+    await qualifyReferralForUser(
+      ownerId,
+      "SELLER"
+    );
+  } catch (error) {
+    console.error(
+      `Seller referral qualification failed (${context}):`,
       error
     );
   }
@@ -770,7 +881,8 @@ export async function PATCH(
       );
     }
 
-    const payload = body as Record<string, unknown>;
+    const payload =
+      body as Record<string, unknown>;
 
     /*
      * -----------------------------------------
@@ -779,6 +891,19 @@ export async function PATCH(
      */
 
     if ("restore" in payload) {
+      if (Object.keys(payload).length !== 1) {
+        return NextResponse.json(
+          {
+            error:
+              "A restore request cannot include other updates.",
+          },
+          {
+            status: 400,
+            headers: getNoStoreHeaders(),
+          }
+        );
+      }
+
       if (payload.restore !== true) {
         return NextResponse.json(
           {
@@ -814,6 +939,26 @@ export async function PATCH(
           },
         });
 
+      /*
+       * A restored active business may already have
+       * an active product. Re-check the referred
+       * seller automatically after restoration.
+       *
+       * The service independently checks that the
+       * business is active, not deleted, and has
+       * the required qualifying product.
+       */
+      if (
+        restoredBusiness.status ===
+          BusinessStatus.ACTIVE &&
+        restoredBusiness.ownerId
+      ) {
+        await tryQualifySellerReferral(
+          restoredBusiness.ownerId,
+          "business restoration"
+        );
+      }
+
       const business = await loadBusiness(
         restoredBusiness.id
       );
@@ -839,6 +984,29 @@ export async function PATCH(
         },
         {
           status: 200,
+          headers: getNoStoreHeaders(),
+        }
+      );
+    }
+
+    /*
+     * Reject requests containing no recognized field.
+     * This prevents empty or unknown-only PATCH requests
+     * from being treated as successful updates.
+     */
+    const hasSupportedField =
+      Object.keys(payload).some((key) =>
+        SUPPORTED_PATCH_FIELDS.has(key)
+      );
+
+    if (!hasSupportedField) {
+      return NextResponse.json(
+        {
+          error:
+            "Provide at least one supported business field to update.",
+        },
+        {
+          status: 400,
           headers: getNoStoreHeaders(),
         }
       );
@@ -966,13 +1134,12 @@ export async function PATCH(
      * LEGACY PHONE
      * -----------------------------------------
      *
-     * The PHONE social link remains the source of
-     * truth when socialLinks are explicitly supplied.
-     *
-     * Business.phone is kept as a mirror.
+     * Business.phone is kept as a compatibility
+     * mirror of the PHONE social link.
      */
 
-    const legacyPhoneProvided = "phone" in payload;
+    const legacyPhoneProvided =
+      "phone" in payload;
 
     const legacyPhone = legacyPhoneProvided
       ? nullableString(payload.phone)
@@ -1167,12 +1334,14 @@ export async function PATCH(
      * -----------------------------------------
      */
 
-    const priceMinProvided = "priceMin" in payload;
-    const priceMaxProvided = "priceMax" in payload;
+    const priceMinProvided =
+      "priceMin" in payload;
 
-    const priceMin = parseOptionalInt(
-      payload.priceMin
-    );
+    const priceMaxProvided =
+      "priceMax" in payload;
+
+    const priceMin =
+      parseOptionalInt(payload.priceMin);
 
     if (priceMin === undefined) {
       return NextResponse.json(
@@ -1187,9 +1356,8 @@ export async function PATCH(
       );
     }
 
-    const priceMax = parseOptionalInt(
-      payload.priceMax
-    );
+    const priceMax =
+      parseOptionalInt(payload.priceMax);
 
     if (priceMax === undefined) {
       return NextResponse.json(
@@ -1222,7 +1390,9 @@ export async function PATCH(
 
     if (
       finalPriceMin !== null &&
+      finalPriceMin !== undefined &&
       finalPriceMax !== null &&
+      finalPriceMax !== undefined &&
       finalPriceMin > finalPriceMax
     ) {
       return NextResponse.json(
@@ -1253,8 +1423,11 @@ export async function PATCH(
       "lng" in payload ||
       "long" in payload;
 
-    const categoryIdsProvided = "categoryIds" in payload;
-    const socialLinksProvided = "socialLinks" in payload;
+    const categoryIdsProvided =
+      "categoryIds" in payload;
+
+    const socialLinksProvided =
+      "socialLinks" in payload;
 
     /*
      * -----------------------------------------
@@ -1296,7 +1469,9 @@ export async function PATCH(
             },
           });
 
-        if (categories.length !== categoryIds.length) {
+        if (
+          categories.length !== categoryIds.length
+        ) {
           return NextResponse.json(
             {
               error:
@@ -1328,7 +1503,7 @@ export async function PATCH(
         return NextResponse.json(
           {
             error:
-              "socialLinks must be an array containing no more than 6 valid links.",
+              "socialLinks must be an array containing no more than 6 valid links, with no duplicate platforms.",
           },
           {
             status: 400,
@@ -1337,9 +1512,8 @@ export async function PATCH(
         );
       }
 
-      const phoneFromSocial = getPhoneFromSocialLinks(
-        socialLinks
-      );
+      const phoneFromSocial =
+        getPhoneFromSocialLinks(socialLinks);
 
       if (
         phoneFromSocial &&
@@ -1357,18 +1531,18 @@ export async function PATCH(
       }
 
       /*
-       * PHONE social link is authoritative.
-       *
-       * Business.phone remains its compatibility mirror.
+       * The PHONE social link is authoritative.
+       * Business.phone remains its mirror.
        */
       if (phoneFromSocial) {
         data.phone = phoneFromSocial;
       } else if (legacyPhoneProvided) {
-        /*
-         * Keep legacy phone compatible by creating
-         * the canonical PHONE social link.
-         */
         if (legacyPhone) {
+          /*
+           * The parser allows only one entry per
+           * platform. A blank PHONE entry is skipped,
+           * so this will not create a duplicate.
+           */
           socialLinks.push({
             platform: SocialPlatform.PHONE,
             handle: legacyPhone,
@@ -1378,8 +1552,8 @@ export async function PATCH(
         data.phone = legacyPhone;
       } else {
         /*
-         * socialLinks was explicitly supplied without a
-         * PHONE link or legacy phone. PHONE is removed.
+         * socialLinks was supplied without PHONE and
+         * without a legacy phone value; remove PHONE.
          */
         data.phone = null;
       }
@@ -1457,14 +1631,13 @@ export async function PATCH(
         parsedExistingAddress.street;
 
       /*
-       * -----------------------------------------
        * AREA
-       * -----------------------------------------
        */
 
-      requestedArea = "area" in payload
-        ? cleanString(payload.area)
-        : currentArea;
+      requestedArea =
+        "area" in payload
+          ? cleanString(payload.area)
+          : currentArea;
 
       if (!requestedArea) {
         return NextResponse.json(
@@ -1478,7 +1651,9 @@ export async function PATCH(
         );
       }
 
-      if (requestedArea.length > MAX_AREA_LENGTH) {
+      if (
+        requestedArea.length > MAX_AREA_LENGTH
+      ) {
         return NextResponse.json(
           {
             error: "Business area is too long.",
@@ -1491,14 +1666,17 @@ export async function PATCH(
       }
 
       /*
-       * -----------------------------------------
        * STRUCTURED LOCATION
-       * -----------------------------------------
        */
 
-      const streetProvided = "street" in payload;
-      const houseNumberProvided = "houseNumber" in payload;
-      const cityProvided = "city" in payload;
+      const streetProvided =
+        "street" in payload;
+
+      const houseNumberProvided =
+        "houseNumber" in payload;
+
+      const cityProvided =
+        "city" in payload;
 
       const structuredLocationWasProvided =
         streetProvided ||
@@ -1506,19 +1684,24 @@ export async function PATCH(
         cityProvided;
 
       if (structuredLocationWasProvided) {
-        const resultingStreet = streetProvided
-          ? cleanString(payload.street)
-          : existingStreet;
+        const resultingStreet =
+          streetProvided
+            ? cleanString(payload.street)
+            : existingStreet;
 
-        const resultingHouseNumber = houseNumberProvided
-          ? cleanString(payload.houseNumber)
-          : parsedExistingAddress.houseNumber;
+        const resultingHouseNumber =
+          houseNumberProvided
+            ? cleanString(payload.houseNumber)
+            : parsedExistingAddress.houseNumber;
 
-        const resultingCity = cityProvided
-          ? cleanString(payload.city)
-          : parsedExistingAddress.city;
+        const resultingCity =
+          cityProvided
+            ? cleanString(payload.city)
+            : parsedExistingAddress.city;
 
-        if (resultingStreet.length > MAX_STREET_LENGTH) {
+        if (
+          resultingStreet.length > MAX_STREET_LENGTH
+        ) {
           return NextResponse.json(
             {
               error: "Business street is too long.",
@@ -1546,7 +1729,9 @@ export async function PATCH(
           );
         }
 
-        if (resultingCity.length > MAX_CITY_LENGTH) {
+        if (
+          resultingCity.length > MAX_CITY_LENGTH
+        ) {
           return NextResponse.json(
             {
               error: "Business city is too long.",
@@ -1561,7 +1746,8 @@ export async function PATCH(
         if (!resultingStreet) {
           return NextResponse.json(
             {
-              error: "Street, road, or close is required.",
+              error:
+                "Street, road, or close is required.",
             },
             {
               status: 400,
@@ -1572,11 +1758,6 @@ export async function PATCH(
 
         requestedStreet = resultingStreet;
 
-        /*
-         * Canonical address:
-         *
-         * House Number, Street, Area, City, Nigeria
-         */
         requestedAddress = composeLocationAddress(
           resultingHouseNumber,
           resultingStreet,
@@ -1585,19 +1766,37 @@ export async function PATCH(
         );
       } else {
         /*
-         * Address-only / legacy caller.
+         * Address-only / legacy update.
+         *
+         * Important correction:
+         * if only the area changes, rebuild the address
+         * from the recoverable structured parts instead
+         * of retaining the old area in the address.
          */
-        requestedAddress = "address" in payload
-          ? nullableString(payload.address)
-          : currentAddress;
+        const addressWasProvided =
+          "address" in payload;
+
+        if (addressWasProvided) {
+          requestedAddress = nullableString(
+            payload.address
+          );
+        } else if (
+          requestedArea !== currentArea &&
+          existingStreet
+        ) {
+          requestedAddress = composeLocationAddress(
+            parsedExistingAddress.houseNumber,
+            existingStreet,
+            requestedArea,
+            parsedExistingAddress.city
+          );
+        } else {
+          requestedAddress = currentAddress;
+        }
 
         requestedStreet = existingStreet || null;
       }
 
-      /*
-       * The check explicitly excludes both null
-       * and undefined.
-       */
       if (
         requestedAddress != null &&
         requestedAddress.length > MAX_ADDRESS_LENGTH
@@ -1614,14 +1813,13 @@ export async function PATCH(
       }
 
       /*
-       * -----------------------------------------
        * COORDINATES
-       * -----------------------------------------
        */
 
-      requestedLat = "lat" in payload
-        ? parseOptionalFloat(payload.lat)
-        : currentLat;
+      requestedLat =
+        "lat" in payload
+          ? parseOptionalFloat(payload.lat)
+          : currentLat;
 
       if (requestedLat === undefined) {
         return NextResponse.json(
@@ -1651,11 +1849,12 @@ export async function PATCH(
         );
       }
 
-      requestedLong = "long" in payload
-        ? parseOptionalFloat(payload.long)
-        : "lng" in payload
-          ? parseOptionalFloat(payload.lng)
-          : currentLong;
+      requestedLong =
+        "long" in payload
+          ? parseOptionalFloat(payload.long)
+          : "lng" in payload
+            ? parseOptionalFloat(payload.lng)
+            : currentLong;
 
       if (requestedLong === undefined) {
         return NextResponse.json(
@@ -1669,9 +1868,6 @@ export async function PATCH(
         );
       }
 
-      /*
-       * Coordinates must always exist as a pair.
-       */
       if (
         (requestedLat === null) !==
         (requestedLong === null)
@@ -1697,7 +1893,8 @@ export async function PATCH(
       ) {
         return NextResponse.json(
           {
-            error: "Latitude must be between -90 and 90.",
+            error:
+              "Latitude must be between -90 and 90.",
           },
           {
             status: 400,
@@ -1726,9 +1923,7 @@ export async function PATCH(
       }
 
       /*
-       * -----------------------------------------
        * DETERMINE LOCATION CHANGES
-       * -----------------------------------------
        */
 
       const areaChanged =
@@ -1749,13 +1944,11 @@ export async function PATCH(
       resolvedStreet = requestedStreet ?? null;
 
       /*
-       * -----------------------------------------
        * RE-GEOCODE CHANGED LOCATION
-       * -----------------------------------------
        *
-       * If the address/area/street changed without
-       * newly supplied coordinates, the old
-       * coordinates must not be retained.
+       * If the address, area, or street changed without
+       * fresh coordinates, do not retain coordinates
+       * that may belong to the previous location.
        */
 
       if (
@@ -1779,7 +1972,7 @@ export async function PATCH(
               const geocoded =
                 await geocodeBusinessLocation({
                   address: requestedAddress,
-                  area: requestedArea!,
+                  area: requestedArea,
                 });
 
               resolvedLat = geocoded.latitude;
@@ -1794,10 +1987,6 @@ export async function PATCH(
                 error
               );
 
-              /*
-               * Never retain stale coordinates from
-               * the previous physical location.
-               */
               resolvedLat = null;
               resolvedLong = null;
             }
@@ -1813,16 +2002,10 @@ export async function PATCH(
         }
       }
 
-      /*
-       * If only the stored street changed, preserve
-       * the newly requested street.
-       */
       if (
         streetChanged &&
-        !(
-          areaChanged ||
-          addressChanged
-        )
+        !areaChanged &&
+        !addressChanged
       ) {
         resolvedStreet = requestedStreet ?? null;
       }
@@ -1837,7 +2020,7 @@ export async function PATCH(
     }
 
     /*
-     * A location verification request needs an
+     * A location-verification request needs an
      * existing or newly supplied location.
      */
     if (
@@ -1865,9 +2048,7 @@ export async function PATCH(
 
     await prisma.$transaction(async (tx) => {
       /*
-       * -----------------------------------------
        * LOCATION
-       * -----------------------------------------
        */
 
       if (
@@ -1875,9 +2056,8 @@ export async function PATCH(
         locationChanged
       ) {
         /*
-         * Any physical location change creates
-         * a fresh Location record and resets
-         * location verification.
+         * A physical location change creates a new
+         * Location record and resets its verification.
          */
         const location = await tx.location.create({
           data: {
@@ -1909,11 +2089,7 @@ export async function PATCH(
       }
 
       /*
-       * -----------------------------------------
        * BUSINESS
-       * -----------------------------------------
-       *
-       * Only validated fields are passed to Prisma.
        */
 
       await tx.business.update({
@@ -1925,9 +2101,7 @@ export async function PATCH(
       });
 
       /*
-       * -----------------------------------------
        * CATEGORIES
-       * -----------------------------------------
        */
 
       if (categoryIdsProvided) {
@@ -1937,7 +2111,10 @@ export async function PATCH(
           },
         });
 
-        if (categoryIds && categoryIds.length > 0) {
+        if (
+          categoryIds &&
+          categoryIds.length > 0
+        ) {
           await tx.businessCategory.createMany({
             data: categoryIds.map((categoryId) => ({
               businessId: id,
@@ -1950,14 +2127,12 @@ export async function PATCH(
       }
 
       /*
-       * -----------------------------------------
        * SOCIAL LINKS
-       * -----------------------------------------
        */
 
       if (socialLinksProvided) {
         /*
-         * socialLinks is a full replacement.
+         * Explicit socialLinks means full replacement.
          */
         await tx.businessSocialLink.deleteMany({
           where: {
@@ -1965,7 +2140,10 @@ export async function PATCH(
           },
         });
 
-        if (socialLinks && socialLinks.length > 0) {
+        if (
+          socialLinks &&
+          socialLinks.length > 0
+        ) {
           await tx.businessSocialLink.createMany({
             data: socialLinks.map((link) => ({
               businessId: id,
@@ -1978,8 +2156,8 @@ export async function PATCH(
         }
       } else if (legacyPhoneProvided) {
         /*
-         * Legacy callers can still update only the
-         * phone number. Keep PHONE social link synced.
+         * Legacy callers may update only the phone.
+         * Keep the PHONE social link synchronized.
          */
         await tx.businessSocialLink.deleteMany({
           where: {
@@ -2023,7 +2201,7 @@ export async function PATCH(
 
     /*
      * -----------------------------------------
-     * BUSINESS STATUS
+     * RESULTING STATUS
      * -----------------------------------------
      */
 
@@ -2035,49 +2213,43 @@ export async function PATCH(
 
     /*
      * -----------------------------------------
-     * SELLER REFERRAL QUALIFICATION
+     * AUTOMATIC SELLER REFERRAL QUALIFICATION
      * -----------------------------------------
      *
-     * Check qualification when a seller-owned business
-     * changes from PENDING to ACTIVE.
+     * Re-check when a non-active business becomes active.
      *
-     * The referral service independently verifies that
-     * the referred seller has an active, non-deleted
-     * business and the required active product.
+     * This covers both:
+     * - PENDING -> ACTIVE
+     * - INACTIVE -> ACTIVE
      *
-     * Admin-created businesses without ownerId cannot
-     * qualify a seller referral through this block.
+     * The referral service independently verifies the
+     * referred seller's current role, active non-deleted
+     * business, and qualifying product requirement.
      *
-     * Qualification errors must not reverse a successful
-     * approval. A still-pending referral can be checked
-     * again when the seller creates a qualifying product.
+     * This call does not approve or qualify a referral
+     * simply because an admin sets status to ACTIVE.
+     * The referral service remains the authority.
      */
 
+    const becameActive =
+      existing.status !== BusinessStatus.ACTIVE &&
+      resultingStatus === BusinessStatus.ACTIVE;
+
     if (
-      existing.status === BusinessStatus.PENDING &&
-      resultingStatus === BusinessStatus.ACTIVE &&
+      becameActive &&
+      !existing.deletedAt &&
       existing.ownerId
     ) {
-      try {
-        await qualifyReferralForUser(
-          existing.ownerId,
-          "SELLER"
-        );
-      } catch (qualificationError) {
-        console.error(
-          "Seller referral qualification after business approval failed:",
-          qualificationError
-        );
-      }
+      await tryQualifySellerReferral(
+        existing.ownerId,
+        "business activation"
+      );
     }
 
     /*
      * -----------------------------------------
      * BUSINESS STATUS NOTIFICATIONS
      * -----------------------------------------
-     *
-     * Only notify when an actual lifecycle
-     * transition happened.
      */
 
     /*
@@ -2102,7 +2274,7 @@ export async function PATCH(
     /*
      * PENDING -> INACTIVE
      *
-     * Business not approved.
+     * Business was not approved.
      */
     if (
       existing.status === BusinessStatus.PENDING &&
@@ -2140,12 +2312,14 @@ export async function PATCH(
     /*
      * UNVERIFIED -> VERIFIED
      *
-     * This refers specifically to Business.verification.
-     * Location.verification remains separate.
+     * Business verification is distinct from
+     * location verification.
      */
     if (
-      existing.verification === VerificationStatus.UNVERIFIED &&
-      resultingVerification === VerificationStatus.VERIFIED
+      existing.verification ===
+        VerificationStatus.UNVERIFIED &&
+      resultingVerification ===
+        VerificationStatus.VERIFIED
     ) {
       await notifyBusinessOwner({
         ownerId: existing.ownerId,
@@ -2173,6 +2347,41 @@ export async function PATCH(
       error
     );
 
+    if (
+      typeof error === "object" &&
+      error !== null &&
+      "code" in error &&
+      error.code === "P2025"
+    ) {
+      return NextResponse.json(
+        {
+          error: "Business could not be found.",
+        },
+        {
+          status: 404,
+          headers: getNoStoreHeaders(),
+        }
+      );
+    }
+
+    if (
+      typeof error === "object" &&
+      error !== null &&
+      "code" in error &&
+      error.code === "P2002"
+    ) {
+      return NextResponse.json(
+        {
+          error:
+            "The update conflicts with an existing record.",
+        },
+        {
+          status: 409,
+          headers: getNoStoreHeaders(),
+        }
+      );
+    }
+
     return NextResponse.json(
       {
         error: "Unable to update business.",
@@ -2192,8 +2401,9 @@ export async function PATCH(
  *
  * DELETE /api/admin/businesses/[id]
  *
- * This does NOT physically remove the business.
- * It only sets deletedAt.
+ * This does not physically remove the database record.
+ * It sets deletedAt, making the business unavailable
+ * where public queries exclude soft-deleted businesses.
  */
 
 export async function DELETE(
@@ -2270,25 +2480,37 @@ export async function DELETE(
       );
     }
 
-    const business = await prisma.business.update({
-      where: {
-        id,
-      },
+    /*
+     * Conditional update protects against two concurrent
+     * requests attempting to delete the same business.
+     */
+    const deleteResult =
+      await prisma.business.updateMany({
+        where: {
+          id,
+          deletedAt: null,
+        },
 
-      data: {
-        deletedAt: new Date(),
-      },
+        data: {
+          deletedAt: new Date(),
+        },
+      });
 
-      select: {
-        id: true,
-        name: true,
-        deletedAt: true,
-      },
-    });
+    if (deleteResult.count !== 1) {
+      return NextResponse.json(
+        {
+          error:
+            "The business was already deleted or changed. Reload and try again.",
+        },
+        {
+          status: 409,
+          headers: getNoStoreHeaders(),
+        }
+      );
+    }
 
     /*
-     * Notify the seller after the soft delete
-     * succeeds.
+     * Notify the owner only after the soft delete succeeds.
      */
     await notifyBusinessOwner({
       ownerId: existing.ownerId,
@@ -2303,7 +2525,12 @@ export async function DELETE(
       {
         success: true,
         deleted: true,
-        business,
+
+        business: {
+          id: existing.id,
+          name: existing.name,
+          deletedAt: new Date(),
+        },
       },
       {
         status: 200,

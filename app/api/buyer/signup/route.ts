@@ -1,4 +1,3 @@
-
 import { NextResponse } from "next/server";
 import bcrypt from "bcryptjs";
 
@@ -7,6 +6,12 @@ import {
   attachReferralAtSignup,
   ReferralServiceError,
 } from "@/lib/referrals";
+
+const MIN_PASSWORD_LENGTH = 8;
+const MAX_BCRYPT_PASSWORD_BYTES = 72;
+const MAX_NAME_LENGTH = 100;
+const MAX_EMAIL_LENGTH = 320;
+const MAX_REQUEST_BODY_SIZE = 32 * 1024;
 
 function cleanString(value: unknown): string {
   return typeof value === "string"
@@ -46,8 +51,46 @@ function isPrismaUniqueConstraintError(
   );
 }
 
+function isRequestTooLarge(request: Request): boolean {
+  const contentLength =
+    request.headers.get("content-length");
+
+  if (contentLength === null) {
+    return false;
+  }
+
+  const parsedLength = Number(contentLength);
+
+  if (
+    !Number.isSafeInteger(parsedLength) ||
+    parsedLength < 0
+  ) {
+    return true;
+  }
+
+  return parsedLength > MAX_REQUEST_BODY_SIZE;
+}
+
 export async function POST(request: Request) {
   try {
+    /*
+     * -----------------------------------------
+     * REQUEST SIZE
+     * -----------------------------------------
+     */
+
+    if (isRequestTooLarge(request)) {
+      return NextResponse.json(
+        {
+          error: "Request body is too large.",
+        },
+        {
+          status: 413,
+          headers: jsonHeaders(),
+        }
+      );
+    }
+
     /*
      * -----------------------------------------
      * PARSE REQUEST BODY
@@ -60,7 +103,9 @@ export async function POST(request: Request) {
       body = await request.json();
     } catch {
       return NextResponse.json(
-        { error: "Invalid request body." },
+        {
+          error: "Invalid JSON body.",
+        },
         {
           status: 400,
           headers: jsonHeaders(),
@@ -70,7 +115,9 @@ export async function POST(request: Request) {
 
     if (!isRecord(body)) {
       return NextResponse.json(
-        { error: "Invalid request body." },
+        {
+          error: "Invalid request body.",
+        },
         {
           status: 400,
           headers: jsonHeaders(),
@@ -78,9 +125,21 @@ export async function POST(request: Request) {
       );
     }
 
-    const name = cleanString(body.name);
-    const email = cleanString(body.email).toLowerCase();
+    /*
+     * -----------------------------------------
+     * READ INPUTS
+     * -----------------------------------------
+     */
 
+    const name = cleanString(body.name);
+
+    const email = cleanString(body.email)
+      .toLowerCase();
+
+    /*
+     * Do not trim passwords. Spaces may be
+     * an intentional part of the password.
+     */
     const password =
       typeof body.password === "string"
         ? body.password
@@ -88,13 +147,15 @@ export async function POST(request: Request) {
 
     /*
      * -----------------------------------------
-     * VALIDATION
+     * VALIDATE NAME
      * -----------------------------------------
      */
 
     if (!name) {
       return NextResponse.json(
-        { error: "Name is required." },
+        {
+          error: "Name is required.",
+        },
         {
           status: 400,
           headers: jsonHeaders(),
@@ -102,19 +163,41 @@ export async function POST(request: Request) {
       );
     }
 
-    if (name.length > 100) {
+    if (name.length > MAX_NAME_LENGTH) {
       return NextResponse.json(
-        { error: "Name is too long." },
+        {
+          error: "Name is too long.",
+        },
         {
           status: 400,
           headers: jsonHeaders(),
         }
       );
     }
+
+    /*
+     * -----------------------------------------
+     * VALIDATE EMAIL
+     * -----------------------------------------
+     */
 
     if (!email) {
       return NextResponse.json(
-        { error: "Email address is required." },
+        {
+          error: "Email address is required.",
+        },
+        {
+          status: 400,
+          headers: jsonHeaders(),
+        }
+      );
+    }
+
+    if (email.length > MAX_EMAIL_LENGTH) {
+      return NextResponse.json(
+        {
+          error: "Email address is too long.",
+        },
         {
           status: 400,
           headers: jsonHeaders(),
@@ -124,38 +207,8 @@ export async function POST(request: Request) {
 
     if (!isValidEmail(email)) {
       return NextResponse.json(
-        { error: "Enter a valid email address." },
         {
-          status: 400,
-          headers: jsonHeaders(),
-        }
-      );
-    }
-
-    if (email.length > 320) {
-      return NextResponse.json(
-        { error: "Email address is too long." },
-        {
-          status: 400,
-          headers: jsonHeaders(),
-        }
-      );
-    }
-
-    if (!password) {
-      return NextResponse.json(
-        { error: "Password is required." },
-        {
-          status: 400,
-          headers: jsonHeaders(),
-        }
-      );
-    }
-
-    if (password.length < 8) {
-      return NextResponse.json(
-        {
-          error: "Password must be at least 8 characters.",
+          error: "Enter a valid email address.",
         },
         {
           status: 400,
@@ -164,9 +217,58 @@ export async function POST(request: Request) {
       );
     }
 
-    if (password.length > 100) {
+    /*
+     * -----------------------------------------
+     * VALIDATE PASSWORD
+     * -----------------------------------------
+     */
+
+    if (!password) {
       return NextResponse.json(
-        { error: "Password is too long." },
+        {
+          error: "Password is required.",
+        },
+        {
+          status: 400,
+          headers: jsonHeaders(),
+        }
+      );
+    }
+
+    if (
+      Array.from(password).length <
+      MIN_PASSWORD_LENGTH
+    ) {
+      return NextResponse.json(
+        {
+          error:
+            `Password must be at least ${MIN_PASSWORD_LENGTH} characters.`,
+        },
+        {
+          status: 400,
+          headers: jsonHeaders(),
+        }
+      );
+    }
+
+    /*
+     * Bcrypt's input limit is measured in UTF-8 bytes,
+     * not JavaScript string characters.
+     */
+    const passwordBytes = Buffer.byteLength(
+      password,
+      "utf8"
+    );
+
+    if (
+      passwordBytes >
+      MAX_BCRYPT_PASSWORD_BYTES
+    ) {
+      return NextResponse.json(
+        {
+          error:
+            "Password is too long. It must not exceed 72 UTF-8 bytes.",
+        },
         {
           status: 400,
           headers: jsonHeaders(),
@@ -178,16 +280,22 @@ export async function POST(request: Request) {
      * -----------------------------------------
      * CHECK EXISTING ACCOUNT
      * -----------------------------------------
+     *
+     * This check provides a friendly response.
+     * The database unique constraint still protects
+     * against concurrent duplicate signup requests.
      */
 
-    const existingUser = await prisma.user.findUnique({
-      where: {
-        email,
-      },
-      select: {
-        id: true,
-      },
-    });
+    const existingUser =
+      await prisma.user.findUnique({
+        where: {
+          email,
+        },
+
+        select: {
+          id: true,
+        },
+      });
 
     if (existingUser) {
       return NextResponse.json(
@@ -218,15 +326,18 @@ export async function POST(request: Request) {
      * CREATE BUYER AND ATTRIBUTE REFERRAL
      * -----------------------------------------
      *
-     * The account and its referral attribution are
-     * created in one transaction.
+     * The new account and its referral attribution
+     * are created inside the same transaction.
      *
-     * If the supplied referral code is invalid,
-     * the transaction rolls back and no account
-     * is left partially created.
+     * If a supplied referral code is invalid,
+     * attachReferralAtSignup throws and the
+     * transaction rolls back.
      *
-     * Referral codes are optional, so ordinary
-     * registration continues to work unchanged.
+     * Referral codes are optional. Ordinary buyer
+     * signup continues to work without one.
+     *
+     * The role is set on the server. A client cannot
+     * create an administrator by supplying another role.
      */
 
     const user = await prisma.$transaction(
@@ -238,6 +349,7 @@ export async function POST(request: Request) {
             password: hashedPassword,
             role: "BUYER",
           },
+
           select: {
             id: true,
             name: true,
@@ -260,11 +372,14 @@ export async function POST(request: Request) {
     );
 
     /*
-     * Preserve the existing behavior:
-     * the buyer signs in separately.
+     * -----------------------------------------
+     * SUCCESS
+     * -----------------------------------------
      *
-     * Password hashes and referral records are
-     * never returned to the client.
+     * Preserve the existing behavior: the buyer
+     * signs in separately after signup.
+     *
+     * Never return the password or password hash.
      */
 
     return NextResponse.json(
@@ -279,6 +394,12 @@ export async function POST(request: Request) {
       }
     );
   } catch (error) {
+    /*
+     * -----------------------------------------
+     * REFERRAL VALIDATION ERRORS
+     * -----------------------------------------
+     */
+
     if (error instanceof ReferralServiceError) {
       return NextResponse.json(
         {
@@ -291,6 +412,15 @@ export async function POST(request: Request) {
         }
       );
     }
+
+    /*
+     * -----------------------------------------
+     * UNIQUE CONSTRAINT ERRORS
+     * -----------------------------------------
+     *
+     * The database is authoritative if concurrent
+     * requests attempt to register the same email.
+     */
 
     if (isPrismaUniqueConstraintError(error)) {
       return NextResponse.json(
@@ -305,7 +435,10 @@ export async function POST(request: Request) {
       );
     }
 
-    console.error("Buyer signup error:", error);
+    console.error(
+      "Buyer signup error:",
+      error
+    );
 
     return NextResponse.json(
       {

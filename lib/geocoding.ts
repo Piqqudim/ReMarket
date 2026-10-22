@@ -25,10 +25,7 @@ export type ReverseGeocodeLocationResult = {
   formattedAddress: string | null;
 };
 
-type NominatimAddress = Record<
-  string,
-  unknown
->;
+type NominatimAddress = Record<string, unknown>;
 
 type NominatimResult = {
   lat?: unknown;
@@ -40,10 +37,7 @@ type NominatimResult = {
   address?: NominatimAddress;
 };
 
-type EsriAddress = Record<
-  string,
-  unknown
->;
+type EsriAddress = Record<string, unknown>;
 
 type EsriReverseResult = {
   address?: EsriAddress;
@@ -85,51 +79,48 @@ const NOMINATIM_TIMEOUT_MS = 10_000;
  */
 const ESRI_TIMEOUT_MS = 10_000;
 
-const PRECISE_TYPES =
-  new Set([
-    "house",
-    "building",
-    "commercial",
-    "industrial",
-    "retail",
-    "shop",
-    "office",
-    "amenity",
-    "craft",
-    "tourism",
-  ]);
+const PRECISE_TYPES = new Set([
+  "house",
+  "building",
+  "commercial",
+  "industrial",
+  "retail",
+  "shop",
+  "office",
+  "amenity",
+  "craft",
+  "tourism",
+]);
 
-const BROAD_TYPES =
-  new Set([
-    "city",
-    "town",
-    "village",
-    "suburb",
-    "neighbourhood",
-    "quarter",
-    "district",
-    "county",
-    "state",
-    "region",
-    "road",
-    "residential",
-  ]);
+const BROAD_TYPES = new Set([
+  "city",
+  "town",
+  "village",
+  "suburb",
+  "neighbourhood",
+  "quarter",
+  "district",
+  "county",
+  "state",
+  "region",
+  "road",
+  "residential",
+]);
 
-const LOCALITY_ADDRESS_KEYS =
-  new Set([
-    "suburb",
-    "neighbourhood",
-    "quarter",
-    "village",
-    "town",
-    "city",
-    "municipality",
-    "district",
-    "city_district",
-    "county",
-    "state_district",
-    "region",
-  ]);
+const LOCALITY_ADDRESS_KEYS = new Set([
+  "suburb",
+  "neighbourhood",
+  "quarter",
+  "village",
+  "town",
+  "city",
+  "municipality",
+  "district",
+  "city_district",
+  "county",
+  "state_district",
+  "region",
+]);
 
 function cleanPart(
   value: string | null | undefined
@@ -144,19 +135,10 @@ function normalizeComparableText(
 ): string {
   return value
     .normalize("NFKD")
-    .replace(
-      /[\u0300-\u036f]/g,
-      ""
-    )
+    .replace(/[\u0300-\u036f]/g, "")
     .toLowerCase()
-    .replace(
-      /[^a-z0-9]+/g,
-      " "
-    )
-    .replace(
-      /\s+/g,
-      " "
-    )
+    .replace(/[^a-z0-9]+/g, " ")
+    .replace(/\s+/g, " ")
     .trim();
 }
 
@@ -165,26 +147,17 @@ function containsPart(
   part: string
 ): boolean {
   const normalizedValue =
-    normalizeComparableText(
-      value
-    );
+    normalizeComparableText(value);
 
   const normalizedPart =
-    normalizeComparableText(
-      part
-    );
+    normalizeComparableText(part);
 
-  if (
-    !normalizedValue ||
-    !normalizedPart
-  ) {
+  if (!normalizedValue || !normalizedPart) {
     return false;
   }
 
-  return (
-    ` ${normalizedValue} `.includes(
-      ` ${normalizedPart} `
-    )
+  return (` ${normalizedValue} `).includes(
+    ` ${normalizedPart} `
   );
 }
 
@@ -213,14 +186,9 @@ function isValidLongitude(
 function buildQuery(
   input: GeocodeBusinessLocationInput
 ): string {
-  const address =
-    cleanPart(input.address);
-
-  const area =
-    cleanPart(input.area);
-
-  const city =
-    cleanPart(input.city);
+  const address = cleanPart(input.address);
+  const area = cleanPart(input.area);
+  const city = cleanPart(input.city);
 
   const parts: string[] = [];
 
@@ -228,26 +196,14 @@ function buildQuery(
     parts.push(address);
   }
 
-  if (
-    area &&
-    !containsPart(
-      address,
-      area
-    )
-  ) {
+  if (area && !containsPart(address, area)) {
     parts.push(area);
   }
 
   if (
     city &&
-    !containsPart(
-      address,
-      city
-    ) &&
-    !containsPart(
-      area,
-      city
-    )
+    !containsPart(address, city) &&
+    !containsPart(area, city)
   ) {
     parts.push(city);
   }
@@ -261,10 +217,7 @@ function buildQuery(
   return Array.from(
     new Set(
       parts
-        .map(
-          (part) =>
-            part.trim()
-        )
+        .map((part) => part.trim())
         .filter(Boolean)
     )
   ).join(", ");
@@ -273,22 +226,18 @@ function buildQuery(
 function hasHouseNumber(
   result: NominatimResult
 ): boolean {
-  const houseNumber =
-    result.address?.house_number;
+  const houseNumber = result.address?.house_number;
 
   return (
-    typeof houseNumber ===
-      "string" &&
-    houseNumber.trim()
-      .length > 0
+    typeof houseNumber === "string" &&
+    houseNumber.trim().length > 0
   );
 }
 
 function hasStreet(
   result: NominatimResult
 ): boolean {
-  const road =
-    result.address?.road;
+  const road = result.address?.road;
 
   return (
     typeof road === "string" &&
@@ -299,26 +248,20 @@ function hasStreet(
 function getStreet(
   result: NominatimResult
 ): string | null {
-  const road =
-    result.address?.road;
+  const road = result.address?.road;
 
-  if (
-    typeof road !== "string"
-  ) {
+  if (typeof road !== "string") {
     return null;
   }
 
-  const cleaned =
-    road.trim();
-
+  const cleaned = road.trim();
   return cleaned || null;
 }
 
 function getResultType(
   result: NominatimResult
 ): string {
-  return typeof result.type ===
-    "string"
+  return typeof result.type === "string"
     ? result.type
     : "";
 }
@@ -326,8 +269,7 @@ function getResultType(
 function getResultCategory(
   result: NominatimResult
 ): string {
-  return typeof result.category ===
-    "string"
+  return typeof result.category === "string"
     ? result.category
     : "";
 }
@@ -335,11 +277,8 @@ function getResultCategory(
 function isBroadResult(
   result: NominatimResult
 ): boolean {
-  const type =
-    getResultType(result);
-
-  const category =
-    getResultCategory(result);
+  const type = getResultType(result);
+  const category = getResultCategory(result);
 
   return (
     BROAD_TYPES.has(type) ||
@@ -350,21 +289,15 @@ function isBroadResult(
 function isPreciseResult(
   result: NominatimResult
 ): boolean {
-  const type =
-    getResultType(result);
-
-  const category =
-    getResultCategory(result);
+  const type = getResultType(result);
+  const category = getResultCategory(result);
 
   /*
    * A result containing an actual house
    * number and street is acceptable even when
    * the OSM feature type is different.
    */
-  if (
-    hasHouseNumber(result) &&
-    hasStreet(result)
-  ) {
+  if (hasHouseNumber(result) && hasStreet(result)) {
     return true;
   }
 
@@ -389,41 +322,23 @@ function getLocalityValues(
   result: NominatimResult
 ): string[] {
   const values: string[] = [];
+  const address = result.address ?? {};
 
-  const address =
-    result.address ?? {};
-
-  for (
-    const [key, value] of Object.entries(
-      address
-    )
-  ) {
-    if (
-      !LOCALITY_ADDRESS_KEYS.has(
-        key
-      )
-    ) {
+  for (const [key, value] of Object.entries(address)) {
+    if (!LOCALITY_ADDRESS_KEYS.has(key)) {
       continue;
     }
 
-    if (
-      typeof value === "string" &&
-      value.trim()
-    ) {
-      values.push(
-        value.trim()
-      );
+    if (typeof value === "string" && value.trim()) {
+      values.push(value.trim());
     }
   }
 
   if (
-    typeof result.display_name ===
-      "string" &&
+    typeof result.display_name === "string" &&
     result.display_name.trim()
   ) {
-    values.push(
-      result.display_name.trim()
-    );
+    values.push(result.display_name.trim());
   }
 
   return values;
@@ -433,20 +348,14 @@ function hasRequestedArea(
   result: NominatimResult,
   area: string
 ): boolean {
-  const cleanedArea =
-    cleanPart(area);
+  const cleanedArea = cleanPart(area);
 
   if (!cleanedArea) {
     return false;
   }
 
-  return getLocalityValues(
-    result
-  ).some((value) =>
-    containsPart(
-      value,
-      cleanedArea
-    )
+  return getLocalityValues(result).some((value) =>
+    containsPart(value, cleanedArea)
   );
 }
 
@@ -454,56 +363,35 @@ function hasRequestedCity(
   result: NominatimResult,
   city: string
 ): boolean {
-  const cleanedCity =
-    cleanPart(city);
+  const cleanedCity = cleanPart(city);
 
   if (!cleanedCity) {
     return false;
   }
 
-  return getLocalityValues(
-    result
-  ).some((value) =>
-    containsPart(
-      value,
-      cleanedCity
-    )
+  return getLocalityValues(result).some((value) =>
+    containsPart(value, cleanedCity)
   );
 }
 
 function getCountryCode(
   result: NominatimResult
 ): string {
-  const countryCode =
-    result.address
-      ?.country_code;
+  const countryCode = result.address?.country_code;
 
-  return typeof countryCode ===
-    "string"
-    ? countryCode
-        .trim()
-        .toLowerCase()
+  return typeof countryCode === "string"
+    ? countryCode.trim().toLowerCase()
     : "";
 }
 
 function isNigeriaResult(
   result: NominatimResult
 ): boolean {
-  const countryCode =
-    getCountryCode(result);
-
   /*
-   * countrycodes=ng is already supplied to
-   * Nominatim. This additional validation makes
-   * the acceptance rule explicit.
+   * Only accept results explicitly identified as
+   * Nigeria. A missing country code is unconfirmed.
    */
-  if (!countryCode) {
-    return true;
-  }
-
-  return (
-    countryCode === "ng"
-  );
+  return getCountryCode(result) === "ng";
 }
 
 function getResultScore(
@@ -511,66 +399,40 @@ function getResultScore(
   area: string,
   city?: string | null
 ): number {
-  const type =
-    getResultType(result);
-
-  const category =
-    getResultCategory(result);
+  const type = getResultType(result);
+  const category = getResultCategory(result);
 
   let score = 0;
 
-  if (
-    hasHouseNumber(result)
-  ) {
+  if (hasHouseNumber(result)) {
     score += 100;
   }
 
-  if (
-    hasStreet(result)
-  ) {
+  if (hasStreet(result)) {
     score += 25;
   }
 
-  if (
-    PRECISE_TYPES.has(type)
-  ) {
+  if (PRECISE_TYPES.has(type)) {
     score += 30;
   }
 
-  if (
-    PRECISE_TYPES.has(category)
-  ) {
+  if (PRECISE_TYPES.has(category)) {
     score += 20;
   }
 
-  if (
-    hasRequestedArea(
-      result,
-      area
-    )
-  ) {
+  if (hasRequestedArea(result, area)) {
     score += 120;
   }
 
-  if (
-    city &&
-    hasRequestedCity(
-      result,
-      city
-    )
-  ) {
+  if (city && hasRequestedCity(result, city)) {
     score += 60;
   }
 
-  if (
-    isNigeriaResult(result)
-  ) {
+  if (isNigeriaResult(result)) {
     score += 10;
   }
 
-  if (
-    isBroadResult(result)
-  ) {
+  if (isBroadResult(result)) {
     score -= 100;
   }
 
@@ -586,17 +448,11 @@ function selectBestResult(
    * The result must first be structurally
    * precise enough for a business location.
    */
-  const preciseResults =
-    results.filter(
-      (result) =>
-        isPreciseResult(
-          result
-        )
-    );
+  const preciseResults = results.filter((result) =>
+    isPreciseResult(result)
+  );
 
-  if (
-    preciseResults.length === 0
-  ) {
+  if (preciseResults.length === 0) {
     return null;
   }
 
@@ -608,66 +464,41 @@ function selectBestResult(
    * else from being accepted simply because
    * Nominatim returned it as a good address match.
    */
-  const areaMatchedResults =
-    preciseResults.filter(
-      (result) =>
-        hasRequestedArea(
-          result,
-          area
-        )
-    );
+  const areaMatchedResults = preciseResults.filter((result) =>
+    hasRequestedArea(result, area)
+  );
 
-  if (
-    areaMatchedResults.length ===
-    0
-  ) {
+  if (areaMatchedResults.length === 0) {
     return null;
   }
 
-  const sorted =
-    [...areaMatchedResults].sort(
-      (a, b) =>
-        getResultScore(
-          b,
-          area,
-          city
-        ) -
-        getResultScore(
-          a,
-          area,
-          city
-        )
-    );
-
-  return (
-    sorted[0] ?? null
+  const sorted = [...areaMatchedResults].sort(
+    (a, b) =>
+      getResultScore(b, area, city) -
+      getResultScore(a, area, city)
   );
+
+  return sorted[0] ?? null;
 }
 
 function getAddressValue(
   result: NominatimResult,
   key: string
 ): string | null {
-  const value =
-    result.address?.[key];
+  const value = result.address?.[key];
 
-  if (
-    typeof value !== "string"
-  ) {
+  if (typeof value !== "string") {
     return null;
   }
 
-  const cleaned =
-    value.trim();
-
+  const cleaned = value.trim();
   return cleaned || null;
 }
 
 function getReverseArea(
   result: NominatimResult
 ): string | null {
-  const address =
-    result.address ?? {};
+  const address = result.address ?? {};
 
   const preferredKeys = [
     "suburb",
@@ -678,16 +509,10 @@ function getReverseArea(
     "district",
   ];
 
-  for (
-    const key of preferredKeys
-  ) {
-    const value =
-      address[key];
+  for (const key of preferredKeys) {
+    const value = address[key];
 
-    if (
-      typeof value === "string" &&
-      value.trim()
-    ) {
+    if (typeof value === "string" && value.trim()) {
       return value.trim();
     }
   }
@@ -698,8 +523,7 @@ function getReverseArea(
 function getReverseCity(
   result: NominatimResult
 ): string | null {
-  const address =
-    result.address ?? {};
+  const address = result.address ?? {};
 
   const preferredKeys = [
     "city",
@@ -709,16 +533,10 @@ function getReverseCity(
     "state_district",
   ];
 
-  for (
-    const key of preferredKeys
-  ) {
-    const value =
-      address[key];
+  for (const key of preferredKeys) {
+    const value = address[key];
 
-    if (
-      typeof value === "string" &&
-      value.trim()
-    ) {
+    if (typeof value === "string" && value.trim()) {
       return value.trim();
     }
   }
@@ -743,50 +561,29 @@ function parseNominatimObject(
 async function fetchNominatim(
   url: URL,
   userAgent: string
-): Promise<
-  NominatimResult |
-  NominatimResult[]
-> {
+): Promise<NominatimResult | NominatimResult[]> {
   let response: Response;
 
   try {
-    response =
-      await fetch(
-        url.toString(),
-        {
-          method: "GET",
-
-          headers: {
-            "User-Agent":
-              userAgent,
-
-            "Accept":
-              "application/json",
-          },
-
-          cache:
-            "no-store",
-
-          /*
-           * Prevent an external location-service
-           * request from hanging indefinitely.
-           */
-          signal:
-            AbortSignal.timeout(
-              NOMINATIM_TIMEOUT_MS
-            ),
-        }
-      );
+    response = await fetch(url.toString(), {
+      method: "GET",
+      headers: {
+        "User-Agent": userAgent,
+        Accept: "application/json",
+      },
+      cache: "no-store",
+      /*
+       * Prevent an external location-service request
+       * from hanging indefinitely.
+       */
+      signal: AbortSignal.timeout(NOMINATIM_TIMEOUT_MS),
+    });
   } catch (error) {
     if (
-      error instanceof
-        DOMException &&
-      error.name ===
-        "TimeoutError"
+      error instanceof DOMException &&
+      error.name === "TimeoutError"
     ) {
-      throw new Error(
-        "The location service timed out."
-      );
+      throw new Error("The location service timed out.");
     }
 
     throw new Error(
@@ -795,50 +592,28 @@ async function fetchNominatim(
   }
 
   if (!response.ok) {
-    console.error(
-      "Nominatim request failed:",
-      {
-        status:
-          response.status,
-
-        statusText:
-          response.statusText,
-
-        url:
-          url.pathname,
-      }
-    );
+    console.error("Nominatim request failed:", {
+      status: response.status,
+      statusText: response.statusText,
+      url: url.pathname,
+    });
 
     throw new Error(
       "The location service could not be reached right now."
     );
   }
 
-  const data: unknown =
-    await response.json();
+  const data: unknown = await response.json();
 
-  if (
-    Array.isArray(data)
-  ) {
+  if (Array.isArray(data)) {
     return data
-      .map(
-        (item) =>
-          parseNominatimObject(
-            item
-          )
-      )
+      .map((item) => parseNominatimObject(item))
       .filter(
-        (
-          item
-        ): item is NominatimResult =>
-          item !== null
+        (item): item is NominatimResult => item !== null
       );
   }
 
-  const result =
-    parseNominatimObject(
-      data
-    );
+  const result = parseNominatimObject(data);
 
   if (!result) {
     throw new Error(
@@ -861,14 +636,9 @@ export async function geocodeBusinessLocation(
     );
   }
 
-  const address =
-    cleanPart(input.address);
-
-  const area =
-    cleanPart(input.area);
-
-  const city =
-    cleanPart(input.city);
+  const address = cleanPart(input.address);
+  const area = cleanPart(input.area);
+  const city = cleanPart(input.city);
 
   if (!address) {
     throw new Error(
@@ -882,66 +652,28 @@ export async function geocodeBusinessLocation(
     );
   }
 
-  const query =
-    buildQuery({
-      address,
-      area,
-      city:
-        city || undefined,
-    });
+  const query = buildQuery({
+    address,
+    area,
+    city: city || undefined,
+  });
 
-  const url =
-    new URL(
-      NOMINATIM_URL
-    );
+  const url = new URL(NOMINATIM_URL);
 
-  url.searchParams.set(
-    "q",
-    query
-  );
+  url.searchParams.set("q", query);
+  url.searchParams.set("format", "jsonv2");
+  url.searchParams.set("addressdetails", "1");
+  url.searchParams.set("countrycodes", "ng");
+  url.searchParams.set("limit", "5");
+  url.searchParams.set("accept-language", "en");
 
-  url.searchParams.set(
-    "format",
-    "jsonv2"
-  );
+  const response = await fetchNominatim(url, userAgent);
 
-  url.searchParams.set(
-    "addressdetails",
-    "1"
-  );
+  const results = Array.isArray(response)
+    ? response
+    : [response];
 
-  url.searchParams.set(
-    "countrycodes",
-    "ng"
-  );
-
-  url.searchParams.set(
-    "limit",
-    "5"
-  );
-
-  url.searchParams.set(
-    "accept-language",
-    "en"
-  );
-
-  const response =
-    await fetchNominatim(
-      url,
-      userAgent
-    );
-
-  const results =
-    Array.isArray(response)
-      ? response
-      : [response];
-
-  const bestResult =
-    selectBestResult(
-      results,
-      area,
-      city || undefined
-    );
+  const bestResult = selectBestResult(results, area, city || undefined);
 
   if (!bestResult) {
     throw new Error(
@@ -950,58 +682,38 @@ export async function geocodeBusinessLocation(
   }
 
   const latitude =
-    bestResult.lat !==
-      undefined
-      ? Number(
-          bestResult.lat
-        )
+    bestResult.lat !== undefined
+      ? Number(bestResult.lat)
       : NaN;
 
   const longitude =
-    bestResult.lon !==
-      undefined
-      ? Number(
-          bestResult.lon
-        )
+    bestResult.lon !== undefined
+      ? Number(bestResult.lon)
       : NaN;
 
   if (
-    !isValidLatitude(
-      latitude
-    ) ||
-    !isValidLongitude(
-      longitude
-    )
+    !isValidLatitude(latitude) ||
+    !isValidLongitude(longitude)
   ) {
     throw new Error(
       "The location service returned invalid business coordinates."
     );
   }
 
-  if (
-    !isNigeriaResult(
-      bestResult
-    )
-  ) {
+  if (!isNigeriaResult(bestResult)) {
     throw new Error(
-      "The location service returned a result outside Nigeria."
+      "The location service returned a result outside Nigeria or without a confirmed Nigerian country code."
     );
   }
 
   return {
     latitude,
     longitude,
-
     formattedAddress:
-      typeof bestResult.display_name ===
-      "string"
+      typeof bestResult.display_name === "string"
         ? bestResult.display_name
         : null,
-
-    street:
-      getStreet(
-        bestResult
-      ),
+    street: getStreet(bestResult),
   };
 }
 
@@ -1029,18 +741,13 @@ function getEsriAddressValue(
   result: EsriReverseResult,
   key: string
 ): string | null {
-  const value =
-    result.address?.[key];
+  const value = result.address?.[key];
 
-  if (
-    typeof value !== "string"
-  ) {
+  if (typeof value !== "string") {
     return null;
   }
 
-  const cleaned =
-    value.trim();
-
+  const cleaned = value.trim();
   return cleaned || null;
 }
 
@@ -1068,17 +775,10 @@ function removeLeadingHouseNumber(
 function getEsriReverseStreet(
   result: EsriReverseResult
 ): string | null {
-  const address =
-    getEsriAddressValue(
-      result,
-      "Address"
-    );
+  const address = getEsriAddressValue(result, "Address");
 
   if (address) {
-    const street =
-      removeLeadingHouseNumber(
-        address
-      );
+    const street = removeLeadingHouseNumber(address);
 
     if (street) {
       return street;
@@ -1089,11 +789,7 @@ function getEsriReverseStreet(
    * Fallback to Match_addr when Address is
    * unavailable.
    */
-  const matchAddress =
-    getEsriAddressValue(
-      result,
-      "Match_addr"
-    );
+  const matchAddress = getEsriAddressValue(result, "Match_addr");
 
   if (!matchAddress) {
     return null;
@@ -1104,20 +800,13 @@ function getEsriReverseStreet(
    * the first comma-separated section contains
    * the address/street portion.
    */
-  const firstPart =
-    matchAddress
-      .split(",")[0]
-      ?.trim() ?? "";
+  const firstPart = matchAddress.split(",")[0]?.trim() ?? "";
 
   if (!firstPart) {
     return null;
   }
 
-  const street =
-    removeLeadingHouseNumber(
-      firstPart
-    );
-
+  const street = removeLeadingHouseNumber(firstPart);
   return street || null;
 }
 
@@ -1132,19 +821,10 @@ function getEsriReverseArea(
    * Neighborhood is preferred because it is usually
    * the more local subdivision.
    */
-  const preferredKeys = [
-    "Neighborhood",
-    "District",
-  ];
+  const preferredKeys = ["Neighborhood", "District"];
 
-  for (
-    const key of preferredKeys
-  ) {
-    const value =
-      getEsriAddressValue(
-        result,
-        key
-      );
+  for (const key of preferredKeys) {
+    const value = getEsriAddressValue(result, key);
 
     if (value) {
       return value;
@@ -1161,11 +841,7 @@ function getEsriReverseCity(
    * City is the primary city field returned by
    * the Esri World Geocoding service.
    */
-  const city =
-    getEsriAddressValue(
-      result,
-      "City"
-    );
+  const city = getEsriAddressValue(result, "City");
 
   if (city) {
     return city;
@@ -1175,40 +851,20 @@ function getEsriReverseCity(
    * Subregion is a fallback for responses where
    * City is not populated.
    */
-  const subregion =
-    getEsriAddressValue(
-      result,
-      "Subregion"
-    );
-
-  return subregion;
+  return getEsriAddressValue(result, "Subregion");
 }
 
 function isEsriNigeriaResult(
   result: EsriReverseResult
 ): boolean {
-  const countryCode =
-    getEsriAddressValue(
-      result,
-      "CountryCode"
-    );
+  const countryCode = getEsriAddressValue(result, "CountryCode");
 
-  if (!countryCode) {
-    /*
-     * Some responses may not include a country
-     * code. The request is still made to the
-     * World Geocoding service, so absence of the
-     * field alone is not treated as failure.
-     */
-    return true;
-  }
-
-  return (
-    countryCode
-      .trim()
-      .toUpperCase() ===
-      "NGA"
-  );
+  /*
+   * Only accept a result explicitly identified as Nigeria.
+   * A missing country code is unconfirmed and must not
+   * be treated as a successful country validation.
+   */
+  return countryCode?.trim().toUpperCase() === "NGA";
 }
 
 async function fetchEsriReverseGeocode(
@@ -1216,29 +872,15 @@ async function fetchEsriReverseGeocode(
   longitude: number,
   apiKey: string
 ): Promise<EsriReverseResult> {
-  const url =
-    new URL(
-      ESRI_REVERSE_URL
-    );
+  const url = new URL(ESRI_REVERSE_URL);
 
   /*
    * Esri expects longitude first and latitude
    * second for the location parameter.
    */
-  url.searchParams.set(
-    "location",
-    `${longitude},${latitude}`
-  );
-
-  url.searchParams.set(
-    "f",
-    "json"
-  );
-
-  url.searchParams.set(
-    "token",
-    apiKey
-  );
+  url.searchParams.set("location", `${longitude},${latitude}`);
+  url.searchParams.set("f", "json");
+  url.searchParams.set("token", apiKey);
 
   /*
    * Ask Esri to focus the reverse-geocode result
@@ -1257,48 +899,26 @@ async function fetchEsriReverseGeocode(
    * For PointAddress/Subaddress matches, use the
    * street-access location where applicable.
    */
-  url.searchParams.set(
-    "locationType",
-    "street"
-  );
+  url.searchParams.set("locationType", "street");
 
-  /*
-   * Prefer English labels.
-   */
-  url.searchParams.set(
-    "langCode",
-    "ENG"
-  );
+  /* Prefer English labels. */
+  url.searchParams.set("langCode", "ENG");
 
   let response: Response;
 
   try {
-    response =
-      await fetch(
-        url.toString(),
-        {
-          method: "GET",
-
-          headers: {
-            "Accept":
-              "application/json",
-          },
-
-          cache:
-            "no-store",
-
-          signal:
-            AbortSignal.timeout(
-              ESRI_TIMEOUT_MS
-            ),
-        }
-      );
+    response = await fetch(url.toString(), {
+      method: "GET",
+      headers: {
+        Accept: "application/json",
+      },
+      cache: "no-store",
+      signal: AbortSignal.timeout(ESRI_TIMEOUT_MS),
+    });
   } catch (error) {
     if (
-      error instanceof
-        DOMException &&
-      error.name ===
-        "TimeoutError"
+      error instanceof DOMException &&
+      error.name === "TimeoutError"
     ) {
       throw new Error(
         "The Esri location service timed out."
@@ -1313,56 +933,40 @@ async function fetchEsriReverseGeocode(
   let data: unknown;
 
   try {
-    data =
-      await response.json();
+    data = await response.json();
   } catch {
     throw new Error(
       "The Esri location service returned an invalid response."
     );
   }
 
-  const result =
-    parseEsriReverseObject(
-      data
-    );
+  const result = parseEsriReverseObject(data);
 
   if (!response.ok) {
-    console.error(
-      "Esri reverse geocoding request failed:",
-      {
-        status:
-          response.status,
-
-        statusText:
-          response.statusText,
-
-        error:
-          result?.error ?? null,
-      }
-    );
+    console.error("Esri reverse geocoding request failed:", {
+      status: response.status,
+      statusText: response.statusText,
+      error: result?.error ?? null,
+    });
 
     throw new Error(
       "The Esri location service could not be reached right now."
     );
   }
 
-  if (
-    result?.error
-  ) {
+  if (result?.error) {
     console.error(
       "Esri reverse geocoding returned an error:",
       result.error
     );
 
     const message =
-      typeof result.error.message ===
-      "string"
+      typeof result.error.message === "string"
         ? result.error.message
         : null;
 
     throw new Error(
-      message ||
-        "The Esri location service returned an error."
+      message || "The Esri location service returned an error."
     );
   }
 
@@ -1394,76 +998,39 @@ async function fetchEsriReverseGeocode(
 export async function reverseGeocodeLocation(
   input: ReverseGeocodeLocationInput
 ): Promise<ReverseGeocodeLocationResult> {
-  const apiKey =
-    process.env.ESRI_API_KEY?.trim();
+  const apiKey = process.env.ESRI_API_KEY?.trim();
 
   if (!apiKey) {
-    throw new Error(
-      "ESRI_API_KEY is not configured."
-    );
+    throw new Error("ESRI_API_KEY is not configured.");
   }
 
-  if (
-    !isValidLatitude(
-      input.latitude
-    )
-  ) {
-    throw new Error(
-      "Latitude must be between -90 and 90."
-    );
+  if (!isValidLatitude(input.latitude)) {
+    throw new Error("Latitude must be between -90 and 90.");
   }
 
-  if (
-    !isValidLongitude(
-      input.longitude
-    )
-  ) {
-    throw new Error(
-      "Longitude must be between -180 and 180."
-    );
+  if (!isValidLongitude(input.longitude)) {
+    throw new Error("Longitude must be between -180 and 180.");
   }
 
-  const result =
-    await fetchEsriReverseGeocode(
-      input.latitude,
-      input.longitude,
-      apiKey
-    );
+  const result = await fetchEsriReverseGeocode(
+    input.latitude,
+    input.longitude,
+    apiKey
+  );
 
-  if (
-    !isEsriNigeriaResult(
-      result
-    )
-  ) {
+  if (!isEsriNigeriaResult(result)) {
     throw new Error(
       "The current location could not be confirmed within Nigeria."
     );
   }
 
-  const street =
-    getEsriReverseStreet(
-      result
-    );
-
-  const area =
-    getEsriReverseArea(
-      result
-    );
-
-  const city =
-    getEsriReverseCity(
-      result
-    );
+  const street = getEsriReverseStreet(result);
+  const area = getEsriReverseArea(result);
+  const city = getEsriReverseCity(result);
 
   const formattedAddress =
-    getEsriAddressValue(
-      result,
-      "LongLabel"
-    ) ??
-    getEsriAddressValue(
-      result,
-      "Match_addr"
-    );
+    getEsriAddressValue(result, "LongLabel") ??
+    getEsriAddressValue(result, "Match_addr");
 
   /*
    * The Near Me ranking depends on having a

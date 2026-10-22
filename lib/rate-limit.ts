@@ -34,170 +34,128 @@ const PUBLIC_RATE_LIMITS: Record<
   PublicRateLimitScope,
   RateLimitConfig
 > = {
-  /*
-   * Lightweight public reads.
-   */
   categories: {
     limit: 60,
     windowMs: 60_000,
   },
-
   featured: {
     limit: 30,
     windowMs: 60_000,
   },
-
   search: {
     limit: 60,
     windowMs: 60_000,
   },
-
   "near-me": {
     limit: 30,
     windowMs: 60_000,
   },
-
-  /*
-   * Request lookup is protected more aggressively
-   * because it can expose buyer request information.
-   */
   "request-read": {
     limit: 20,
     windowMs: 60_000,
   },
-
-  /*
-   * Creating requests is more expensive because it
-   * triggers database writes and matching.
-   */
   "request-create": {
     limit: 5,
     windowMs: 60_000,
   },
-
-  /*
-   * Uploads are expensive because they consume server
-   * memory and Cloudinary resources.
-   */
   upload: {
     limit: 10,
     windowMs: 5 * 60_000,
   },
-
-  /*
-   * Analytics writes should be restricted to prevent
-   * artificial inflation of event tables.
-   */
   "contact-event": {
     limit: 30,
     windowMs: 60_000,
   },
-
   "business-view-event": {
     limit: 60,
     windowMs: 60_000,
   },
 };
 
-/*
- * ------------------------------------------------
- * IN-MEMORY RATE-LIMIT STORE
- * ------------------------------------------------
+/**
+ * In-memory fixed-window rate limiter.
  *
- * This deliberately does not use Prisma/Postgres.
+ * This does not use Prisma or PostgreSQL, so checking a
+ * rate limit does not create additional database traffic.
  *
- * Public abuse protection should not create more
- * database traffic, especially with ReMarket's
- * existing connection-pool constraints.
- *
- * Important:
- * In-memory limits are per running application
- * instance. They are still useful protection on
- * each instance, but a distributed rate limiter can
- * be introduced later if ReMarket needs globally
- * consistent limits across many instances.
+ * Limits are local to each running application instance.
+ * They are not shared globally across Vercel instances.
  */
-
-const store = new Map<
-  string,
-  RateLimitState
->();
+const store = new Map<string, RateLimitState>();
 
 const MAX_STORE_ENTRIES = 10_000;
+const CLEANUP_INTERVAL_MS = 30_000;
 
-function getClientIp(
-  request: NextRequest
-): string {
+let nextCleanupAt = 0;
+
+function getClientIp(request: NextRequest): string {
   /*
-   * Vercel/proxy environments commonly provide
-   * x-real-ip and/or x-forwarded-for.
+   * Prefer the IP supplied by the hosting proxy.
    *
-   * Prefer x-real-ip when available.
+   * The deployment proxy must overwrite or sanitize
+   * these headers. Otherwise, clients might spoof them
+   * to bypass IP-based rate limiting.
    */
-  const realIp =
-    request.headers.get(
-      "x-real-ip"
-    )?.trim();
+  const realIp = request.headers
+    .get("x-real-ip")
+    ?.trim();
 
   if (realIp) {
     return realIp;
   }
 
-  const forwardedFor =
-    request.headers.get(
-      "x-forwarded-for"
-    );
+  const forwardedFor = request.headers.get(
+    "x-forwarded-for"
+  );
 
   if (forwardedFor) {
-    const firstIp =
-      forwardedFor
-        .split(",")[0]
-        ?.trim();
+    const firstIp = forwardedFor
+      .split(",")[0]
+      ?.trim();
 
     if (firstIp) {
       return firstIp;
     }
   }
 
-  /*
-   * All requests without a detectable address
-   * share this fallback bucket.
-   *
-   * This is preferable to trusting a browser-supplied
-   * custom identifier as an IP substitute.
-   */
+  // Requests without a detectable IP share one bucket.
   return "unknown";
 }
 
-function cleanupExpiredEntries(
-  now: number
-): void {
-  for (const [
-    key,
-    state,
-  ] of store) {
+function cleanupExpiredEntries(now: number): void {
+  for (const [key, state] of store) {
     if (state.resetAt <= now) {
       store.delete(key);
     }
   }
 }
 
+/**
+ * Run the cleanup scan periodically instead of scanning
+ * the entire Map on every incoming request.
+ */
+function cleanupExpiredEntriesIfDue(now: number): void {
+  if (now < nextCleanupAt) {
+    return;
+  }
+
+  nextCleanupAt = now + CLEANUP_INTERVAL_MS;
+
+  cleanupExpiredEntries(now);
+}
+
 function enforceStoreLimit(): void {
-  if (
-    store.size <=
-    MAX_STORE_ENTRIES
-  ) {
+  if (store.size <= MAX_STORE_ENTRIES) {
     return;
   }
 
   /*
-   * Map iteration order is insertion order.
-   * Remove the oldest entries until the store
-   * returns to a safe bounded size.
+   * Map iteration follows insertion order.
+   * Evict the oldest inserted buckets until the store
+   * returns to its configured maximum size.
    */
   const entriesToRemove =
-    store.size -
-    MAX_STORE_ENTRIES;
+    store.size - MAX_STORE_ENTRIES;
 
   let removed = 0;
 
@@ -205,10 +163,7 @@ function enforceStoreLimit(): void {
     store.delete(key);
     removed += 1;
 
-    if (
-      removed >=
-      entriesToRemove
-    ) {
+    if (removed >= entriesToRemove) {
       break;
     }
   }
@@ -220,8 +175,7 @@ function makeHeaders(
   resetAt: number,
   retryAfterSeconds: number
 ): Headers {
-  const headers =
-    new Headers();
+  const headers = new Headers();
 
   headers.set(
     "X-RateLimit-Limit",
@@ -230,31 +184,18 @@ function makeHeaders(
 
   headers.set(
     "X-RateLimit-Remaining",
-    String(
-      Math.max(
-        0,
-        remaining
-      )
-    )
+    String(Math.max(0, remaining))
   );
 
   headers.set(
     "X-RateLimit-Reset",
-    String(
-      Math.ceil(
-        resetAt / 1000
-      )
-    )
+    String(Math.ceil(resetAt / 1000))
   );
 
-  if (
-    retryAfterSeconds > 0
-  ) {
+  if (retryAfterSeconds > 0) {
     headers.set(
       "Retry-After",
-      String(
-        retryAfterSeconds
-      )
+      String(retryAfterSeconds)
     );
   }
 
@@ -265,93 +206,68 @@ export function checkPublicRateLimit(
   request: NextRequest,
   scope: PublicRateLimitScope
 ): RateLimitResult {
-  const config =
-    PUBLIC_RATE_LIMITS[
-      scope
-    ];
+  const config = PUBLIC_RATE_LIMITS[scope];
+  const now = Date.now();
 
-  const now =
-    Date.now();
+  cleanupExpiredEntriesIfDue(now);
+
+  const clientIp = getClientIp(request);
+  const key = `${scope}:${clientIp}`;
+  const existing = store.get(key);
 
   /*
-   * Periodically clean expired entries.
-   *
-   * Running cleanup on each rate-limit check keeps
-   * the implementation self-contained and avoids
-   * background timers in serverless environments.
+   * Start a new fixed window when the client has no
+   * existing bucket or the previous window has expired.
    */
-  cleanupExpiredEntries(
-    now
-  );
-
-  const clientIp =
-    getClientIp(request);
-
-  const key =
-    `${scope}:${clientIp}`;
-
-  const existing =
-    store.get(key);
-
-  if (
-    !existing ||
-    existing.resetAt <= now
-  ) {
-    const resetAt =
-      now +
-      config.windowMs;
+  if (!existing || existing.resetAt <= now) {
+    const resetAt = now + config.windowMs;
+    const count = 1;
 
     store.set(key, {
-      count: 1,
+      count,
       resetAt,
     });
 
     enforceStoreLimit();
 
+    const remaining = Math.max(
+      0,
+      config.limit - count
+    );
+
     return {
       allowed: true,
       limit: config.limit,
-      remaining:
-        Math.max(
-          0,
-          config.limit - 1
-        ),
+      remaining,
       resetAt,
       retryAfterSeconds: 0,
-      headers:
-        makeHeaders(
-          config.limit,
-          config.limit - 1,
-          resetAt,
-          0
-        ),
+      headers: makeHeaders(
+        config.limit,
+        remaining,
+        resetAt,
+        0
+      ),
     };
   }
 
   existing.count += 1;
 
-  const remaining =
-    Math.max(
-      0,
-      config.limit -
-        existing.count
-    );
+  const remaining = Math.max(
+    0,
+    config.limit - existing.count
+  );
 
   const allowed =
-    existing.count <=
-    config.limit;
+    existing.count <= config.limit;
 
-  const retryAfterSeconds =
-    allowed
-      ? 0
-      : Math.max(
-          1,
-          Math.ceil(
-            (existing.resetAt -
-              now) /
-              1000
-          )
-        );
+  const retryAfterSeconds = allowed
+    ? 0
+    : Math.max(
+        1,
+        Math.ceil(
+          (existing.resetAt - now) / 1000
+        )
+      );
 
   enforceStoreLimit();
 
@@ -359,15 +275,13 @@ export function checkPublicRateLimit(
     allowed,
     limit: config.limit,
     remaining,
-    resetAt:
-      existing.resetAt,
+    resetAt: existing.resetAt,
     retryAfterSeconds,
-    headers:
-      makeHeaders(
-        config.limit,
-        remaining,
-        existing.resetAt,
-        retryAfterSeconds
-      ),
+    headers: makeHeaders(
+      config.limit,
+      remaining,
+      existing.resetAt,
+      retryAfterSeconds
+    ),
   };
 }

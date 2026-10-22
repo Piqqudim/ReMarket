@@ -59,10 +59,7 @@ type Product = {
   price: number | null;
   priceMin: number | null;
   priceMax: number | null;
-  availability:
-    | "AVAILABLE"
-    | "ASK_SELLER"
-    | "UNAVAILABLE";
+  availability: "AVAILABLE" | "ASK_SELLER" | "UNAVAILABLE";
   imageUrl: string | null;
   keywords: string[];
   images: ProductImage[];
@@ -74,34 +71,21 @@ type Business = {
   ownerName?: string | null;
   description: string | null;
   imageUrl: string | null;
-
   location: {
     id: string;
     area: string;
   } | null;
-
   area?: string;
-
-  availability:
-    | "AVAILABLE"
-    | "ASK_SELLER"
-    | "UNAVAILABLE";
-
-  verification:
-    | "VERIFIED"
-    | "UNVERIFIED";
-
+  availability: "AVAILABLE" | "ASK_SELLER" | "UNAVAILABLE";
+  verification: "VERIFIED" | "UNVERIFIED";
   categories: {
     category: {
       id: string;
       name: string;
     };
   }[];
-
   products: Product[];
-
   productCount?: number;
-
   socialLinks: {
     id: string;
     platform: string;
@@ -112,118 +96,91 @@ type Business = {
 const PAGE_SIZE = 12;
 
 const NAV_ITEMS = [
-  {
-    label: "Home",
-    href: "/",
-    icon: Home,
-  },
-  {
-    label: "Shop",
-    href: "/shop",
-    icon: ShoppingBag,
-  },
-  {
-    label: "Requests",
-    href: "/my-requests",
-    icon: ClipboardList,
-  },
-  {
-    label: "Saved",
-    href: "/saved",
-    icon: Heart,
-  },
+  { label: "Home", href: "/", icon: Home },
+  { label: "Shop", href: "/shop", icon: ShoppingBag },
+  { label: "Requests", href: "/my-requests", icon: ClipboardList },
+  { label: "Saved", href: "/saved", icon: Heart },
 ];
 
-function getProductImage(
-  product: Product
-): string | null {
-  return (
-    product.images?.[0]?.url ??
-    product.imageUrl ??
-    null
-  );
+function getProductImage(product: Product): string | null {
+  return product.images?.[0]?.url ?? product.imageUrl ?? null;
 }
 
-function formatPrice(
-  product: Product
-): string {
-  if (product.price !== null) {
-    return `₦${product.price.toLocaleString()}`;
+function formatPrice(product: Product): string {
+  const price = product.price;
+  const priceMin = product.priceMin;
+  const priceMax = product.priceMax;
+
+  if (typeof price === "number" && Number.isFinite(price)) {
+    return `₦${price.toLocaleString("en-NG")}`;
   }
 
-  if (
-    product.priceMin !== null &&
-    product.priceMax !== null
-  ) {
-    return `₦${product.priceMin.toLocaleString()} - ₦${product.priceMax.toLocaleString()}`;
+  const hasMin =
+    typeof priceMin === "number" && Number.isFinite(priceMin);
+  const hasMax =
+    typeof priceMax === "number" && Number.isFinite(priceMax);
+
+  if (hasMin && hasMax) {
+    return `₦${priceMin.toLocaleString("en-NG")} - ₦${priceMax.toLocaleString("en-NG")}`;
   }
 
-  if (product.priceMin !== null) {
-    return `From ₦${product.priceMin.toLocaleString()}`;
+  if (hasMin) {
+    return `From ₦${priceMin.toLocaleString("en-NG")}`;
   }
 
-  if (product.priceMax !== null) {
-    return `Up to ₦${product.priceMax.toLocaleString()}`;
+  if (hasMax) {
+    return `Up to ₦${priceMax.toLocaleString("en-NG")}`;
   }
 
   return "Ask seller";
 }
 
-function parsePage(
-  value: string | null
-): number {
-  const parsed = Number(value);
-
-  if (
-    !Number.isInteger(parsed) ||
-    parsed < 1
-  ) {
-    return 1;
+function getBusinessAvailabilityBadge(
+  availability: Business["availability"]
+): { label: string; className: string } {
+  switch (availability) {
+    case "AVAILABLE":
+      return {
+        label: "Available",
+        className: "bg-[#DDF5EA] text-[#137A59]",
+      };
+    case "UNAVAILABLE":
+      return {
+        label: "Unavailable",
+        className: "bg-[#FDE8E7] text-[#A83228]",
+      };
+    case "ASK_SELLER":
+    default:
+      return {
+        label: "Ask seller",
+        className: "bg-[#FFF3D6] text-[#8B6508]",
+      };
   }
+}
 
+function parsePage(value: string | null): number {
+  const parsed = Number(value);
+  if (!Number.isInteger(parsed) || parsed < 1) return 1;
   return parsed;
 }
 
-function buildShopUrl(
-  query: string,
-  category: string,
-  page: number
-): string {
+function buildShopUrl(query: string, category: string, page: number): string {
   const params = new URLSearchParams();
-
   const trimmedQuery = query.trim();
 
-  if (trimmedQuery) {
-    params.set("q", trimmedQuery);
-  }
-
-  if (category) {
-    params.set("category", category);
-  }
-
-  if (page > 1) {
-    params.set("page", String(page));
-  }
+  if (trimmedQuery) params.set("q", trimmedQuery);
+  if (category) params.set("category", category);
+  if (page > 1) params.set("page", String(page));
 
   const queryString = params.toString();
-
-  return queryString
-    ? `/shop?${queryString}`
-    : "/shop";
+  return queryString ? `/shop?${queryString}` : "/shop";
 }
 
 function ShopPageContent() {
   const searchParams = useSearchParams();
-
-  const initialQuery =
-    searchParams.get("q") ?? "";
-
-  const initialCategory =
-    searchParams.get("category") ?? "";
-
-  const initialPage = parsePage(
-    searchParams.get("page")
-  );
+  const initialQuery = searchParams.get("q") ?? "";
+  const initialCategory = searchParams.get("category") ?? "";
+  const initialPage = parsePage(searchParams.get("page"));
 
   return (
     <ShopPageView
@@ -248,149 +205,74 @@ function ShopPageView({
 }: ShopPageViewProps) {
   const router = useRouter();
 
-  const [query, setQuery] =
-    useState(initialQuery);
+  const [query, setQuery] = useState(initialQuery);
+  const [category, setCategory] = useState(initialCategory);
+  const [categories, setCategories] = useState<ReMarketCategory[]>(DEFAULT_CATEGORIES);
+  const [businesses, setBusinesses] = useState<Business[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+  const [totalBusinesses, setTotalBusinesses] = useState(0);
+  const [totalPages, setTotalPages] = useState(1);
+  const [currentPage, setCurrentPage] = useState(initialPage);
+  const [savedBusinesses, setSavedBusinesses] = useState<Record<string, boolean>>({});
 
-  const [category, setCategory] =
-    useState(initialCategory);
-
-  const [categories, setCategories] =
-    useState<ReMarketCategory[]>(
-      DEFAULT_CATEGORIES
+  /* CATEGORY VISUAL */
+  function getCategoryStyle(name: string) {
+    const matchedCategory = categories.find(
+      (item) => item.name.trim().toLowerCase() === name.trim().toLowerCase()
     );
-
-  const [businesses, setBusinesses] =
-    useState<Business[]>([]);
-
-  const [loading, setLoading] =
-    useState(true);
-
-  const [error, setError] =
-    useState("");
-
-  const [totalBusinesses, setTotalBusinesses] =
-    useState(0);
-
-  const [totalPages, setTotalPages] =
-    useState(1);
-
-  const [currentPage, setCurrentPage] =
-    useState(initialPage);
-
-  const [savedBusinesses, setSavedBusinesses] =
-    useState<Record<string, boolean>>({});
-
-  /*
-   * -----------------------------------------
-   * CATEGORY VISUAL
-   * -----------------------------------------
-   */
-
-  function getCategoryStyle(
-    name: string
-  ) {
-    const matchedCategory =
-      categories.find(
-        (item) =>
-          item.name.trim().toLowerCase() ===
-          name.trim().toLowerCase()
-      );
 
     if (!matchedCategory) {
       return {
         bg: "#EEF1F4",
-        icon: (
-          <MoreHorizontal className="h-5 w-5" />
-        ),
+        icon: <MoreHorizontal className="h-5 w-5" />,
       };
     }
 
     const Icon = matchedCategory.icon;
-
     return {
       bg: matchedCategory.bg,
       icon: <Icon className="h-5 w-5" />,
     };
   }
 
-  /*
-   * -----------------------------------------
-   * SAVED BUSINESSES
-   * -----------------------------------------
-   */
-
+  /* SAVED BUSINESSES */
   useEffect(() => {
     function syncSaved() {
       const saved = getSavedBusinesses();
-
       const next: Record<string, boolean> = {};
-
-      for (const business of saved) {
-        next[business.id] = true;
-      }
-
+      for (const business of saved) next[business.id] = true;
       setSavedBusinesses(next);
     }
 
     syncSaved();
-
-    window.addEventListener(
-      SAVED_BUSINESSES_CHANGED_EVENT,
-      syncSaved
-    );
-
-    window.addEventListener(
-      "storage",
-      syncSaved
-    );
+    window.addEventListener(SAVED_BUSINESSES_CHANGED_EVENT, syncSaved);
+    window.addEventListener("storage", syncSaved);
 
     return () => {
-      window.removeEventListener(
-        SAVED_BUSINESSES_CHANGED_EVENT,
-        syncSaved
-      );
-
-      window.removeEventListener(
-        "storage",
-        syncSaved
-      );
+      window.removeEventListener(SAVED_BUSINESSES_CHANGED_EVENT, syncSaved);
+      window.removeEventListener("storage", syncSaved);
     };
   }, []);
 
-  /*
-   * -----------------------------------------
-   * LOAD CATEGORIES
-   * -----------------------------------------
-   */
-
+  /* LOAD CATEGORIES */
   useEffect(() => {
     const controller = new AbortController();
 
     async function loadCategories() {
       try {
-        const response = await fetch(
-          "/api/categories",
-          {
-            cache: "no-store",
-            signal: controller.signal,
-          }
-        );
+        const response = await fetch("/api/categories", {
+          cache: "no-store",
+          signal: controller.signal,
+        });
 
-        if (!response.ok) {
-          throw new Error(
-            "Unable to load categories."
-          );
-        }
+        if (!response.ok) throw new Error("Unable to load categories.");
 
         const data = await response.json();
-
-        const backendCategories =
-          Array.isArray(data?.categories)
-            ? data.categories
-            : [];
-
-        const mergedCategories =
-          mergeCategories(backendCategories);
+        const backendCategories = Array.isArray(data?.categories)
+          ? data.categories
+          : [];
+        const mergedCategories = mergeCategories(backendCategories);
 
         if (mergedCategories.length > 0) {
           setCategories(mergedCategories);
@@ -403,34 +285,16 @@ function ShopPageView({
           return;
         }
 
-        console.error(
-          "Shop categories error:",
-          loadError
-        );
-
-        /*
-         * Keep DEFAULT_CATEGORIES
-         * as the fallback.
-         */
+        console.error("Shop categories error:", loadError);
+        // Keep DEFAULT_CATEGORIES as the fallback.
       }
     }
 
     void loadCategories();
-
-    return () => {
-      controller.abort();
-    };
+    return () => controller.abort();
   }, []);
 
-  /*
-   * -----------------------------------------
-   * LOAD BUSINESSES
-   * -----------------------------------------
-   *
-   * The API performs pagination.
-   * We only request PAGE_SIZE businesses.
-   */
-
+  /* LOAD BUSINESSES: the API handles pagination. */
   useEffect(() => {
     const controller = new AbortController();
 
@@ -440,41 +304,17 @@ function ShopPageView({
 
       try {
         const params = new URLSearchParams();
+        if (initialQuery.trim()) params.set("q", initialQuery.trim());
+        if (initialCategory) params.set("category", initialCategory);
+        params.set("page", String(initialPage));
+        params.set("pageSize", String(PAGE_SIZE));
 
-        if (initialQuery.trim()) {
-          params.set(
-            "q",
-            initialQuery.trim()
-          );
-        }
-
-        if (initialCategory) {
-          params.set(
-            "category",
-            initialCategory
-          );
-        }
-
-        params.set(
-          "page",
-          String(initialPage)
-        );
-
-        params.set(
-          "pageSize",
-          String(PAGE_SIZE)
-        );
-
-        const response = await fetch(
-          `/api/browse?${params.toString()}`,
-          {
-            cache: "no-store",
-            signal: controller.signal,
-          }
-        );
+        const response = await fetch(`/api/browse?${params.toString()}`, {
+          cache: "no-store",
+          signal: controller.signal,
+        });
 
         const data = await response.json();
-
         if (!response.ok) {
           throw new Error(
             typeof data?.error === "string"
@@ -483,42 +323,34 @@ function ShopPageView({
           );
         }
 
-        const nextBusinesses =
-          Array.isArray(data?.businesses)
-            ? data.businesses
-            : [];
-
+        const nextBusinesses = Array.isArray(data?.businesses)
+          ? data.businesses
+          : [];
         const nextTotal = Number(data?.total);
         const nextPage = Number(data?.page);
         const nextPageSize = Number(data?.pageSize);
 
         const safeTotal =
-          Number.isFinite(nextTotal)
+          Number.isInteger(nextTotal) && nextTotal >= 0
             ? nextTotal
             : nextBusinesses.length;
 
         const safePageSize =
-          Number.isFinite(nextPageSize) &&
-          nextPageSize > 0
+          Number.isInteger(nextPageSize) && nextPageSize > 0
             ? nextPageSize
             : PAGE_SIZE;
 
+        const reportedTotalPages = Number(data?.totalPages);
         const calculatedTotalPages =
-          Number(data?.totalPages) ||
-          Math.max(
-            1,
-            Math.ceil(
-              safeTotal / safePageSize
-            )
-          );
+          Number.isInteger(reportedTotalPages) && reportedTotalPages >= 1
+            ? reportedTotalPages
+            : Math.max(1, Math.ceil(safeTotal / safePageSize));
 
         setBusinesses(nextBusinesses);
         setTotalBusinesses(safeTotal);
         setTotalPages(calculatedTotalPages);
-
         setCurrentPage(
-          Number.isInteger(nextPage) &&
-          nextPage >= 1
+          Number.isInteger(nextPage) && nextPage >= 1
             ? nextPage
             : initialPage
         );
@@ -530,136 +362,61 @@ function ShopPageView({
           return;
         }
 
-        console.error(
-          "Shop loading error:",
-          loadError
-        );
-
+        console.error("Shop loading error:", loadError);
         setBusinesses([]);
         setTotalBusinesses(0);
         setTotalPages(1);
-
         setError(
           loadError instanceof Error
             ? loadError.message
             : "Unable to load businesses."
         );
       } finally {
-        if (!controller.signal.aborted) {
-          setLoading(false);
-        }
+        if (!controller.signal.aborted) setLoading(false);
       }
     }
 
     void loadBusinesses();
+    return () => controller.abort();
+  }, [initialQuery, initialCategory, initialPage]);
 
-    return () => {
-      controller.abort();
-    };
-  }, [
-    initialQuery,
-    initialCategory,
-    initialPage,
-  ]);
-
-  /*
-   * -----------------------------------------
-   * SEARCH
-   * -----------------------------------------
-   */
-
-  function submitSearch(
-    event: FormEvent<HTMLFormElement>
-  ) {
+  /* SEARCH */
+  function submitSearch(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-
-    router.push(
-      buildShopUrl(
-        query,
-        category,
-        1
-      )
-    );
+    router.push(buildShopUrl(query, category, 1));
   }
 
-  /*
-   * -----------------------------------------
-   * CATEGORY
-   * -----------------------------------------
-   */
-
-  function selectCategory(
-    nextCategory: string
-  ) {
+  /* CATEGORY */
+  function selectCategory(nextCategory: string) {
     setCategory(nextCategory);
-
-    router.push(
-      buildShopUrl(
-        query,
-        nextCategory,
-        1
-      )
-    );
+    router.push(buildShopUrl(query, nextCategory, 1));
   }
 
-  /*
-   * -----------------------------------------
-   * PAGINATION
-   * -----------------------------------------
-   */
-
+  /* PAGINATION */
   function goToPage(page: number) {
-    if (
-      page < 1 ||
-      page > totalPages ||
-      page === currentPage
-    ) {
-      return;
-    }
-
-    router.push(
-      buildShopUrl(
-        query,
-        category,
-        page
-      )
-    );
+    if (page < 1 || page > totalPages || page === currentPage) return;
+    router.push(buildShopUrl(query, category, page));
   }
 
-  /*
-   * -----------------------------------------
-   * SAVE / UNSAVE
-   * -----------------------------------------
-   */
-
-  function toggleSaved(
-    business: Business
-  ) {
+  /* SAVE / UNSAVE */
+  function toggleSaved(business: Business) {
     if (isBusinessSaved(business.id)) {
       removeSavedBusiness(business.id);
-
       setSavedBusinesses((current) => ({
         ...current,
         [business.id]: false,
       }));
-
       return;
     }
 
-    const categoryName =
-      business.categories?.[0]?.category?.name ??
-      "Services";
+    const categoryName = business.categories?.[0]?.category?.name ?? "Services";
 
     saveBusiness({
       id: business.id,
       name: business.name,
-      area:
-        business.location?.area ??
-        business.area ??
-        "Local",
+      area: business.location?.area ?? business.area ?? "Local",
       category: categoryName,
-      verified:
-        business.verification === "VERIFIED",
+      verified: business.verification === "VERIFIED",
       availability: business.availability,
       imageUrl: business.imageUrl,
     });
@@ -670,22 +427,16 @@ function ShopPageView({
     }));
   }
 
-  /*
-   * -----------------------------------------
-   * RESULTS LABEL
-   * -----------------------------------------
-   */
-
   const resultStart =
-    totalBusinesses === 0
+    totalBusinesses === 0 || businesses.length === 0
       ? 0
       : (currentPage - 1) * PAGE_SIZE + 1;
 
   const resultEnd =
-    totalBusinesses === 0
+    resultStart === 0
       ? 0
       : Math.min(
-          currentPage * PAGE_SIZE,
+          resultStart + businesses.length - 1,
           totalBusinesses
         );
 
@@ -693,39 +444,25 @@ function ShopPageView({
     <main className="min-h-dvh w-full overflow-x-clip bg-[#FFFDFC]">
       <div className="min-h-dvh w-full">
         <div className="min-h-dvh w-full bg-[#FFFDFC]">
-
           {/* HEADER */}
-
           <header className="flex h-[64px] items-center justify-between gap-2 border-b border-[#EAE6DF] bg-white px-3 sm:px-6 lg:h-[66px] lg:px-6">
-            <Link
-              href="/"
-              className="flex min-w-0 shrink-0 items-center gap-2 sm:gap-2.5"
-            >
+            <Link href="/" className="flex min-w-0 shrink-0 items-center gap-2 sm:gap-2.5">
               <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-[#FF5A36] text-white sm:h-10 sm:w-10">
                 <Store className="h-5 w-5" />
               </div>
-
               <div className="min-w-0">
-                <p className="truncate text-sm font-bold">
-                  ReMarket
-                </p>
-
-                <p className="truncate text-[10px] text-muted">
-                  Find it nearby
-                </p>
+                <p className="truncate text-sm font-bold">ReMarket</p>
+                <p className="truncate text-[10px] text-muted">Find it nearby</p>
               </div>
             </Link>
 
-            {/* DESKTOP NAVIGATION */}
-
+            {/* Keep full navigation for wide desktop headers. */}
             <nav className="hidden items-center gap-1 xl:flex">
               {NAV_ITEMS.map((item) => (
                 <button
                   key={item.label}
                   type="button"
-                  onClick={() =>
-                    router.push(item.href)
-                  }
+                  onClick={() => router.push(item.href)}
                   className="rounded-xl px-4 py-2 text-xs font-semibold text-gray-700 hover:bg-gray-50"
                 >
                   {item.label}
@@ -733,20 +470,15 @@ function ShopPageView({
               ))}
             </nav>
 
-            {/* HEADER ACTIONS */}
-
             <div className="flex shrink-0 items-center gap-1.5 sm:gap-3">
               <button
                 type="button"
-                onClick={() =>
-                  router.push("/saved")
-                }
+                onClick={() => router.push("/saved")}
                 className="hidden h-9 w-9 items-center justify-center rounded-full hover:bg-gray-50 sm:flex"
                 aria-label="Saved"
               >
                 <Heart className="h-[19px] w-[19px] text-gray-700" />
               </button>
-
               <button
                 type="button"
                 className="hidden h-9 w-9 items-center justify-center rounded-full bg-gray-100 sm:flex"
@@ -754,41 +486,28 @@ function ShopPageView({
               >
                 <UserCircle className="h-6 w-6 text-gray-700" />
               </button>
-
               <button
                 type="button"
-                onClick={() =>
-                  router.push("/request")
-                }
+                onClick={() => router.push("/request")}
                 className="shrink-0 whitespace-nowrap rounded-xl bg-[#FF5A36] px-2.5 py-2.5 text-[10px] font-bold text-white sm:px-4 sm:text-xs"
               >
-                <span className="sm:hidden">
-                  Request
-                </span>
-
-                <span className="hidden sm:inline">
-                  Request something
-                </span>
+                <span className="sm:hidden">Request</span>
+                <span className="hidden sm:inline">Request something</span>
               </button>
             </div>
           </header>
 
           <div className="flex min-w-0">
-
             {/* SIDEBAR */}
-
             <aside className="hidden w-[190px] shrink-0 border-r border-[#EAE6DF] bg-[#FCFAF6] px-3 py-5 lg:block">
               <nav className="space-y-1">
                 {NAV_ITEMS.map((item) => {
                   const Icon = item.icon;
-
                   return (
                     <button
                       key={item.label}
                       type="button"
-                      onClick={() =>
-                        router.push(item.href)
-                      }
+                      onClick={() => router.push(item.href)}
                       className={`flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-sm font-medium ${
                         item.label === "Shop"
                           ? "bg-white text-[#9F2D18]"
@@ -803,7 +522,6 @@ function ShopPageView({
               </nav>
 
               <div className="my-5 h-px bg-[#E7E2DB]" />
-
               <p className="px-3 text-[10px] font-bold uppercase tracking-[0.12em] text-gray-400">
                 Categories
               </p>
@@ -811,9 +529,7 @@ function ShopPageView({
               <div className="mt-3 space-y-1">
                 <button
                   type="button"
-                  onClick={() =>
-                    selectCategory("")
-                  }
+                  onClick={() => selectCategory("")}
                   className={`flex w-full items-center gap-3 rounded-xl px-3 py-2 text-left text-xs font-medium ${
                     !category
                       ? "bg-white text-[#9F2D18]"
@@ -823,24 +539,17 @@ function ShopPageView({
                   <span className="flex h-7 w-7 items-center justify-center rounded-full bg-gray-100">
                     <Store className="h-4 w-4 text-gray-500" />
                   </span>
-
                   All
                 </button>
 
                 {categories.map((item) => {
-                  const style =
-                    getCategoryStyle(item.name);
-
-                  const active =
-                    category === item.name;
-
+                  const style = getCategoryStyle(item.name);
+                  const active = category === item.name;
                   return (
                     <button
                       key={item.id}
                       type="button"
-                      onClick={() =>
-                        selectCategory(item.name)
-                      }
+                      onClick={() => selectCategory(item.name)}
                       className={`flex w-full items-center gap-3 rounded-xl px-3 py-2 text-left ${
                         active
                           ? "bg-white text-[#9F2D18]"
@@ -849,18 +558,11 @@ function ShopPageView({
                     >
                       <span
                         className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full"
-                        style={{
-                          backgroundColor: style.bg,
-                        }}
+                        style={{ backgroundColor: style.bg }}
                       >
-                        <span className="scale-[0.65]">
-                          {style.icon}
-                        </span>
+                        <span className="scale-[0.65]">{style.icon}</span>
                       </span>
-
-                      <span className="truncate text-xs font-medium">
-                        {item.name}
-                      </span>
+                      <span className="truncate text-xs font-medium">{item.name}</span>
                     </button>
                   );
                 })}
@@ -868,21 +570,16 @@ function ShopPageView({
             </aside>
 
             {/* MAIN */}
-
             <div className="min-w-0 flex-1">
               <div className="px-4 pb-24 pt-4 sm:px-6 sm:pt-6 lg:px-6 lg:pb-8">
-
                 {/* HERO */}
-
                 <section className="rounded-[18px] bg-[#FF5A36] px-5 py-6 text-white sm:px-7 sm:py-7">
                   <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-white/75">
                     Shop ReMarket
                   </p>
-
                   <h1 className="mt-2 text-[26px] font-bold leading-tight sm:text-[30px]">
                     Find local sellers
                   </h1>
-
                   <p className="mt-2 max-w-[560px] text-xs leading-5 text-white/80 sm:text-sm">
                     Discover real businesses and what they sell.
                   </p>
@@ -892,16 +589,12 @@ function ShopPageView({
                     className="mt-5 flex h-[48px] w-full max-w-[720px] items-center rounded-full bg-white p-1.5"
                   >
                     <Search className="ml-3 h-[18px] w-[18px] shrink-0 text-gray-500" />
-
                     <input
                       value={query}
-                      onChange={(event) =>
-                        setQuery(event.target.value)
-                      }
+                      onChange={(event) => setQuery(event.target.value)}
                       placeholder="What are you looking for?"
                       className="min-w-0 flex-1 bg-transparent px-3 text-xs text-gray-800 outline-none placeholder:text-gray-400"
                     />
-
                     <button
                       type="submit"
                       className="shrink-0 rounded-full bg-[#FF5A36] px-3 py-2.5 text-xs font-bold text-white sm:px-5"
@@ -912,14 +605,12 @@ function ShopPageView({
                 </section>
 
                 {/* RESULTS HEADER */}
-
                 <section className="mt-5">
                   <div className="flex flex-wrap items-center justify-between gap-3">
                     <div>
                       <h2 className="text-lg font-bold text-[#17202A]">
                         {category || "All businesses"}
                       </h2>
-
                       <p className="mt-0.5 text-xs text-muted">
                         {loading
                           ? "Loading businesses..."
@@ -938,7 +629,6 @@ function ShopPageView({
                 </section>
 
                 {/* RESULTS */}
-
                 <section className="mt-4">
                   {error && (
                     <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-xs text-red-700">
@@ -946,14 +636,9 @@ function ShopPageView({
                     </div>
                   )}
 
-                  {/* LOADING */}
-
                   {loading && (
                     <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-                      {[
-                        1, 2, 3, 4,
-                        5, 6, 7, 8,
-                      ].map((item) => (
+                      {[1, 2, 3, 4, 5, 6, 7, 8].map((item) => (
                         <div
                           key={item}
                           className="h-[250px] animate-pulse rounded-xl border border-[#E8E4DE] bg-white"
@@ -962,275 +647,220 @@ function ShopPageView({
                     </div>
                   )}
 
-                  {/* EMPTY RESULTS */}
+                  {!loading && !error && businesses.length === 0 && (
+                    <div className="rounded-xl border border-[#E8E4DE] bg-white px-5 py-12 text-center">
+                      <Search className="mx-auto h-8 w-8 text-gray-300" />
+                      <p className="mt-3 text-sm font-semibold text-gray-700">
+                        No businesses found
+                      </p>
+                      <p className="mt-1 text-xs text-gray-400">
+                        Try another search or category.
+                      </p>
+                    </div>
+                  )}
 
-                  {!loading &&
-                    !error &&
-                    businesses.length === 0 && (
-                      <div className="rounded-xl border border-[#E8E4DE] bg-white px-5 py-12 text-center">
-                        <Search className="mx-auto h-8 w-8 text-gray-300" />
+                  {!loading && !error && businesses.length > 0 && (
+                    <>
+                      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+                        {businesses.map((business) => {
+                          const categoryName =
+                            business.categories?.[0]?.category?.name ?? "Services";
+                          const style = getCategoryStyle(categoryName);
+                          const saved = Boolean(savedBusinesses[business.id]);
+                          const products = Array.isArray(business.products)
+                            ? business.products
+                            : [];
+                          const product = products[0] ?? null;
+                          const productImage = product ? getProductImage(product) : null;
+                          const productCount =
+                            typeof business.productCount === "number" &&
+                            Number.isInteger(business.productCount) &&
+                            business.productCount >= 0
+                              ? business.productCount
+                              : products.length;
+                          const availabilityBadge = getBusinessAvailabilityBadge(
+                            business.availability
+                          );
 
-                        <p className="mt-3 text-sm font-semibold text-gray-700">
-                          No businesses found
-                        </p>
-
-                        <p className="mt-1 text-xs text-gray-400">
-                          Try another search or category.
-                        </p>
-                      </div>
-                    )}
-
-                  {/* BUSINESS CARDS */}
-
-                  {!loading &&
-                    !error &&
-                    businesses.length > 0 && (
-                      <>
-                        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-                          {businesses.map((business) => {
-                            const categoryName =
-                              business.categories?.[0]?.category?.name ??
-                              "Services";
-
-                            const style =
-                              getCategoryStyle(categoryName);
-
-                            const saved = Boolean(
-                              savedBusinesses[business.id]
-                            );
-
-                            const product =
-                              business.products?.[0] ?? null;
-
-                            const productImage = product
-                              ? getProductImage(product)
-                              : null;
-
-                            const productCount =
-                              business.productCount ??
-                              business.products.length;
-
-                            return (
-                              <article
-                                key={business.id}
-                                className="overflow-hidden rounded-xl border border-[#E8E4DE] bg-white transition hover:-translate-y-0.5 hover:shadow-md"
+                          return (
+                            <article
+                              key={business.id}
+                              className="overflow-hidden rounded-xl border border-[#E8E4DE] bg-white transition hover:-translate-y-0.5 hover:shadow-md"
+                            >
+                              <Link
+                                href={`/seller/${business.id}`}
+                                className="relative flex h-[116px] items-center justify-center overflow-hidden"
+                                style={{ backgroundColor: style.bg }}
                               >
-                                <Link
-                                  href={`/seller/${business.id}`}
-                                  className="relative flex h-[116px] items-center justify-center overflow-hidden"
-                                  style={{
-                                    backgroundColor: style.bg,
-                                  }}
+                                {business.imageUrl ? (
+                                  <img
+                                    src={business.imageUrl}
+                                    alt={business.name}
+                                    className="absolute inset-0 h-full w-full object-cover"
+                                  />
+                                ) : (
+                                  <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-white/75">
+                                    <Store className="h-7 w-7 text-gray-700" />
+                                  </div>
+                                )}
+                                <span
+                                  className={`absolute right-3 top-3 rounded-full px-2.5 py-1 text-[9px] font-semibold ${availabilityBadge.className}`}
                                 >
-                                  {business.imageUrl ? (
-                                    <img
-                                      src={business.imageUrl}
-                                      alt={business.name}
-                                      className="absolute inset-0 h-full w-full object-cover"
-                                    />
-                                  ) : (
-                                    <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-white/75">
-                                      <Store className="h-7 w-7 text-gray-700" />
-                                    </div>
-                                  )}
+                                  {availabilityBadge.label}
+                                </span>
+                              </Link>
 
-                                  <span className="absolute right-3 top-3 rounded-full bg-[#DDF5EA] px-2.5 py-1 text-[9px] font-semibold text-[#137A59]">
-                                    {business.availability === "AVAILABLE"
-                                      ? "Available"
-                                      : "Active"}
-                                  </span>
-                                </Link>
-
-                                <div className="p-3.5">
-                                  <div className="flex items-start justify-between gap-2">
-                                    <div className="min-w-0 flex-1">
-                                      <Link
-                                        href={`/seller/${business.id}`}
-                                        className="block truncate text-sm font-bold text-[#17202A] hover:text-[#9F2D18]"
-                                      >
-                                        {business.name}
-                                      </Link>
-
-                                      <p className="mt-1 flex min-w-0 items-center gap-1 text-[10px] text-muted">
-                                        <span className="shrink-0">
-                                          {categoryName}
-                                        </span>
-
-                                        <span className="shrink-0">
-                                          ·
-                                        </span>
-
-                                        <span className="flex min-w-0 items-center gap-1 truncate">
-                                          <MapPin className="h-3 w-3 shrink-0" />
-
-                                          {business.location?.area ??
-                                            business.area ??
-                                            "Local"}
-                                        </span>
-                                      </p>
-                                    </div>
-
-                                    <button
-                                      type="button"
-                                      aria-label={
-                                        saved
-                                          ? `Remove ${business.name} from saved businesses`
-                                          : `Save ${business.name}`
-                                      }
-                                      aria-pressed={saved}
-                                      onClick={(event) => {
-                                        event.preventDefault();
-                                        event.stopPropagation();
-
-                                        toggleSaved(business);
-                                      }}
-                                      className={`shrink-0 ${
-                                        saved
-                                          ? "text-[#9F2D18]"
-                                          : "text-gray-500 hover:text-[#9F2D18]"
-                                      }`}
+                              <div className="p-3.5">
+                                <div className="flex items-start justify-between gap-2">
+                                  <div className="min-w-0 flex-1">
+                                    <Link
+                                      href={`/seller/${business.id}`}
+                                      className="block truncate text-sm font-bold text-[#17202A] hover:text-[#9F2D18]"
                                     >
-                                      <Bookmark
-                                        className="h-4 w-4"
-                                        fill={
-                                          saved
-                                            ? "currentColor"
-                                            : "none"
-                                        }
-                                      />
-                                    </button>
-                                  </div>
-
-                                  <div className="mt-3 flex items-center justify-between">
-                                    <div className="flex items-center gap-1">
-                                      <Package className="h-4 w-4 text-gray-400" />
-
-                                      <span className="text-[10px] font-semibold text-gray-600">
-                                        {productCount}{" "}
-                                        {productCount === 1
-                                          ? "product"
-                                          : "products"}
+                                      {business.name}
+                                    </Link>
+                                    <p className="mt-1 flex min-w-0 items-center gap-1 text-[10px] text-muted">
+                                      <span className="shrink-0">{categoryName}</span>
+                                      <span className="shrink-0">·</span>
+                                      <span className="flex min-w-0 items-center gap-1 truncate">
+                                        <MapPin className="h-3 w-3 shrink-0" />
+                                        {business.location?.area ?? business.area ?? "Local"}
                                       </span>
-                                    </div>
+                                    </p>
                                   </div>
 
-                                  {product && (
-                                    <div className="mt-3 border-t border-[#F0ECE6] pt-3">
-                                      <div className="flex items-center gap-2.5">
-                                        {productImage ? (
-                                          <img
-                                            src={productImage}
-                                            alt={product.name}
-                                            className="h-10 w-10 shrink-0 rounded-lg object-cover"
-                                          />
-                                        ) : (
-                                          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-[#FCFAF6] text-gray-400">
-                                            <Package className="h-4 w-4" />
-                                          </div>
-                                        )}
+                                  <button
+                                    type="button"
+                                    aria-label={
+                                      saved
+                                        ? `Remove ${business.name} from saved businesses`
+                                        : `Save ${business.name}`
+                                    }
+                                    aria-pressed={saved}
+                                    onClick={(event) => {
+                                      event.preventDefault();
+                                      event.stopPropagation();
+                                      toggleSaved(business);
+                                    }}
+                                    className={`shrink-0 ${
+                                      saved
+                                        ? "text-[#9F2D18]"
+                                        : "text-gray-500 hover:text-[#9F2D18]"
+                                    }`}
+                                  >
+                                    <Bookmark
+                                      className="h-4 w-4"
+                                      fill={saved ? "currentColor" : "none"}
+                                    />
+                                  </button>
+                                </div>
 
-                                        <div className="min-w-0">
-                                          <p className="truncate text-[10px] font-semibold text-gray-600">
-                                            {product.name}
-                                          </p>
+                                <div className="mt-3 flex items-center justify-between">
+                                  <div className="flex items-center gap-1">
+                                    <Package className="h-4 w-4 text-gray-400" />
+                                    <span className="text-[10px] font-semibold text-gray-600">
+                                      {productCount} {productCount === 1 ? "product" : "products"}
+                                    </span>
+                                  </div>
+                                </div>
 
-                                          <p className="mt-1 text-[10px] text-gray-400">
-                                            {formatPrice(product)}
-                                          </p>
+                                {product && (
+                                  <div className="mt-3 border-t border-[#F0ECE6] pt-3">
+                                    <div className="flex items-center gap-2.5">
+                                      {productImage ? (
+                                        <img
+                                          src={productImage}
+                                          alt={product.name}
+                                          className="h-10 w-10 shrink-0 rounded-lg object-cover"
+                                        />
+                                      ) : (
+                                        <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-[#FCFAF6] text-gray-400">
+                                          <Package className="h-4 w-4" />
                                         </div>
+                                      )}
+                                      <div className="min-w-0">
+                                        <p className="truncate text-[10px] font-semibold text-gray-600">
+                                          {product.name}
+                                        </p>
+                                        <p className="mt-1 text-[10px] text-gray-400">
+                                          {formatPrice(product)}
+                                        </p>
                                       </div>
                                     </div>
-                                  )}
+                                  </div>
+                                )}
 
-                                  <Link
-                                    href={`/seller/${business.id}`}
-                                    className="mt-3 flex w-full items-center justify-center gap-2 rounded-lg bg-[#FFF1ED] py-2.5 text-[11px] font-bold text-[#9F2D18]"
-                                  >
-                                    Browse
-                                    <ArrowRight className="h-3.5 w-3.5" />
-                                  </Link>
-                                </div>
-                              </article>
-                            );
-                          })}
-                        </div>
-
-                        {/* PAGINATION */}
-
-                        {totalPages > 1 && (
-                          <div className="mt-6 flex items-center justify-center">
-                            <div className="flex w-full max-w-md items-center justify-between gap-1 rounded-xl border border-[#E8E4DE] bg-white p-2">
-                              <button
-                                type="button"
-                                onClick={() =>
-                                  goToPage(currentPage - 1)
-                                }
-                                disabled={currentPage <= 1}
-                                className="inline-flex items-center gap-1 rounded-lg px-2 py-2 text-[11px] font-bold text-[#9F2D18] transition hover:bg-[#FFF1ED] disabled:cursor-not-allowed disabled:text-gray-300 disabled:hover:bg-transparent sm:px-3"
-                              >
-                                <ChevronLeft className="h-4 w-4" />
-                                Previous
-                              </button>
-
-                              <div className="min-w-0 text-center">
-                                <p className="text-[11px] font-bold text-[#17202A]">
-                                  {currentPage} / {totalPages}
-                                </p>
-
-                                <p className="mt-0.5 text-[9px] text-gray-400">
-                                  {totalBusinesses} businesses
-                                </p>
+                                <Link
+                                  href={`/seller/${business.id}`}
+                                  className="mt-3 flex w-full items-center justify-center gap-2 rounded-lg bg-[#FFF1ED] py-2.5 text-[11px] font-bold text-[#9F2D18]"
+                                >
+                                  Browse
+                                  <ArrowRight className="h-3.5 w-3.5" />
+                                </Link>
                               </div>
+                            </article>
+                          );
+                        })}
+                      </div>
 
-                              <button
-                                type="button"
-                                onClick={() =>
-                                  goToPage(currentPage + 1)
-                                }
-                                disabled={
-                                  currentPage >= totalPages
-                                }
-                                className="inline-flex items-center gap-1 rounded-lg px-2 py-2 text-[11px] font-bold text-[#9F2D18] transition hover:bg-[#FFF1ED] disabled:cursor-not-allowed disabled:text-gray-300 disabled:hover:bg-transparent sm:px-3"
-                              >
-                                Next
-                                <ChevronRight className="h-4 w-4" />
-                              </button>
+                      {/* PAGINATION */}
+                      {totalPages > 1 && (
+                        <div className="mt-6 flex items-center justify-center">
+                          <div className="flex w-full max-w-md items-center justify-between gap-1 rounded-xl border border-[#E8E4DE] bg-white p-2">
+                            <button
+                              type="button"
+                              onClick={() => goToPage(currentPage - 1)}
+                              disabled={currentPage <= 1}
+                              className="inline-flex items-center gap-1 rounded-lg px-2 py-2 text-[11px] font-bold text-[#9F2D18] transition hover:bg-[#FFF1ED] disabled:cursor-not-allowed disabled:text-gray-300 disabled:hover:bg-transparent sm:px-3"
+                            >
+                              <ChevronLeft className="h-4 w-4" />
+                              Previous
+                            </button>
+
+                            <div className="min-w-0 text-center">
+                              <p className="text-[11px] font-bold text-[#17202A]">
+                                {currentPage} / {totalPages}
+                              </p>
+                              <p className="mt-0.5 text-[9px] text-gray-400">
+                                {totalBusinesses} businesses
+                              </p>
                             </div>
-                          </div>
-                        )}
-                      </>
-                    )}
-                </section>
 
-                {/* FOOTER */}
+                            <button
+                              type="button"
+                              onClick={() => goToPage(currentPage + 1)}
+                              disabled={currentPage >= totalPages}
+                              className="inline-flex items-center gap-1 rounded-lg px-2 py-2 text-[11px] font-bold text-[#9F2D18] transition hover:bg-[#FFF1ED] disabled:cursor-not-allowed disabled:text-gray-300 disabled:hover:bg-transparent sm:px-3"
+                            >
+                              Next
+                              <ChevronRight className="h-4 w-4" />
+                            </button>
+                          </div>
+                        </div>
+                      )}
+                    </>
+                  )}
+                </section>
 
                 <footer className="mt-7 flex items-center justify-center gap-3 text-[10px] text-gray-400">
                   <span className="h-px w-16 bg-gray-200" />
-
-                  <span>
-                    ReMarket · Find it nearby
-                  </span>
-
+                  <span>ReMarket · Find it nearby</span>
                   <span className="h-px w-16 bg-gray-200" />
                 </footer>
               </div>
             </div>
           </div>
 
-          {/* MOBILE NAVIGATION */}
-
+          {/* MOBILE NAV */}
           <nav className="fixed inset-x-0 bottom-0 z-50 border-t border-gray-200 bg-white/95 px-2 pb-[max(6px,env(safe-area-inset-bottom))] pt-1.5 backdrop-blur lg:hidden">
             <div className="grid w-full grid-cols-4">
               {NAV_ITEMS.map((item) => {
                 const Icon = item.icon;
-
                 return (
                   <button
                     key={item.label}
                     type="button"
-                    onClick={() =>
-                      router.push(item.href)
-                    }
+                    onClick={() => router.push(item.href)}
                     className={`flex flex-col items-center justify-center gap-1 rounded-xl py-2 ${
                       item.label === "Shop"
                         ? "text-[#9F2D18]"
@@ -1238,10 +868,7 @@ function ShopPageView({
                     }`}
                   >
                     <Icon className="h-[19px] w-[19px]" />
-
-                    <span className="text-[9px] font-medium">
-                      {item.label}
-                    </span>
+                    <span className="text-[9px] font-medium">{item.label}</span>
                   </button>
                 );
               })}

@@ -10,6 +10,13 @@ import { requireSeller } from "@/lib/seller-auth";
 import { geocodeBusinessLocation } from "@/lib/geocoding";
 import { createNotification } from "@/lib/notifications";
 
+const MAX_PRISMA_INT = 2_147_483_647;
+const MAX_REQUEST_BODY_BYTES = 100 * 1024;
+const MAX_CATEGORY_IDS = 50;
+const MAX_CATEGORY_ID_LENGTH = 100;
+const MAX_SOCIAL_LINKS = 30;
+const MAX_SOCIAL_HANDLE_LENGTH = 2000;
+
 const ALLOWED_AVAILABILITY = [
   "AVAILABLE",
   "ASK_SELLER",
@@ -55,7 +62,8 @@ function cleanString(value: unknown): string {
 function nullableString(
   value: unknown
 ): string | null {
-  const cleaned = cleanString(value);
+  const cleaned =
+    cleanString(value);
 
   return cleaned || null;
 }
@@ -73,7 +81,9 @@ function parseOptionalInt(
 
   if (
     typeof value !== "number" ||
-    !Number.isInteger(value)
+    !Number.isSafeInteger(value) ||
+    value < 0 ||
+    value > MAX_PRISMA_INT
   ) {
     return "INVALID";
   }
@@ -99,13 +109,15 @@ function parseOptionalFloat(
   }
 
   if (typeof value === "string") {
-    const cleaned = value.trim();
+    const cleaned =
+      value.trim();
 
     if (!cleaned) {
       return null;
     }
 
-    const parsed = Number(cleaned);
+    const parsed =
+      Number(cleaned);
 
     return Number.isFinite(parsed)
       ? parsed
@@ -118,7 +130,8 @@ function parseOptionalFloat(
 function parseAvailability(
   value: unknown
 ): AvailabilityValue | null {
-  const cleaned = cleanString(value);
+  const cleaned =
+    cleanString(value);
 
   if (
     cleaned === "AVAILABLE" ||
@@ -134,7 +147,17 @@ function parseAvailability(
 function jsonHeaders() {
   return {
     "Content-Type": "application/json",
+    "Cache-Control": "no-store",
   };
+}
+
+function isValidHttpUrl(value: string): boolean {
+  try {
+    const url = new URL(value);
+    return url.protocol === "http:" || url.protocol === "https:";
+  } catch {
+    return false;
+  }
 }
 
 function validateCoordinates(
@@ -190,19 +213,29 @@ function normalizeNigerianPhone(
     return "";
   }
 
-  if (clean.startsWith("00")) {
-    clean = clean.slice(2);
+  if (
+    clean.startsWith("00")
+  ) {
+    clean =
+      clean.slice(2);
   }
 
-  if (clean.startsWith("+")) {
-    clean = clean.slice(1);
+  if (
+    clean.startsWith("+")
+  ) {
+    clean =
+      clean.slice(1);
   }
 
-  if (clean.startsWith("234")) {
+  if (
+    clean.startsWith("234")
+  ) {
     return `+${clean}`;
   }
 
-  if (clean.startsWith("0")) {
+  if (
+    clean.startsWith("0")
+  ) {
     return `+234${clean.slice(1)}`;
   }
 
@@ -212,31 +245,42 @@ function normalizeNigerianPhone(
 function normalizePhone(
   value: string
 ): string {
-  return normalizeNigerianPhone(value);
+  return normalizeNigerianPhone(
+    value
+  );
 }
 
 function normalizeSocialHandle(
   platform: SocialPlatform,
   handle: string
 ): string {
-  const clean = handle.trim();
+  const clean =
+    handle.trim();
 
   if (!clean) {
     return "";
   }
 
   if (
-    platform === "WHATSAPP" ||
-    platform === "PHONE"
+    platform ===
+      "WHATSAPP" ||
+    platform ===
+      "PHONE"
   ) {
     if (
-      clean.startsWith("http://") ||
-      clean.startsWith("https://")
+      clean.startsWith(
+        "http://"
+      ) ||
+      clean.startsWith(
+        "https://"
+      )
     ) {
       return clean;
     }
 
-    return normalizeNigerianPhone(clean);
+    return normalizeNigerianPhone(
+      clean
+    );
   }
 
   return clean;
@@ -269,21 +313,14 @@ function normalizeSocialHandle(
 function parseSocialLinkUpdates(
   value: unknown
 ): ParsedSocialLink[] | null {
-  if (!Array.isArray(value)) {
+  if (
+    !Array.isArray(value) ||
+    value.length > MAX_SOCIAL_LINKS
+  ) {
     return null;
   }
 
   const result: ParsedSocialLink[] = [];
-
-  /*
-   * Multiple rows for the same social platform
-   * are supported. This matches the repeatable
-   * social-link UI used by seller/admin forms.
-   *
-   * PHONE remains a single canonical platform
-   * because Business.phone is a single mirrored
-   * value and must stay synchronized with it.
-   */
   let phoneAlreadyProvided = false;
 
   for (const item of value) {
@@ -292,34 +329,33 @@ function parseSocialLinkUpdates(
       typeof item !== "object" ||
       Array.isArray(item)
     ) {
-      continue;
+      return null;
     }
 
-    const record =
-      item as Record<string, unknown>;
+    const record = item as Record<string, unknown>;
 
-    if (
-      !isSocialPlatform(record.platform)
-    ) {
-      continue;
+    if (!isSocialPlatform(record.platform)) {
+      return null;
+    }
+
+    if (typeof record.handle !== "string") {
+      return null;
+    }
+
+    let handle = record.handle.trim();
+
+    if (handle.length > MAX_SOCIAL_HANDLE_LENGTH) {
+      return null;
     }
 
     if (record.platform === "PHONE") {
       if (phoneAlreadyProvided) {
-        continue;
+        return null;
       }
 
       phoneAlreadyProvided = true;
     }
 
-    let handle =
-      cleanString(record.handle);
-
-    /*
-     * Preserve an intentionally empty
-     * handle so PATCH can interpret it
-     * as removal of that platform.
-     */
     if (handle) {
       handle = normalizeSocialHandle(
         record.platform,
@@ -327,6 +363,12 @@ function parseSocialLinkUpdates(
       );
     }
 
+    if (handle.length > MAX_SOCIAL_HANDLE_LENGTH) {
+      return null;
+    }
+
+    // PHONE must mirror Business.phone and is kept to one entry.
+    // Other platforms may have multiple links (for example, multiple Instagram handles).
     result.push({
       platform: record.platform,
       handle,
@@ -335,14 +377,14 @@ function parseSocialLinkUpdates(
 
   return result;
 }
-
 function getPhoneUpdateFromSocialLinks(
   socialLinks: ParsedSocialLink[]
 ): ParsedSocialLink | null {
   return (
     socialLinks.find(
       (link) =>
-        link.platform === "PHONE"
+        link.platform ===
+        "PHONE"
     ) ?? null
   );
 }
@@ -350,33 +392,46 @@ function getPhoneUpdateFromSocialLinks(
 function parseCategoryIds(
   value: unknown
 ): string[] | null {
-  if (!Array.isArray(value)) {
+  if (
+    !Array.isArray(value) ||
+    value.length > MAX_CATEGORY_IDS
+  ) {
     return null;
   }
 
-  return Array.from(
-    new Set(
-      value
-        .filter(
-          (
-            item
-          ): item is string =>
-            typeof item === "string"
-        )
-        .map((item) => item.trim())
-        .filter(Boolean)
-    )
-  );
+  const result: string[] = [];
+  const seen = new Set<string>();
+
+  for (const item of value) {
+    if (typeof item !== "string") {
+      return null;
+    }
+
+    const id = item.trim();
+
+    if (!id || id.length > MAX_CATEGORY_ID_LENGTH) {
+      return null;
+    }
+
+    if (seen.has(id)) {
+      return null;
+    }
+
+    seen.add(id);
+    result.push(id);
+  }
+
+  return result;
 }
 
 /*
  * Build the canonical Location.address
  * from the structured seller location fields.
  *
- * EXACT ReMarket order:
+ * Order:
  *
- * House Number
- * Street
+ * House/Shop number
+ * Street/Road/Close
  * Area
  * City
  * Nigeria
@@ -394,6 +449,7 @@ function composeLocationAddress(
     street,
     area,
     city,
+    
     "Nigeria",
   ]
     .filter(Boolean)
@@ -414,31 +470,46 @@ function composeLocationAddress(
  * and older callers.
  */
 function parseLocationInput(
-  payload: Record<string, unknown>
+  payload: Record<
+    string,
+    unknown
+  >
 ): ParsedLocationInput {
   const area =
-    cleanString(payload.area);
+    cleanString(
+      payload.area
+    );
 
   const street =
-    cleanString(payload.street);
+    cleanString(
+      payload.street
+    );
 
   const houseNumber =
-    cleanString(payload.houseNumber);
+    cleanString(
+      payload.houseNumber
+    );
 
   const city =
-    cleanString(payload.city);
+    cleanString(
+      payload.city
+    );
 
   const suppliedAddress =
-    cleanString(payload.address);
+    cleanString(
+      payload.address
+    );
 
-  const address = street
-    ? composeLocationAddress(
-        houseNumber,
-        street,
-        area,
-        city
-      )
-    : suppliedAddress;
+  const address =
+    street
+      ? composeLocationAddress(
+          houseNumber,
+          street,
+          area,
+          city
+          
+        )
+      : suppliedAddress;
 
   return {
     area,
@@ -454,23 +525,9 @@ function parseLocationInput(
  * street separately now, but older locations
  * may not have it populated yet.
  *
- * The canonical address format is:
- *
- *   House Number, Street, Area, City, Nigeria
- *
- * Older records may also have:
- *
- *   House Number, Street, City, Area, Nigeria
- *
- * or address-only/free-form values.
- *
- * This helper therefore:
- *
- * 1. removes Nigeria;
- * 2. recognizes the stored area when it appears
- *    at the end or immediately before the city;
- * 3. reconstructs house number, street, and city
- *    as safely as possible.
+ * This helper still recovers structured parts
+ * from addresses created by the existing
+ * composeLocationAddress format.
  */
 function parseStoredLocationAddress(
   address: string | null,
@@ -497,56 +554,21 @@ function parseStoredLocationAddress(
     };
   }
 
-  /*
-   * Remove the country suffix when present.
-   */
-  if (
-    parts[parts.length - 1]
-      .toLowerCase() === "nigeria"
-  ) {
+  // Remove the country suffix when present.
+  if (parts[parts.length - 1].toLowerCase() === "nigeria") {
     parts = parts.slice(0, -1);
   }
 
-  if (parts.length === 0) {
-    return {
-      houseNumber: "",
-      street: "",
-      city: "",
-    };
-  }
-
-  /*
-   * The confirmed ReMarket format places Area:
-   *
-   *   - immediately before City when City exists;
-   *   - at the end when City is omitted.
-   *
-   * Some older records may use:
-   *
-   *   House, Street, City, Area
-   *
-   * so we support both placements.
-   */
-  const normalizedArea =
-    area.trim().toLowerCase();
-
+  // Current canonical order places Area before City. Older records may
+  // have placed Area last, so support either of those trailing positions.
+  const normalizedArea = area.trim().toLowerCase();
   if (normalizedArea) {
     let areaIndex = -1;
 
-    for (
-      let index = parts.length - 1;
-      index >= 0;
-      index -= 1
-    ) {
+    for (let index = parts.length - 1; index >= 0; index -= 1) {
       if (
-        parts[index].toLowerCase() ===
-          normalizedArea &&
-        (
-          index ===
-            parts.length - 1 ||
-          index ===
-            parts.length - 2
-        )
+        parts[index].toLowerCase() === normalizedArea &&
+        (index === parts.length - 1 || index === parts.length - 2)
       ) {
         areaIndex = index;
         break;
@@ -574,21 +596,8 @@ function parseStoredLocationAddress(
     };
   }
 
-  /*
-   * At this point two parts can represent:
-   *
-   *   Street, City
-   *
-   * or:
-   *
-   *   House Number, Street
-   *
-   * Detect the second form when the first
-   * value clearly looks like a house/shop number.
-   */
   if (parts.length === 2) {
     const firstPart = parts[0];
-
     const looksLikeHouseNumber =
       /^(?:\d+[A-Za-z]?(?:\s*[/-]\s*[\w-]+)?|(?:shop|suite|unit|plot|house|block)\s*[\w-]+)$/i.test(
         firstPart
@@ -609,152 +618,122 @@ function parseStoredLocationAddress(
     };
   }
 
-  /*
-   * Three or more remaining parts are interpreted
-   * as:
-   *
-   *   House Number, Street, City...
-   *
-   * which supports canonical structured addresses
-   * after the known Area value has been removed.
-   */
+  // With three or more components after removing Area/country, interpret
+  // them as House Number, Street, and the remaining City components.
   return {
     houseNumber: parts[0],
     street: parts[1],
-    city: parts
-      .slice(2)
-      .join(", "),
+    city: parts.slice(2).join(", "),
   };
 }
 
 async function loadSellerBusiness(
   ownerId: string
 ) {
-  return prisma.business.findUnique({
-    where: {
-      ownerId,
-    },
-
-    include: {
-      location: true,
-
-      categories: {
-        include: {
-          category: true,
-        },
+  return prisma.business.findUnique(
+    {
+      where: {
+        ownerId,
       },
 
-      products: {
-        where: {
-          deletedAt: null,
+      include: {
+        location: true,
+
+        categories: {
+          include: {
+            category: true,
+          },
         },
 
-        orderBy: {
-          updatedAt: "desc",
-        },
-
-        include: {
-          images: {
-            orderBy: {
-              sortOrder: "asc",
-            },
+        products: {
+          where: {
+            deletedAt: null,
           },
 
-          category: true,
-        },
-      },
+          orderBy: {
+            updatedAt:
+              "desc",
+          },
 
-      socialLinks: {
-        orderBy: {
-          platform: "asc",
+          include: {
+            images: {
+              orderBy: {
+                sortOrder:
+                  "asc",
+              },
+            },
+
+            category: true,
+          },
+        },
+
+        socialLinks: {
+          orderBy: {
+            platform:
+              "asc",
+          },
         },
       },
-    },
-  });
+    }
+  );
+}
+
+function isRequestBodyTooLarge(request: Request): boolean {
+  const contentLength = request.headers.get("content-length");
+
+  if (contentLength !== null) {
+    const parsed = Number(contentLength);
+
+    if (!Number.isSafeInteger(parsed) || parsed < 0) {
+      return true;
+    }
+
+    if (parsed > MAX_REQUEST_BODY_BYTES) {
+      return true;
+    }
+  }
+
+  return false;
 }
 
 /*
  * ------------------------------------------------
  * NOTIFY ADMINS OF BUSINESS UPDATE
  * ------------------------------------------------
- *
- * The seller is the person performing the
- * update, so the seller does not need an
- * in-app notification about their own action.
- *
- * Every ADMIN is notified because the business
- * information visible to ReMarket has changed.
- *
- * Notification failure must never undo a
- * successful business update.
+ * Notification errors must never undo a successful business update.
  */
-
 async function notifyAdminsOfBusinessUpdate(
   businessId: string,
   businessName: string
-) {
+): Promise<void> {
   try {
-    const admins =
-      await prisma.user.findMany({
-        where: {
-          role: "ADMIN",
-        },
+    const admins = await prisma.user.findMany({
+      where: { role: "ADMIN" },
+      select: { id: true },
+    });
 
-        select: {
-          id: true,
-        },
-      });
-
-    for (
-      const admin of admins
-    ) {
+    for (const admin of admins) {
       try {
         await createNotification({
-          userId:
-            admin.id,
-
-          type:
-            NotificationType.BUSINESS_UPDATED,
-
-          title:
-            "Business updated",
-
-          message:
-            `${businessName} was updated by its seller.`,
-
-          priority:
-            NotificationPriority.NORMAL,
-
+          userId: admin.id,
+          type: NotificationType.BUSINESS_UPDATED,
+          title: "Business updated",
+          message: `${businessName} was updated by its seller.`,
+          priority: NotificationPriority.NORMAL,
           data: {
             businessId,
-
-            href:
-              `/admin/businesses/${businessId}`,
+            href: `/admin/businesses/${businessId}`,
           },
-
-          /*
-           * No permanent dedupe key here.
-           *
-           * A seller can update the same business
-           * multiple times, and each successful
-           * update should be capable of producing
-           * its own notification.
-           */
-          dedupeKey:
-            null,
+          dedupeKey: null,
         });
-      } catch (
-        notificationError
-      ) {
+      } catch (notificationError) {
         console.error(
           "Seller business admin notification error:",
           notificationError
         );
       }
     }
-  } catch (
-    adminLookupError
-  ) {
+  } catch (adminLookupError) {
     console.error(
       "Seller business admin lookup error:",
       adminLookupError
@@ -806,7 +785,8 @@ export async function GET() {
       },
       {
         status: 500,
-        headers: jsonHeaders(),
+        headers:
+          jsonHeaders(),
       }
     );
   }
@@ -836,18 +816,53 @@ export async function POST(
       },
       {
         status: 409,
-        headers: jsonHeaders(),
+        headers:
+          jsonHeaders(),
       }
     );
   }
 
   try {
-    const body: unknown =
-      await request.json();
+    if (isRequestBodyTooLarge(request)) {
+      return NextResponse.json(
+        { error: "Request body is too large." },
+        { status: 413, headers: jsonHeaders() }
+      );
+    }
+
+    let rawBody: string;
+
+    try {
+      rawBody = await request.text();
+    } catch {
+      return NextResponse.json(
+        { error: "Unable to read request body." },
+        { status: 400, headers: jsonHeaders() }
+      );
+    }
+
+    if (Buffer.byteLength(rawBody, "utf8") > MAX_REQUEST_BODY_BYTES) {
+      return NextResponse.json(
+        { error: "Request body is too large." },
+        { status: 413, headers: jsonHeaders() }
+      );
+    }
+
+    let body: unknown;
+
+    try {
+      body = JSON.parse(rawBody);
+    } catch {
+      return NextResponse.json(
+        { error: "Invalid JSON body." },
+        { status: 400, headers: jsonHeaders() }
+      );
+    }
 
     if (
       !body ||
-      typeof body !== "object" ||
+      typeof body !==
+        "object" ||
       Array.isArray(body)
     ) {
       return NextResponse.json(
@@ -857,7 +872,8 @@ export async function POST(
         },
         {
           status: 400,
-          headers: jsonHeaders(),
+          headers:
+            jsonHeaders(),
         }
       );
     }
@@ -869,16 +885,24 @@ export async function POST(
       >;
 
     const name =
-      cleanString(payload.name);
+      cleanString(
+        payload.name
+      );
 
     const ownerName =
-      cleanString(payload.ownerName);
+      cleanString(
+        payload.ownerName
+      );
 
     const description =
-      cleanString(payload.description);
+      cleanString(
+        payload.description
+      );
 
     const locationInput =
-      parseLocationInput(payload);
+      parseLocationInput(
+        payload
+      );
 
     const area =
       locationInput.area;
@@ -890,7 +914,9 @@ export async function POST(
       locationInput.street;
 
     const imageUrl =
-      cleanString(payload.imageUrl);
+      cleanString(
+        payload.imageUrl
+      );
 
     const categoryIds =
       parseCategoryIds(
@@ -898,7 +924,8 @@ export async function POST(
       );
 
     if (
-      payload.categoryIds !== undefined &&
+      payload.categoryIds !==
+        undefined &&
       !categoryIds
     ) {
       return NextResponse.json(
@@ -908,7 +935,8 @@ export async function POST(
         },
         {
           status: 400,
-          headers: jsonHeaders(),
+          headers:
+            jsonHeaders(),
         }
       );
     }
@@ -929,12 +957,16 @@ export async function POST(
         },
         {
           status: 400,
-          headers: jsonHeaders(),
+          headers:
+            jsonHeaders(),
         }
       );
     }
 
-    if (name.length > 200) {
+    if (
+      name.length >
+      200
+    ) {
       return NextResponse.json(
         {
           error:
@@ -942,7 +974,8 @@ export async function POST(
         },
         {
           status: 400,
-          headers: jsonHeaders(),
+          headers:
+            jsonHeaders(),
         }
       );
     }
@@ -951,6 +984,12 @@ export async function POST(
      * -----------------------------------------
      * LOCATION
      * -----------------------------------------
+     *
+     * Area is required.
+     *
+     * A structured street value is preferred.
+     * The legacy address value remains supported
+     * so the current Seller client does not break.
      */
 
     if (!area) {
@@ -961,12 +1000,16 @@ export async function POST(
         },
         {
           status: 400,
-          headers: jsonHeaders(),
+          headers:
+            jsonHeaders(),
         }
       );
     }
 
-    if (area.length > 200) {
+    if (
+      area.length >
+      200
+    ) {
       return NextResponse.json(
         {
           error:
@@ -974,12 +1017,16 @@ export async function POST(
         },
         {
           status: 400,
-          headers: jsonHeaders(),
+          headers:
+            jsonHeaders(),
         }
       );
     }
 
-    if (!street && !address) {
+    if (
+      !street &&
+      !address
+    ) {
       return NextResponse.json(
         {
           error:
@@ -987,12 +1034,16 @@ export async function POST(
         },
         {
           status: 400,
-          headers: jsonHeaders(),
+          headers:
+            jsonHeaders(),
         }
       );
     }
 
-    if (address.length > 2000) {
+    if (
+      address.length >
+      2000
+    ) {
       return NextResponse.json(
         {
           error:
@@ -1000,12 +1051,37 @@ export async function POST(
         },
         {
           status: 400,
-          headers: jsonHeaders(),
+          headers:
+            jsonHeaders(),
         }
       );
     }
 
-    if (ownerName.length > 200) {
+    if (street.length > 300) {
+      return NextResponse.json(
+        { error: "Business street is too long." },
+        { status: 400, headers: jsonHeaders() }
+      );
+    }
+
+    if (locationInput.houseNumber.length > 100) {
+      return NextResponse.json(
+        { error: "House or shop number is too long." },
+        { status: 400, headers: jsonHeaders() }
+      );
+    }
+
+    if (locationInput.city.length > 100) {
+      return NextResponse.json(
+        { error: "Business city is too long." },
+        { status: 400, headers: jsonHeaders() }
+      );
+    }
+
+    if (
+      ownerName.length >
+      200
+    ) {
       return NextResponse.json(
         {
           error:
@@ -1013,12 +1089,16 @@ export async function POST(
         },
         {
           status: 400,
-          headers: jsonHeaders(),
+          headers:
+            jsonHeaders(),
         }
       );
     }
 
-    if (description.length > 2000) {
+    if (
+      description.length >
+      2000
+    ) {
       return NextResponse.json(
         {
           error:
@@ -1026,12 +1106,16 @@ export async function POST(
         },
         {
           status: 400,
-          headers: jsonHeaders(),
+          headers:
+            jsonHeaders(),
         }
       );
     }
 
-    if (imageUrl.length > 2000) {
+    if (
+      imageUrl.length >
+      2000
+    ) {
       return NextResponse.json(
         {
           error:
@@ -1039,16 +1123,26 @@ export async function POST(
         },
         {
           status: 400,
-          headers: jsonHeaders(),
+          headers:
+            jsonHeaders(),
         }
       );
     }
 
+
+    if (imageUrl && !isValidHttpUrl(imageUrl)) {
+      return NextResponse.json(
+        { error: "Image URL must be a valid HTTP or HTTPS URL." },
+        { status: 400, headers: jsonHeaders() }
+      );
+    }
     const availabilityWasProvided =
       payload.availability !==
         undefined &&
-      payload.availability !== null &&
-      payload.availability !== "";
+      payload.availability !==
+        null &&
+      payload.availability !==
+        "";
 
     if (
       availabilityWasProvided &&
@@ -1061,7 +1155,8 @@ export async function POST(
         },
         {
           status: 400,
-          headers: jsonHeaders(),
+          headers:
+            jsonHeaders(),
         }
       );
     }
@@ -1083,8 +1178,10 @@ export async function POST(
       );
 
     if (
-      priceMin === "INVALID" ||
-      priceMax === "INVALID"
+      priceMin ===
+        "INVALID" ||
+      priceMax ===
+        "INVALID"
     ) {
       return NextResponse.json(
         {
@@ -1093,7 +1190,8 @@ export async function POST(
         },
         {
           status: 400,
-          headers: jsonHeaders(),
+          headers:
+            jsonHeaders(),
         }
       );
     }
@@ -1109,7 +1207,8 @@ export async function POST(
         },
         {
           status: 400,
-          headers: jsonHeaders(),
+          headers:
+            jsonHeaders(),
         }
       );
     }
@@ -1125,7 +1224,8 @@ export async function POST(
         },
         {
           status: 400,
-          headers: jsonHeaders(),
+          headers:
+            jsonHeaders(),
         }
       );
     }
@@ -1133,7 +1233,8 @@ export async function POST(
     if (
       priceMin !== null &&
       priceMax !== null &&
-      priceMin > priceMax
+      priceMin >
+        priceMax
     ) {
       return NextResponse.json(
         {
@@ -1142,7 +1243,8 @@ export async function POST(
         },
         {
           status: 400,
-          headers: jsonHeaders(),
+          headers:
+            jsonHeaders(),
         }
       );
     }
@@ -1151,6 +1253,13 @@ export async function POST(
      * -----------------------------------------
      * COORDINATES
      * -----------------------------------------
+     *
+     * The API keeps accepting coordinates
+     * because the existing Seller UI captures
+     * them internally through browser GPS.
+     *
+     * The UI does not ask the seller to type
+     * latitude/longitude manually.
      */
 
     const parsedLat =
@@ -1181,7 +1290,8 @@ export async function POST(
         },
         {
           status: 400,
-          headers: jsonHeaders(),
+          headers:
+            jsonHeaders(),
         }
       );
     }
@@ -1194,8 +1304,10 @@ export async function POST(
       );
 
     if (
-      parsedLat === "INVALID" ||
-      parsedLong === "INVALID"
+      parsedLat ===
+        "INVALID" ||
+      parsedLong ===
+        "INVALID"
     ) {
       return NextResponse.json(
         {
@@ -1204,7 +1316,8 @@ export async function POST(
         },
         {
           status: 400,
-          headers: jsonHeaders(),
+          headers:
+            jsonHeaders(),
         }
       );
     }
@@ -1218,11 +1331,13 @@ export async function POST(
     if (coordinateError) {
       return NextResponse.json(
         {
-          error: coordinateError,
+          error:
+            coordinateError,
         },
         {
           status: 400,
-          headers: jsonHeaders(),
+          headers:
+            jsonHeaders(),
         }
       );
     }
@@ -1239,9 +1354,12 @@ export async function POST(
 
     let socialLinks:
       | ParsedSocialLink[]
-      | null = null;
+      | null =
+      null;
 
-    if (socialLinksProvided) {
+    if (
+      socialLinksProvided
+    ) {
       socialLinks =
         parseSocialLinkUpdates(
           payload.socialLinks
@@ -1255,7 +1373,8 @@ export async function POST(
           },
           {
             status: 400,
-            headers: jsonHeaders(),
+            headers:
+              jsonHeaders(),
           }
         );
       }
@@ -1269,10 +1388,15 @@ export async function POST(
 
     const legacyPhoneRaw =
       legacyPhoneProvided
-        ? cleanString(payload.phone)
+        ? cleanString(
+            payload.phone
+          )
         : "";
 
-    if (legacyPhoneRaw.length > 50) {
+    if (
+      legacyPhoneRaw.length >
+      50
+    ) {
       return NextResponse.json(
         {
           error:
@@ -1280,7 +1404,8 @@ export async function POST(
         },
         {
           status: 400,
-          headers: jsonHeaders(),
+          headers:
+            jsonHeaders(),
         }
       );
     }
@@ -1294,7 +1419,8 @@ export async function POST(
 
     if (
       normalizedLegacyPhone &&
-      normalizedLegacyPhone.length > 50
+      normalizedLegacyPhone.length >
+        50
     ) {
       return NextResponse.json(
         {
@@ -1303,7 +1429,8 @@ export async function POST(
         },
         {
           status: 400,
-          headers: jsonHeaders(),
+          headers:
+            jsonHeaders(),
         }
       );
     }
@@ -1318,15 +1445,19 @@ export async function POST(
      * - Business.phone mirrors the PHONE value.
      */
     const createSocialLinks =
-      (socialLinks ?? []).filter(
-        (link) =>
-          Boolean(link.handle)
-      );
+      (socialLinks ?? [])
+        .filter(
+          (link) =>
+            Boolean(
+              link.handle
+            )
+        );
 
     const createPhoneSocial =
       createSocialLinks.find(
         (link) =>
-          link.platform === "PHONE"
+          link.platform ===
+          "PHONE"
       );
 
     let finalCreateSocialLinks =
@@ -1337,7 +1468,8 @@ export async function POST(
       normalizedLegacyPhone
     ) {
       finalCreateSocialLinks.push({
-        platform: "PHONE",
+        platform:
+          "PHONE",
         handle:
           normalizedLegacyPhone,
       });
@@ -1346,12 +1478,15 @@ export async function POST(
     const phone =
       finalCreateSocialLinks.find(
         (link) =>
-          link.platform === "PHONE"
-      )?.handle ?? null;
+          link.platform ===
+          "PHONE"
+      )?.handle ??
+      null;
 
     if (
       phone &&
-      phone.length > 50
+      phone.length >
+        50
     ) {
       return NextResponse.json(
         {
@@ -1360,7 +1495,8 @@ export async function POST(
         },
         {
           status: 400,
-          headers: jsonHeaders(),
+          headers:
+            jsonHeaders(),
         }
       );
     }
@@ -1376,7 +1512,8 @@ export async function POST(
     }[] = [];
 
     if (
-      finalCategoryIds.length > 0
+      finalCategoryIds.length >
+      0
     ) {
       categories =
         await prisma.category.findMany(
@@ -1387,7 +1524,8 @@ export async function POST(
                   finalCategoryIds,
               },
 
-              isActive: true,
+              isActive:
+                true,
             },
 
             select: {
@@ -1407,7 +1545,8 @@ export async function POST(
           },
           {
             status: 400,
-            headers: jsonHeaders(),
+            headers:
+              jsonHeaders(),
           }
         );
       }
@@ -1441,7 +1580,8 @@ export async function POST(
         },
         {
           status: 409,
-          headers: jsonHeaders(),
+          headers:
+            jsonHeaders(),
         }
       );
     }
@@ -1450,6 +1590,22 @@ export async function POST(
      * -----------------------------------------
      * RESOLVE BUSINESS LOCATION
      * -----------------------------------------
+     *
+     * Existing behavior is preserved:
+     *
+     * 1. captured GPS is used when supplied;
+     * 2. address geocoding is used when GPS is absent;
+     * 3. failed geocoding does not prevent
+     *    business creation.
+     *
+     * Street:
+     *
+     * 1. seller-provided structured street is
+     *    used as the initial value;
+     * 2. successful geocoding can provide the
+     *    geocoder-confirmed road/street;
+     * 3. when geocoding fails, the seller's
+     *    supplied street is preserved.
      */
 
     let resolvedLat =
@@ -1464,8 +1620,10 @@ export async function POST(
       street || null;
 
     if (
-      resolvedLat === null &&
-      resolvedLong === null &&
+      resolvedLat ===
+        null &&
+      resolvedLong ===
+        null &&
       address
     ) {
       try {
@@ -1486,7 +1644,9 @@ export async function POST(
         resolvedLong =
           geocoded.longitude;
 
-        if (geocoded.street) {
+        if (
+          geocoded.street
+        ) {
           resolvedStreet =
             geocoded.street;
         }
@@ -1504,7 +1664,9 @@ export async function POST(
         resolvedLong
       );
 
-    if (resolvedCoordinateError) {
+    if (
+      resolvedCoordinateError
+    ) {
       return NextResponse.json(
         {
           error:
@@ -1512,7 +1674,8 @@ export async function POST(
         },
         {
           status: 400,
-          headers: jsonHeaders(),
+          headers:
+            jsonHeaders(),
         }
       );
     }
@@ -1545,11 +1708,17 @@ export async function POST(
                 data: {
                   area,
 
+                  /*
+                   * Canonical street used by
+                   * the Near Me street-ranking
+                   * system.
+                   */
                   street:
                     resolvedStreet,
 
                   address:
-                    address || null,
+                    address ||
+                    null,
 
                   lat:
                     resolvedLat,
@@ -1594,7 +1763,8 @@ export async function POST(
                   phone,
 
                   imageUrl:
-                    imageUrl || null,
+                    imageUrl ||
+                    null,
 
                   categories:
                     categories.length >
@@ -1623,7 +1793,9 @@ export async function POST(
               {
                 data:
                   finalCreateSocialLinks.map(
-                    (link) => ({
+                    (
+                      link
+                    ) => ({
                       businessId:
                         createdBusiness.id,
 
@@ -1703,7 +1875,8 @@ export async function POST(
       },
       {
         status: 201,
-        headers: jsonHeaders(),
+        headers:
+          jsonHeaders(),
       }
     );
   } catch (error) {
@@ -1713,10 +1886,12 @@ export async function POST(
     );
 
     if (
-      typeof error === "object" &&
+      typeof error ===
+        "object" &&
       error !== null &&
       "code" in error &&
-      error.code === "P2002"
+      error.code ===
+        "P2002"
     ) {
       return NextResponse.json(
         {
@@ -1725,7 +1900,8 @@ export async function POST(
         },
         {
           status: 409,
-          headers: jsonHeaders(),
+          headers:
+            jsonHeaders(),
         }
       );
     }
@@ -1737,7 +1913,8 @@ export async function POST(
       },
       {
         status: 500,
-        headers: jsonHeaders(),
+        headers:
+          jsonHeaders(),
       }
     );
   }
@@ -1760,12 +1937,46 @@ export async function PATCH(
   }
 
   try {
-    const body: unknown =
-      await request.json();
+    if (isRequestBodyTooLarge(request)) {
+      return NextResponse.json(
+        { error: "Request body is too large." },
+        { status: 413, headers: jsonHeaders() }
+      );
+    }
+
+    let rawBody: string;
+
+    try {
+      rawBody = await request.text();
+    } catch {
+      return NextResponse.json(
+        { error: "Unable to read request body." },
+        { status: 400, headers: jsonHeaders() }
+      );
+    }
+
+    if (Buffer.byteLength(rawBody, "utf8") > MAX_REQUEST_BODY_BYTES) {
+      return NextResponse.json(
+        { error: "Request body is too large." },
+        { status: 413, headers: jsonHeaders() }
+      );
+    }
+
+    let body: unknown;
+
+    try {
+      body = JSON.parse(rawBody);
+    } catch {
+      return NextResponse.json(
+        { error: "Invalid JSON body." },
+        { status: 400, headers: jsonHeaders() }
+      );
+    }
 
     if (
       !body ||
-      typeof body !== "object" ||
+      typeof body !==
+        "object" ||
       Array.isArray(body)
     ) {
       return NextResponse.json(
@@ -1775,7 +1986,8 @@ export async function PATCH(
         },
         {
           status: 400,
-          headers: jsonHeaders(),
+          headers:
+            jsonHeaders(),
         }
       );
     }
@@ -1785,6 +1997,37 @@ export async function PATCH(
         string,
         unknown
       >;
+
+    const supportedPatchFields = new Set([
+      "name",
+      "ownerName",
+      "description",
+      "phone",
+      "imageUrl",
+      "availability",
+      "priceMin",
+      "priceMax",
+      "categoryIds",
+      "socialLinks",
+      "area",
+      "address",
+      "street",
+      "houseNumber",
+      "city",
+      "lat",
+      "long",
+      "lng",
+    ]);
+
+    if (
+      Object.keys(payload).length === 0 ||
+      !Object.keys(payload).some((key) => supportedPatchFields.has(key))
+    ) {
+      return NextResponse.json(
+        { error: "Provide at least one supported field to update." },
+        { status: 400, headers: jsonHeaders() }
+      );
+    }
 
     const existingBusiness =
       await prisma.business.findUnique(
@@ -1827,7 +2070,8 @@ export async function PATCH(
         },
         {
           status: 404,
-          headers: jsonHeaders(),
+          headers:
+            jsonHeaders(),
         }
       );
     }
@@ -1843,7 +2087,8 @@ export async function PATCH(
         },
         {
           status: 403,
-          headers: jsonHeaders(),
+          headers:
+            jsonHeaders(),
         }
       );
     }
@@ -1858,7 +2103,8 @@ export async function PATCH(
         },
         {
           status: 410,
-          headers: jsonHeaders(),
+          headers:
+            jsonHeaders(),
         }
       );
     }
@@ -1879,7 +2125,9 @@ export async function PATCH(
 
     const name =
       has("name")
-        ? cleanString(payload.name)
+        ? cleanString(
+            payload.name
+          )
         : undefined;
 
     const ownerName =
@@ -1924,14 +2172,16 @@ export async function PATCH(
         },
         {
           status: 400,
-          headers: jsonHeaders(),
+          headers:
+            jsonHeaders(),
         }
       );
     }
 
     if (
       name !== undefined &&
-      name.length > 200
+      name.length >
+        200
     ) {
       return NextResponse.json(
         {
@@ -1940,14 +2190,17 @@ export async function PATCH(
         },
         {
           status: 400,
-          headers: jsonHeaders(),
+          headers:
+            jsonHeaders(),
         }
       );
     }
 
     if (
-      ownerName !== undefined &&
-      ownerName.length > 200
+      ownerName !==
+        undefined &&
+      ownerName.length >
+        200
     ) {
       return NextResponse.json(
         {
@@ -1956,14 +2209,17 @@ export async function PATCH(
         },
         {
           status: 400,
-          headers: jsonHeaders(),
+          headers:
+            jsonHeaders(),
         }
       );
     }
 
     if (
-      description !== undefined &&
-      description.length > 2000
+      description !==
+        undefined &&
+      description.length >
+        2000
     ) {
       return NextResponse.json(
         {
@@ -1972,14 +2228,17 @@ export async function PATCH(
         },
         {
           status: 400,
-          headers: jsonHeaders(),
+          headers:
+            jsonHeaders(),
         }
       );
     }
 
     if (
-      imageUrl !== undefined &&
-      imageUrl.length > 2000
+      imageUrl !==
+        undefined &&
+      imageUrl.length >
+        2000
     ) {
       return NextResponse.json(
         {
@@ -1988,8 +2247,16 @@ export async function PATCH(
         },
         {
           status: 400,
-          headers: jsonHeaders(),
+          headers:
+            jsonHeaders(),
         }
+      );
+    }
+
+    if (imageUrl && !isValidHttpUrl(imageUrl)) {
+      return NextResponse.json(
+        { error: "Image URL must be a valid HTTP or HTTPS URL." },
+        { status: 400, headers: jsonHeaders() }
       );
     }
 
@@ -2004,7 +2271,8 @@ export async function PATCH(
         },
         {
           status: 400,
-          headers: jsonHeaders(),
+          headers:
+            jsonHeaders(),
         }
       );
     }
@@ -2036,8 +2304,10 @@ export async function PATCH(
         : undefined;
 
     if (
-      priceMin === "INVALID" ||
-      priceMax === "INVALID"
+      priceMin ===
+        "INVALID" ||
+      priceMax ===
+        "INVALID"
     ) {
       return NextResponse.json(
         {
@@ -2046,13 +2316,15 @@ export async function PATCH(
         },
         {
           status: 400,
-          headers: jsonHeaders(),
+          headers:
+            jsonHeaders(),
         }
       );
     }
 
     if (
-      priceMin !== undefined &&
+      priceMin !==
+        undefined &&
       priceMin !== null &&
       priceMin < 0
     ) {
@@ -2063,13 +2335,15 @@ export async function PATCH(
         },
         {
           status: 400,
-          headers: jsonHeaders(),
+          headers:
+            jsonHeaders(),
         }
       );
     }
 
     if (
-      priceMax !== undefined &&
+      priceMax !==
+        undefined &&
       priceMax !== null &&
       priceMax < 0
     ) {
@@ -2080,7 +2354,8 @@ export async function PATCH(
         },
         {
           status: 400,
-          headers: jsonHeaders(),
+          headers:
+            jsonHeaders(),
         }
       );
     }
@@ -2096,8 +2371,10 @@ export async function PATCH(
         : existingBusiness.priceMax;
 
     if (
-      resultingPriceMin !== null &&
-      resultingPriceMax !== null &&
+      resultingPriceMin !==
+        null &&
+      resultingPriceMax !==
+        null &&
       resultingPriceMin >
         resultingPriceMax
     ) {
@@ -2108,7 +2385,8 @@ export async function PATCH(
         },
         {
           status: 400,
-          headers: jsonHeaders(),
+          headers:
+            jsonHeaders(),
         }
       );
     }
@@ -2117,14 +2395,26 @@ export async function PATCH(
      * -----------------------------------------
      * CATEGORIES
      * -----------------------------------------
+     *
+     * categoryIds are still a full-set
+     * replacement because a category selection
+     * represents the seller's complete category
+     * membership.
+     *
+     * This is intentionally different from
+     * socialLinks, which use per-platform
+     * PATCH semantics.
      */
 
     const categoryIdsProvided =
       has("categoryIds");
 
-    let categoryIds: string[] = [];
+    let categoryIds: string[] =
+      [];
 
-    if (categoryIdsProvided) {
+    if (
+      categoryIdsProvided
+    ) {
       const parsedCategoryIds =
         parseCategoryIds(
           payload.categoryIds
@@ -2138,7 +2428,8 @@ export async function PATCH(
           },
           {
             status: 400,
-            headers: jsonHeaders(),
+            headers:
+              jsonHeaders(),
           }
         );
       }
@@ -2147,17 +2438,20 @@ export async function PATCH(
         parsedCategoryIds;
 
       if (
-        categoryIds.length > 0
+        categoryIds.length >
+        0
       ) {
         const validCategories =
           await prisma.category.findMany(
             {
               where: {
                 id: {
-                  in: categoryIds,
+                  in:
+                    categoryIds,
                 },
 
-                isActive: true,
+                isActive:
+                  true,
               },
 
               select: {
@@ -2177,7 +2471,8 @@ export async function PATCH(
             },
             {
               status: 400,
-              headers: jsonHeaders(),
+              headers:
+                jsonHeaders(),
             }
           );
         }
@@ -2188,6 +2483,34 @@ export async function PATCH(
      * -----------------------------------------
      * SOCIAL / PHONE
      * -----------------------------------------
+     *
+     * SOCIAL LINKS ARE NOW PARTIAL UPDATES.
+     *
+     * Important:
+     *
+     * socialLinks omitted
+     *     -> preserve every existing link
+     *
+     * socialLinks: []
+     *     -> make no social-link changes
+     *
+     * socialLinks: [
+     *   {
+     *     platform: "INSTAGRAM",
+     *     handle: "newhandle"
+     *   }
+     * ]
+     *     -> update Instagram only
+     *
+     * socialLinks: [
+     *   {
+     *     platform: "INSTAGRAM",
+     *     handle: ""
+     *   }
+     * ]
+     *     -> explicitly remove Instagram
+     *
+     * PHONE is synchronized with Business.phone.
      */
 
     const socialLinksProvided =
@@ -2195,9 +2518,12 @@ export async function PATCH(
 
     let socialLinks:
       | ParsedSocialLink[]
-      | null = null;
+      | null =
+      null;
 
-    if (socialLinksProvided) {
+    if (
+      socialLinksProvided
+    ) {
       socialLinks =
         parseSocialLinkUpdates(
           payload.socialLinks
@@ -2211,7 +2537,8 @@ export async function PATCH(
           },
           {
             status: 400,
-            headers: jsonHeaders(),
+            headers:
+              jsonHeaders(),
           }
         );
       }
@@ -2228,7 +2555,8 @@ export async function PATCH(
         : "";
 
     if (
-      legacyPhoneRaw.length > 50
+      legacyPhoneRaw.length >
+      50
     ) {
       return NextResponse.json(
         {
@@ -2237,7 +2565,8 @@ export async function PATCH(
         },
         {
           status: 400,
-          headers: jsonHeaders(),
+          headers:
+            jsonHeaders(),
         }
       );
     }
@@ -2251,7 +2580,8 @@ export async function PATCH(
 
     if (
       normalizedLegacyPhone &&
-      normalizedLegacyPhone.length > 50
+      normalizedLegacyPhone.length >
+        50
     ) {
       return NextResponse.json(
         {
@@ -2260,7 +2590,8 @@ export async function PATCH(
         },
         {
           status: 400,
-          headers: jsonHeaders(),
+          headers:
+            jsonHeaders(),
         }
       );
     }
@@ -2270,6 +2601,18 @@ export async function PATCH(
         socialLinks ?? []
       );
 
+    /*
+     * Determine the PHONE value that should
+     * be mirrored to Business.phone.
+     *
+     * PHONE social update wins when present.
+     *
+     * Otherwise legacy `phone` wins when
+     * explicitly supplied.
+     *
+     * Otherwise Business.phone remains
+     * unchanged.
+     */
     let phoneUpdate:
       | string
       | null
@@ -2289,7 +2632,8 @@ export async function PATCH(
 
     if (
       phoneUpdate &&
-      phoneUpdate.length > 50
+      phoneUpdate.length >
+        50
     ) {
       return NextResponse.json(
         {
@@ -2298,7 +2642,8 @@ export async function PATCH(
         },
         {
           status: 400,
-          headers: jsonHeaders(),
+          headers:
+            jsonHeaders(),
         }
       );
     }
@@ -2307,6 +2652,21 @@ export async function PATCH(
      * -----------------------------------------
      * LOCATION
      * -----------------------------------------
+     *
+     * Supported inputs:
+     *
+     * area
+     * address
+     * street
+     * houseNumber
+     * city
+     * lat
+     * long
+     * lng
+     *
+     * The seller never needs to type coordinates
+     * in the UI. Existing browser-captured GPS
+     * remains supported by the API.
      */
 
     const areaProvided =
@@ -2344,7 +2704,8 @@ export async function PATCH(
         },
         {
           status: 400,
-          headers: jsonHeaders(),
+          headers:
+            jsonHeaders(),
         }
       );
     }
@@ -2367,29 +2728,49 @@ export async function PATCH(
           lat: number | null;
           long: number | null;
         }
-      | null = null;
+      | null =
+      null;
 
-    if (locationWasProvided) {
+    if (
+      locationWasProvided
+    ) {
       const currentArea =
-        existingBusiness.location
-          ?.area ?? "";
+        existingBusiness
+          .location
+          ?.area ??
+        "";
 
       const currentStoredStreet =
-        existingBusiness.location
-          ?.street ?? null;
+        existingBusiness
+          .location
+          ?.street ??
+        null;
 
       const currentAddress =
-        existingBusiness.location
-          ?.address ?? null;
+        existingBusiness
+          .location
+          ?.address ??
+        null;
 
       const currentLat =
-        existingBusiness.location
-          ?.lat ?? null;
+        existingBusiness
+          .location
+          ?.lat ??
+        null;
 
       const currentLong =
-        existingBusiness.location
-          ?.long ?? null;
+        existingBusiness
+          .location
+          ?.long ??
+        null;
 
+      /*
+       * Recover the existing structured
+       * address components where possible.
+       *
+       * Prefer the dedicated Location.street
+       * field when it already exists.
+       */
       const parsedExistingAddress =
         parseStoredLocationAddress(
           currentAddress,
@@ -2415,13 +2796,15 @@ export async function PATCH(
           },
           {
             status: 400,
-            headers: jsonHeaders(),
+            headers:
+              jsonHeaders(),
           }
         );
       }
 
       if (
-        resultingArea.length > 200
+        resultingArea.length >
+        200
       ) {
         return NextResponse.json(
           {
@@ -2430,7 +2813,8 @@ export async function PATCH(
           },
           {
             status: 400,
-            headers: jsonHeaders(),
+            headers:
+              jsonHeaders(),
           }
         );
       }
@@ -2443,7 +2827,8 @@ export async function PATCH(
       let resultingStreet =
         existingStreet;
 
-      let resultingAddress = "";
+      let resultingAddress =
+        "";
 
       if (
         structuredLocationWasProvided
@@ -2469,6 +2854,14 @@ export async function PATCH(
               )
             : parsedExistingAddress.city;
 
+        /*
+         * A structured update still needs
+         * a usable street.
+         *
+         * This preserves the existing street
+         * when the seller changes only the
+         * house number or city.
+         */
         if (!resultingStreet) {
           return NextResponse.json(
             {
@@ -2477,16 +2870,12 @@ export async function PATCH(
             },
             {
               status: 400,
-              headers: jsonHeaders(),
+              headers:
+                jsonHeaders(),
             }
           );
         }
 
-        /*
-         * Exact ReMarket address order:
-         *
-         * House Number, Street, Area, City, Nigeria
-         */
         resultingAddress =
           composeLocationAddress(
             resultingHouseNumber,
@@ -2496,15 +2885,23 @@ export async function PATCH(
           );
       } else {
         /*
-         * Backward-compatible address-only
-         * update path.
+         * Backward-compatible address-only update path.
+         * If only area changes, rebuild the canonical address using
+         * the recovered structured components so the old area is not
+         * left embedded in the new address.
          */
-        resultingAddress =
-          addressProvided
-            ? cleanString(
-                payload.address
-              )
-            : currentAddress ?? "";
+        if (addressProvided) {
+          resultingAddress = cleanString(payload.address);
+        } else if (areaProvided && resultingArea !== currentArea && existingStreet) {
+          resultingAddress = composeLocationAddress(
+            parsedExistingAddress.houseNumber,
+            existingStreet,
+            resultingArea,
+            parsedExistingAddress.city
+          );
+        } else {
+          resultingAddress = currentAddress ?? "";
+        }
       }
 
       if (
@@ -2518,7 +2915,8 @@ export async function PATCH(
           },
           {
             status: 400,
-            headers: jsonHeaders(),
+            headers:
+              jsonHeaders(),
           }
         );
       }
@@ -2534,7 +2932,8 @@ export async function PATCH(
           },
           {
             status: 400,
-            headers: jsonHeaders(),
+            headers:
+              jsonHeaders(),
           }
         );
       }
@@ -2557,8 +2956,10 @@ export async function PATCH(
           : currentLong;
 
       if (
-        parsedLat === "INVALID" ||
-        parsedLong === "INVALID"
+        parsedLat ===
+          "INVALID" ||
+        parsedLong ===
+          "INVALID"
       ) {
         return NextResponse.json(
           {
@@ -2567,7 +2968,8 @@ export async function PATCH(
           },
           {
             status: 400,
-            headers: jsonHeaders(),
+            headers:
+              jsonHeaders(),
           }
         );
       }
@@ -2586,7 +2988,8 @@ export async function PATCH(
           },
           {
             status: 400,
-            headers: jsonHeaders(),
+            headers:
+              jsonHeaders(),
           }
         );
       }
@@ -2597,15 +3000,19 @@ export async function PATCH(
 
       const addressChanged =
         currentAddress !==
-        (resultingAddress || null);
+        (resultingAddress ||
+          null);
 
       const streetChanged =
         existingStreet !==
-        (resultingStreet || null);
+        (resultingStreet ||
+          null);
 
       const coordinatesChanged =
-        currentLat !== parsedLat ||
-        currentLong !== parsedLong;
+        currentLat !==
+          parsedLat ||
+        currentLong !==
+          parsedLong;
 
       let resolvedLat =
         parsedLat;
@@ -2613,11 +3020,25 @@ export async function PATCH(
       let resolvedLong =
         parsedLong;
 
+      /*
+       * Start with the requested/dedicated
+       * street value.
+       */
       let resolvedStreet:
         | string
         | null =
-        resultingStreet || null;
+        resultingStreet ||
+        null;
 
+      /*
+       * If the area/address changes and the seller
+       * did not provide a newly captured coordinate
+       * pair, resolve the new address instead of
+       * retaining coordinates from the old location.
+       *
+       * Geocoding also supplies a canonical road/street
+       * when one is available.
+       */
       if (
         areaChanged ||
         addressChanged
@@ -2627,21 +3048,31 @@ export async function PATCH(
           parsedLong !== null &&
           coordinatesChanged;
 
-        if (!hasFreshCoordinates) {
+        if (
+          !hasFreshCoordinates
+        ) {
+          /*
+           * Do not carry the old street forward
+           * for an address-only location change.
+           *
+           * A newly entered structured street remains
+           * available as a fallback if geocoding fails.
+           */
           resolvedStreet =
             structuredLocationWasProvided
               ? resultingStreet ||
                 null
               : null;
 
-          if (resultingAddress) {
+          if (
+            resultingAddress
+          ) {
             try {
               const geocoded =
                 await geocodeBusinessLocation(
                   {
                     address:
                       resultingAddress,
-
                     area:
                       resultingArea,
                   }
@@ -2666,19 +3097,31 @@ export async function PATCH(
               );
 
               /*
-               * Do not retain coordinates that
-               * belong to the previous location.
+               * Do not keep coordinates belonging
+               * to the old location.
                */
-              resolvedLat = null;
-              resolvedLong = null;
+              resolvedLat =
+                null;
+
+              resolvedLong =
+                null;
             }
           } else {
-            resolvedLat = null;
-            resolvedLong = null;
+            resolvedLat =
+              null;
+
+            resolvedLong =
+              null;
           }
         }
       }
 
+      /*
+       * If the seller explicitly changed only
+       * the street/structured location while the
+       * address and coordinates happen to remain
+       * unchanged, preserve that street value.
+       */
       if (
         streetChanged &&
         !(
@@ -2687,7 +3130,8 @@ export async function PATCH(
         )
       ) {
         resolvedStreet =
-          resultingStreet || null;
+          resultingStreet ||
+          null;
       }
 
       const locationChanged =
@@ -2695,11 +3139,15 @@ export async function PATCH(
         currentArea !==
           resultingArea ||
         currentStoredStreet !==
-          (resolvedStreet || null) ||
+          (resolvedStreet ||
+            null) ||
         currentAddress !==
-          (resultingAddress || null) ||
-        currentLat !== resolvedLat ||
-        currentLong !== resolvedLong;
+          (resultingAddress ||
+            null) ||
+        currentLat !==
+          resolvedLat ||
+        currentLong !==
+          resolvedLong;
 
       const resolvedCoordinateError =
         validateCoordinates(
@@ -2707,7 +3155,9 @@ export async function PATCH(
           resolvedLong
         );
 
-      if (resolvedCoordinateError) {
+      if (
+        resolvedCoordinateError
+      ) {
         return NextResponse.json(
           {
             error:
@@ -2715,19 +3165,31 @@ export async function PATCH(
           },
           {
             status: 400,
-            headers: jsonHeaders(),
+            headers:
+              jsonHeaders(),
           }
         );
       }
 
-      if (locationChanged) {
+      if (
+        locationChanged
+      ) {
         newLocationData = {
-          area: resultingArea,
-          street: resolvedStreet,
+          area:
+            resultingArea,
+
+          street:
+            resolvedStreet,
+
           address:
-            resultingAddress || null,
-          lat: resolvedLat,
-          long: resolvedLong,
+            resultingAddress ||
+            null,
+
+          lat:
+            resolvedLat,
+
+          long:
+            resolvedLong,
         };
       }
     }
@@ -2750,23 +3212,33 @@ export async function PATCH(
       priceMax?: number | null;
     } = {};
 
-    if (name !== undefined) {
-      updateData.name = name;
+    if (
+      name !== undefined
+    ) {
+      updateData.name =
+        name;
     }
 
-    if (ownerName !== undefined) {
+    if (
+      ownerName !==
+        undefined
+    ) {
       updateData.ownerName =
         ownerName || null;
     }
 
     if (
-      description !== undefined
+      description !==
+        undefined
     ) {
       updateData.description =
         description || null;
     }
 
-    if (imageUrl !== undefined) {
+    if (
+      imageUrl !==
+        undefined
+    ) {
       updateData.imageUrl =
         imageUrl || null;
     }
@@ -2774,18 +3246,23 @@ export async function PATCH(
     if (
       availabilityProvided &&
       availability !== null &&
-      availability !== undefined
+      availability !==
+        undefined
     ) {
       updateData.availability =
         availability;
     }
 
-    if (priceMinProvided) {
+    if (
+      priceMinProvided
+    ) {
       updateData.priceMin =
         priceMin ?? null;
     }
 
-    if (priceMaxProvided) {
+    if (
+      priceMaxProvided
+    ) {
       updateData.priceMax =
         priceMax ?? null;
     }
@@ -2793,8 +3270,14 @@ export async function PATCH(
     /*
      * PHONE is updated only when the seller
      * actually touched PHONE or legacy phone.
+     *
+     * Editing Instagram, WhatsApp, etc. does
+     * not alter the current phone value.
      */
-    if (phoneUpdate !== undefined) {
+    if (
+      phoneUpdate !==
+      undefined
+    ) {
       updateData.phone =
         phoneUpdate;
     }
@@ -2811,7 +3294,9 @@ export async function PATCH(
          * LOCATION
          */
 
-        if (newLocationData) {
+        if (
+          newLocationData
+        ) {
           const location =
             await tx.location.create(
               {
@@ -2834,6 +3319,8 @@ export async function PATCH(
                   /*
                    * Seller-submitted location
                    * remains unverified.
+                   *
+                   * Admin verification is separate.
                    */
                   verification:
                     "UNVERIFIED",
@@ -2856,12 +3343,17 @@ export async function PATCH(
                 existingBusiness.id,
             },
 
-            data: updateData,
+            data:
+              updateData,
           }
         );
 
         /*
          * CATEGORIES
+         *
+         * A submitted categoryIds array
+         * represents the seller's full category
+         * selection.
          */
 
         if (
@@ -2877,13 +3369,16 @@ export async function PATCH(
           );
 
           if (
-            categoryIds.length > 0
+            categoryIds.length >
+            0
           ) {
             await tx.businessCategory.createMany(
               {
                 data:
                   categoryIds.map(
-                    (categoryId) => ({
+                    (
+                      categoryId
+                    ) => ({
                       businessId:
                         existingBusiness.id,
 
@@ -2900,82 +3395,57 @@ export async function PATCH(
 
         /*
          * SOCIAL LINKS
+         *
+         * Only the explicitly supplied
+         * platforms are changed.
+         *
+         * Other platforms remain untouched.
          */
-
         if (
           socialLinksProvided
         ) {
-          const socialLinksByPlatform =
-            new Map<
-              SocialPlatform,
-              ParsedSocialLink[]
-            >();
-
           for (
             const link of
               socialLinks ?? []
           ) {
-            const existingLinks =
-              socialLinksByPlatform.get(
-                link.platform
-              ) ?? [];
-
-            existingLinks.push(
-              link
-            );
-
-            socialLinksByPlatform.set(
-              link.platform,
-              existingLinks
-            );
-          }
-
-          for (
-            const [
-              platform,
-              links,
-            ] of socialLinksByPlatform
-          ) {
+            /*
+             * Remove the existing record only
+             * for this platform.
+             */
             await tx.businessSocialLink.deleteMany(
               {
                 where: {
                   businessId:
                     existingBusiness.id,
 
-                  platform,
+                  platform:
+                    link.platform,
                 },
               }
             );
 
-            const validLinks =
-              links.filter(
-                (link) =>
-                  Boolean(
-                    link.handle
-                  )
-              );
-
+            /*
+             * Empty handle means intentional
+             * removal, so do not recreate it.
+             */
             if (
-              validLinks.length === 0
+              !link.handle
             ) {
               continue;
             }
 
-            await tx.businessSocialLink.createMany(
+            await tx.businessSocialLink.create(
               {
-                data:
-                  validLinks.map(
-                    (link) => ({
-                      businessId:
-                        existingBusiness.id,
+                data: {
+                  businessId:
+                    existingBusiness.id,
 
-                      platform:
-                        link.platform,
+                  platform:
+                    link.platform,
 
-                      handle:
-                        link.handle,
-                    })
-                  ),
+                  handle:
+                    link.handle,
+                },
               }
             );
           }
@@ -2983,8 +3453,14 @@ export async function PATCH(
 
         /*
          * LEGACY PHONE-ONLY UPDATE
+         *
+         * Used only when the caller supplied
+         * `phone` without a PHONE social-link
+         * update.
+         *
+         * This keeps older callers synchronized
+         * with the PHONE social record.
          */
-
         if (
           legacyPhoneProvided &&
           !phoneSocialUpdate
@@ -3001,7 +3477,9 @@ export async function PATCH(
             }
           );
 
-          if (normalizedLegacyPhone) {
+          if (
+            normalizedLegacyPhone
+          ) {
             await tx.businessSocialLink.create(
               {
                 data: {
@@ -3021,24 +3499,20 @@ export async function PATCH(
       }
     );
 
+    /*
+     * Reload the complete seller business
+     * after the transaction so the response
+     * contains the latest relationships.
+     */
     const business =
       await loadSellerBusiness(
         auth.user.id
       );
 
-    /*
-     * -----------------------------------------
-     * NOTIFY ADMINS
-     * -----------------------------------------
-     *
-     * Send only after the transaction and
-     * business reload have succeeded.
-     */
     await notifyAdminsOfBusinessUpdate(
       existingBusiness.id,
       business?.name ??
-        name ??
-        existingBusiness.name
+        (cleanString(payload.name) || existingBusiness.name)
     );
 
     return NextResponse.json(
@@ -3049,7 +3523,8 @@ export async function PATCH(
         business,
       },
       {
-        headers: jsonHeaders(),
+        headers:
+          jsonHeaders(),
       }
     );
   } catch (error) {
@@ -3059,10 +3534,12 @@ export async function PATCH(
     );
 
     if (
-      typeof error === "object" &&
+      typeof error ===
+        "object" &&
       error !== null &&
       "code" in error &&
-      error.code === "P2025"
+      error.code ===
+        "P2025"
     ) {
       return NextResponse.json(
         {
@@ -3071,16 +3548,19 @@ export async function PATCH(
         },
         {
           status: 404,
-          headers: jsonHeaders(),
+          headers:
+            jsonHeaders(),
         }
       );
     }
 
     if (
-      typeof error === "object" &&
+      typeof error ===
+        "object" &&
       error !== null &&
       "code" in error &&
-      error.code === "P2002"
+      error.code ===
+        "P2002"
     ) {
       return NextResponse.json(
         {
@@ -3089,7 +3569,8 @@ export async function PATCH(
         },
         {
           status: 409,
-          headers: jsonHeaders(),
+          headers:
+            jsonHeaders(),
         }
       );
     }
@@ -3101,7 +3582,8 @@ export async function PATCH(
       },
       {
         status: 500,
-        headers: jsonHeaders(),
+        headers:
+          jsonHeaders(),
       }
     );
   }

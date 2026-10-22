@@ -1,22 +1,69 @@
-import { NextRequest, NextResponse } from "next/server";
+import {
+  NextRequest,
+  NextResponse,
+} from "next/server";
 
 import { prisma } from "@/lib/prisma";
-import { checkPublicRateLimit } from "@/lib/rate-limit";
+import {
+  checkPublicRateLimit,
+} from "@/lib/rate-limit";
 
-const FEATURED_COUNT = 4;
+/**
+ * ------------------------------------------------
+ * REMARKET FEATURED BUSINESSES API
+ * ------------------------------------------------
+ *
+ * Purpose:
+ * - Return a small random selection of active
+ *   businesses for the homepage.
+ * - Include active categories and product previews.
+ * - Keep the total product count accurate.
+ * - Never expose exact business coordinates.
+ * - Prevent excessive public requests.
+ *
+ * Important:
+ * - This is an organic featured-business selection.
+ * - It is not a paid promotion or sponsored-listing
+ *   system.
+ */
 
-function getResponseHeaders(
-  rateLimitHeaders: Headers
+const FEATURED_BUSINESS_LIMIT = 4;
+const PRODUCT_PREVIEW_LIMIT = 4;
+
+function noStoreHeaders(
+  baseHeaders?: HeadersInit
 ): Headers {
-  const headers =
-    new Headers(rateLimitHeaders);
+  const headers = new Headers(baseHeaders);
 
   headers.set(
     "Cache-Control",
-    "no-store, no-cache, must-revalidate"
+    "no-store, max-age=0"
+  );
+
+  headers.set(
+    "Pragma",
+    "no-cache"
+  );
+
+  headers.set(
+    "Expires",
+    "0"
   );
 
   return headers;
+}
+
+function emptyResponse(
+  headers?: HeadersInit
+) {
+  return NextResponse.json(
+    {
+      businesses: [],
+    },
+    {
+      headers: noStoreHeaders(headers),
+    }
+  );
 }
 
 export async function GET(
@@ -32,13 +79,12 @@ export async function GET(
     return NextResponse.json(
       {
         businesses: [],
-        total: 0,
         error:
-          "Too many featured-business requests. Please try again shortly.",
+          "Too many requests. Please try again shortly.",
       },
       {
         status: 429,
-        headers: getResponseHeaders(
+        headers: noStoreHeaders(
           rateLimit.headers
         ),
       }
@@ -47,72 +93,67 @@ export async function GET(
 
   try {
     /*
-     * -----------------------------------------
-     * SELECT RANDOM FEATURED BUSINESSES
-     * -----------------------------------------
+     * --------------------------------------------
+     * 1. Select a small random set of businesses
+     * --------------------------------------------
      *
-     * Only active and non-soft-deleted
-     * businesses can appear publicly.
+     * The raw query returns IDs only.
+     * It does not retrieve or expose location
+     * coordinates.
      *
-     * The query is parameterized through Prisma.
+     * Keep this query restricted to active,
+     * non-deleted businesses.
      */
-    const randomBusinessRows =
+
+    const selectedBusinesses =
       await prisma.$queryRaw<
-        { id: string }[]
+        Array<{ id: string }>
       >`
         SELECT "id"
         FROM "Business"
-        WHERE "status" = 'ACTIVE'
+        WHERE
+          "status" = 'ACTIVE'
           AND "deletedAt" IS NULL
         ORDER BY RANDOM()
-        LIMIT ${FEATURED_COUNT}
+        LIMIT ${FEATURED_BUSINESS_LIMIT}
       `;
 
-    const randomBusinessIds =
-      randomBusinessRows.map(
-        (row) => row.id
+    const selectedIds =
+      selectedBusinesses.map(
+        (business) => business.id
       );
 
-    /*
-     * No eligible businesses.
-     */
-    if (
-      randomBusinessIds.length === 0
-    ) {
-      return NextResponse.json(
-        {
-          businesses: [],
-          total: 0,
-        },
-        {
-          headers:
-            getResponseHeaders(
-              rateLimit.headers
-            ),
-        }
+    if (selectedIds.length === 0) {
+      return emptyResponse(
+        rateLimit.headers
       );
     }
 
     /*
-     * -----------------------------------------
-     * LOAD PUBLIC BUSINESS DATA
-     * -----------------------------------------
+     * --------------------------------------------
+     * 2. Fetch public business information
+     * --------------------------------------------
      *
-     * Only fields actually used by the public
-     * response are selected.
+     * Do not select:
+     * - Business phone directly from the record
+     * - Internal notes
+     * - Owner account IDs
+     * - Location latitude
+     * - Location longitude
+     *
+     * The public location object deliberately
+     * excludes exact coordinates.
      */
+
     const businesses =
       await prisma.business.findMany({
         where: {
           id: {
-            in: randomBusinessIds,
+            in: selectedIds,
           },
 
-          /*
-           * Re-check business visibility in case
-           * the record changed between queries.
-           */
           status: "ACTIVE",
+
           deletedAt: null,
         },
 
@@ -129,13 +170,14 @@ export async function GET(
             select: {
               id: true,
               area: true,
-              lat: true,
-              long: true,
+              street: true,
+              address: true,
             },
           },
 
           /*
-           * Only active categories are public.
+           * Show only categories that are
+           * currently enabled by ReMarket.
            */
           categories: {
             where: {
@@ -147,6 +189,7 @@ export async function GET(
             select: {
               category: {
                 select: {
+                  id: true,
                   name: true,
                 },
               },
@@ -154,8 +197,12 @@ export async function GET(
           },
 
           /*
-           * Only active, non-deleted products are
-           * visible to customers.
+           * Product previews are intentionally
+           * limited so the homepage response
+           * does not grow with the full catalogue.
+           *
+           * productCount below still represents
+           * the complete active product count.
            */
           products: {
             where: {
@@ -173,7 +220,6 @@ export async function GET(
               availability: true,
               imageUrl: true,
               keywords: true,
-              category: true,
 
               images: {
                 select: {
@@ -181,27 +227,26 @@ export async function GET(
                   url: true,
                   publicId: true,
                   sortOrder: true,
-                  createdAt: true,
                 },
 
-                orderBy: [
-                  {
-                    sortOrder: "asc",
-                  },
-                  {
-                    createdAt: "asc",
-                  },
-                ],
+                orderBy: {
+                  sortOrder: "asc",
+                },
+
+                take: 1,
               },
             },
 
             orderBy: {
               updatedAt: "desc",
             },
+
+            take: PRODUCT_PREVIEW_LIMIT,
           },
 
           /*
-           * Count only publicly visible products.
+           * Count all visible products, not just
+           * the product previews returned above.
            */
           _count: {
             select: {
@@ -215,22 +260,28 @@ export async function GET(
           },
 
           /*
-           * Preserve the existing public
-           * social-links response.
+           * Keep only the fields used for public
+           * business contact links.
            */
-          socialLinks: true,
+          socialLinks: {
+            select: {
+              platform: true,
+              handle: true,
+            },
+          },
         },
       });
 
     /*
-     * -----------------------------------------
-     * RESTORE RANDOM ORDER
-     * -----------------------------------------
+     * --------------------------------------------
+     * 3. Restore the random selection order
+     * --------------------------------------------
      *
-     * Prisma's `in` query does not guarantee
-     * PostgreSQL's RANDOM() order.
+     * findMany does not guarantee that results
+     * follow the order of IDs supplied in `in`.
      */
-    const businessMap =
+
+    const businessesById =
       new Map(
         businesses.map(
           (business) => [
@@ -241,183 +292,122 @@ export async function GET(
       );
 
     const orderedBusinesses =
-      randomBusinessIds
-        .map((id) =>
-          businessMap.get(id)
+      selectedIds
+        .map(
+          (id) =>
+            businessesById.get(id)
         )
         .filter(
           (
             business
           ): business is NonNullable<
             typeof business
-          > =>
-            business !== undefined
+          > => Boolean(business)
         );
 
     /*
-     * -----------------------------------------
-     * FORMAT PUBLIC RESPONSE
-     * -----------------------------------------
+     * --------------------------------------------
+     * 4. Format the existing public response
+     * --------------------------------------------
+     *
+     * Keep homepage fields including:
+     * - area
+     * - category
+     * - categories
+     * - products
+     * - productCount
+     * - socialLinks
+     *
+     * Do not include exact latitude/longitude.
      */
-    const featured =
+
+    const formattedBusinesses =
       orderedBusinesses.map(
-        (business) => ({
-          id: business.id,
-
-          name: business.name,
-
-          ownerName:
-            business.ownerName,
-
-          description:
-            business.description,
-
-          imageUrl:
-            business.imageUrl,
-
-          location:
-            business.location
-              ? {
-                  id:
-                    business.location.id,
-
-                  area:
-                    business.location.area,
-
-                  lat:
-                    business.location.lat,
-
-                  long:
-                    business.location.long,
-                }
-              : null,
-
-          area:
-            business.location
-              ?.area ??
-            "Location not added",
-
-          availability:
-            business.availability,
-
-          verification:
-            business.verification,
-
-          verified:
-            business.verification ===
-            "VERIFIED",
-
-          category:
-            business.categories[0]
-              ?.category.name ??
-            "Other",
-
-          categories:
+        (business) => {
+          const categoryNames =
             business.categories.map(
               (item) =>
                 item.category.name
-            ),
+            );
 
-          productCount:
-            business._count.products,
+          return {
+            id: business.id,
 
-          products:
-            business.products.map(
-              (product) => ({
-                id: product.id,
+            name: business.name,
 
-                name:
-                  product.name,
+            ownerName:
+              business.ownerName,
 
-                description:
-                  product.description,
+            description:
+              business.description,
 
-                price:
-                  product.price,
+            imageUrl:
+              business.imageUrl,
 
-                priceMin:
-                  product.priceMin,
+            area:
+              business.location?.area ??
+              "Location not added",
 
-                priceMax:
-                  product.priceMax,
+            /*
+             * Retain this nested location object
+             * without latitude or longitude.
+             */
+            location:
+              business.location,
 
-                availability:
-                  product.availability,
+            availability:
+              business.availability,
 
-                imageUrl:
-                  product.imageUrl,
+            verification:
+              business.verification,
 
-                keywords:
-                  product.keywords,
+            category:
+              categoryNames[0] ??
+              "Services",
 
-                category:
-                  product.category,
+            categories:
+              categoryNames,
 
-                images:
-                  product.images.map(
-                    (image) => ({
-                      id:
-                        image.id,
+            products:
+              business.products,
 
-                      url:
-                        image.url,
+            productCount:
+              business._count.products,
 
-                      publicId:
-                        image.publicId,
-
-                      sortOrder:
-                        image.sortOrder,
-                    })
-                  ),
-              })
-            ),
-
-          socialLinks:
-            business.socialLinks,
-        })
+            socialLinks:
+              business.socialLinks,
+          };
+        }
       );
 
-    /*
-     * -----------------------------------------
-     * RESPONSE
-     * -----------------------------------------
-     *
-     * Featured is intentionally randomized,
-     * so public caching is disabled.
-     */
     return NextResponse.json(
       {
-        businesses: featured,
-
-        total:
-          featured.length,
+        businesses:
+          formattedBusinesses,
       },
       {
-        headers:
-          getResponseHeaders(
-            rateLimit.headers
-          ),
+        headers: noStoreHeaders(
+          rateLimit.headers
+        ),
       }
     );
   } catch (error) {
     console.error(
-      "Featured businesses error:",
+      "Featured API error:",
       error
     );
 
     return NextResponse.json(
       {
         businesses: [],
-        total: 0,
         error:
-          "Unable to load featured businesses",
+          "Unable to load featured businesses.",
       },
       {
         status: 500,
-        headers:
-          getResponseHeaders(
-            rateLimit.headers
-          ),
+        headers: noStoreHeaders(
+          rateLimit.headers
+        ),
       }
     );
   }

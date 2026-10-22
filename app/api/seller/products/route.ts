@@ -1,4 +1,3 @@
-
 import { Prisma } from "@prisma/client";
 import { NextResponse } from "next/server";
 
@@ -16,6 +15,14 @@ import {
 } from "@/lib/referrals";
 
 const MAX_ACTIVE_PRODUCTS = 10;
+const MAX_PRISMA_INT = 2_147_483_647;
+const MAX_REQUEST_BODY_BYTES = 256 * 1024;
+const MAX_PRODUCT_IMAGES = 20;
+const MAX_IMAGE_URL_LENGTH = 2000;
+const MAX_PUBLIC_ID_LENGTH = 500;
+const MAX_KEYWORDS = 30;
+const MAX_KEYWORD_LENGTH = 80;
+const MAX_KEYWORDS_TOTAL_LENGTH = 1500;
 
 const ALLOWED_AVAILABILITY = [
   "AVAILABLE",
@@ -32,9 +39,15 @@ type ParsedProductImage = {
   sortOrder: number;
 };
 
+type ParseResult<T> = {
+  valid: boolean;
+  value: T;
+};
+
 function jsonHeaders() {
   return {
     "Cache-Control": "no-store",
+    "Content-Type": "application/json",
   };
 }
 
@@ -48,20 +61,46 @@ function isRecord(
   );
 }
 
-function cleanString(
-  value: unknown
-): string {
+function hasOwn(
+  value: Record<string, unknown>,
+  key: string
+): boolean {
+  return Object.prototype.hasOwnProperty.call(value, key);
+}
+
+function cleanString(value: unknown): string {
   return typeof value === "string"
     ? value.trim()
     : "";
 }
 
+function isAvailability(
+  value: unknown
+): value is Availability {
+  return (
+    value === "AVAILABLE" ||
+    value === "ASK_SELLER" ||
+    value === "UNAVAILABLE"
+  );
+}
+
+function isPrismaInt(value: number): boolean {
+  return (
+    Number.isSafeInteger(value) &&
+    value >= 0 &&
+    value <= MAX_PRISMA_INT
+  );
+}
+
+/**
+ * Parse an optional non-negative Prisma Int.
+ * Blank/null values clear the optional field.
+ * Booleans, objects, arrays, decimals, negative values,
+ * and values outside the supported Int range are rejected.
+ */
 function parseOptionalInteger(
   value: unknown
-): {
-  valid: boolean;
-  value: number | null;
-} {
+): ParseResult<number | null> {
   if (
     value === undefined ||
     value === null ||
@@ -73,15 +112,32 @@ function parseOptionalInteger(
     };
   }
 
+  if (
+    typeof value !== "number" &&
+    typeof value !== "string"
+  ) {
+    return {
+      valid: false,
+      value: null,
+    };
+  }
+
+  if (
+    typeof value === "string" &&
+    value.trim() === ""
+  ) {
+    return {
+      valid: false,
+      value: null,
+    };
+  }
+
   const parsed =
     typeof value === "number"
       ? value
-      : Number(value);
+      : Number(value.trim());
 
-  if (
-    !Number.isFinite(parsed) ||
-    !Number.isInteger(parsed)
-  ) {
+  if (!isPrismaInt(parsed)) {
     return {
       valid: false,
       value: null,
@@ -96,10 +152,7 @@ function parseOptionalInteger(
 
 function parseKeywords(
   value: unknown
-): {
-  valid: boolean;
-  value: string[];
-} {
+): ParseResult<string[]> {
   if (value === undefined) {
     return {
       valid: true,
@@ -113,7 +166,7 @@ function parseKeywords(
       ? value.split(",")
       : null;
 
-  if (!values) {
+  if (!values || values.length > MAX_KEYWORDS) {
     return {
       valid: false,
       value: [],
@@ -121,6 +174,8 @@ function parseKeywords(
   }
 
   const normalized: string[] = [];
+  const seen = new Set<string>();
+  let totalLength = 0;
 
   for (const item of values) {
     if (typeof item !== "string") {
@@ -136,8 +191,31 @@ function parseKeywords(
       continue;
     }
 
-    if (!normalized.includes(cleaned)) {
-      normalized.push(cleaned);
+    if (cleaned.length > MAX_KEYWORD_LENGTH) {
+      return {
+        valid: false,
+        value: [],
+      };
+    }
+
+    const normalizedKey = cleaned.toLocaleLowerCase();
+
+    if (seen.has(normalizedKey)) {
+      continue;
+    }
+
+    seen.add(normalizedKey);
+    normalized.push(cleaned);
+    totalLength += cleaned.length;
+
+    if (
+      normalized.length > MAX_KEYWORDS ||
+      totalLength > MAX_KEYWORDS_TOTAL_LENGTH
+    ) {
+      return {
+        valid: false,
+        value: [],
+      };
     }
   }
 
@@ -147,12 +225,28 @@ function parseKeywords(
   };
 }
 
-function isAvailability(
-  value: string
-): value is Availability {
-  return ALLOWED_AVAILABILITY.includes(
-    value as Availability
-  );
+function parseHttpUrl(value: string): string | null {
+  if (!value || value.length > MAX_IMAGE_URL_LENGTH) {
+    return null;
+  }
+
+  try {
+    const parsed = new URL(value);
+
+    if (
+      (parsed.protocol !== "https:" &&
+        parsed.protocol !== "http:") ||
+      !parsed.hostname ||
+      parsed.username ||
+      parsed.password
+    ) {
+      return null;
+    }
+
+    return parsed.toString();
+  } catch {
+    return null;
+  }
 }
 
 /*
@@ -160,28 +254,19 @@ function isAvailability(
  * PRODUCT IMAGES
  * --------------------------------------------------
  *
- * New image payload:
- *
- * images: [
- *   {
- *     url: "...",
- *     publicId: "...",
- *     sortOrder: 0
- *   }
- * ]
- *
  * ProductImage is the primary image record.
- * Product.imageUrl remains a compatibility mirror
- * of the first image.
+ * Product.imageUrl remains a compatibility mirror of
+ * the first image.
+ *
+ * If images is omitted, the caller has not supplied
+ * this field. On POST, an imageUrl compatibility value
+ * may be converted into a single image record.
  * --------------------------------------------------
  */
 
 function parseProductImages(
   value: unknown
-): {
-  valid: boolean;
-  value: ParsedProductImage[];
-} {
+): ParseResult<ParsedProductImage[]> {
   if (value === undefined) {
     return {
       valid: true,
@@ -189,7 +274,10 @@ function parseProductImages(
     };
   }
 
-  if (!Array.isArray(value)) {
+  if (
+    !Array.isArray(value) ||
+    value.length > MAX_PRODUCT_IMAGES
+  ) {
     return {
       valid: false,
       value: [],
@@ -197,100 +285,103 @@ function parseProductImages(
   }
 
   const images: ParsedProductImage[] = [];
+  const seenUrls = new Set<string>();
 
-  for (
-    let index = 0;
-    index < value.length;
-    index += 1
-  ) {
+  for (let index = 0; index < value.length; index += 1) {
     const item = value[index];
 
-    /*
-     * Support string entries for backwards
-     * compatibility with existing callers.
-     */
-    if (typeof item === "string") {
-      const url = item.trim();
-
-      if (!url) {
-        continue;
-      }
-
-      if (url.length > 2000) {
-        return {
-          valid: false,
-          value: [],
-        };
-      }
-
-      images.push({
-        url,
-        publicId: null,
-        sortOrder: index,
-      });
-
-      continue;
-    }
-
-    if (!isRecord(item)) {
-      return {
-        valid: false,
-        value: [],
-      };
-    }
-
-    const url = cleanString(item.url);
-
-    if (!url) {
-      continue;
-    }
-
-    if (url.length > 2000) {
-      return {
-        valid: false,
-        value: [],
-      };
-    }
-
+    let rawUrl: string;
     let publicId: string | null = null;
-
-    if (
-      item.publicId !== undefined &&
-      item.publicId !== null
-    ) {
-      if (typeof item.publicId !== "string") {
-        return {
-          valid: false,
-          value: [],
-        };
-      }
-
-      publicId = item.publicId.trim() || null;
-    }
-
     let sortOrder = index;
 
-    if (
-      item.sortOrder !== undefined &&
-      item.sortOrder !== null &&
-      item.sortOrder !== ""
-    ) {
-      const parsedSortOrder =
-        parseOptionalInteger(item.sortOrder);
+    /* Backward compatibility with string image entries. */
+    if (typeof item === "string") {
+      rawUrl = item.trim();
 
-      if (
-        !parsedSortOrder.valid ||
-        parsedSortOrder.value === null ||
-        parsedSortOrder.value < 0
-      ) {
+      if (!rawUrl) {
+        return {
+          valid: false,
+          value: [],
+        };
+      }
+    } else {
+      if (!isRecord(item)) {
         return {
           valid: false,
           value: [],
         };
       }
 
-      sortOrder = parsedSortOrder.value;
+      rawUrl = cleanString(item.url);
+
+      if (!rawUrl) {
+        return {
+          valid: false,
+          value: [],
+        };
+      }
+
+      if (
+        item.publicId !== undefined &&
+        item.publicId !== null
+      ) {
+        if (typeof item.publicId !== "string") {
+          return {
+            valid: false,
+            value: [],
+          };
+        }
+
+        publicId = item.publicId.trim() || null;
+
+        if (
+          publicId &&
+          publicId.length > MAX_PUBLIC_ID_LENGTH
+        ) {
+          return {
+            valid: false,
+            value: [],
+          };
+        }
+      }
+
+      if (
+        item.sortOrder !== undefined &&
+        item.sortOrder !== null &&
+        item.sortOrder !== ""
+      ) {
+        const parsedSortOrder = parseOptionalInteger(
+          item.sortOrder
+        );
+
+        if (
+          !parsedSortOrder.valid ||
+          parsedSortOrder.value === null
+        ) {
+          return {
+            valid: false,
+            value: [],
+          };
+        }
+
+        sortOrder = parsedSortOrder.value;
+      }
     }
+
+    const url = parseHttpUrl(rawUrl);
+
+    if (!url || url.length > MAX_IMAGE_URL_LENGTH) {
+      return {
+        valid: false,
+        value: [],
+      };
+    }
+
+    if (seenUrls.has(url)) {
+      continue;
+    }
+
+    seenUrls.add(url);
 
     images.push({
       url,
@@ -323,11 +414,9 @@ function getCompatibilityImageUrl(
  * EFFECTIVE PRODUCT LIMIT
  * --------------------------------------------------
  *
- * Every seller gets the base allowance.
- * Granted referral rewards add extra slots.
- *
- * Do not calculate referral rewards from client
- * input. Always read them from the database.
+ * Every seller gets the base allowance. Granted referral
+ * rewards add permanent slots. The API always calculates
+ * the effective limit from the database, not client input.
  * --------------------------------------------------
  */
 
@@ -342,7 +431,8 @@ function calculateMaxActiveProducts(
 
 class ActiveProductLimitError extends Error {
   constructor(
-    public readonly maxActiveProducts: number
+    public readonly maxActiveProducts: number,
+    public readonly referralBonusSlots: number
   ) {
     super(
       `You have reached the maximum of ${maxActiveProducts} active products.`
@@ -357,11 +447,9 @@ class ActiveProductLimitError extends Error {
  * CREATE PRODUCT WITH EFFECTIVE LIMIT
  * --------------------------------------------------
  *
- * The product count and referral bonus are read
- * inside the transaction used to enforce the limit.
- *
- * Serializable isolation and retries preserve the
- * existing concurrency protection.
+ * The product count and referral bonus are checked in
+ * the same serializable transaction as the creation.
+ * Retry only serialization conflicts.
  * --------------------------------------------------
  */
 
@@ -372,22 +460,17 @@ async function createProductWithLimit(
 ) {
   const MAX_RETRIES = 3;
 
-  for (
-    let attempt = 0;
-    attempt < MAX_RETRIES;
-    attempt += 1
-  ) {
+  for (let attempt = 0; attempt < MAX_RETRIES; attempt += 1) {
     try {
       return await prisma.$transaction(
         async (tx) => {
-          const activeCount =
-            await tx.product.count({
-              where: {
-                businessId,
-                status: "ACTIVE",
-                deletedAt: null,
-              },
-            });
+          const activeCount = await tx.product.count({
+            where: {
+              businessId,
+              status: "ACTIVE",
+              deletedAt: null,
+            },
+          });
 
           const referralBonusSlots =
             await getGrantedProductSlotBonus(
@@ -396,36 +479,33 @@ async function createProductWithLimit(
             );
 
           const maxActiveProducts =
-            calculateMaxActiveProducts(
-              referralBonusSlots
-            );
+            calculateMaxActiveProducts(referralBonusSlots);
 
-          if (
-            activeCount >=
-            maxActiveProducts
-          ) {
+          if (activeCount >= maxActiveProducts) {
             throw new ActiveProductLimitError(
-              maxActiveProducts
+              maxActiveProducts,
+              referralBonusSlots
             );
           }
 
-          const product =
-            await tx.product.create({
-              data,
-              include: {
-                category: true,
-                images: {
-                  orderBy: {
-                    sortOrder: "asc",
-                  },
-                },
+          const product = await tx.product.create({
+            data,
+            include: {
+              category: true,
+              images: {
+                orderBy: [
+                  { sortOrder: "asc" },
+                  { createdAt: "asc" },
+                ],
               },
-            });
+            },
+          });
 
           return {
             product,
             maxActiveProducts,
             referralBonusSlots,
+            activeCount: activeCount + 1,
           };
         },
         {
@@ -434,15 +514,12 @@ async function createProductWithLimit(
         }
       );
     } catch (error) {
-      if (
-        error instanceof ActiveProductLimitError
-      ) {
+      if (error instanceof ActiveProductLimitError) {
         throw error;
       }
 
       if (
-        error instanceof
-          Prisma.PrismaClientKnownRequestError &&
+        error instanceof Prisma.PrismaClientKnownRequestError &&
         error.code === "P2034"
       ) {
         if (attempt === MAX_RETRIES - 1) {
@@ -461,6 +538,25 @@ async function createProductWithLimit(
   throw new Error("Unable to create product.");
 }
 
+function isRequestBodyTooLarge(request: Request): boolean {
+  const contentLength = request.headers.get("content-length");
+
+  if (contentLength === null) {
+    return false;
+  }
+
+  const parsedLength = Number(contentLength);
+
+  if (
+    !Number.isSafeInteger(parsedLength) ||
+    parsedLength < 0
+  ) {
+    return true;
+  }
+
+  return parsedLength > MAX_REQUEST_BODY_BYTES;
+}
+
 /* --------------------------------------------------
  * GET
  *
@@ -475,17 +571,16 @@ export async function GET() {
   }
 
   try {
-    const business =
-      await prisma.business.findUnique({
-        where: {
-          ownerId: auth.user.id,
-        },
-        select: {
-          id: true,
-          name: true,
-          deletedAt: true,
-        },
-      });
+    const business = await prisma.business.findUnique({
+      where: {
+        ownerId: auth.user.id,
+      },
+      select: {
+        id: true,
+        name: true,
+        deletedAt: true,
+      },
+    });
 
     if (!business) {
       return NextResponse.json(
@@ -512,49 +607,40 @@ export async function GET() {
       );
     }
 
-    const [
-      products,
-      activeCount,
-      referralBonusSlots,
-    ] = await Promise.all([
-      prisma.product.findMany({
-        where: {
-          businessId: business.id,
-          deletedAt: null,
-        },
-        orderBy: {
-          updatedAt: "desc",
-        },
-        include: {
-          category: true,
-          images: {
-            orderBy: [
-              {
-                sortOrder: "asc",
-              },
-              {
-                createdAt: "asc",
-              },
-            ],
+    const [products, activeCount, referralBonusSlots] =
+      await Promise.all([
+        prisma.product.findMany({
+          where: {
+            businessId: business.id,
+            deletedAt: null,
           },
-        },
-      }),
+          orderBy: {
+            updatedAt: "desc",
+          },
+          include: {
+            category: true,
+            images: {
+              orderBy: [
+                { sortOrder: "asc" },
+                { createdAt: "asc" },
+              ],
+            },
+          },
+        }),
 
-      prisma.product.count({
-        where: {
-          businessId: business.id,
-          status: "ACTIVE",
-          deletedAt: null,
-        },
-      }),
+        prisma.product.count({
+          where: {
+            businessId: business.id,
+            status: "ACTIVE",
+            deletedAt: null,
+          },
+        }),
 
-      getGrantedProductSlotBonus(auth.user.id),
-    ]);
+        getGrantedProductSlotBonus(auth.user.id),
+      ]);
 
     const maxActiveProducts =
-      calculateMaxActiveProducts(
-        referralBonusSlots
-      );
+      calculateMaxActiveProducts(referralBonusSlots);
 
     return NextResponse.json(
       {
@@ -562,20 +648,12 @@ export async function GET() {
           id: business.id,
           name: business.name,
         },
-
         products,
         total: products.length,
         activeCount,
-
-        // Existing field, now reflects the effective limit.
         maxActiveProducts,
-
-        // Additional fields for seller-facing display.
-        baseMaxActiveProducts:
-          MAX_ACTIVE_PRODUCTS,
-
+        baseMaxActiveProducts: MAX_ACTIVE_PRODUCTS,
         referralBonusSlots,
-
         remainingSlots: Math.max(
           0,
           maxActiveProducts - activeCount
@@ -607,14 +685,10 @@ export async function GET() {
  * POST
  *
  * Creates an active product for the seller's business.
- * The seller cannot choose its status.
- *
- * Images are supplied through ProductImage records.
+ * Sellers cannot choose product status themselves.
  * -------------------------------------------------- */
 
-export async function POST(
-  request: Request
-) {
+export async function POST(request: Request) {
   const auth = await requireSeller();
 
   if (!auth.authorized) {
@@ -622,7 +696,64 @@ export async function POST(
   }
 
   try {
-    const body: unknown = await request.json();
+    if (isRequestBodyTooLarge(request)) {
+      return NextResponse.json(
+        {
+          error: "Request body is too large.",
+        },
+        {
+          status: 413,
+          headers: jsonHeaders(),
+        }
+      );
+    }
+
+    let rawBody: string;
+
+    try {
+      rawBody = await request.text();
+    } catch {
+      return NextResponse.json(
+        {
+          error: "Unable to read request body.",
+        },
+        {
+          status: 400,
+          headers: jsonHeaders(),
+        }
+      );
+    }
+
+    if (
+      Buffer.byteLength(rawBody, "utf8") >
+      MAX_REQUEST_BODY_BYTES
+    ) {
+      return NextResponse.json(
+        {
+          error: "Request body is too large.",
+        },
+        {
+          status: 413,
+          headers: jsonHeaders(),
+        }
+      );
+    }
+
+    let body: unknown;
+
+    try {
+      body = JSON.parse(rawBody);
+    } catch {
+      return NextResponse.json(
+        {
+          error: "Invalid JSON body.",
+        },
+        {
+          status: 400,
+          headers: jsonHeaders(),
+        }
+      );
+    }
 
     if (!isRecord(body)) {
       return NextResponse.json(
@@ -639,36 +770,86 @@ export async function POST(
     const name = cleanString(body.name);
     const description = cleanString(body.description);
     const categoryId = cleanString(body.categoryId);
+    const availabilityValue = cleanString(body.availability);
 
-    const availabilityValue =
-      cleanString(body.availability);
-
-    const keywordsResult =
-      parseKeywords(body.keywords);
-
-    const priceResult =
-      parseOptionalInteger(body.price);
-
-    const priceMinResult =
-      parseOptionalInteger(body.priceMin);
-
-    const priceMaxResult =
-      parseOptionalInteger(body.priceMax);
-
-    const imagesResult =
-      parseProductImages(body.images);
-
-    /*
-     * Compatibility for existing callers that
-     * still supply imageUrl.
-     */
-    const legacyImageUrl =
-      cleanString(body.imageUrl);
-
-    if (legacyImageUrl.length > 2000) {
+    if (
+      hasOwn(body, "description") &&
+      body.description !== null &&
+      typeof body.description !== "string"
+    ) {
       return NextResponse.json(
         {
-          error: "Legacy image URL is too long.",
+          error: "Product description must be a string.",
+        },
+        {
+          status: 400,
+          headers: jsonHeaders(),
+        }
+      );
+    }
+
+    if (
+      hasOwn(body, "categoryId") &&
+      body.categoryId !== null &&
+      body.categoryId !== "" &&
+      typeof body.categoryId !== "string"
+    ) {
+      return NextResponse.json(
+        {
+          error: "Invalid category ID.",
+        },
+        {
+          status: 400,
+          headers: jsonHeaders(),
+        }
+      );
+    }
+
+    if (categoryId.length > 100) {
+      return NextResponse.json(
+        {
+          error: "Category ID is too long.",
+        },
+        {
+          status: 400,
+          headers: jsonHeaders(),
+        }
+      );
+    }
+
+    const keywordsResult = parseKeywords(body.keywords);
+    const priceResult = parseOptionalInteger(body.price);
+    const priceMinResult = parseOptionalInteger(body.priceMin);
+    const priceMaxResult = parseOptionalInteger(body.priceMax);
+    const imagesResult = parseProductImages(body.images);
+
+    const legacyImageUrlProvided = hasOwn(body, "imageUrl");
+    const legacyImageUrl = cleanString(body.imageUrl);
+
+    if (
+      legacyImageUrlProvided &&
+      body.imageUrl !== null &&
+      body.imageUrl !== "" &&
+      typeof body.imageUrl !== "string"
+    ) {
+      return NextResponse.json(
+        {
+          error: "Image URL must be a string.",
+        },
+        {
+          status: 400,
+          headers: jsonHeaders(),
+        }
+      );
+    }
+
+    if (
+      legacyImageUrl &&
+      !parseHttpUrl(legacyImageUrl)
+    ) {
+      return NextResponse.json(
+        {
+          error: "Image URL must be a valid HTTP or HTTPS URL.",
         },
         {
           status: 400,
@@ -681,7 +862,7 @@ export async function POST(
       return NextResponse.json(
         {
           error:
-            "Images must be an array of uploaded image records.",
+            `Images must be an array of no more than ${MAX_PRODUCT_IMAGES} valid uploaded image records.`,
         },
         {
           status: 400,
@@ -693,17 +874,18 @@ export async function POST(
     let images = imagesResult.value;
 
     /*
-     * If the new images field was not supplied,
-     * convert a legacy imageUrl into one image record.
+     * Compatibility with existing callers that still
+     * supply imageUrl. An explicit images array takes
+     * precedence, including an intentionally empty array.
      */
     if (
       body.images === undefined &&
-      !images.length &&
+      images.length === 0 &&
       legacyImageUrl
     ) {
       images = [
         {
-          url: legacyImageUrl,
+          url: parseHttpUrl(legacyImageUrl)!,
           publicId: null,
           sortOrder: 0,
         },
@@ -750,7 +932,7 @@ export async function POST(
       return NextResponse.json(
         {
           error:
-            "Keywords must be an array of strings or a comma-separated string.",
+            `Keywords must contain no more than ${MAX_KEYWORDS} strings, each at most ${MAX_KEYWORD_LENGTH} characters.`,
         },
         {
           status: 400,
@@ -766,7 +948,8 @@ export async function POST(
     ) {
       return NextResponse.json(
         {
-          error: "Prices must be valid whole numbers.",
+          error:
+            `Prices must be whole numbers between 0 and ${MAX_PRISMA_INT}.`,
         },
         {
           status: 400,
@@ -778,42 +961,6 @@ export async function POST(
     const price = priceResult.value;
     const priceMin = priceMinResult.value;
     const priceMax = priceMaxResult.value;
-
-    if (price !== null && price < 0) {
-      return NextResponse.json(
-        {
-          error: "Price cannot be negative.",
-        },
-        {
-          status: 400,
-          headers: jsonHeaders(),
-        }
-      );
-    }
-
-    if (priceMin !== null && priceMin < 0) {
-      return NextResponse.json(
-        {
-          error: "Minimum price cannot be negative.",
-        },
-        {
-          status: 400,
-          headers: jsonHeaders(),
-        }
-      );
-    }
-
-    if (priceMax !== null && priceMax < 0) {
-      return NextResponse.json(
-        {
-          error: "Maximum price cannot be negative.",
-        },
-        {
-          status: 400,
-          headers: jsonHeaders(),
-        }
-      );
-    }
 
     if (
       priceMin !== null &&
@@ -833,7 +980,9 @@ export async function POST(
     }
 
     if (
-      availabilityValue &&
+      body.availability !== undefined &&
+      body.availability !== null &&
+      body.availability !== "" &&
       !isAvailability(availabilityValue)
     ) {
       return NextResponse.json(
@@ -848,20 +997,22 @@ export async function POST(
     }
 
     /*
+     * -----------------------------------------
      * SELLER BUSINESS
+     * -----------------------------------------
      */
 
-    const business =
-      await prisma.business.findUnique({
-        where: {
-          ownerId: auth.user.id,
-        },
-        select: {
-          id: true,
-          name: true,
-          deletedAt: true,
-        },
-      });
+    const business = await prisma.business.findUnique({
+      where: {
+        ownerId: auth.user.id,
+      },
+      select: {
+        id: true,
+        name: true,
+        status: true,
+        deletedAt: true,
+      },
+    });
 
     if (!business) {
       return NextResponse.json(
@@ -889,22 +1040,31 @@ export async function POST(
     }
 
     /*
+     * Allow sellers to prepare products while their
+     * business is pending/inactive. Such products are
+     * not publicly discoverable through business queries
+     * that require an ACTIVE business. The referral service
+     * still requires an active business and active product.
+     */
+
+    /*
+     * -----------------------------------------
      * CATEGORY
+     * -----------------------------------------
      */
 
     let validatedCategoryId: string | null = null;
 
     if (categoryId) {
-      const category =
-        await prisma.category.findFirst({
-          where: {
-            id: categoryId,
-            isActive: true,
-          },
-          select: {
-            id: true,
-          },
-        });
+      const category = await prisma.category.findFirst({
+        where: {
+          id: categoryId,
+          isActive: true,
+        },
+        select: {
+          id: true,
+        },
+      });
 
       if (!category) {
         return NextResponse.json(
@@ -923,10 +1083,9 @@ export async function POST(
     }
 
     /*
-     * CREATE PRODUCT
-     *
-     * The effective active-product limit is checked
-     * inside the serializable transaction.
+     * -----------------------------------------
+     * CREATE PRODUCT WITH SERVER-SIDE LIMIT
+     * -----------------------------------------
      */
 
     const compatibilityImageUrl =
@@ -935,6 +1094,8 @@ export async function POST(
     const {
       product,
       maxActiveProducts: enforcedMaxActiveProducts,
+      referralBonusSlots: enforcedReferralBonusSlots,
+      activeCount,
     } = await createProductWithLimit(
       business.id,
       auth.user.id,
@@ -946,7 +1107,6 @@ export async function POST(
         },
 
         name,
-
         description: description || null,
 
         category: validatedCategoryId
@@ -986,17 +1146,17 @@ export async function POST(
     );
 
     /*
+     * -----------------------------------------
      * QUALIFY SELLER REFERRAL
+     * -----------------------------------------
      *
-     * Creating an active product can be the action
-     * that makes a referred seller eligible.
+     * The current seller's newly-created product may
+     * satisfy the referred-seller qualification rule.
+     * The referral service handles the status check and
+     * idempotency. It awards the referrer, not the newly
+     * referred seller, for seller-to-seller referrals.
      *
-     * The referral service must verify the actual
-     * business/product state and prevent duplicate
-     * qualification and reward grants.
-     *
-     * A qualification failure must not undo the
-     * product that was already created.
+     * Qualification failure must not undo product creation.
      */
 
     try {
@@ -1012,42 +1172,38 @@ export async function POST(
     }
 
     /*
+     * -----------------------------------------
      * NOTIFY ADMINS
+     * -----------------------------------------
      *
-     * Notification failures do not undo product creation.
+     * Notification failures must not undo a successfully
+     * created product.
      */
 
     try {
-      const admins =
-        await prisma.user.findMany({
-          where: {
-            role: "ADMIN",
-          },
-          select: {
-            id: true,
-          },
-        });
+      const admins = await prisma.user.findMany({
+        where: {
+          role: "ADMIN",
+        },
+        select: {
+          id: true,
+        },
+      });
 
       for (const admin of admins) {
         try {
           await createNotification({
             userId: admin.id,
-
             type: NotificationType.PRODUCT_ADDED,
-
             title: "New product added",
-
             message:
               `A new product, "${product.name}", was added to ${business.name}.`,
-
             priority: NotificationPriority.NORMAL,
-
             data: {
               productId: product.id,
               businessId: business.id,
               href: "/admin/products",
             },
-
             dedupeKey:
               `product:${product.id}:added:admin:${admin.id}`,
           });
@@ -1066,48 +1222,22 @@ export async function POST(
     }
 
     /*
-     * RETURN CURRENT PRODUCT CAPACITY
+     * Return capacity from the same transaction snapshot
+     * as the product creation. Avoid turning a successful
+     * create into a 500 because a later summary query fails.
      */
-
-    const [
-      activeCount,
-      referralBonusSlots,
-    ] = await Promise.all([
-      prisma.product.count({
-        where: {
-          businessId: business.id,
-          status: "ACTIVE",
-          deletedAt: null,
-        },
-      }),
-
-      getGrantedProductSlotBonus(auth.user.id),
-    ]);
-
-    const currentMaxActiveProducts =
-      calculateMaxActiveProducts(
-        referralBonusSlots
-      );
 
     return NextResponse.json(
       {
         message: "Product created successfully.",
-
         product,
-
         activeCount,
-
-        maxActiveProducts:
-          currentMaxActiveProducts,
-
-        baseMaxActiveProducts:
-          MAX_ACTIVE_PRODUCTS,
-
-        referralBonusSlots,
-
+        maxActiveProducts: enforcedMaxActiveProducts,
+        baseMaxActiveProducts: MAX_ACTIVE_PRODUCTS,
+        referralBonusSlots: enforcedReferralBonusSlots,
         remainingSlots: Math.max(
           0,
-          currentMaxActiveProducts - activeCount
+          enforcedMaxActiveProducts - activeCount
         ),
       },
       {
@@ -1120,20 +1250,10 @@ export async function POST(
       return NextResponse.json(
         {
           error: error.message,
-
           code: "ACTIVE_PRODUCT_LIMIT",
-
-          maxActiveProducts:
-            error.maxActiveProducts,
-
-          baseMaxActiveProducts:
-            MAX_ACTIVE_PRODUCTS,
-
-          referralBonusSlots: Math.max(
-            0,
-            error.maxActiveProducts -
-              MAX_ACTIVE_PRODUCTS
-          ),
+          maxActiveProducts: error.maxActiveProducts,
+          baseMaxActiveProducts: MAX_ACTIVE_PRODUCTS,
+          referralBonusSlots: error.referralBonusSlots,
         },
         {
           status: 409,

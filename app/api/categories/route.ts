@@ -1,22 +1,57 @@
-import { NextRequest, NextResponse } from "next/server";
+import {
+  NextRequest,
+  NextResponse,
+} from "next/server";
+
+import {
+  BusinessStatus,
+  Prisma,
+} from "@prisma/client";
 
 import { prisma } from "@/lib/prisma";
-import { checkPublicRateLimit } from "@/lib/rate-limit";
+import {
+  checkPublicRateLimit,
+} from "@/lib/rate-limit";
 
-function getResponseHeaders(
-  rateLimitHeaders: Headers
+/**
+ * ------------------------------------------------
+ * REMARKET PUBLIC CATEGORIES API
+ * ------------------------------------------------
+ *
+ * Returns active categories for buyer discovery.
+ *
+ * Counts:
+ * - Businesses: active, non-deleted businesses.
+ * - Products: active, non-deleted products belonging
+ *   to active, non-deleted businesses.
+ * - Requests: retains the existing total request
+ *   count for response compatibility.
+ *
+ * No buyer request details or business coordinates
+ * are returned by this endpoint.
+ */
+
+const CACHE_CONTROL =
+  "public, max-age=60, s-maxage=60, stale-while-revalidate=300";
+
+const NO_STORE =
+  "no-store, max-age=0, must-revalidate";
+
+function responseHeaders(
+  baseHeaders?: HeadersInit,
+  cacheControl = NO_STORE
 ): Headers {
-  const headers =
-    new Headers(rateLimitHeaders);
+  const headers = new Headers(baseHeaders);
 
-  /*
-   * Categories are public data and can be cached
-   * briefly by the browser/CDN.
-   */
   headers.set(
     "Cache-Control",
-    "public, s-maxage=60, stale-while-revalidate=300"
+    cacheControl
   );
+
+  if (cacheControl === NO_STORE) {
+    headers.set("Pragma", "no-cache");
+    headers.set("Expires", "0");
+  }
 
   return headers;
 }
@@ -35,23 +70,13 @@ export async function GET(
       {
         categories: [],
         error:
-          "Too many category requests. Please try again shortly.",
+          "Too many requests. Please try again shortly.",
       },
       {
         status: 429,
-        headers: (() => {
-          const headers =
-            new Headers(
-              rateLimit.headers
-            );
-
-          headers.set(
-            "Cache-Control",
-            "no-store"
-          );
-
-          return headers;
-        })(),
+        headers: responseHeaders(
+          rateLimit.headers
+        ),
       }
     );
   }
@@ -63,16 +88,6 @@ export async function GET(
           isActive: true,
         },
 
-        include: {
-          _count: {
-            select: {
-              business: true,
-              products: true,
-              requests: true,
-            },
-          },
-        },
-
         orderBy: [
           {
             sortOrder: "asc",
@@ -81,6 +96,62 @@ export async function GET(
             name: "asc",
           },
         ],
+
+        select: {
+          id: true,
+          name: true,
+          iconKey: true,
+          isActive: true,
+          sortOrder: true,
+
+          /*
+           * Count only currently visible businesses
+           * associated with this category.
+           */
+          _count: {
+            select: {
+              business: {
+                where: {
+                  business: {
+                    is: {
+                      status:
+                        BusinessStatus.ACTIVE,
+                      deletedAt: null,
+                    },
+                  },
+                },
+              },
+
+              /*
+               * Do not count products belonging to
+               * inactive or soft-deleted businesses.
+               */
+              products: {
+                where: {
+                  status:
+                    BusinessStatus.ACTIVE,
+
+                  deletedAt: null,
+
+                  business: {
+                    is: {
+                      status:
+                        BusinessStatus.ACTIVE,
+                      deletedAt: null,
+                    },
+                  },
+                },
+              },
+
+              /*
+               * Preserve the existing request-count
+               * field; no request records or buyer
+               * contact details are exposed.
+               */
+              requests: true,
+            },
+          },
+        },
       });
 
     return NextResponse.json(
@@ -88,38 +159,29 @@ export async function GET(
         categories,
       },
       {
-        headers:
-          getResponseHeaders(
-            rateLimit.headers
-          ),
+        headers: responseHeaders(
+          rateLimit.headers,
+          CACHE_CONTROL
+        ),
       }
     );
   } catch (error) {
     console.error(
-      "Failed to fetch categories:",
+      "Categories API error:",
       error
     );
 
     return NextResponse.json(
       {
+        categories: [],
         error:
-          "Failed to fetch categories",
+          "Unable to load categories.",
       },
       {
         status: 500,
-        headers: (() => {
-          const headers =
-            new Headers(
-              rateLimit.headers
-            );
-
-          headers.set(
-            "Cache-Control",
-            "no-store"
-          );
-
-          return headers;
-        })(),
+        headers: responseHeaders(
+          rateLimit.headers
+        ),
       }
     );
   }
