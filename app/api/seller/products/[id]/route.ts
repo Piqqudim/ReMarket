@@ -5,6 +5,7 @@ import {
 import { NextResponse } from "next/server";
 
 import { prisma } from "@/lib/prisma";
+import { validateProductPricing } from "@/lib/product-pricing";
 import { requireSeller } from "@/lib/seller-auth";
 import { createNotification } from "@/lib/notifications";
 
@@ -1216,24 +1217,19 @@ export async function PATCH(
           null
         : existing.priceMax;
 
-    if (
-      finalPriceMin !==
-        null &&
-      finalPriceMax !==
-        null &&
-      finalPriceMin >
-        finalPriceMax
-    ) {
+    const finalPrice = priceProvided
+      ? data.price ?? null
+      : existing.price;
+    const pricingError = validateProductPricing(
+      finalPrice,
+      finalPriceMin,
+      finalPriceMax,
+    );
+
+    if (pricingError) {
       return NextResponse.json(
-        {
-          error:
-            "Minimum price cannot be greater than maximum price.",
-        },
-        {
-          status: 400,
-          headers:
-            jsonHeaders(),
-        }
+        { error: pricingError },
+        { status: 400, headers: jsonHeaders() }
       );
     }
 

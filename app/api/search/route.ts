@@ -34,17 +34,25 @@ import {
  *
  * Pagination:
  * The current search page paginates the combined
- * result arrays client-side. This endpoint returns
- * those arrays rather than applying a second,
- * potentially conflicting pagination layer.
+ * result arrays client-side. The API bounds each
+ * result type and reports when more matches exist,
+ * preventing broad searches from loading the full catalogue.
  */
 
 const MAX_SEARCH_LENGTH = 100;
 const MAX_CATEGORY_LENGTH = 100;
 const MAX_LOCATION_LENGTH = 100;
 const MAX_PRICE_VALUE = 1_000_000_000;
-const PRODUCT_PREVIEW_LIMIT = 4;
-const PRODUCT_IMAGE_LIMIT = 5;
+const PRODUCT_PREVIEW_LIMIT = 1;
+const PRODUCT_IMAGE_LIMIT = 1;
+
+/**
+ * Bound the number of candidates loaded for client-side pagination.
+ * The Search page keeps its existing combined product/business paging
+ * contract, while this cap prevents a broad query from loading the full
+ * catalogue into one response.
+ */
+const MAX_SEARCH_RESULTS_PER_TYPE = 120;
 
 const ALLOWED_AVAILABILITY =
   new Set<Availability>([
@@ -376,11 +384,8 @@ function getSearchTerms(
 function productTextConditions(
   terms: string[]
 ): Prisma.ProductWhereInput[] {
-  const conditions:
-    Prisma.ProductWhereInput[] = [];
-
-  for (const term of terms) {
-    conditions.push(
+  return terms.map((term) => ({
+    OR: [
       {
         name: {
           contains: term,
@@ -408,21 +413,16 @@ function productTextConditions(
             },
           },
         },
-      }
-    );
-  }
-
-  return conditions;
+      },
+    ],
+  }));
 }
 
 function businessTextConditions(
   terms: string[]
 ): Prisma.BusinessWhereInput[] {
-  const conditions:
-    Prisma.BusinessWhereInput[] = [];
-
-  for (const term of terms) {
-    conditions.push(
+  return terms.map((term) => ({
+    OR: [
       {
         name: {
           contains: term,
@@ -474,114 +474,9 @@ function businessTextConditions(
             ],
           },
         },
-      }
-    );
-  }
-
-  return conditions;
-}
-
-/**
- * A product is eligible when its price range
- * overlaps the requested range.
- *
- * Unpriced products do not match explicit
- * numeric price filters.
- */
-function buildProductPriceConditions(
-  filters: SearchFilters
-): Prisma.ProductWhereInput[] {
-  const conditions:
-    Prisma.ProductWhereInput[] = [];
-
-  if (filters.minPrice !== null) {
-    conditions.push({
-      OR: [
-        {
-          price: {
-            gte: filters.minPrice,
-          },
-        },
-        {
-          priceMin: {
-            gte: filters.minPrice,
-          },
-        },
-        {
-          priceMax: {
-            gte: filters.minPrice,
-          },
-        },
-      ],
-    });
-  }
-
-  if (filters.maxPrice !== null) {
-    conditions.push({
-      OR: [
-        {
-          price: {
-            lte: filters.maxPrice,
-          },
-        },
-        {
-          priceMin: {
-            lte: filters.maxPrice,
-          },
-        },
-        {
-          priceMax: {
-            lte: filters.maxPrice,
-          },
-        },
-      ],
-    });
-  }
-
-  return conditions;
-}
-
-function buildBusinessPriceConditions(
-  filters: SearchFilters
-): Prisma.BusinessWhereInput[] {
-  const conditions:
-    Prisma.BusinessWhereInput[] = [];
-
-  if (filters.minPrice !== null) {
-    conditions.push({
-      OR: [
-        {
-          priceMin: {
-            gte: filters.minPrice,
-          },
-        },
-        {
-          priceMax: {
-            gte: filters.minPrice,
-          },
-        },
-      ],
-    });
-  }
-
-  if (filters.maxPrice !== null) {
-    conditions.push({
-      OR: [
-        {
-          priceMin: {
-            lte: filters.maxPrice,
-          },
-        },
-        {
-          priceMax: {
-            lte: filters.maxPrice,
-          },
-        },
-      ],
-    });
-  }
-
-  return conditions;
+      },
+    ],
+  }));
 }
 
 function buildLocationWhere(
@@ -614,34 +509,37 @@ function buildLocationWhere(
 function buildProductCategoryConditions(
   category: string
 ): Prisma.ProductWhereInput[] {
+  const activeCategory = {
+    isActive: true,
+    name: {
+      equals: category,
+      mode: "insensitive" as const,
+    },
+  };
+
   return [
     {
       category: {
-        is: {
-          isActive: true,
-          name: {
-            equals: category,
-            mode: "insensitive",
-          },
-        },
+        is: activeCategory,
       },
     },
     {
-      business: {
-        is: {
-          categories: {
-            some: {
-              category: {
-                isActive: true,
-                name: {
-                  equals: category,
-                  mode: "insensitive",
+      AND: [
+        {
+          category: { is: null },
+        },
+        {
+          business: {
+            is: {
+              categories: {
+                some: {
+                  category: activeCategory,
                 },
               },
             },
           },
         },
-      },
+      ],
     },
   ];
 }
@@ -684,38 +582,35 @@ function buildProductWhere(
     ];
 
   if (terms.length > 0) {
-    conditions.push({
-      OR: [
-        ...productTextConditions(terms),
+    const perTermConditions = terms.map(
+      (term): Prisma.ProductWhereInput => ({
+        OR: [
+          ...productTextConditions([term]),
+          {
+            business: {
+              is: {
+                OR: [
+                  {
+                    name: {
+                      contains: term,
+                      mode: "insensitive",
+                    },
+                  },
+                  {
+                    description: {
+                      contains: term,
+                      mode: "insensitive",
+                    },
+                  },
+                ],
+              },
+            },
+          },
+        ],
+      })
+    );
 
-        /*
-         * Searching for a business name should
-         * also reveal its products.
-         */
-        ...terms.flatMap((term) => [
-          {
-            business: {
-              is: {
-                name: {
-                  contains: term,
-                  mode: "insensitive" as const,
-                },
-              },
-            },
-          },
-          {
-            business: {
-              is: {
-                description: {
-                  contains: term,
-                  mode: "insensitive" as const,
-                },
-              },
-            },
-          },
-        ]),
-      ],
-    });
+    conditions.push(...perTermConditions);
   }
 
   if (filters.category) {
@@ -762,7 +657,7 @@ function buildBusinessWhere(
 
   if (terms.length > 0) {
     conditions.push({
-      OR: businessTextConditions(terms),
+      AND: businessTextConditions(terms),
     });
   }
 
@@ -1198,8 +1093,12 @@ export async function GET(
      * latitude and longitude.
      */
 
-    const matchedProducts =
-      await prisma.product.findMany({
+    const [totalProductMatches, matchedProducts] =
+      await Promise.all([
+        prisma.product.count({
+          where: productWhere,
+        }),
+        prisma.product.findMany({
         where: productWhere,
 
         select: {
@@ -1228,7 +1127,6 @@ export async function GET(
             select: {
               id: true,
               url: true,
-              publicId: true,
               sortOrder: true,
             },
 
@@ -1290,7 +1188,9 @@ export async function GET(
         orderBy: {
           updatedAt: "desc",
         },
-      });
+        take: MAX_SEARCH_RESULTS_PER_TYPE,
+        }),
+      ]);
 
     const sortedProducts =
       matchedProducts
@@ -1337,6 +1237,11 @@ export async function GET(
           return {
             ...publicProduct,
 
+            category:
+              product.category?.isActive
+                ? product.category
+                : null,
+
             /*
              * Keep the location information useful
              * for discovery without exposing coordinates.
@@ -1352,7 +1257,7 @@ export async function GET(
 
               category:
                 categoryNames[0] ??
-                "Services",
+                "Uncategorised",
 
               verified:
                 product.business.verification ===
@@ -1375,8 +1280,12 @@ export async function GET(
      * appearing beneath filtered business results.
      */
 
-    const matchedBusinesses =
-      await prisma.business.findMany({
+    const [totalBusinessMatches, matchedBusinesses] =
+      await Promise.all([
+        prisma.business.count({
+          where: businessWhere,
+        }),
+        prisma.business.findMany({
         where: businessWhere,
 
         select: {
@@ -1448,7 +1357,6 @@ export async function GET(
                 select: {
                   id: true,
                   url: true,
-                  publicId: true,
                   sortOrder: true,
                 },
 
@@ -1500,7 +1408,9 @@ export async function GET(
             id: "desc",
           },
         ],
-      });
+        take: MAX_SEARCH_RESULTS_PER_TYPE,
+        }),
+      ]);
 
     const sortedBusinesses =
       matchedBusinesses
@@ -1591,7 +1501,7 @@ export async function GET(
 
           category:
             categoryNames[0] ??
-            "Services",
+            "Uncategorised",
 
           products:
             business.products.map(
@@ -1630,8 +1540,8 @@ export async function GET(
           query: rawQuery,
           category: category || null,
           resultCount:
-            formattedProducts.length +
-            formattedBusinesses.length,
+            totalProductMatches +
+            totalBusinessMatches,
           location: location || null,
           minPrice: filters.minPrice,
           maxPrice: filters.maxPrice,
@@ -1651,6 +1561,15 @@ export async function GET(
 
         products:
           formattedProducts,
+
+        resultMeta: {
+          totalProducts: totalProductMatches,
+          totalBusinesses: totalBusinessMatches,
+          maxResultsPerType: MAX_SEARCH_RESULTS_PER_TYPE,
+          truncated:
+            totalProductMatches > MAX_SEARCH_RESULTS_PER_TYPE ||
+            totalBusinessMatches > MAX_SEARCH_RESULTS_PER_TYPE,
+        },
       },
       {
         headers: noStoreHeaders(

@@ -1,3 +1,4 @@
+
 import {
   NotificationPriority,
   NotificationType,
@@ -18,6 +19,7 @@ import {
 
 import { prisma } from "@/lib/prisma";
 import { createNotification } from "@/lib/notifications";
+import { checkPublicRateLimit } from "@/lib/rate-limit";
 
 type RouteContext = {
   params: Promise<{
@@ -27,16 +29,21 @@ type RouteContext = {
 
 const MAX_BUSINESS_ID_LENGTH = 100;
 const MAX_COMMENT_LENGTH = 2000;
+const DEFAULT_PAGE_SIZE = 10;
+const MAX_PAGE_SIZE = 50;
 
-function getNoStoreHeaders(): Headers {
-  const headers = new Headers();
-
-  headers.set(
-    "Cache-Control",
-    "no-store"
-  );
-
+function getNoStoreHeaders(baseHeaders?: HeadersInit): Headers {
+  const headers = new Headers(baseHeaders);
+  headers.set("Cache-Control", "no-store, max-age=0, must-revalidate");
+  headers.set("Pragma", "no-cache");
+  headers.set("Expires", "0");
   return headers;
+}
+
+function parsePositiveInteger(value: string | null, fallback: number): number {
+  if (!value) return fallback;
+  const parsed = Number(value);
+  return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : fallback;
 }
 
 function cleanString(
@@ -103,214 +110,137 @@ function parseComment(
  */
 
 export async function GET(
-  _request: NextRequest,
+  request: NextRequest,
   context: RouteContext
 ) {
-  const { id } =
-    await context.params;
+  const rateLimit = checkPublicRateLimit(request, "business-review-read");
+  const responseHeaders = getNoStoreHeaders(rateLimit.headers);
 
-  if (!id) {
+  if (!rateLimit.allowed) {
     return NextResponse.json(
-      {
-        error:
-          "Business ID is required.",
-      },
-      {
-        status: 400,
-        headers:
-          getNoStoreHeaders(),
-      }
+      { error: "Too many review requests. Please try again shortly." },
+      { status: 429, headers: responseHeaders }
     );
   }
 
-  if (
-    id.length >
-    MAX_BUSINESS_ID_LENGTH
-  ) {
+  const { id } = await context.params;
+  if (!id || id.length > MAX_BUSINESS_ID_LENGTH) {
     return NextResponse.json(
-      {
-        error:
-          "Invalid business ID.",
-      },
-      {
-        status: 400,
-        headers:
-          getNoStoreHeaders(),
-      }
+      { error: id ? "Invalid business ID." : "Business ID is required." },
+      { status: 400, headers: responseHeaders }
     );
   }
 
   try {
-    const business =
-      await prisma.business.findFirst({
-        where: {
-          id,
-
-          status:
-            "ACTIVE",
-
-          deletedAt:
-            null,
-        },
-
-        select: {
-          id: true,
-        },
-      });
+    const business = await prisma.business.findFirst({
+      where: { id, status: "ACTIVE", deletedAt: null },
+      select: { id: true },
+    });
 
     if (!business) {
       return NextResponse.json(
-        {
-          error:
-            "Business not found.",
-        },
-        {
-          status: 404,
-          headers:
-            getNoStoreHeaders(),
-        }
+        { error: "Business not found." },
+        { status: 404, headers: responseHeaders }
       );
     }
 
-    const reviews =
-      await prisma.businessReview.findMany(
-        {
-          where: {
-            businessId:
-              id,
-          },
+    const searchParams = request.nextUrl.searchParams;
+    const requestedPage = parsePositiveInteger(searchParams.get("page"), 1);
+    const pageSize = Math.min(
+      parsePositiveInteger(searchParams.get("pageSize"), DEFAULT_PAGE_SIZE),
+      MAX_PAGE_SIZE
+    );
 
-          orderBy: {
-            createdAt:
-              "desc",
-          },
+    const [summary, ratingGroups] = await Promise.all([
+      prisma.businessReview.aggregate({
+        where: { businessId: id },
+        _avg: { rating: true },
+        _count: { _all: true },
+      }),
+      prisma.businessReview.groupBy({
+        by: ["rating"],
+        where: { businessId: id },
+        _count: { _all: true },
+      }),
+    ]);
 
-          select: {
-            id: true,
-            rating: true,
-            comment: true,
-            createdAt: true,
-            updatedAt: true,
+    const reviewCount = summary._count._all;
+    const totalPages = Math.max(1, Math.ceil(reviewCount / pageSize));
+    const page = Math.min(requestedPage, totalPages);
+    const averageRating = reviewCount > 0 && summary._avg.rating !== null
+      ? Number(summary._avg.rating.toFixed(1))
+      : 0;
 
-            user: {
-              select: {
-                id: true,
-                name: true,
-              },
-            },
-          },
-        }
-      );
-
-    const reviewCount =
-      reviews.length;
-
-    const ratingTotal =
-      reviews.reduce(
-        (
-          total,
-          review
-        ) =>
-          total +
-          review.rating,
-        0
-      );
-
-    const averageRating =
-      reviewCount > 0
-        ? Number(
-            (
-              ratingTotal /
-              reviewCount
-            ).toFixed(1)
-          )
-        : 0;
-
-    const ratingBreakdown = {
-      1: 0,
-      2: 0,
-      3: 0,
-      4: 0,
-      5: 0,
+    const ratingBreakdown: Record<1 | 2 | 3 | 4 | 5, number> = {
+      1: 0, 2: 0, 3: 0, 4: 0, 5: 0,
     };
-
-    for (
-      const review of
-        reviews
-    ) {
-      if (
-        review.rating >= 1 &&
-        review.rating <= 5
-      ) {
-        ratingBreakdown[
-          review.rating as
-            | 1
-            | 2
-            | 3
-            | 4
-            | 5
-        ] += 1;
+    for (const group of ratingGroups) {
+      if (group.rating >= 1 && group.rating <= 5) {
+        ratingBreakdown[group.rating as 1 | 2 | 3 | 4 | 5] = group._count._all;
       }
     }
+
+    let currentUserId: string | null = null;
+    try {
+      const session = await getServerSession(authOptions);
+      const sessionUser = session?.user as { id?: unknown } | undefined;
+      currentUserId = typeof sessionUser?.id === "string" && sessionUser.id.trim()
+        ? sessionUser.id.trim()
+        : null;
+    } catch (sessionError) {
+      // Reviews remain publicly readable if optional ownership lookup fails.
+      console.warn("Unable to resolve review viewer session:", sessionError);
+    }
+
+    const reviews = await prisma.businessReview.findMany({
+      where: { businessId: id },
+      orderBy: [
+        { createdAt: "desc" },
+        { id: "desc" },
+      ],
+      skip: (page - 1) * pageSize,
+      take: pageSize,
+      select: {
+        id: true,
+        userId: true,
+        rating: true,
+        comment: true,
+        createdAt: true,
+        updatedAt: true,
+        user: {
+          select: { name: true },
+        },
+      },
+    });
 
     return NextResponse.json(
       {
-        reviews:
-          reviews.map(
-            (review) => ({
-              id:
-                review.id,
-
-              rating:
-                review.rating,
-
-              comment:
-                review.comment,
-
-              createdAt:
-                review.createdAt,
-
-              updatedAt:
-                review.updatedAt,
-
-              user: {
-                id:
-                  review.user.id,
-
-                name:
-                  review.user.name ||
-                  "ReMarket user",
-              },
-            })
-          ),
-
+        reviews: reviews.map((review) => ({
+          id: review.id,
+          rating: review.rating,
+          comment: review.comment,
+          createdAt: review.createdAt,
+          updatedAt: review.updatedAt,
+          isOwnReview: Boolean(currentUserId && review.userId === currentUserId),
+          user: {
+            name: review.user.name || "ReMarket user",
+          },
+        })),
         reviewCount,
-
         averageRating,
-
         ratingBreakdown,
+        page,
+        pageSize,
+        totalPages,
+        hasMore: page < totalPages,
       },
-      {
-        headers:
-          getNoStoreHeaders(),
-      }
+      { headers: responseHeaders }
     );
   } catch (error) {
-    console.error(
-      "Business reviews GET error:",
-      error
-    );
-
+    console.error("Business reviews GET error:", error);
     return NextResponse.json(
-      {
-        error:
-          "Unable to load reviews.",
-      },
-      {
-        status: 500,
-        headers:
-          getNoStoreHeaders(),
-      }
+      { error: "Unable to load reviews." },
+      { status: 500, headers: responseHeaders }
     );
   }
 }
@@ -333,6 +263,23 @@ export async function POST(
   request: NextRequest,
   context: RouteContext
 ) {
+  const rateLimit = checkPublicRateLimit(request, "business-review-write");
+  const responseHeaders = getNoStoreHeaders(rateLimit.headers);
+  if (!rateLimit.allowed) {
+    return NextResponse.json(
+      { error: "Too many review submissions. Please try again shortly." },
+      { status: 429, headers: responseHeaders }
+    );
+  }
+
+  const declaredLength = Number(request.headers.get("content-length") ?? 0);
+  if (Number.isFinite(declaredLength) && declaredLength > 12_000) {
+    return NextResponse.json(
+      { error: "Review submission is too large." },
+      { status: 413, headers: responseHeaders }
+    );
+  }
+
   /*
    * -----------------------------------------
    * AUTHENTICATION
@@ -352,8 +299,7 @@ export async function POST(
       },
       {
         status: 401,
-        headers:
-          getNoStoreHeaders(),
+        headers: responseHeaders,
       }
     );
   }
@@ -384,8 +330,7 @@ export async function POST(
       },
       {
         status: 401,
-        headers:
-          getNoStoreHeaders(),
+        headers: responseHeaders,
       }
     );
   }
@@ -403,8 +348,7 @@ export async function POST(
       },
       {
         status: 403,
-        headers:
-          getNoStoreHeaders(),
+        headers: responseHeaders,
       }
     );
   }
@@ -440,8 +384,7 @@ export async function POST(
         },
         {
           status: 401,
-          headers:
-            getNoStoreHeaders(),
+          headers: responseHeaders,
         }
       );
     }
@@ -456,8 +399,7 @@ export async function POST(
         },
         {
           status: 403,
-          headers:
-            getNoStoreHeaders(),
+          headers: responseHeaders,
         }
       );
     }
@@ -479,8 +421,7 @@ export async function POST(
         },
         {
           status: 400,
-          headers:
-            getNoStoreHeaders(),
+          headers: responseHeaders,
         }
       );
     }
@@ -496,8 +437,7 @@ export async function POST(
         },
         {
           status: 400,
-          headers:
-            getNoStoreHeaders(),
+          headers: responseHeaders,
         }
       );
     }
@@ -521,8 +461,7 @@ export async function POST(
         },
         {
           status: 400,
-          headers:
-            getNoStoreHeaders(),
+          headers: responseHeaders,
         }
       );
     }
@@ -540,8 +479,7 @@ export async function POST(
         },
         {
           status: 400,
-          headers:
-            getNoStoreHeaders(),
+          headers: responseHeaders,
         }
       );
     }
@@ -571,8 +509,7 @@ export async function POST(
         },
         {
           status: 400,
-          headers:
-            getNoStoreHeaders(),
+          headers: responseHeaders,
         }
       );
     }
@@ -600,8 +537,7 @@ export async function POST(
         },
         {
           status: 400,
-          headers:
-            getNoStoreHeaders(),
+          headers: responseHeaders,
         }
       );
     }
@@ -641,8 +577,7 @@ export async function POST(
         },
         {
           status: 404,
-          headers:
-            getNoStoreHeaders(),
+          headers: responseHeaders,
         }
       );
     }
@@ -687,7 +622,6 @@ export async function POST(
 
             user: {
               select: {
-                id: true,
                 name: true,
               },
             },
@@ -778,9 +712,6 @@ export async function POST(
             review.updatedAt,
 
           user: {
-            id:
-              review.user.id,
-
             name:
               review.user.name ||
               "ReMarket user",
@@ -789,8 +720,7 @@ export async function POST(
       },
       {
         status: 201,
-        headers:
-          getNoStoreHeaders(),
+        headers: responseHeaders,
       }
     );
   } catch (error) {
@@ -824,8 +754,7 @@ export async function POST(
         },
         {
           status: 409,
-          headers:
-            getNoStoreHeaders(),
+          headers: responseHeaders,
         }
       );
     }
@@ -837,8 +766,7 @@ export async function POST(
       },
       {
         status: 500,
-        headers:
-          getNoStoreHeaders(),
+        headers: responseHeaders,
       }
     );
   }

@@ -40,18 +40,32 @@
     --foreground: #ededed;
   }
 }
-@theme {
-  --color-cream: #FFF7ED;
-  --color-coral-light: #FFE4DC;
-  --color-coral-dark: #FF5A36;
-  --color-ink: #17202A;
-  --color-muted: #667085;
+@theme inline {
+  --color-cream: var(--cream);
+  --color-cream-deep: var(--cream-deep);
+
+  --color-coral: var(--coral);
+  --color-coral-light: var(--coral-light);
+  --color-coral-dark: var(--coral-dark);
+
+  --color-ink: var(--ink);
+  --color-muted: var(--muted);
+
+  --color-card: var(--card);
+  --color-border: var(--border);
+
+  --color-green: var(--green);
+  --color-green-bg: var(--green-bg);
+
+  --color-yellow: var(--yellow);
+  --color-yellow-bg: var(--yellow-bg);
+
+  --color-red: var(--red);
+  --color-red-bg: var(--red-bg);
 
   --shadow-soft: 0 10px 35px rgba(23, 32, 42, 0.07);
   --shadow-card: 0 4px 20px rgba(23, 32, 42, 0.05);
-
 }
-
 body {
   margin: 0;
   background: var(--cream);

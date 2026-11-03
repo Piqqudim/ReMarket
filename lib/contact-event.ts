@@ -18,7 +18,7 @@ export async function trackContactEvent({
   requestId,
 }: TrackContactEventOptions): Promise<void> {
   try {
-    await fetch("/api/events/contact", {
+    const response = await fetch("/api/events/contact", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -30,10 +30,14 @@ export async function trackContactEvent({
       }),
       keepalive: true,
     });
+
+    if (!response.ok) {
+      console.error(
+        "Contact event was not recorded:",
+        response.status
+      );
+    }
   } catch (error) {
-    console.error(
-      "Failed to track contact event:",
-      error,
-    );
+    console.error("Failed to track contact event:", error);
   }
 }

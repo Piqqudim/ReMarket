@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 
 import { prisma } from "@/lib/prisma";
 import { requireSeller } from "@/lib/seller-auth";
+import { parseAnalyticsPeriod } from "@/lib/analytics-period";
 
 const REQUEST_STATUSES = [
   "NEW",
@@ -12,8 +13,7 @@ const REQUEST_STATUSES = [
   "CLOSED",
 ] as const;
 
-type RequestStatus =
-  (typeof REQUEST_STATUSES)[number];
+const MAX_RECENT_EVENTS = 20;
 
 function jsonHeaders() {
   return {
@@ -21,106 +21,97 @@ function jsonHeaders() {
   };
 }
 
-function parseDate(
-  value: string | null,
-  endOfDay: boolean
-): Date | null {
-  if (!value) {
-    return null;
+function percentage(
+  numerator: number,
+  denominator: number
+): number {
+  if (denominator <= 0) {
+    return 0;
   }
 
-  const trimmed =
-    value.trim();
-
-  if (!trimmed) {
-    return null;
-  }
-
-  const date =
-    /^\d{4}-\d{2}-\d{2}$/.test(
-      trimmed
-    )
-      ? new Date(
-          `${trimmed}T${
-            endOfDay
-              ? "23:59:59.999"
-              : "00:00:00.000"
-          }Z`
-        )
-      : new Date(trimmed);
-
-  if (
-    Number.isNaN(
-      date.getTime()
-    )
-  ) {
-    return null;
-  }
-
-  return date;
-}
-
-function startOfDefaultPeriod(
-  end: Date
-): Date {
-  return new Date(
-    end.getTime() -
-      30 * 24 * 60 * 60 * 1000
-  );
-}
-
-function incrementMap(
-  map: Record<string, number>,
-  key: string
-) {
-  map[key] =
-    (map[key] ?? 0) + 1;
+  return Number(((numerator / denominator) * 100).toFixed(2));
 }
 
 function countStatuses(
-  rows: { status: string }[]
-) {
-  const counts: Record<
-    string,
-    number
-  > = {};
-
-  for (const status of REQUEST_STATUSES) {
-    counts[status] = 0;
-  }
+  rows: Array<{
+    status: string;
+    _count: { _all: number };
+  }>
+): Record<string, number> {
+  const counts: Record<string, number> = Object.fromEntries(
+    REQUEST_STATUSES.map((status) => [status, 0])
+  );
 
   for (const row of rows) {
-    incrementMap(
-      counts,
-      row.status
-    );
+    counts[row.status] = row._count._all;
   }
 
   return counts;
 }
 
-function percentage(
-  numerator: number,
-  denominator: number
-): number {
-  if (
-    denominator <= 0
-  ) {
-    return 0;
+function countByPlatform(
+  rows: Array<{
+    platform: string;
+    _count: { _all: number };
+  }>
+): Record<string, number> {
+  const counts: Record<string, number> = {
+    WHATSAPP: 0,
+    PHONE: 0,
+    INSTAGRAM: 0,
+    TIKTOK: 0,
+    FACEBOOK: 0,
+    DIRECTIONS: 0,
+  };
+
+  for (const row of rows) {
+    counts[row.platform] = row._count._all;
   }
 
-  return Number(
-    (
-      (numerator /
-        denominator) *
-      100
-    ).toFixed(2)
-  );
+  return counts;
 }
 
-export async function GET(
-  request: Request
-) {
+function countAvailability(
+  rows: Array<{
+    availability: string;
+    _count: { _all: number };
+  }>
+): Record<string, number> {
+  const counts: Record<string, number> = {
+    AVAILABLE: 0,
+    ASK_SELLER: 0,
+    UNAVAILABLE: 0,
+  };
+
+  for (const row of rows) {
+    counts[row.availability] = row._count._all;
+  }
+
+  return counts;
+}
+
+async function countUniqueVisitors(
+  businessId: string,
+  period?: { from: Date; to: Date }
+): Promise<number> {
+  const rows = period
+    ? await prisma.$queryRaw<Array<{ count: bigint }>>`
+        SELECT COUNT(DISTINCT "visitorId")::bigint AS "count"
+        FROM "BusinessViewEvent"
+        WHERE "businessId" = ${businessId}
+          AND "createdAt" >= ${period.from}
+          AND "createdAt" < ${period.to}
+      `
+    : await prisma.$queryRaw<Array<{ count: bigint }>>`
+        SELECT COUNT(DISTINCT "visitorId")::bigint AS "count"
+        FROM "BusinessViewEvent"
+        WHERE "businessId" = ${businessId}
+      `;
+
+  return Number(rows[0]?.count ?? 0);
+}
+
+export async function GET(request: Request) {
   const auth = await requireSeller();
 
   if (!auth.authorized) {
@@ -128,124 +119,55 @@ export async function GET(
   }
 
   try {
-    const url =
-      new URL(request.url);
+    const url = new URL(request.url);
+    const periodResult = parseAnalyticsPeriod(
+      url.searchParams,
+      30
+    );
 
-    const fromParam =
-      url.searchParams.get(
-        "from"
-      );
-
-    const toParam =
-      url.searchParams.get(
-        "to"
-      );
-
-    const parsedTo =
-      parseDate(
-        toParam,
-        true
-      );
-
-    if (
-      toParam &&
-      !parsedTo
-    ) {
+    if (!periodResult.valid) {
       return NextResponse.json(
-        {
-          error:
-            "Invalid 'to' date.",
-        },
-        {
-          status: 400,
-          headers: jsonHeaders(),
-        }
+        { error: periodResult.error },
+        { status: 400, headers: jsonHeaders() }
       );
     }
 
-    const to =
-      parsedTo ?? new Date();
-
-    const parsedFrom =
-      parseDate(
-        fromParam,
-        false
-      );
-
-    if (
-      fromParam &&
-      !parsedFrom
-    ) {
-      return NextResponse.json(
-        {
-          error:
-            "Invalid 'from' date.",
-        },
-        {
-          status: 400,
-          headers: jsonHeaders(),
-        }
-      );
-    }
-
-    const from =
-      parsedFrom ??
-      startOfDefaultPeriod(to);
-
-    if (
-      from.getTime() >
-      to.getTime()
-    ) {
-      return NextResponse.json(
-        {
-          error:
-            "'from' date cannot be after 'to' date.",
-        },
-        {
-          status: 400,
-          headers: jsonHeaders(),
-        }
-      );
-    }
-
+    const { from, to } = periodResult.period;
     const periodWhere = {
       gte: from,
-      lte: to,
+      lt: to,
     };
 
-    const business =
-      await prisma.business.findUnique({
-        where: {
-          ownerId: auth.user.id,
-        },
-        select: {
-          id: true,
-          name: true,
-          ownerName: true,
-          status: true,
-          verification: true,
-          availability: true,
-          deletedAt: true,
-
-          location: {
-            select: {
-              id: true,
-              area: true,
-            },
+    const business = await prisma.business.findUnique({
+      where: {
+        ownerId: auth.user.id,
+      },
+      select: {
+        id: true,
+        name: true,
+        ownerName: true,
+        status: true,
+        verification: true,
+        availability: true,
+        deletedAt: true,
+        location: {
+          select: {
+            id: true,
+            area: true,
           },
-
-          categories: {
-            select: {
-              category: {
-                select: {
-                  id: true,
-                  name: true,
-                },
+        },
+        categories: {
+          select: {
+            category: {
+              select: {
+                id: true,
+                name: true,
               },
             },
           },
         },
-      });
+      },
+    });
 
     if (!business) {
       return NextResponse.json(
@@ -253,513 +175,277 @@ export async function GET(
           error:
             "You do not have a business linked to this seller account.",
         },
-        {
-          status: 404,
-          headers: jsonHeaders(),
-        }
+        { status: 404, headers: jsonHeaders() }
       );
     }
 
     if (business.deletedAt) {
       return NextResponse.json(
-        {
-          error:
-            "This business has been deleted.",
-        },
-        {
-          status: 410,
-          headers: jsonHeaders(),
-        }
+        { error: "This business has been deleted." },
+        { status: 410, headers: jsonHeaders() }
       );
     }
 
     const [
       allViews,
       periodViews,
-      uniqueVisitorsAllRows,
-      uniqueVisitorsPeriodRows,
-
+      uniqueVisitorsAllTime,
+      uniqueVisitorsPeriod,
       recentViews,
-
       allContacts,
       periodContacts,
       contactsByPlatformAllRows,
       contactsByPlatformPeriodRows,
       recentContacts,
-
       productTotal,
       productActive,
       productInactive,
       productPending,
       productDeleted,
       productsByAvailability,
-
       matchesTotal,
       matchesPeriod,
-      matchedRequestsAll,
-      matchedRequestsPeriod,
+      matchedRequestStatusesAllRows,
+      matchedRequestStatusesPeriodRows,
     ] = await Promise.all([
       prisma.businessViewEvent.count({
-        where: {
-          businessId:
-            business.id,
-        },
+        where: { businessId: business.id },
       }),
-
       prisma.businessViewEvent.count({
         where: {
-          businessId:
-            business.id,
-
-          createdAt:
-            periodWhere,
+          businessId: business.id,
+          createdAt: periodWhere,
         },
       }),
-
+      countUniqueVisitors(business.id),
+      countUniqueVisitors(business.id, { from, to }),
       prisma.businessViewEvent.findMany({
         where: {
-          businessId:
-            business.id,
+          businessId: business.id,
+          createdAt: periodWhere,
         },
-
-        select: {
-          visitorId: true,
-        },
-
-        distinct: [
-          "visitorId",
-        ],
-      }),
-
-      prisma.businessViewEvent.findMany({
-        where: {
-          businessId:
-            business.id,
-
-          createdAt:
-            periodWhere,
-        },
-
-        select: {
-          visitorId: true,
-        },
-
-        distinct: [
-          "visitorId",
-        ],
-      }),
-
-      prisma.businessViewEvent.findMany({
-        where: {
-          businessId:
-            business.id,
-        },
-
         select: {
           id: true,
-          visitorId: true,
           createdAt: true,
         },
-
-        orderBy: {
-          createdAt: "desc",
-        },
-
-        take: 20,
+        orderBy: { createdAt: "desc" },
+        take: MAX_RECENT_EVENTS,
       }),
-
+      prisma.contactEvent.count({
+        where: { businessId: business.id },
+      }),
       prisma.contactEvent.count({
         where: {
-          businessId:
-            business.id,
+          businessId: business.id,
+          createdAt: periodWhere,
         },
       }),
-
-      prisma.contactEvent.count({
-        where: {
-          businessId:
-            business.id,
-
-          createdAt:
-            periodWhere,
-        },
-      }),
-
       prisma.contactEvent.groupBy({
         by: ["platform"],
-
-        where: {
-          businessId:
-            business.id,
-        },
-
-        _count: {
-          _all: true,
-        },
+        where: { businessId: business.id },
+        _count: { _all: true },
       }),
-
       prisma.contactEvent.groupBy({
         by: ["platform"],
-
         where: {
-          businessId:
-            business.id,
-
-          createdAt:
-            periodWhere,
+          businessId: business.id,
+          createdAt: periodWhere,
         },
-
-        _count: {
-          _all: true,
-        },
+        _count: { _all: true },
       }),
-
       prisma.contactEvent.findMany({
         where: {
-          businessId:
-            business.id,
+          businessId: business.id,
+          createdAt: periodWhere,
         },
-
         select: {
           id: true,
           platform: true,
           requestId: true,
           createdAt: true,
         },
-
-        orderBy: {
-          createdAt: "desc",
-        },
-
-        take: 20,
+        orderBy: { createdAt: "desc" },
+        take: MAX_RECENT_EVENTS,
       }),
-
+      // Preserve the existing seller API meaning: total excludes soft-deleted products.
       prisma.product.count({
         where: {
-          businessId:
-            business.id,
+          businessId: business.id,
           deletedAt: null,
         },
       }),
-
       prisma.product.count({
         where: {
-          businessId:
-            business.id,
+          businessId: business.id,
           status: "ACTIVE",
           deletedAt: null,
         },
       }),
-
       prisma.product.count({
         where: {
-          businessId:
-            business.id,
+          businessId: business.id,
           status: "INACTIVE",
           deletedAt: null,
         },
       }),
-
       prisma.product.count({
         where: {
-          businessId:
-            business.id,
+          businessId: business.id,
           status: "PENDING",
           deletedAt: null,
         },
       }),
-
       prisma.product.count({
         where: {
-          businessId:
-            business.id,
-          deletedAt: {
-            not: null,
-          },
+          businessId: business.id,
+          deletedAt: { not: null },
         },
       }),
-
       prisma.product.groupBy({
         by: ["availability"],
-
         where: {
-          businessId:
-            business.id,
-
+          businessId: business.id,
           deletedAt: null,
         },
-
-        _count: {
-          _all: true,
-        },
+        _count: { _all: true },
       }),
-
+      prisma.match.count({
+        where: { businessId: business.id },
+      }),
       prisma.match.count({
         where: {
-          businessId:
-            business.id,
+          businessId: business.id,
+          createdAt: periodWhere,
         },
       }),
-
-      prisma.match.count({
+      // Grouping BuyerRequest records counts distinct matched requests.
+      // Statuses are current statuses, not historical snapshots.
+      prisma.buyerRequest.groupBy({
+        by: ["status"],
         where: {
-          businessId:
-            business.id,
-
-          createdAt:
-            periodWhere,
+          matches: {
+            some: { businessId: business.id },
+          },
         },
+        _count: { _all: true },
       }),
-
-      prisma.buyerRequest.findMany({
+      prisma.buyerRequest.groupBy({
+        by: ["status"],
         where: {
           matches: {
             some: {
-              businessId:
-                business.id,
+              businessId: business.id,
+              createdAt: periodWhere,
             },
           },
         },
-
-        select: {
-          status: true,
-        },
-      }),
-
-      prisma.buyerRequest.findMany({
-        where: {
-          matches: {
-            some: {
-              businessId:
-                business.id,
-
-              createdAt:
-                periodWhere,
-            },
-          },
-        },
-
-        select: {
-          status: true,
-        },
+        _count: { _all: true },
       }),
     ]);
 
-    const contactsByPlatformAll: Record<
-      string,
-      number
-    > = {};
+    const contactsByPlatformAll = countByPlatform(
+      contactsByPlatformAllRows
+    );
+    const contactsByPlatformPeriod = countByPlatform(
+      contactsByPlatformPeriodRows
+    );
+    const availabilityCounts = countAvailability(
+      productsByAvailability
+    );
 
-    for (const row of contactsByPlatformAllRows) {
-      contactsByPlatformAll[
-        row.platform
-      ] =
-        row._count._all;
-    }
-
-    const contactsByPlatformPeriod: Record<
-      string,
-      number
-    > = {};
-
-    for (
-      const row of contactsByPlatformPeriodRows
-    ) {
-      contactsByPlatformPeriod[
-        row.platform
-      ] =
-        row._count._all;
-    }
-
-    const availabilityCounts: Record<
-      string,
-      number
-    > = {};
-
-    for (
-      const row of productsByAvailability
-    ) {
-      availabilityCounts[
-        row.availability
-      ] =
-        row._count._all;
-    }
+    const matchedRequestsAllTime = matchedRequestStatusesAllRows.reduce(
+      (sum, row) => sum + row._count._all,
+      0
+    );
+    const matchedRequestsPeriod = matchedRequestStatusesPeriodRows.reduce(
+      (sum, row) => sum + row._count._all,
+      0
+    );
 
     return NextResponse.json(
       {
         business: {
           id: business.id,
           name: business.name,
-          ownerName:
-            business.ownerName,
-          status:
-            business.status,
-          verification:
-            business.verification,
-          availability:
-            business.availability,
-          location:
-            business.location,
-          categories:
-            business.categories,
+          ownerName: business.ownerName,
+          status: business.status,
+          verification: business.verification,
+          availability: business.availability,
+          location: business.location,
+          categories: business.categories,
         },
-
         period: {
-          from:
-            from.toISOString(),
-          to:
-            to.toISOString(),
+          from: from.toISOString(),
+          to: to.toISOString(),
+          timezone: "Africa/Lagos",
+          endExclusive: true,
           days: Math.max(
             1,
-            Math.ceil(
-              (to.getTime() -
-                from.getTime()) /
-                (24 *
-                  60 *
-                  60 *
-                  1000)
-            )
+            Math.ceil((to.getTime() - from.getTime()) / (24 * 60 * 60 * 1000))
           ),
         },
-
         views: {
           allTime: allViews,
           period: periodViews,
-
-          uniqueVisitorsAllTime:
-            uniqueVisitorsAllRows.length,
-
-          uniqueVisitorsPeriod:
-            uniqueVisitorsPeriodRows.length,
-
-          recent:
-            recentViews.map(
-              (view) => ({
-                id: view.id,
-                visitorId:
-                  view.visitorId,
-                createdAt:
-                  view.createdAt.toISOString(),
-              })
-            ),
+          uniqueVisitorsAllTime,
+          uniqueVisitorsPeriod,
+          recent: recentViews.map((view) => ({
+            id: view.id,
+            createdAt: view.createdAt.toISOString(),
+          })),
+          recentScope: "Selected reporting period",
         },
-
         contacts: {
           allTime: allContacts,
           period: periodContacts,
-
-          allTimeByPlatform:
-            contactsByPlatformAll,
-
-          periodByPlatform:
-            contactsByPlatformPeriod,
-
-          recent:
-            recentContacts.map(
-              (contact) => ({
-                id: contact.id,
-                platform:
-                  contact.platform,
-                requestId:
-                  contact.requestId,
-                createdAt:
-                  contact.createdAt.toISOString(),
-              })
-            ),
-
-          allTimeContactRate:
-            percentage(
-              allContacts,
-              allViews
-            ),
-
-          periodContactRate:
-            percentage(
-              periodContacts,
-              periodViews
-            ),
-
-          directionsAllTime:
-            contactsByPlatformAll[
-              "DIRECTIONS"
-            ] ?? 0,
-
-          directionsPeriod:
-            contactsByPlatformPeriod[
-              "DIRECTIONS"
-            ] ?? 0,
+          allTimeByPlatform: contactsByPlatformAll,
+          periodByPlatform: contactsByPlatformPeriod,
+          recent: recentContacts.map((contact) => ({
+            id: contact.id,
+            platform: contact.platform,
+            requestId: contact.requestId,
+            createdAt: contact.createdAt.toISOString(),
+          })),
+          recentScope: "Selected reporting period",
+          allTimeContactRate: percentage(allContacts, allViews),
+          periodContactRate: percentage(periodContacts, periodViews),
+          contactRateDefinition:
+            "Contact clicks per 100 business views. This is not a unique-buyer conversion rate and can exceed 100%.",
+          directionsAllTime: contactsByPlatformAll.DIRECTIONS,
+          directionsPeriod: contactsByPlatformPeriod.DIRECTIONS,
         },
-
         products: {
-          total:
-            productTotal,
-
-          active:
-            productActive,
-
-          inactive:
-            productInactive,
-
-          pending:
-            productPending,
-
-          deleted:
-            productDeleted,
-
-          availability:
-            availabilityCounts,
+          total: productTotal,
+          active: productActive,
+          inactive: productInactive,
+          pending: productPending,
+          deleted: productDeleted,
+          availability: availabilityCounts,
+          totalDefinition: "Non-deleted products only; deleted is reported separately.",
+          availabilityScope: "Non-deleted products, including inactive and pending products.",
         },
-
         matches: {
-          total:
-            matchesTotal,
-
-          period:
-            matchesPeriod,
-
-          matchedRequestsAllTime:
-            matchedRequestsAll.length,
-
-          matchedRequestsPeriod:
-            matchedRequestsPeriod.length,
-
-          requestStatusesAllTime:
-            countStatuses(
-              matchedRequestsAll
-            ),
-
-          requestStatusesPeriod:
-            countStatuses(
-              matchedRequestsPeriod
-            ),
+          total: matchesTotal,
+          period: matchesPeriod,
+          matchedRequestsAllTime,
+          matchedRequestsPeriod,
+          requestStatusesAllTime: countStatuses(matchedRequestStatusesAllRows),
+          requestStatusesPeriod: countStatuses(matchedRequestStatusesPeriodRows),
+          statusMeaning: "Current status of matched requests, not a historical status snapshot.",
         },
-
         search: {
           available: false,
-
-          reason:
-            "SearchEvent does not currently reference a business.",
+          reason: "SearchEvent does not currently reference a business.",
         },
       },
-      {
-        headers: jsonHeaders(),
-      }
+      { headers: jsonHeaders() }
     );
   } catch (error) {
-    console.error(
-      "Seller analytics GET error:",
-      error
-    );
+    console.error("Seller analytics GET error:", error);
 
     return NextResponse.json(
-      {
-        error:
-          "Unable to load seller analytics.",
-      },
-      {
-        status: 500,
-        headers: jsonHeaders(),
-      }
+      { error: "Unable to load seller analytics." },
+      { status: 500, headers: jsonHeaders() }
     );
   }
 }

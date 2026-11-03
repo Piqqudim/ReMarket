@@ -7,6 +7,7 @@ import {
 } from "@prisma/client";
 
 import { prisma } from "@/lib/prisma";
+import { validateProductPricing } from "@/lib/product-pricing";
 import { requireSeller } from "@/lib/seller-auth";
 import { createNotification } from "@/lib/notifications";
 import {
@@ -14,7 +15,7 @@ import {
   qualifyReferralForUser,
 } from "@/lib/referrals";
 
-const MAX_ACTIVE_PRODUCTS = 10;
+const MAX_ACTIVE_PRODUCTS = 100;
 const MAX_PRISMA_INT = 2_147_483_647;
 const MAX_REQUEST_BODY_BYTES = 256 * 1024;
 const MAX_PRODUCT_IMAGES = 20;
@@ -961,21 +962,12 @@ export async function POST(request: Request) {
     const price = priceResult.value;
     const priceMin = priceMinResult.value;
     const priceMax = priceMaxResult.value;
+    const pricingError = validateProductPricing(price, priceMin, priceMax);
 
-    if (
-      priceMin !== null &&
-      priceMax !== null &&
-      priceMin > priceMax
-    ) {
+    if (pricingError) {
       return NextResponse.json(
-        {
-          error:
-            "Minimum price cannot be greater than maximum price.",
-        },
-        {
-          status: 400,
-          headers: jsonHeaders(),
-        }
+        { error: pricingError },
+        { status: 400, headers: jsonHeaders() }
       );
     }
 

@@ -186,6 +186,11 @@ function getProductImage(product: Product): string | null {
 function getBusinessCategory(business: {
   categories?: string[];
   category?: string;
+  products?: Array<{
+    category?: {
+      name?: string | null;
+    } | null;
+  }>;
 }): string {
   const firstCategory = business.categories?.find(
     (value) => typeof value === "string" && value.trim().length > 0
@@ -193,11 +198,22 @@ function getBusinessCategory(business: {
 
   if (firstCategory) return firstCategory.trim();
 
-  if (typeof business.category === "string" && business.category.trim()) {
-    return business.category.trim();
+  const savedCategory =
+    typeof business.category === "string"
+      ? business.category.trim()
+      : "";
+
+  if (savedCategory && savedCategory.toLowerCase() !== "uncategorised") {
+    return savedCategory;
   }
 
-  return "Services";
+  const productCategory = business.products?.find(
+    (product) =>
+      typeof product.category?.name === "string" &&
+      product.category.name.trim().length > 0
+  )?.category?.name;
+
+  return productCategory?.trim() || savedCategory || "Uncategorised";
 }
 
 function getAvailabilityStatus(availability: string | null | undefined) {
@@ -554,6 +570,7 @@ function SearchPageView({
   const [categories, setCategories] = useState<Category[]>(DEFAULT_CATEGORIES);
   const [businesses, setBusinesses] = useState<Business[]>([]);
   const [products, setProducts] = useState<ProductSearchResult[]>([]);
+  const [resultsTruncated, setResultsTruncated] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [showFilters, setShowFilters] = useState(false);
@@ -669,6 +686,7 @@ function SearchPageView({
 
         setBusinesses(Array.isArray(data.businesses) ? data.businesses : []);
         setProducts(Array.isArray(data.products) ? data.products : []);
+        setResultsTruncated(data?.resultMeta?.truncated === true);
       } catch (searchError) {
         if (searchError instanceof DOMException && searchError.name === "AbortError") {
           return;
@@ -677,7 +695,12 @@ function SearchPageView({
         console.error("Search loading error:", searchError);
         setBusinesses([]);
         setProducts([]);
-        setError("We couldn't complete your search right now.");
+        setResultsTruncated(false);
+        setError(
+          searchError instanceof Error && searchError.message
+            ? searchError.message
+            : "We couldn't complete your search right now."
+        );
       } finally {
         if (!controller.signal.aborted) setLoading(false);
       }
@@ -995,6 +1018,16 @@ function SearchPageView({
                     </button>
                   </div>
 
+                  {!loading && !error && resultsTruncated && (
+                    <div
+                      role="status"
+                      className="mt-3 rounded-xl border border-[#F1D7A7] bg-[#FFF8E8] px-3.5 py-3 text-[11px] leading-5 text-[#76551A]"
+                    >
+                      We found more matches than we can load at once. These results show a limited selection.
+                      Add a category, location or price filter to narrow your search.
+                    </div>
+                  )}
+
                   {/* APPLIED FILTER CHIPS */}
                   {activeFilterCount > 0 && (
                     <div className="mt-3 flex min-w-0 flex-wrap gap-2">
@@ -1068,7 +1101,8 @@ function SearchPageView({
 
                       <div className="grid min-w-0 grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4">
                         {displayedProducts.map((product) => {
-                          const businessCategory = getBusinessCategory(product.business);
+                          const businessCategory =
+                            product.category?.name ?? getBusinessCategory(product.business);
                           return (
                             <ProductResultCard
                               key={product.id}

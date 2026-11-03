@@ -21,13 +21,14 @@ import {
  *
  * Supports:
  * - Business-name and description search.
- * - Product-name and description search.
- * - Product keyword search.
- * - Active category filtering.
- * - Pagination.
- * - Product previews.
+ * - Product-name, description and keyword search.
+ * - Multi-word matching (each search term must match).
+ * - Active business and product categories.
+ * - Server-side business pagination.
+ * - Relevant active product previews.
+ * - Public business data without exact coordinates.
  *
- * Public API contract remains:
+ * Public API contract:
  * {
  *   businesses,
  *   total,
@@ -42,9 +43,7 @@ const MAX_PAGE_SIZE = 24;
 const MAX_SEARCH_LENGTH = 100;
 const MAX_CATEGORY_LENGTH = 100;
 
-function clean(
-  value: string | null
-): string {
+function clean(value: string | null): string {
   return value?.trim() ?? "";
 }
 
@@ -52,32 +51,36 @@ function parsePositiveInteger(
   value: string | null,
   fallback: number
 ): number {
-  if (!value) {
-    return fallback;
-  }
+  if (!value) return fallback;
 
   const parsed = Number(value);
-
-  if (
-    !Number.isSafeInteger(parsed) ||
-    parsed < 1
-  ) {
+  if (!Number.isSafeInteger(parsed) || parsed < 1) {
     return fallback;
   }
 
   return parsed;
 }
 
-function noStoreHeaders(
-  baseHeaders?: HeadersInit
-): Headers {
+function getQueryTerms(query: string): string[] {
+  const normalized = query
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
+
+  return Array.from(
+    new Set(normalized.split(/\s+/).filter(Boolean))
+  );
+}
+
+function noStoreHeaders(baseHeaders?: HeadersInit): Headers {
   const headers = new Headers(baseHeaders);
 
   headers.set(
     "Cache-Control",
     "no-store, max-age=0, must-revalidate"
   );
-
   headers.set("Pragma", "no-cache");
   headers.set("Expires", "0");
 
@@ -105,19 +108,58 @@ function emptyResponse(
   );
 }
 
-export async function GET(
-  request: NextRequest
-) {
+function buildActiveCategoryCondition(
+  category: string
+): Prisma.CategoryWhereInput {
+  return {
+    isActive: true,
+    name: {
+      equals: category,
+      mode: "insensitive",
+    },
+  };
+}
+
+function buildProductCategoryFilter(
+  category: string
+): Prisma.ProductWhereInput {
+  const activeCategory = buildActiveCategoryCondition(category);
+
+  return {
+    OR: [
+      {
+        category: {
+          is: activeCategory,
+        },
+      },
+      {
+        AND: [
+          {
+            category: { is: null },
+          },
+          {
+            business: {
+              is: {
+                categories: {
+                  some: {
+                    category: activeCategory,
+                  },
+                },
+              },
+            },
+          },
+        ],
+      },
+    ],
+  };
+}
+
+export async function GET(request: NextRequest) {
   /*
-   * Use the existing configured public search
-   * rate-limit bucket. This shares its request
-   * budget with /api/search.
+   * Browse and Search intentionally share the existing
+   * public search rate-limit budget.
    */
-  const rateLimit =
-    checkPublicRateLimit(
-      request,
-      "search"
-    );
+  const rateLimit = checkPublicRateLimit(request, "search");
 
   if (!rateLimit.allowed) {
     return emptyResponse(
@@ -128,26 +170,11 @@ export async function GET(
   }
 
   try {
-    const searchParams =
-      request.nextUrl.searchParams;
+    const searchParams = request.nextUrl.searchParams;
+    const q = clean(searchParams.get("q"));
+    const category = clean(searchParams.get("category"));
 
-    const q = clean(
-      searchParams.get("q")
-    );
-
-    const category = clean(
-      searchParams.get("category")
-    );
-
-    /*
-     * --------------------------------------------
-     * 1. Validate input
-     * --------------------------------------------
-     */
-
-    if (
-      q.length > MAX_SEARCH_LENGTH
-    ) {
+    if (q.length > MAX_SEARCH_LENGTH) {
       return emptyResponse(
         `Search text must not exceed ${MAX_SEARCH_LENGTH} characters.`,
         400,
@@ -155,10 +182,7 @@ export async function GET(
       );
     }
 
-    if (
-      category.length >
-      MAX_CATEGORY_LENGTH
-    ) {
+    if (category.length > MAX_CATEGORY_LENGTH) {
       return emptyResponse(
         `Category must not exceed ${MAX_CATEGORY_LENGTH} characters.`,
         400,
@@ -166,339 +190,293 @@ export async function GET(
       );
     }
 
-    const requestedPage =
-      parsePositiveInteger(
-        searchParams.get("page"),
-        1
+    const terms = getQueryTerms(q);
+    if (q && terms.length === 0) {
+      return emptyResponse(
+        "Enter a search term containing letters or numbers.",
+        400,
+        rateLimit.headers
       );
+    }
 
-    const requestedPageSize =
-      parsePositiveInteger(
-        searchParams.get("pageSize"),
-        DEFAULT_PAGE_SIZE
-      );
-
-    const pageSize = Math.min(
-      requestedPageSize,
-      MAX_PAGE_SIZE
+    const requestedPage = parsePositiveInteger(
+      searchParams.get("page"),
+      1
     );
 
+    const requestedPageSize = parsePositiveInteger(
+      searchParams.get("pageSize"),
+      DEFAULT_PAGE_SIZE
+    );
+
+    const pageSize = Math.min(requestedPageSize, MAX_PAGE_SIZE);
+
     /*
-     * --------------------------------------------
-     * 2. Define the business search
-     * --------------------------------------------
-     *
-     * A business must be active and not soft-deleted.
-     *
-     * Category matches must use active categories.
-     *
-     * Product matches must use active,
-     * non-deleted products.
+     * Each term must match a product field. This avoids
+     * broad partial matches where only one word in a
+     * multi-word query happens to occur in a listing.
      */
-
-    const matchingProductConditions:
-      Prisma.ProductWhereInput = {
-        status: "ACTIVE",
-        deletedAt: null,
-
-        ...(q
-          ? {
-              OR: [
-                {
-                  name: {
-                    contains: q,
-                    mode: "insensitive",
-                  },
-                },
-                {
-                  description: {
-                    contains: q,
-                    mode: "insensitive",
-                  },
-                },
-                {
-                  keywords: {
-                    has: q.toLowerCase(),
-                  },
-                },
-              ],
-            }
-          : {}),
-      };
-
-    const where:
-      Prisma.BusinessWhereInput = {
-        status: "ACTIVE",
-        deletedAt: null,
-
-        ...(category
-          ? {
-              categories: {
-                some: {
-                  category: {
-                    isActive: true,
+    const productTextConditions: Prisma.ProductWhereInput[] =
+      terms.map((term) => ({
+        OR: [
+          {
+            name: {
+              contains: term,
+              mode: "insensitive",
+            },
+          },
+          {
+            description: {
+              contains: term,
+              mode: "insensitive",
+            },
+          },
+          {
+            keywords: {
+              has: term,
+            },
+          },
+          {
+            business: {
+              is: {
+                OR: [
+                  {
                     name: {
-                      equals: category,
+                      contains: term,
                       mode: "insensitive",
                     },
                   },
+                  {
+                    description: {
+                      contains: term,
+                      mode: "insensitive",
+                    },
+                  },
+                ],
+              },
+            },
+          },
+        ],
+      }));
+
+    const matchingProductConditions: Prisma.ProductWhereInput = {
+      AND: [
+        {
+          status: "ACTIVE",
+          deletedAt: null,
+        },
+        ...productTextConditions,
+        ...(category
+          ? [buildProductCategoryFilter(category)]
+          : []),
+      ],
+    };
+
+    const businessConditions: Prisma.BusinessWhereInput[] = [
+      {
+        status: "ACTIVE",
+        deletedAt: null,
+      },
+    ];
+
+    if (category) {
+      const activeCategory = buildActiveCategoryCondition(category);
+
+      businessConditions.push({
+        OR: [
+          {
+            categories: {
+              some: {
+                category: activeCategory,
+              },
+            },
+          },
+          {
+            products: {
+              some: {
+                status: "ACTIVE",
+                deletedAt: null,
+                category: {
+                  is: activeCategory,
                 },
               },
-            }
-          : {}),
+            },
+          },
+        ],
+      });
+    }
 
-        ...(q
-          ? {
-              OR: [
-                {
-                  name: {
-                    contains: q,
-                    mode: "insensitive",
-                  },
-                },
-                {
-                  description: {
-                    contains: q,
-                    mode: "insensitive",
-                  },
-                },
-                {
-                  products: {
-                    some:
-                      matchingProductConditions,
-                  },
-                },
-              ],
-            }
-          : {}),
+    if (terms.length > 0) {
+      const businessProfileMatchesAllTerms: Prisma.BusinessWhereInput = {
+        AND: terms.map((term) => ({
+          OR: [
+            {
+              name: {
+                contains: term,
+                mode: "insensitive",
+              },
+            },
+            {
+              description: {
+                contains: term,
+                mode: "insensitive",
+              },
+            },
+          ],
+        })),
       };
 
-    /*
-     * --------------------------------------------
-     * 3. Count matching businesses
-     * --------------------------------------------
-     */
-
-    const total =
-      await prisma.business.count({
-        where,
+      businessConditions.push({
+        OR: [
+          businessProfileMatchesAllTerms,
+          {
+            products: {
+              some: matchingProductConditions,
+            },
+          },
+        ],
       });
+    }
 
-    const totalPages = Math.max(
-      1,
-      Math.ceil(total / pageSize)
-    );
+    const where: Prisma.BusinessWhereInput = {
+      AND: businessConditions,
+    };
 
-    const page = Math.min(
-      requestedPage,
-      totalPages
-    );
+    const total = await prisma.business.count({ where });
+    const totalPages = Math.max(1, Math.ceil(total / pageSize));
+    const page = Math.min(requestedPage, totalPages);
 
-    /*
-     * --------------------------------------------
-     * 4. Fetch the requested page
-     * --------------------------------------------
-     */
+    const businesses = await prisma.business.findMany({
+      where,
+      skip: (page - 1) * pageSize,
+      take: pageSize,
+      select: {
+        id: true,
+        name: true,
+        ownerName: true,
+        description: true,
+        imageUrl: true,
+        availability: true,
+        verification: true,
 
-    const businesses =
-      await prisma.business.findMany({
-        where,
+        // Public area only. Exact coordinates stay private.
+        location: {
+          select: {
+            id: true,
+            area: true,
+          },
+        },
 
-        skip:
-          (page - 1) * pageSize,
-
-        take: pageSize,
-
-        select: {
-          id: true,
-          name: true,
-          ownerName: true,
-          description: true,
-          imageUrl: true,
-          availability: true,
-          verification: true,
-
-          /*
-           * Keep the existing public location
-           * contract: ID and area only.
-           * Exact coordinates are not selected.
-           */
-          location: {
-            select: {
-              id: true,
-              area: true,
+        categories: {
+          where: {
+            category: {
+              isActive: true,
             },
           },
-
-          categories: {
-            where: {
-              category: {
-                isActive: true,
+          select: {
+            category: {
+              select: {
+                id: true,
+                name: true,
               },
-            },
-
-            select: {
-              category: {
-                select: {
-                  id: true,
-                  name: true,
-                },
-              },
-            },
-          },
-
-          /*
-           * When searching by text, return only
-           * product previews that match that text.
-           *
-           * With no text query, show the latest
-           * active products as before.
-           */
-          products: {
-            where:
-              matchingProductConditions,
-
-            select: {
-              id: true,
-              name: true,
-              description: true,
-              price: true,
-              priceMin: true,
-              priceMax: true,
-              availability: true,
-              imageUrl: true,
-              keywords: true,
-
-              images: {
-                select: {
-                  id: true,
-                  url: true,
-                  publicId: true,
-                  sortOrder: true,
-                },
-
-                orderBy: {
-                  sortOrder: "asc",
-                },
-
-                take: 1,
-              },
-            },
-
-            orderBy: {
-              updatedAt: "desc",
-            },
-
-            take: 4,
-          },
-
-          /*
-           * This is the complete active product
-           * count, not just the returned previews.
-           */
-          _count: {
-            select: {
-              products: {
-                where: {
-                  status: "ACTIVE",
-                  deletedAt: null,
-                },
-              },
-            },
-          },
-
-          /*
-           * Keep these existing public fields
-           * for compatibility with callers.
-           */
-          socialLinks: {
-            select: {
-              id: true,
-              platform: true,
-              handle: true,
             },
           },
         },
 
-        orderBy: [
-          {
-            onboardedAt: "desc",
+        products: {
+          where: matchingProductConditions,
+          select: {
+            id: true,
+            name: true,
+            description: true,
+            price: true,
+            priceMin: true,
+            priceMax: true,
+            availability: true,
+            imageUrl: true,
+            keywords: true,
+            category: {
+              select: {
+                id: true,
+                name: true,
+              },
+            },
+            images: {
+              select: {
+                id: true,
+                url: true,
+                sortOrder: true,
+              },
+              orderBy: {
+                sortOrder: "asc",
+              },
+              take: 1,
+            },
           },
-          {
-            id: "desc",
+          orderBy: {
+            updatedAt: "desc",
           },
-        ],
-      });
+          take: 4,
+        },
 
-    /*
-     * --------------------------------------------
-     * 5. Preserve the existing response structure
-     * --------------------------------------------
-     */
+        _count: {
+          select: {
+            products: {
+              where: {
+                status: "ACTIVE",
+                deletedAt: null,
+              },
+            },
+          },
+        },
 
-    const formattedBusinesses =
-      businesses.map(
-        (business) => ({
-          id: business.id,
+        socialLinks: {
+          select: {
+            id: true,
+            platform: true,
+            handle: true,
+          },
+        },
+      },
+      orderBy: [
+        {
+          onboardedAt: "desc",
+        },
+        {
+          id: "desc",
+        },
+      ],
+    });
 
-          name: business.name,
-
-          ownerName:
-            business.ownerName,
-
-          description:
-            business.description,
-
-          imageUrl:
-            business.imageUrl,
-
-          availability:
-            business.availability,
-
-          verification:
-            business.verification,
-
-          location:
-            business.location,
-
-          categories:
-            business.categories,
-
-          products:
-            business.products,
-
-          productCount:
-            business._count.products,
-
-          socialLinks:
-            business.socialLinks,
-        })
-      );
+    const formattedBusinesses = businesses.map((business) => ({
+      id: business.id,
+      name: business.name,
+      ownerName: business.ownerName,
+      description: business.description,
+      imageUrl: business.imageUrl,
+      availability: business.availability,
+      verification: business.verification,
+      location: business.location,
+      categories: business.categories,
+      products: business.products,
+      productCount: business._count.products,
+      socialLinks: business.socialLinks,
+    }));
 
     return NextResponse.json(
       {
-        businesses:
-          formattedBusinesses,
-
+        businesses: formattedBusinesses,
         total,
-
         page,
-
         pageSize,
-
         totalPages,
       },
       {
-        headers: noStoreHeaders(
-          rateLimit.headers
-        ),
+        headers: noStoreHeaders(rateLimit.headers),
       }
     );
   } catch (error) {
-    console.error(
-      "Browse API error:",
-      error
-    );
+    console.error("Browse API error:", error);
 
     return emptyResponse(
       "Unable to load businesses.",

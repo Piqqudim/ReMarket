@@ -523,13 +523,31 @@ export async function GET(
           business.location?.address ??
           null,
 
-        lat:
-          business.location?.lat ??
-          null,
-
-        long:
-          business.location?.long ??
-          null,
+        /*
+         * Coordinates remain server-side. The public profile
+         * receives only a capability flag; exact destination
+         * details are resolved by the Directions endpoint after
+         * the visitor explicitly requests navigation.
+         */
+        hasDirections: Boolean(
+          business.location &&
+          (
+            (
+              typeof business.location.lat === "number" &&
+              Number.isFinite(business.location.lat) &&
+              business.location.lat >= -90 &&
+              business.location.lat <= 90 &&
+              typeof business.location.long === "number" &&
+              Number.isFinite(business.location.long) &&
+              business.location.long >= -180 &&
+              business.location.long <= 180
+            ) ||
+            (
+              typeof business.location.address === "string" &&
+              business.location.address.trim().length > 0
+            )
+          )
+        ),
 
         verification:
           business.location

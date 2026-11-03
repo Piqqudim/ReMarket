@@ -20,8 +20,6 @@ import {
   ArrowRight,
   ChevronLeft,
   ChevronRight,
-  Pause,
-  Play,
   Navigation,
   MoreHorizontal,
   Package,
@@ -30,6 +28,7 @@ import {
   Store,
   Loader2,
   LogOut,
+  Share2,
 } from "lucide-react";
 import Link from "next/link";
 import NotificationBell from "@/components/NotificationBell";
@@ -85,7 +84,7 @@ type NearbyBusiness = {
   area: string | null;
   distanceKm: number | null;
   category: string | null;
-  productCount: number;
+  productCount: number | null;
   verified: boolean;
   availability?: string;
   imageUrl?: string | null;
@@ -174,7 +173,7 @@ function formatRecentProductPrice(product: RecentProduct): string {
     return `Up to ${formatNaira(product.priceMax)}`;
   }
 
-  return "Ask seller for price";
+  return "Price unavailable";
 }
 const NAV_ITEMS = [
   {
@@ -198,6 +197,72 @@ const NAV_ITEMS = [
     icon: Heart,
   },
 ];
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+async function fetchHomepageJson<T>(
+  url: string,
+  signal: AbortSignal,
+  label: string,
+): Promise<T | null> {
+  try {
+    const response = await fetch(url, {
+      cache: "no-store",
+      signal,
+    });
+
+    if (!response.ok) {
+      throw new Error(`${label} returned HTTP ${response.status}.`);
+    }
+
+    return (await response.json()) as T;
+  } catch (error) {
+    if (!signal.aborted) {
+      console.error(`Failed to load ${label}:`, error);
+    }
+    return null;
+  }
+}
+
+function parseNearbyBusiness(value: unknown): NearbyBusiness | null {
+  if (!isRecord(value)) return null;
+  if (typeof value.id !== "string" || typeof value.name !== "string") {
+    return null;
+  }
+
+  let category: string | null =
+    typeof value.category === "string" ? value.category : null;
+
+  // The current Near Me API returns categories as nested records.
+  // Normalise the first available category for the homepage card.
+  if (!category && Array.isArray(value.categories)) {
+    for (const item of value.categories) {
+      if (!isRecord(item) || !isRecord(item.category)) continue;
+      if (typeof item.category.name === "string") {
+        category = item.category.name;
+        break;
+      }
+    }
+  }
+
+  return {
+    id: value.id,
+    name: value.name,
+    area: typeof value.area === "string" ? value.area : null,
+    distanceKm: typeof value.distanceKm === "number" && Number.isFinite(value.distanceKm)
+      ? value.distanceKm
+      : null,
+    category,
+    // The existing Near Me endpoint does not return a total product count.
+    // Keep it unknown rather than presenting the one-product preview as a total.
+    productCount: typeof value.productCount === "number" ? value.productCount : null,
+    verified: value.verified === true,
+    availability: typeof value.availability === "string" ? value.availability : undefined,
+    imageUrl: typeof value.imageUrl === "string" ? value.imageUrl : null,
+  };
+}
+
 type HomepageAccountRole = "ADMIN" | "BUYER" | "SELLER";
 
 type HomepageAccount = {
@@ -292,10 +357,6 @@ export default function HomePage() {
     useState(true);
   const [activeFeaturedIndex, setActiveFeaturedIndex] =
     useState(0);
-  const [featuredAutoplayPaused, setFeaturedAutoplayPaused] =
-    useState(false);
-  const [featuredHovered, setFeaturedHovered] =
-    useState(false);
   const [
     nearbyBusinesses,
     setNearbyBusiness,
@@ -341,6 +402,8 @@ export default function HomePage() {
   const accountMenuRef =
     useRef<HTMLDivElement | null>(null);
   const accountRequestVersionRef = useRef(0);
+  const nearbyRequestVersionRef = useRef(0);
+  const nearbyAbortControllerRef = useRef<AbortController | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -411,6 +474,14 @@ export default function HomePage() {
       cancelled = true;
       accountRequestVersionRef.current += 1;
       window.removeEventListener("focus", handleWindowFocus);
+    };
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      nearbyRequestVersionRef.current += 1;
+      nearbyAbortControllerRef.current?.abort();
+      nearbyAbortControllerRef.current = null;
     };
   }, []);
 
@@ -544,168 +615,79 @@ export default function HomePage() {
    * -----------------------------------------
    * LOAD HOMEPAGE DATA
    * -----------------------------------------
+   * Each public feed fails independently. A categories
+   * response error must not prevent products or featured
+   * businesses from loading.
    */
   useEffect(() => {
-    let cancelled =
-      false;
+    const controller = new AbortController();
+
     async function loadHomeData() {
-      try {
-        const [
-          categoriesResponse,
-          featuredResponse,
-          recentProductsResponse,
-        ] =
-          await Promise.all([
-            fetch(
-              "/api/categories",
-              {
-                cache:
-                  "no-store",
-              }
-            ).catch((error) => {
-              console.error("Failed to load homepage categories", error);
-              return null;
-            }),
-            fetch(
-              "/api/featured",
-              {
-                cache:
-                  "no-store",
-              }
-            ).catch((error) => {
-              console.error("Failed to load featured businesses", error);
-              return null;
-            }),
-            fetch(
-              "/api/recent-products?page=1&pageSize=8",
-              {
-                cache:
-                  "no-store",
-              }
-            ).catch((error) => {
-              console.error("Failed to load recently added products", error);
-              return null;
-            }),
-          ]);
-        /*
-         * Categories
-         */
-        if (
-          categoriesResponse?.ok
-        ) {
-          const categoryData =
-            await categoriesResponse.json();
-          const backendCategories =
-            Array.isArray(
-              categoryData.categories
-            )
-              ? categoryData.categories
-              : [];
-          const mergedCategories =
-            mergeCategories(
-              backendCategories
-            );
-          if (
-            mergedCategories.length >
-            0 &&
-            !cancelled
-          ) {
-            setCategories(
-              mergedCategories
-            );
-          }
-        }
-        /*
-         * Featured businesses
-         */
-        if (
-          featuredResponse?.ok
-        ) {
-          const featuredData =
-            await featuredResponse.json();
-          if (!cancelled) {
-            setFeaturedBusinesses(
-              Array.isArray(
-                featuredData.businesses
-              )
-                ? featuredData.businesses.slice(
-                  0,
-                  5
-                )
-                : []
-            );
-          }
-        }
-        /*
-         * Recently added products.
-         * This is a separate public feed from the random featured-business list.
-         */
-        if (recentProductsResponse?.ok) {
-          const recentProductsData = await recentProductsResponse.json();
-          if (!cancelled) {
-            setRecentProducts(
-              Array.isArray(recentProductsData.products)
-                ? recentProductsData.products.slice(0, 8)
-                : []
-            );
-          }
-        }
-      } catch (
-      error
-      ) {
-        console.error(
-          "Failed to load homepage data",
-          error
-        );
-      } finally {
-        if (!cancelled) {
-          setBusinessLoading(
-            false
-          );
-          setRecentProductsLoading(false);
+      const [categoryData, featuredData, recentProductsData] = await Promise.all([
+        fetchHomepageJson<{ categories?: unknown }>(
+          "/api/categories",
+          controller.signal,
+          "homepage categories",
+        ),
+        fetchHomepageJson<{ businesses?: unknown }>(
+          "/api/featured",
+          controller.signal,
+          "featured businesses",
+        ),
+        fetchHomepageJson<{ products?: unknown }>(
+          "/api/recent-products?page=1&pageSize=8",
+          controller.signal,
+          "recently added products",
+        ),
+      ]);
+
+      if (controller.signal.aborted) return;
+
+      if (Array.isArray(categoryData?.categories)) {
+        const mergedCategories = mergeCategories(categoryData.categories as Parameters<typeof mergeCategories>[0]);
+        if (mergedCategories.length > 0) {
+          setCategories(mergedCategories);
         }
       }
+
+      setFeaturedBusinesses(
+        Array.isArray(featuredData?.businesses)
+          ? (featuredData.businesses as FeaturedBusiness[]).slice(0, 5)
+          : [],
+      );
+
+      setRecentProducts(
+        Array.isArray(recentProductsData?.products)
+          ? (recentProductsData.products as RecentProduct[]).slice(0, 8)
+          : [],
+      );
+
+      setBusinessLoading(false);
+      setRecentProductsLoading(false);
     }
-    void loadHomeData();
-    return () => {
-      cancelled = true;
-    };
+
+    void loadHomeData().catch((error) => {
+      if (!controller.signal.aborted) {
+        console.error("Unexpected homepage data loading error:", error);
+        setFeaturedBusinesses([]);
+        setRecentProducts([]);
+        setBusinessLoading(false);
+        setRecentProductsLoading(false);
+      }
+    });
+
+    return () => controller.abort();
   }, []);
   /*
-   * -----------------------------------------
-   * FEATURED BUSINESS SLIDESHOW
-   * -----------------------------------------
-   * Auto-advances gently, pauses while hovered or
-   * manually paused, and respects reduced-motion settings.
+   * Keep the selected spotlight index valid when
+   * the featured business list changes.
+   * Buyers control the spotlight with the arrows/dots.
    */
   useEffect(() => {
-    if (featuredBusinesses.length === 0) {
-      setActiveFeaturedIndex(0);
-      return;
-    }
-    if (activeFeaturedIndex >= featuredBusinesses.length) {
+    if (featuredBusinesses.length === 0 || activeFeaturedIndex >= featuredBusinesses.length) {
       setActiveFeaturedIndex(0);
     }
   }, [featuredBusinesses.length, activeFeaturedIndex]);
-
-  useEffect(() => {
-    if (
-      featuredBusinesses.length < 2 ||
-      featuredAutoplayPaused ||
-      featuredHovered ||
-      window.matchMedia("(prefers-reduced-motion: reduce)").matches
-    ) {
-      return;
-    }
-
-    const intervalId = window.setInterval(() => {
-      setActiveFeaturedIndex((currentIndex) =>
-        (currentIndex + 1) % featuredBusinesses.length
-      );
-    }, 5500);
-
-    return () => window.clearInterval(intervalId);
-  }, [featuredBusinesses.length, featuredAutoplayPaused, featuredHovered]);
   /*
    * -----------------------------------------
    * CATEGORY
@@ -762,112 +744,99 @@ export default function HomePage() {
    * -----------------------------------------
    * FIND NEARBY BUSINESSES
    * -----------------------------------------
+   * Location is requested only after the buyer presses
+   * the button. Earlier requests are aborted/ignored so
+   * an older GPS result cannot overwrite a newer search.
    */
-  const loadNearbyBusinesses =
-    () => {
-      if (
-        !navigator.geolocation
-      ) {
-        setNearbyError(
-          "Location is not supported by this browser"
-        );
-        setNearbyLocationRequested(
-          true
-        );
-        return;
-      }
-      setNearbyLocationRequested(
-        true
-      );
-      setNearbyLoading(
-        true
-      );
-      setNearbyError("");
-      /*
-       * Clear previous nearby results
-       * before starting a new search.
-       */
+  const loadNearbyBusinesses = () => {
+    const requestVersion = ++nearbyRequestVersionRef.current;
+    nearbyAbortControllerRef.current?.abort();
+    nearbyAbortControllerRef.current = null;
+
+    if (!navigator.geolocation) {
+      setNearbyLocationRequested(true);
+      setNearbyLoading(false);
       setNearbyBusiness([]);
-      navigator.geolocation.getCurrentPosition(
-        async (
-          position
-        ) => {
-          try {
-            const {
-              latitude,
-              longitude,
-            } =
-              position.coords;
-            const response =
-              await fetch(
-                `/api/near-me?lat=${latitude}&lng=${longitude}`,
-                {
-                  cache:
-                    "no-store",
-                }
-              );
-            if (!response.ok) {
-              throw new Error(
-                "Failed to load nearby businesses"
-              );
-            }
-            const data =
-              await response.json();
-            /*
-             * GPS can succeed even when
-             * there are no businesses nearby.
-             *
-             * An empty array is therefore
-             * not treated as an error.
-             */
-            setNearbyBusiness(
-              Array.isArray(
-                data.businesses
-              )
-                ? data.businesses.slice(
-                  0,
-                  4
-                )
-                : []
-            );
-          } catch (
-          error
-          ) {
-            console.error(
-              "Failed to load nearby businesses:",
-              error
-            );
-            setNearbyError(
-              "We couldn't load nearby sellers right now"
-            );
-          } finally {
-            setNearbyLoading(
-              false
-            );
+      setNearbyError("Location is not supported by this browser. You can still browse businesses by area.");
+      return;
+    }
+
+    setNearbyLocationRequested(true);
+    setNearbyLoading(true);
+    setNearbyError("");
+    setNearbyBusiness([]);
+
+    navigator.geolocation.getCurrentPosition(
+      async (position) => {
+        if (requestVersion !== nearbyRequestVersionRef.current) return;
+
+        const controller = new AbortController();
+        nearbyAbortControllerRef.current = controller;
+
+        try {
+          const { latitude, longitude } = position.coords;
+          const params = new URLSearchParams({
+            lat: String(latitude),
+            lng: String(longitude),
+            page: "1",
+            pageSize: "4",
+          });
+          const response = await fetch(`/api/near-me?${params.toString()}`, {
+            cache: "no-store",
+            signal: controller.signal,
+          });
+
+          if (!response.ok) {
+            throw new Error(`Nearby businesses returned HTTP ${response.status}.`);
           }
-        },
-        (
-          error
-        ) => {
-          console.error(
-            "Geolocation error:",
-            error
-          );
-          setNearbyError(
-            "Allow location access to discover sellers near you"
-          );
-          setNearbyLoading(
-            false
-          );
-        },
-        {
-          enableHighAccuracy:
-            false,
-          timeout: 100000,
-          maximumAge: 300000,
+
+          const data: unknown = await response.json();
+          if (requestVersion !== nearbyRequestVersionRef.current || controller.signal.aborted) return;
+
+          const rawBusinesses = isRecord(data) ? data.businesses : null;
+          const businesses = Array.isArray(rawBusinesses)
+            ? rawBusinesses
+                .map(parseNearbyBusiness)
+                .filter((business): business is NearbyBusiness => business !== null)
+                .slice(0, 4)
+            : [];
+
+          setNearbyBusiness(businesses);
+          setNearbyError("");
+        } catch (error) {
+          if (controller.signal.aborted || requestVersion !== nearbyRequestVersionRef.current) return;
+
+          console.error("Failed to load nearby businesses:", error);
+          setNearbyBusiness([]);
+          setNearbyError("We couldn't load nearby sellers right now. Please try again or browse by area.");
+        } finally {
+          if (requestVersion === nearbyRequestVersionRef.current) {
+            setNearbyLoading(false);
+            nearbyAbortControllerRef.current = null;
+          }
         }
-      );
-    };
+      },
+      (error) => {
+        if (requestVersion !== nearbyRequestVersionRef.current) return;
+
+        console.warn("Geolocation request did not complete:", error.message);
+        setNearbyBusiness([]);
+        setNearbyError(
+          error.code === error.PERMISSION_DENIED
+            ? "Location access was not allowed. You can enable it in your browser settings or browse businesses by area."
+            : error.code === error.POSITION_UNAVAILABLE
+              ? "Your current location is unavailable. Please try again or browse by area."
+              : "We couldn't get your location in time. Please try again or browse by area."
+        );
+        setNearbyLoading(false);
+      },
+      {
+        enableHighAccuracy: false,
+        timeout: 15000,
+        maximumAge: 300000,
+      }
+    );
+  };
   /*
    * -----------------------------------------
    * SEARCH
@@ -888,6 +857,45 @@ export default function HomePage() {
       )}`
     );
   };
+
+  /*
+   * Share the public ReMarket website.
+   * This is a basic share action, not a tracked referral programme.
+   */
+  async function handleShareReMarket() {
+    const shareUrl = "https://remarket.com.ng";
+    const shareData = {
+      title: "ReMarket — Find it nearby",
+      text: "Discover products and local businesses around you on ReMarket.",
+      url: shareUrl,
+    };
+
+    setShareFeedback("");
+
+    if (typeof navigator !== "undefined" && typeof navigator.share === "function") {
+      try {
+        await navigator.share(shareData);
+        setShareFeedback("Thanks for sharing ReMarket.");
+        return;
+      } catch (error) {
+        if (error instanceof Error && error.name === "AbortError") {
+          return;
+        }
+      }
+    }
+
+    try {
+      if (typeof navigator !== "undefined" && navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(shareUrl);
+        setShareFeedback("ReMarket link copied. Share it with someone.");
+        return;
+      }
+    } catch (error) {
+      console.error("Unable to copy the ReMarket link:", error);
+    }
+
+    setShareFeedback(`Copy this website address to share: ${shareUrl}`);
+  }
 
   const accountMenu = (
     <div ref={accountMenuRef} className="relative shrink-0">
@@ -1129,7 +1137,7 @@ export default function HomePage() {
               </div>
             </div>
             {/* Desktop Navigation */}
-            <nav className="hidden items-center gap-1 xl:flex">
+            <nav className="hidden items-center gap-1 md:flex lg:hidden">
               {NAV_ITEMS.map(
                 (item) => (
                   <button
@@ -1153,21 +1161,6 @@ export default function HomePage() {
             </nav>
             {/* Right Action */}
             <div className="flex shrink-0 items-center gap-1.5 sm:gap-3">
-              {/* Search */}
-              <button
-                type="button"
-                onClick={() => {
-                  const input =
-                    document.getElementById(
-                      "homepage-search"
-                    );
-                  input?.focus();
-                }}
-                className="hidden h-9 w-9 items-center justify-center rounded-full hover:bg-gray-50 sm:flex"
-                aria-label="Search"
-              >
-                <Search className="h-[19px] w-[19px] text-gray-700" />
-              </button>
               {/* Saved */}
               <button
                 type="button"
@@ -1356,7 +1349,7 @@ export default function HomePage() {
                       right around you
                     </h1>
                     <p className="mt-3 max-w-[470px] text-xs leading-5 text-white/85 sm:text-sm">
-                      Search sellers, discover products and connect with people nearby without the hassle.
+                      Discover products and local businesses around you. Find what you need from sellers in your area.
                     </p>
                     <form
                       onSubmit={
@@ -1367,6 +1360,9 @@ export default function HomePage() {
                       <Search className="ml-3 h-[18px] w-[18px] shrink-0 text-gray-500" />
                       <input
                         id="homepage-search"
+                        type="search"
+                        autoComplete="off"
+                        aria-label="Search for products or local businesses"
                         value={q}
                         onChange={(
                           event
@@ -1448,51 +1444,36 @@ export default function HomePage() {
                         );
                       }
                     )}
-                    <button
-                      type="button"
-                      onClick={() =>
-                        router.push(
-                          "/shop"
-                        )
-                      }
-                      className="group flex min-h-[112px] flex-col items-center justify-center rounded-xl border border-[#E8E4DE] bg-white px-2 py-3 transition hover:-translate-y-0.5 hover:shadow-md"
-                    >
-                      <span className="flex h-[58px] w-[58px] items-center justify-center rounded-full bg-[#E9EDF0] transition group-hover:scale-105">
-                        <MoreHorizontal className="h-6 w-6 text-gray-600" />
-                      </span>
-                      <span className="mt-3 text-xs font-medium text-gray-800">
-                        More
-                      </span>
-                    </button>
                   </div>
                 </section>
-                {/* Request Banner */}
-                <section className="mt-5 flex flex-col gap-4 rounded-xl border border-[#F4DFC3] bg-[#FFF0D9] px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
+                {/* Share / Invite */}
+                <section className="mt-5 flex flex-col gap-3 rounded-xl border border-[#EAE6DF] bg-[#FCFAF6] px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
                   <div className="flex items-center gap-3">
-                    <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-[#FFE0AD]">
-                      <ClipboardList className="h-5 w-5 text-[#A76013]" />
+                    <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-[#FFE0D6] text-[#9F2D18]">
+                      <Share2 className="h-5 w-5" aria-hidden="true" />
                     </div>
                     <div>
-                      <h2 className="text-sm font-bold text-gray-800">
-                        Can&apos;t find what you need?
+                      <h2 className="text-sm font-bold text-[#17202A]">
+                        Know someone looking for local products?
                       </h2>
-                      <p className="mt-0.5 text-[11px] text-gray-600">
-                        Tell us what you are looking for and we will help find matching sellers.
+                      <p className="mt-0.5 text-[11px] text-[#756B61]">
+                        Share ReMarket so they can discover nearby businesses too.
                       </p>
                     </div>
                   </div>
                   <button
                     type="button"
-                    onClick={() =>
-                      router.push(
-                        "/request"
-                      )
-                    }
-                    className="flex shrink-0 items-center justify-center gap-2 rounded-xl bg-[#FF5A36] px-5 py-3 text-xs font-bold text-white transition hover:opacity-90"
+                    onClick={() => { void handleShareReMarket(); }}
+                    className="flex shrink-0 items-center justify-center gap-2 rounded-xl border border-[#FFD1C5] bg-white px-5 py-3 text-xs font-bold text-[#9F2D18] transition hover:bg-[#FFF1ED] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#FF5A36] focus-visible:ring-offset-2"
                   >
-                    Submit a request
-                    <ArrowRight className="h-3.5 w-3.5" />
+                    <Share2 className="h-4 w-4" aria-hidden="true" />
+                    Share ReMarket
                   </button>
+                  {shareFeedback && (
+                    <p role="status" className="text-[11px] leading-4 text-[#756B61] sm:basis-full sm:text-right">
+                      {shareFeedback}
+                    </p>
+                  )}
                 </section>
                 {/* Nearby Businesses */}
                 <section className="mt-8">
@@ -1705,15 +1686,12 @@ export default function HomePage() {
                                       </>
                                     )}
                                 </div>
-                                <div className="mt-2 text-[11px] text-muted">
-                                  {
-                                    business.productCount
-                                  }{" "}
-                                  {business.productCount ===
-                                    1
-                                    ? "product"
-                                    : "products"}
-                                </div>
+                                {business.productCount !== null && (
+                                  <div className="mt-2 text-[11px] text-muted">
+                                    {business.productCount}{" "}
+                                    {business.productCount === 1 ? "product" : "products"}
+                                  </div>
+                                )}
                               </Link>
                             );
                           }
@@ -1751,7 +1729,7 @@ export default function HomePage() {
                         Recently added products
                       </h2>
                       <p className="mt-1 text-xs text-gray-500 sm:text-sm">
-                        See what local businesses have listed recently.
+                        Explore products recently added by nearby businesses.
                       </p>
                     </div>
                     <Link
@@ -1873,8 +1851,6 @@ export default function HomePage() {
                   className="mt-7"
                   aria-label="Featured businesses"
                   aria-roledescription="carousel"
-                  onMouseEnter={() => setFeaturedHovered(true)}
-                  onMouseLeave={() => setFeaturedHovered(false)}
                 >
                   <div className="mb-4 flex items-end justify-between gap-3">
                     <div>
@@ -1996,7 +1972,7 @@ export default function HomePage() {
                                 <span className="truncate">{location}</span>
                               </p>
                               <p className="mt-4 line-clamp-3 text-sm leading-6 text-gray-600">
-                                {business.description?.trim() || `Discover products and services from ${business.name} on ReMarket. Contact the business directly to confirm details and availability.`}
+                                {business.description?.trim() || `Discover what ${business.name} offers on ReMarket and explore its local business profile.`}
                               </p>
                             </div>
 
@@ -2053,15 +2029,6 @@ export default function HomePage() {
                               </div>
                             </div>
                             <div className="flex items-center gap-2">
-                              <button
-                                type="button"
-                                aria-label={featuredAutoplayPaused ? "Resume slideshow" : "Pause slideshow"}
-                                aria-pressed={featuredAutoplayPaused}
-                                onClick={() => setFeaturedAutoplayPaused((paused) => !paused)}
-                                className="inline-flex h-9 w-9 items-center justify-center rounded-full border border-[#EAE6DF] bg-white text-gray-600 transition hover:border-[#FFB9A7] hover:text-[#9F2D18] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#FF5A36]"
-                              >
-                                {featuredAutoplayPaused ? <Play className="h-3.5 w-3.5" /> : <Pause className="h-3.5 w-3.5" />}
-                              </button>
                               <button
                                 type="button"
                                 aria-label="Previous featured business"

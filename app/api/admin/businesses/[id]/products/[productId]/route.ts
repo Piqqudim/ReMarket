@@ -1,15 +1,15 @@
-import {
-  NextRequest,
-  NextResponse,
-} from "next/server";
 
 import {
   Availability,
   BusinessStatus,
+  Prisma,
 } from "@prisma/client";
+import { NextRequest, NextResponse } from "next/server";
 
-import { prisma } from "@/lib/prisma";
 import { requireAdmin } from "@/lib/admin-auth";
+import { validateProductPricing } from "@/lib/product-pricing";
+import { prisma } from "@/lib/prisma";
+import { getGrantedProductSlotBonus } from "@/lib/referrals";
 
 type RouteContext = {
   params: Promise<{
@@ -24,184 +24,314 @@ type ProductImageInput = {
   sortOrder: number;
 };
 
-function cleanString(
-  value: unknown
-): string {
-  return typeof value === "string"
-    ? value.trim()
-    : "";
+type ProductUpdateData = {
+  name?: string;
+  description?: string | null;
+  categoryId?: string | null;
+  price?: number | null;
+  priceMin?: number | null;
+  priceMax?: number | null;
+  availability?: Availability;
+  keywords?: string[];
+  imageUrl?: string | null;
+  status?: BusinessStatus;
+};
+
+const BASE_MAX_ACTIVE_PRODUCTS = 100;
+const MAX_REQUEST_BYTES = 256 * 1024;
+const MAX_PRODUCT_IMAGES = 20;
+const MAX_KEYWORDS = 30;
+const MAX_KEYWORD_LENGTH = 80;
+const MAX_KEYWORDS_TOTAL_LENGTH = 1500;
+const MAX_PRISMA_INT = 2_147_483_647;
+
+const VALID_AVAILABILITIES = [
+  Availability.AVAILABLE,
+  Availability.ASK_SELLER,
+  Availability.UNAVAILABLE,
+] as const;
+
+const VALID_PRODUCT_STATUSES = [
+  BusinessStatus.ACTIVE,
+  BusinessStatus.INACTIVE,
+  BusinessStatus.PENDING,
+] as const;
+
+type JsonBodyResult =
+  | { ok: true; value: unknown }
+  | { ok: false; reason: "TOO_LARGE" | "INVALID_JSON" };
+
+class ProductCapacityError extends Error {
+  constructor(
+    public readonly activeCount: number,
+    public readonly maximum: number,
+  ) {
+    super(`This seller has reached the active product limit of ${maximum}.`);
+    this.name = "ProductCapacityError";
+  }
 }
 
-function nullableString(
-  value: unknown
-): string | null {
-  const cleaned =
-    cleanString(value);
+function jsonHeaders() {
+  return { "Cache-Control": "no-store" };
+}
 
-  return cleaned || null;
+function jsonError(message: string, status: number) {
+  return NextResponse.json(
+    { error: message },
+    { status, headers: jsonHeaders() },
+  );
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function cleanString(value: unknown): string {
+  return typeof value === "string" ? value.trim() : "";
+}
+
+function hasOwn(payload: Record<string, unknown>, key: string): boolean {
+  return Object.prototype.hasOwnProperty.call(payload, key);
 }
 
 function parseOptionalInt(
-  value: unknown
-): number | null | undefined {
+  value: unknown,
+): { valid: boolean; value: number | null } {
+  if (value === undefined || value === null || value === "") {
+    return { valid: true, value: null };
+  }
+
+  let parsed: number;
+
+  if (typeof value === "number") {
+    parsed = value;
+  } else if (typeof value === "string" && /^\d+$/.test(value.trim())) {
+    parsed = Number(value.trim());
+  } else {
+    return { valid: false, value: null };
+  }
+
   if (
-    value === undefined ||
-    value === null ||
-    value === ""
+    !Number.isSafeInteger(parsed) ||
+    parsed < 0 ||
+    parsed > MAX_PRISMA_INT
   ) {
-    return null;
+    return { valid: false, value: null };
   }
 
-  const parsed =
-    typeof value === "number"
-      ? value
-      : typeof value === "string"
-        ? Number(value.trim())
-        : Number.NaN;
-
-  if (!Number.isInteger(parsed)) {
-    return undefined;
-  }
-
-  return parsed;
+  return { valid: true, value: parsed };
 }
 
-function isAvailability(
-  value: unknown
-): value is Availability {
-  return (
-    value === "AVAILABLE" ||
-    value === "ASK_SELLER" ||
-    value === "UNAVAILABLE"
-  );
+function isAvailability(value: unknown): value is Availability {
+  return VALID_AVAILABILITIES.includes(value as Availability);
 }
 
-function isBusinessStatus(
-  value: unknown
-): value is BusinessStatus {
-  return (
-    value === "ACTIVE" ||
-    value === "INACTIVE" ||
-    value === "PENDING"
-  );
+function isProductStatus(value: unknown): value is BusinessStatus {
+  return VALID_PRODUCT_STATUSES.includes(value as BusinessStatus);
 }
 
 function parseKeywords(
-  value: unknown
-): string[] | null {
-  if (!Array.isArray(value)) {
-    return null;
+  value: unknown,
+): { valid: boolean; value: string[] } {
+  if (!Array.isArray(value) || value.length > MAX_KEYWORDS) {
+    return { valid: false, value: [] };
   }
 
-  return Array.from(
-    new Set(
-      value
-        .filter(
-          (
-            item
-          ): item is string =>
-            typeof item === "string"
-        )
-        .map((item) =>
-          item.trim()
-        )
-        .filter(Boolean)
-    )
-  );
+  const keywords: string[] = [];
+  const seen = new Set<string>();
+  let totalLength = 0;
+
+  for (const item of value) {
+    if (typeof item !== "string") {
+      return { valid: false, value: [] };
+    }
+
+    const keyword = item.trim().toLowerCase();
+    if (!keyword) continue;
+    if (keyword.length > MAX_KEYWORD_LENGTH) {
+      return { valid: false, value: [] };
+    }
+    if (seen.has(keyword)) continue;
+
+    totalLength += keyword.length;
+    if (totalLength > MAX_KEYWORDS_TOTAL_LENGTH) {
+      return { valid: false, value: [] };
+    }
+
+    seen.add(keyword);
+    keywords.push(keyword);
+  }
+
+  return { valid: true, value: keywords };
 }
 
-function isNonNegativeInteger(
-  value: unknown
-): value is number {
-  return (
-    typeof value === "number" &&
-    Number.isInteger(value) &&
-    value >= 0
-  );
+function isSafeImageUrl(value: string): boolean {
+  if (!value || value.length > 2000) return false;
+
+  try {
+    const url = new URL(value);
+    return (
+      (url.protocol === "http:" || url.protocol === "https:") &&
+      !url.username &&
+      !url.password
+    );
+  } catch {
+    return false;
+  }
 }
 
 function parseImages(
-  value: unknown
-): ProductImageInput[] | null {
-  if (!Array.isArray(value)) {
-    return null;
+  value: unknown,
+): { valid: boolean; value: ProductImageInput[] } {
+  if (!Array.isArray(value) || value.length > MAX_PRODUCT_IMAGES) {
+    return { valid: false, value: [] };
   }
 
   const images: ProductImageInput[] = [];
 
-  for (
-    const [index, item] of value.entries()
-  ) {
-    if (
-      typeof item === "string"
-    ) {
-      const url =
-        item.trim();
+  for (let index = 0; index < value.length; index += 1) {
+    const item = value[index];
+    let url = "";
+    let publicId: string | null = null;
+    let sortOrder = index;
 
-      if (url) {
-        images.push({
-          url,
-          publicId: null,
-          sortOrder: index,
-        });
+    if (typeof item === "string") {
+      url = item.trim();
+    } else if (isRecord(item)) {
+      url = cleanString(item.url);
+
+      if (item.publicId !== undefined && item.publicId !== null) {
+        if (typeof item.publicId !== "string") {
+          return { valid: false, value: [] };
+        }
+
+        publicId = item.publicId.trim() || null;
+        if (publicId && publicId.length > 255) {
+          return { valid: false, value: [] };
+        }
       }
 
-      continue;
+      if (item.sortOrder !== undefined && item.sortOrder !== null) {
+        const parsedOrder = parseOptionalInt(item.sortOrder);
+
+        if (!parsedOrder.valid || parsedOrder.value === null) {
+          return { valid: false, value: [] };
+        }
+
+        sortOrder = parsedOrder.value;
+      }
+    } else {
+      return { valid: false, value: [] };
     }
 
-    if (
-      !item ||
-      typeof item !== "object" ||
-      Array.isArray(item)
-    ) {
-      continue;
+    if (!isSafeImageUrl(url)) {
+      return { valid: false, value: [] };
     }
 
-    const image =
-      item as Record<
-        string,
-        unknown
-      >;
+    images.push({ url, publicId, sortOrder });
+  }
 
-    const url =
-      cleanString(image.url);
+  images.sort((a, b) => a.sortOrder - b.sortOrder);
 
-    if (!url) {
-      continue;
-    }
+  const seenUrls = new Set<string>();
+  const normalized: ProductImageInput[] = [];
 
-    const publicId =
-      nullableString(
-        image.publicId
-      );
+  for (const image of images) {
+    if (seenUrls.has(image.url)) continue;
+    seenUrls.add(image.url);
 
-    const sortOrder =
-      isNonNegativeInteger(
-        image.sortOrder
-      )
-        ? image.sortOrder
-        : index;
-
-    images.push({
-      url,
-      publicId,
-      sortOrder,
+    normalized.push({
+      ...image,
+      sortOrder: normalized.length,
     });
   }
 
-  return images;
+  return { valid: true, value: normalized };
 }
 
-async function getProduct(
-  businessId: string,
-  productId: string
-) {
+async function readJsonBody(
+  request: Request,
+  maximumBytes = MAX_REQUEST_BYTES,
+): Promise<JsonBodyResult> {
+  const contentLength = request.headers.get("content-length");
+
+  if (contentLength) {
+    const declaredLength = Number(contentLength);
+
+    if (
+      Number.isFinite(declaredLength) &&
+      declaredLength > maximumBytes
+    ) {
+      return { ok: false, reason: "TOO_LARGE" };
+    }
+  }
+
+  if (!request.body) {
+    return { ok: false, reason: "INVALID_JSON" };
+  }
+
+  const reader = request.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let totalBytes = 0;
+
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (!value) continue;
+
+      totalBytes += value.byteLength;
+
+      if (totalBytes > maximumBytes) {
+        await reader.cancel().catch(() => undefined);
+        return { ok: false, reason: "TOO_LARGE" };
+      }
+
+      chunks.push(value);
+    }
+  } catch {
+    return { ok: false, reason: "INVALID_JSON" };
+  } finally {
+    try {
+      reader.releaseLock();
+    } catch {
+      // The reader may already have been cancelled.
+    }
+  }
+
+  try {
+    const bytes = new Uint8Array(totalBytes);
+    let offset = 0;
+
+    for (const chunk of chunks) {
+      bytes.set(chunk, offset);
+      offset += chunk.byteLength;
+    }
+
+    const source = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+
+    return {
+      ok: true,
+      value: JSON.parse(source) as unknown,
+    };
+  } catch {
+    return { ok: false, reason: "INVALID_JSON" };
+  }
+}
+
+function isPrismaErrorCode(error: unknown, code: string): boolean {
+  return (
+    error instanceof Prisma.PrismaClientKnownRequestError &&
+    error.code === code
+  );
+}
+
+async function getProduct(businessId: string, productId: string) {
   return prisma.product.findFirst({
     where: {
       id: productId,
       businessId,
     },
-
     include: {
       business: {
         select: {
@@ -210,686 +340,573 @@ async function getProduct(
           deletedAt: true,
         },
       },
-
       category: true,
-
       images: {
-        orderBy: {
-          sortOrder: "asc",
-        },
+        orderBy: [
+          { sortOrder: "asc" },
+          { createdAt: "asc" },
+        ],
       },
     },
   });
 }
 
-export async function GET(
-  _request: NextRequest,
-  context: RouteContext
-) {
-  const auth =
-    await requireAdmin();
+async function updateProductWithCapacityRetry(input: {
+  businessId: string;
+  productId: string;
+  data: ProductUpdateData;
+  imageInputs: ProductImageInput[] | undefined;
+  pricingWasProvided: boolean;
+}) {
+  const maximumAttempts = 3;
 
-  if (!auth.authorized) {
-    return auth.response;
-  }
+  for (let attempt = 1; attempt <= maximumAttempts; attempt += 1) {
+    try {
+      return await prisma.$transaction(
+        async (tx) => {
+          const current = await tx.product.findFirst({
+            where: {
+              id: input.productId,
+              businessId: input.businessId,
+            },
+            include: {
+              business: {
+                select: {
+                  id: true,
+                  ownerId: true,
+                  deletedAt: true,
+                },
+              },
+            },
+          });
 
-  const {
-    id: businessId,
-    productId,
-  } = await context.params;
+          if (!current) {
+            throw new Error("PRODUCT_NOT_FOUND");
+          }
 
-  if (
-    !businessId ||
-    !productId
-  ) {
-    return NextResponse.json(
-      {
-        error:
-          "Business ID and product ID are required.",
-      },
-      {
-        status: 400,
-      }
-    );
-  }
+          if (current.deletedAt) {
+            throw new Error("PRODUCT_DELETED");
+          }
 
-  try {
-    const product =
-      await getProduct(
-        businessId,
-        productId
-      );
+          if (current.business.deletedAt) {
+            throw new Error("BUSINESS_DELETED");
+          }
 
-    if (!product) {
-      return NextResponse.json(
-        {
-          error:
-            "Product not found.",
+          const nextStatus = input.data.status ?? current.status;
+
+          const isActivating =
+            current.status !== BusinessStatus.ACTIVE &&
+            nextStatus === BusinessStatus.ACTIVE;
+
+          if (input.pricingWasProvided || isActivating) {
+            const finalPrice =
+              input.data.price !== undefined
+                ? input.data.price
+                : current.price;
+
+            const finalPriceMin =
+              input.data.priceMin !== undefined
+                ? input.data.priceMin
+                : current.priceMin;
+
+            const finalPriceMax =
+              input.data.priceMax !== undefined
+                ? input.data.priceMax
+                : current.priceMax;
+
+            const pricingError = validateProductPricing(
+              finalPrice,
+              finalPriceMin,
+              finalPriceMax,
+            );
+
+            if (pricingError) {
+              throw new Error(`PRODUCT_PRICING:${pricingError}`);
+            }
+          }
+
+          if (isActivating) {
+            const activeCount = await tx.product.count({
+              where: {
+                businessId: current.business.id,
+                status: BusinessStatus.ACTIVE,
+                deletedAt: null,
+              },
+            });
+
+            const referralBonusSlots = current.business.ownerId
+              ? await getGrantedProductSlotBonus(
+                  current.business.ownerId,
+                  tx,
+                )
+              : 0;
+
+            const maximum =
+              BASE_MAX_ACTIVE_PRODUCTS +
+              Math.max(0, Number(referralBonusSlots) || 0);
+
+            if (activeCount >= maximum) {
+              throw new ProductCapacityError(activeCount, maximum);
+            }
+          }
+
+          if (Object.keys(input.data).length > 0) {
+            await tx.product.update({
+              where: { id: current.id },
+              data: input.data,
+            });
+          }
+
+          if (input.imageInputs !== undefined) {
+            await tx.productImage.deleteMany({
+              where: { productId: current.id },
+            });
+
+            if (input.imageInputs.length > 0) {
+              await tx.productImage.createMany({
+                data: input.imageInputs.map((image) => ({
+                  productId: current.id,
+                  url: image.url,
+                  publicId: image.publicId,
+                  sortOrder: image.sortOrder,
+                })),
+              });
+            }
+          }
+
+          return current.id;
         },
         {
-          status: 404,
-        }
+          isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
+        },
       );
+    } catch (error) {
+      if (
+        isPrismaErrorCode(error, "P2034") &&
+        attempt < maximumAttempts
+      ) {
+        continue;
+      }
+
+      throw error;
+    }
+  }
+
+  throw new Error("PRODUCT_UPDATE_RETRIES_EXHAUSTED");
+}
+
+export async function GET(
+  _request: NextRequest,
+  context: RouteContext,
+) {
+  const auth = await requireAdmin();
+  if (!auth.authorized) return auth.response;
+
+  try {
+    const { id: businessId, productId } = await context.params;
+
+    if (!businessId || !productId) {
+      return jsonError("Business ID and product ID are required.", 400);
     }
 
-    return NextResponse.json({
-      product,
-    });
-  } catch (error) {
-    console.error(
-      "Admin product GET error:",
-      error
-    );
+    const product = await getProduct(businessId, productId);
+
+    if (!product) {
+      return jsonError("Product not found.", 404);
+    }
 
     return NextResponse.json(
-      {
-        error:
-          "Unable to load product.",
-      },
-      {
-        status: 500,
-      }
+      { product },
+      { headers: jsonHeaders() },
     );
+  } catch (error) {
+    console.error("Admin product GET error:", error);
+    return jsonError("Unable to load product.", 500);
   }
 }
 
 export async function PATCH(
   request: NextRequest,
-  context: RouteContext
+  context: RouteContext,
 ) {
-  const auth =
-    await requireAdmin();
-
-  if (!auth.authorized) {
-    return auth.response;
-  }
-
-  const {
-    id: businessId,
-    productId,
-  } = await context.params;
-
-  if (
-    !businessId ||
-    !productId
-  ) {
-    return NextResponse.json(
-      {
-        error:
-          "Business ID and product ID are required.",
-      },
-      {
-        status: 400,
-      }
-    );
-  }
+  const auth = await requireAdmin();
+  if (!auth.authorized) return auth.response;
 
   try {
-    const existing =
-      await prisma.product.findFirst({
-        where: {
-          id: productId,
-          businessId,
-        },
+    const { id: businessId, productId } = await context.params;
 
-        include: {
-          business: {
-            select: {
-              id: true,
-              deletedAt: true,
-            },
+    if (!businessId || !productId) {
+      return jsonError("Business ID and product ID are required.", 400);
+    }
+
+    const bodyResult = await readJsonBody(request);
+
+    if (!bodyResult.ok) {
+      return bodyResult.reason === "TOO_LARGE"
+        ? jsonError("Request body is too large.", 413)
+        : jsonError("Request body must contain valid JSON.", 400);
+    }
+
+    if (!isRecord(bodyResult.value)) {
+      return jsonError("Invalid request body.", 400);
+    }
+
+    const payload = bodyResult.value;
+
+    if (Object.keys(payload).length === 0) {
+      return jsonError("No changes provided.", 400);
+    }
+
+    const existing = await prisma.product.findFirst({
+      where: {
+        id: productId,
+        businessId,
+      },
+      select: {
+        id: true,
+        deletedAt: true,
+        business: {
+          select: {
+            deletedAt: true,
           },
         },
-      });
+      },
+    });
 
     if (!existing) {
-      return NextResponse.json(
-        {
-          error:
-            "Product not found.",
-        },
-        {
-          status: 404,
-        }
-      );
+      return jsonError("Product not found.", 404);
     }
 
     if (existing.deletedAt) {
-      return NextResponse.json(
-        {
-          error:
-            "This product has been deleted and cannot be edited.",
-        },
-        {
-          status: 409,
-        }
+      return jsonError(
+        "This product has been deleted and cannot be edited.",
+        409,
       );
     }
 
     if (existing.business.deletedAt) {
-      return NextResponse.json(
-        {
-          error:
-            "This business has been deleted and its products cannot be edited.",
-        },
-        {
-          status: 409,
-        }
+      return jsonError(
+        "This business has been deleted and its products cannot be edited.",
+        409,
       );
     }
 
-    const body: unknown =
-      await request.json();
+    const data: ProductUpdateData = {};
 
-    if (
-      !body ||
-      typeof body !== "object" ||
-      Array.isArray(body)
-    ) {
-      return NextResponse.json(
-        {
-          error:
-            "Invalid request body.",
-        },
-        {
-          status: 400,
-        }
-      );
-    }
-
-    const payload =
-      body as Record<
-        string,
-        unknown
-      >;
-
-    const data: {
-      name?: string;
-      description?: string | null;
-      categoryId?: string | null;
-      price?: number | null;
-      priceMin?: number | null;
-      priceMax?: number | null;
-      availability?: Availability;
-      keywords?: string[];
-      imageUrl?: string | null;
-      status?: BusinessStatus;
-    } = {};
-
-    if ("name" in payload) {
-      const name =
-        cleanString(
-          payload.name
-        );
+    if (hasOwn(payload, "name")) {
+      const name = cleanString(payload.name);
 
       if (!name) {
-        return NextResponse.json(
-          {
-            error:
-              "Product name is required.",
-          },
-          {
-            status: 400,
-          }
-        );
+        return jsonError("Product name is required.", 400);
+      }
+
+      if (name.length > 200) {
+        return jsonError("Product name must not exceed 200 characters.", 400);
       }
 
       data.name = name;
     }
 
-    if ("description" in payload) {
-      data.description =
-        nullableString(
-          payload.description
+    if (hasOwn(payload, "description")) {
+      if (
+        payload.description !== null &&
+        typeof payload.description !== "string"
+      ) {
+        return jsonError(
+          "Product description must be a string or null.",
+          400,
         );
+      }
+
+      const description = cleanString(payload.description);
+
+      if (description.length > 2000) {
+        return jsonError(
+          "Product description must not exceed 2,000 characters.",
+          400,
+        );
+      }
+
+      data.description = description || null;
     }
 
-    if ("categoryId" in payload) {
-      const categoryId =
-        nullableString(
-          payload.categoryId
-        );
+    if (hasOwn(payload, "categoryId")) {
+      if (
+        payload.categoryId !== null &&
+        typeof payload.categoryId !== "string"
+      ) {
+        return jsonError("Category ID must be a string or null.", 400);
+      }
+
+      const categoryId = cleanString(payload.categoryId) || null;
 
       if (categoryId) {
-        const category =
-          await prisma.category.findUnique(
-            {
-              where: {
-                id: categoryId,
-              },
-              select: {
-                id: true,
-              },
-            }
-          );
+        const category = await prisma.category.findFirst({
+          where: {
+            id: categoryId,
+            isActive: true,
+          },
+          select: {
+            id: true,
+          },
+        });
 
         if (!category) {
-          return NextResponse.json(
-            {
-              error:
-                "Selected category does not exist.",
-            },
-            {
-              status: 400,
-            }
+          return jsonError(
+            "Selected category was not found or is inactive.",
+            400,
           );
         }
       }
 
-      data.categoryId =
-        categoryId;
+      data.categoryId = categoryId;
     }
 
-    const price =
-      parseOptionalInt(
-        payload.price
-      );
+    let pricingWasProvided = false;
 
-    if (
-      price === undefined
-    ) {
-      return NextResponse.json(
-        {
-          error:
-            "Price must be a valid integer.",
-        },
-        {
-          status: 400,
-        }
-      );
-    }
+    if (hasOwn(payload, "price")) {
+      const parsed = parseOptionalInt(payload.price);
 
-    if ("price" in payload) {
-      if (
-        price !== null &&
-        price < 0
-      ) {
-        return NextResponse.json(
-          {
-            error:
-              "Price cannot be negative.",
-          },
-          {
-            status: 400,
-          }
+      if (!parsed.valid) {
+        return jsonError(
+          "Price must be a whole number between 0 and 2,147,483,647.",
+          400,
         );
       }
 
-      data.price = price;
+      data.price = parsed.value;
+      pricingWasProvided = true;
     }
 
-    const priceMin =
-      parseOptionalInt(
-        payload.priceMin
-      );
+    if (hasOwn(payload, "priceMin")) {
+      const parsed = parseOptionalInt(payload.priceMin);
 
-    if (
-      priceMin === undefined
-    ) {
-      return NextResponse.json(
-        {
-          error:
-            "Minimum price must be a valid integer.",
-        },
-        {
-          status: 400,
-        }
-      );
-    }
-
-    if ("priceMin" in payload) {
-      if (
-        priceMin !== null &&
-        priceMin < 0
-      ) {
-        return NextResponse.json(
-          {
-            error:
-              "Minimum price cannot be negative.",
-          },
-          {
-            status: 400,
-          }
+      if (!parsed.valid) {
+        return jsonError(
+          "Minimum price must be a whole number between 0 and 2,147,483,647.",
+          400,
         );
       }
 
-      data.priceMin =
-        priceMin;
+      data.priceMin = parsed.value;
+      pricingWasProvided = true;
     }
 
-    const priceMax =
-      parseOptionalInt(
-        payload.priceMax
-      );
+    if (hasOwn(payload, "priceMax")) {
+      const parsed = parseOptionalInt(payload.priceMax);
 
-    if (
-      priceMax === undefined
-    ) {
-      return NextResponse.json(
-        {
-          error:
-            "Maximum price must be a valid integer.",
-        },
-        {
-          status: 400,
-        }
-      );
-    }
-
-    if ("priceMax" in payload) {
-      if (
-        priceMax !== null &&
-        priceMax < 0
-      ) {
-        return NextResponse.json(
-          {
-            error:
-              "Maximum price cannot be negative.",
-          },
-          {
-            status: 400,
-          }
+      if (!parsed.valid) {
+        return jsonError(
+          "Maximum price must be a whole number between 0 and 2,147,483,647.",
+          400,
         );
       }
 
-      data.priceMax =
-        priceMax;
+      data.priceMax = parsed.value;
+      pricingWasProvided = true;
     }
 
-    const finalPriceMin =
-      "priceMin" in payload
-        ? priceMin
-        : existing.priceMin;
+    if (hasOwn(payload, "availability")) {
+      if (!isAvailability(payload.availability)) {
+        return jsonError("Invalid availability value.", 400);
+      }
 
-    const finalPriceMax =
-      "priceMax" in payload
-        ? priceMax
-        : existing.priceMax;
+      data.availability = payload.availability;
+    }
 
-    if (
-      finalPriceMin !== null &&
-      finalPriceMax !== null &&
-      finalPriceMin >
-        finalPriceMax
-    ) {
-      return NextResponse.json(
-        {
-          error:
-            "Minimum price cannot be greater than maximum price.",
-        },
-        {
-          status: 400,
-        }
-      );
+    if (hasOwn(payload, "status")) {
+      if (!isProductStatus(payload.status)) {
+        return jsonError("Invalid product status.", 400);
+      }
+
+      data.status = payload.status;
+    }
+
+    if (hasOwn(payload, "keywords")) {
+      const keywords = parseKeywords(payload.keywords);
+
+      if (!keywords.valid) {
+        return jsonError(
+          "Keywords must be an array of up to 30 strings. Each keyword may contain up to 80 characters, with 1,500 characters combined.",
+          400,
+        );
+      }
+
+      data.keywords = keywords.value;
+    }
+
+    let imageInputs: ProductImageInput[] | undefined;
+
+    if (hasOwn(payload, "images")) {
+      const parsed = parseImages(payload.images);
+
+      if (!parsed.valid) {
+        return jsonError(
+          "Images must be an array of up to 20 valid HTTP or HTTPS image URLs.",
+          400,
+        );
+      }
+
+      imageInputs = parsed.value;
+      data.imageUrl = imageInputs[0]?.url ?? null;
     }
 
     if (
-      "availability" in
-      payload
+      Object.keys(data).length === 0 &&
+      imageInputs === undefined
     ) {
-      if (
-        !isAvailability(
-          payload.availability
-        )
-      ) {
-        return NextResponse.json(
-          {
-            error:
-              "Invalid availability value.",
-          },
-          {
-            status: 400,
-          }
-        );
-      }
-
-      data.availability =
-        payload.availability;
+      return jsonError("No supported changes were provided.", 400);
     }
 
-    if ("status" in payload) {
-      if (
-        !isBusinessStatus(
-          payload.status
-        )
-      ) {
-        return NextResponse.json(
-          {
-            error:
-              "Invalid product status.",
-          },
-          {
-            status: 400,
-          }
-        );
-      }
-
-      data.status =
-        payload.status;
-    }
-
-    if ("keywords" in payload) {
-      const keywords =
-        parseKeywords(
-          payload.keywords
-        );
-
-      if (!keywords) {
-        return NextResponse.json(
-          {
-            error:
-              "Keywords must be an array.",
-          },
-          {
-            status: 400,
-          }
-        );
-      }
-
-      data.keywords =
-        keywords;
-    }
-
-    let imageInputs:
-      | ProductImageInput[]
-      | null = null;
-
-    if ("images" in payload) {
-      imageInputs =
-        parseImages(
-          payload.images
-        );
-
-      if (!imageInputs) {
-        return NextResponse.json(
-          {
-            error:
-              "Images must be an array.",
-          },
-          {
-            status: 400,
-          }
-        );
-      }
-
-      data.imageUrl =
-        imageInputs[0]?.url ??
-        null;
-    }
-
-    const updated =
-      await prisma.$transaction(
-        async (tx) => {
-          const product =
-            await tx.product.update({
-              where: {
-                id: productId,
-              },
-              data,
-            });
-
-          if (
-            imageInputs !== null
-          ) {
-            await tx.productImage.deleteMany(
-              {
-                where: {
-                  productId,
-                },
-              }
-            );
-
-            if (
-              imageInputs.length >
-              0
-            ) {
-              await tx.productImage.createMany(
-                {
-                  data:
-                    imageInputs.map(
-                      (
-                        image,
-                        index
-                      ) => ({
-                        productId,
-                        url: image.url,
-                        publicId:
-                          image.publicId,
-                        sortOrder:
-                          image.sortOrder ??
-                          index,
-                      })
-                    ),
-                }
-              );
-            }
-          }
-
-          return product;
-        }
-      );
-
-    const refreshed =
-      await getProduct(
-        businessId,
-        updated.id
-      );
-
-    return NextResponse.json({
-      success: true,
-      product: refreshed,
+    await updateProductWithCapacityRetry({
+      businessId,
+      productId,
+      data,
+      imageInputs,
+      pricingWasProvided,
     });
-  } catch (error) {
-    console.error(
-      "Admin product PATCH error:",
-      error
-    );
+
+    const refreshed = await getProduct(businessId, productId);
+
+    if (!refreshed) {
+      return jsonError("Product could not be reloaded.", 500);
+    }
 
     return NextResponse.json(
       {
-        error:
-          "Unable to update product.",
+        success: true,
+        product: refreshed,
       },
-      {
-        status: 500,
-      }
+      { headers: jsonHeaders() },
     );
+  } catch (error) {
+    if (error instanceof ProductCapacityError) {
+      return NextResponse.json(
+        {
+          error: error.message,
+          code: "ACTIVE_PRODUCT_LIMIT",
+          activeProductCount: error.activeCount,
+          maxActiveProducts: error.maximum,
+          availableSlots: Math.max(
+            0,
+            error.maximum - error.activeCount,
+          ),
+        },
+        { status: 409, headers: jsonHeaders() },
+      );
+    }
+
+    if (
+      error instanceof Error &&
+      error.message.startsWith("PRODUCT_PRICING:")
+    ) {
+      return jsonError(
+        error.message.slice("PRODUCT_PRICING:".length),
+        400,
+      );
+    }
+
+    if (error instanceof Error && error.message === "PRODUCT_NOT_FOUND") {
+      return jsonError("Product not found.", 404);
+    }
+
+    if (error instanceof Error && error.message === "PRODUCT_DELETED") {
+      return jsonError(
+        "This product has been deleted and cannot be edited.",
+        409,
+      );
+    }
+
+    if (error instanceof Error && error.message === "BUSINESS_DELETED") {
+      return jsonError(
+        "This business has been deleted and its products cannot be edited.",
+        409,
+      );
+    }
+
+    if (isPrismaErrorCode(error, "P2025")) {
+      return jsonError("Product could not be found.", 404);
+    }
+
+    if (isPrismaErrorCode(error, "P2034")) {
+      return jsonError(
+        "Product capacity changed during this request. Please retry.",
+        409,
+      );
+    }
+
+    console.error("Admin product PATCH error:", error);
+    return jsonError("Unable to update product.", 500);
   }
 }
 
 export async function DELETE(
   _request: NextRequest,
-  context: RouteContext
+  context: RouteContext,
 ) {
-  const auth =
-    await requireAdmin();
-
-  if (!auth.authorized) {
-    return auth.response;
-  }
-
-  const {
-    id: businessId,
-    productId,
-  } = await context.params;
-
-  if (
-    !businessId ||
-    !productId
-  ) {
-    return NextResponse.json(
-      {
-        error:
-          "Business ID and product ID are required.",
-      },
-      {
-        status: 400,
-      }
-    );
-  }
+  const auth = await requireAdmin();
+  if (!auth.authorized) return auth.response;
 
   try {
-    const existing =
-      await prisma.product.findFirst({
-        where: {
-          id: productId,
-          businessId,
-        },
-        select: {
-          id: true,
-          deletedAt: true,
-        },
-      });
+    const { id: businessId, productId } = await context.params;
+
+    if (!businessId || !productId) {
+      return jsonError("Business ID and product ID are required.", 400);
+    }
+
+    const existing = await prisma.product.findFirst({
+      where: {
+        id: productId,
+        businessId,
+      },
+      select: {
+        id: true,
+        deletedAt: true,
+      },
+    });
 
     if (!existing) {
+      return jsonError("Product not found.", 404);
+    }
+
+    if (existing.deletedAt) {
       return NextResponse.json(
-        {
-          error:
-            "Product not found.",
-        },
-        {
-          status: 404,
-        }
+        { success: true, alreadyDeleted: true },
+        { headers: jsonHeaders() },
       );
     }
 
-    /*
-     * Soft delete only.
-     * The product remains in the database
-     * for admin reference.
-     */
-    if (existing.deletedAt) {
-      return NextResponse.json({
-        success: true,
-      });
-    }
+    const deletedAt = new Date();
 
-    await prisma.product.update({
+    const result = await prisma.product.updateMany({
       where: {
         id: productId,
+        businessId,
+        deletedAt: null,
       },
       data: {
-        deletedAt: new Date(),
+        deletedAt,
+        deletedById: auth.user.id,
       },
     });
 
-    return NextResponse.json({
-      success: true,
-    });
-  } catch (error) {
-    console.error(
-      "Admin product DELETE error:",
-      error
-    );
+    if (result.count !== 1) {
+      return jsonError(
+        "Product could not be deleted because it was already deleted or changed.",
+        409,
+      );
+    }
 
     return NextResponse.json(
       {
-        error:
-          "Unable to delete product.",
+        success: true,
+        productId,
+        deletedAt: deletedAt.toISOString(),
       },
-      {
-        status: 500,
-      }
+      { headers: jsonHeaders() },
     );
+  } catch (error) {
+    console.error("Admin product DELETE error:", error);
+    return jsonError("Unable to delete product.", 500);
   }
 }

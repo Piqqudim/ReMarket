@@ -21,7 +21,9 @@ export type PublicRateLimitScope =
   | "request-create"
   | "upload"
   | "contact-event"
-  | "business-view-event";
+  | "business-view-event"
+  | "business-review-read"
+  | "business-review-write";
 
 export type RateLimitResult = {
   allowed: boolean;
@@ -36,7 +38,6 @@ const PUBLIC_RATE_LIMITS: Record<
   PublicRateLimitScope,
   RateLimitConfig
 > = {
-  // Lightweight public reads.
   categories: {
     limit: 60,
     windowMs: 60_000,
@@ -57,31 +58,26 @@ const PUBLIC_RATE_LIMITS: Record<
     windowMs: 60_000,
   },
 
-  // Recently added products: lightweight public read.
   "recent-products": {
     limit: 60,
     windowMs: 60_000,
   },
 
-  // Request lookup may expose buyer request information.
   "request-read": {
     limit: 20,
     windowMs: 60_000,
   },
 
-  // Request creation performs database writes and matching.
   "request-create": {
     limit: 5,
     windowMs: 60_000,
   },
 
-  // Uploads consume server and media-provider resources.
   upload: {
     limit: 10,
     windowMs: 5 * 60_000,
   },
 
-  // Analytics writes should not be easy to inflate artificially.
   "contact-event": {
     limit: 30,
     windowMs: 60_000,
@@ -91,16 +87,26 @@ const PUBLIC_RATE_LIMITS: Record<
     limit: 60,
     windowMs: 60_000,
   },
+
+  "business-review-read": {
+    limit: 60,
+    windowMs: 60_000,
+  },
+
+  "business-review-write": {
+    limit: 5,
+    windowMs: 60_000,
+  },
 };
 
 /**
  * In-memory fixed-window rate limiter.
  *
- * This does not use Prisma or PostgreSQL, so checking a
- * rate limit does not create additional database traffic.
+ * This does not use Prisma or PostgreSQL.
  *
- * Limits are local to each running application instance.
- * They are not shared globally across Vercel instances.
+ * Limits are local to each running application
+ * instance and are not shared globally across
+ * Vercel instances.
  */
 const store = new Map<string, RateLimitState>();
 
@@ -114,8 +120,7 @@ function getClientIp(request: NextRequest): string {
    * Prefer the IP supplied by the hosting proxy.
    *
    * The deployment proxy must overwrite or sanitize
-   * these headers. Otherwise, clients might spoof them
-   * to bypass IP-based rate limiting.
+   * these headers to prevent client spoofing.
    */
   const realIp = request.headers
     .get("x-real-ip")
@@ -139,7 +144,6 @@ function getClientIp(request: NextRequest): string {
     }
   }
 
-  // Requests without a detectable IP share one bucket.
   return "unknown";
 }
 
@@ -151,10 +155,6 @@ function cleanupExpiredEntries(now: number): void {
   }
 }
 
-/**
- * Run the cleanup scan periodically instead of scanning
- * the entire Map on every incoming request.
- */
 function cleanupExpiredEntriesIfDue(now: number): void {
   if (now < nextCleanupAt) {
     return;
@@ -170,11 +170,6 @@ function enforceStoreLimit(): void {
     return;
   }
 
-  /*
-   * Map iteration follows insertion order.
-   * Evict the oldest inserted buckets until the store
-   * returns to its configured maximum size.
-   */
   const entriesToRemove =
     store.size - MAX_STORE_ENTRIES;
 
@@ -237,8 +232,9 @@ export function checkPublicRateLimit(
   const existing = store.get(key);
 
   /*
-   * Start a new fixed window when the client has no
-   * existing bucket or the previous window has expired.
+   * Start a new fixed window when the client
+   * has no existing bucket or the previous
+   * window has expired.
    */
   if (!existing || existing.resetAt <= now) {
     const resetAt = now + config.windowMs;

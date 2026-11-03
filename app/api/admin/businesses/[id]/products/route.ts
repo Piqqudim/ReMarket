@@ -1,601 +1,680 @@
-import {
-  NextRequest,
-  NextResponse,
-} from "next/server";
 
 import {
   Availability,
   BusinessStatus,
+  NotificationPriority,
+  NotificationType,
+  Prisma,
 } from "@prisma/client";
+import { NextRequest, NextResponse } from "next/server";
 
-import { prisma } from "@/lib/prisma";
 import { requireAdmin } from "@/lib/admin-auth";
+import { createNotification } from "@/lib/notifications";
+import { validateProductPricing } from "@/lib/product-pricing";
+import { prisma } from "@/lib/prisma";
+import { getGrantedProductSlotBonus } from "@/lib/referrals";
 
-function isAvailability(
-  value: unknown
-): value is Availability {
-  return (
-    value === Availability.AVAILABLE ||
-    value === Availability.ASK_SELLER ||
-    value === Availability.UNAVAILABLE
+const BASE_MAX_ACTIVE_PRODUCTS = 100;
+const MAX_REQUEST_BYTES = 256 * 1024;
+const MAX_PRODUCT_IMAGES = 20;
+const MAX_KEYWORDS = 30;
+const MAX_KEYWORD_LENGTH = 80;
+const MAX_KEYWORDS_TOTAL_LENGTH = 1500;
+const MAX_PRISMA_INT = 2_147_483_647;
+
+const VALID_AVAILABILITIES = [
+  Availability.AVAILABLE,
+  Availability.ASK_SELLER,
+  Availability.UNAVAILABLE,
+] as const;
+
+const VALID_PRODUCT_STATUSES = [
+  BusinessStatus.ACTIVE,
+  BusinessStatus.INACTIVE,
+  BusinessStatus.PENDING,
+] as const;
+
+type ProductAvailability = (typeof VALID_AVAILABILITIES)[number];
+type ProductStatus = (typeof VALID_PRODUCT_STATUSES)[number];
+
+type RouteContext = {
+  params: Promise<{ id: string }>;
+};
+
+type ProductImageInput = {
+  url: string;
+  publicId: string | null;
+  sortOrder: number;
+};
+
+type JsonBodyResult =
+  | { ok: true; value: unknown }
+  | { ok: false; reason: "TOO_LARGE" | "INVALID_JSON" };
+
+class ProductCapacityError extends Error {
+  constructor(
+    public readonly activeCount: number,
+    public readonly maximum: number,
+  ) {
+    super(`This seller has reached the active product limit of ${maximum}.`);
+    this.name = "ProductCapacityError";
+  }
+}
+
+function jsonHeaders() {
+  return { "Cache-Control": "no-store" };
+}
+
+function jsonError(message: string, status: number) {
+  return NextResponse.json(
+    { error: message },
+    { status, headers: jsonHeaders() },
   );
 }
 
-function isBusinessStatus(
-  value: unknown
-): value is BusinessStatus {
-  return (
-    value === BusinessStatus.ACTIVE ||
-    value === BusinessStatus.INACTIVE ||
-    value === BusinessStatus.PENDING
-  );
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function cleanString(value: unknown): string {
+  return typeof value === "string" ? value.trim() : "";
+}
+
+function hasOwn(value: Record<string, unknown>, key: string): boolean {
+  return Object.prototype.hasOwnProperty.call(value, key);
 }
 
 function parseOptionalInt(
-  value: unknown
-): number | null | undefined {
+  value: unknown,
+): { valid: boolean; value: number | null } {
+  if (value === undefined || value === null || value === "") {
+    return { valid: true, value: null };
+  }
+
+  let parsed: number;
+
+  if (typeof value === "number") {
+    parsed = value;
+  } else if (typeof value === "string" && /^\d+$/.test(value.trim())) {
+    parsed = Number(value.trim());
+  } else {
+    return { valid: false, value: null };
+  }
+
   if (
-    value === null ||
-    value === undefined ||
-    value === ""
+    !Number.isSafeInteger(parsed) ||
+    parsed < 0 ||
+    parsed > MAX_PRISMA_INT
   ) {
-    return null;
+    return { valid: false, value: null };
   }
 
-  const parsed =
-    typeof value === "number"
-      ? value
-      : typeof value === "string"
-        ? Number(value.trim())
-        : Number.NaN;
+  return { valid: true, value: parsed };
+}
 
-  if (!Number.isInteger(parsed)) {
-    return undefined;
-  }
+function isAvailability(value: unknown): value is ProductAvailability {
+  return VALID_AVAILABILITIES.includes(value as ProductAvailability);
+}
 
-  return parsed;
+function isProductStatus(value: unknown): value is ProductStatus {
+  return VALID_PRODUCT_STATUSES.includes(value as ProductStatus);
 }
 
 function parseKeywords(
-  value: unknown
-): string[] {
-  if (!Array.isArray(value)) {
-    return [];
+  value: unknown,
+): { valid: boolean; value: string[] } {
+  if (!Array.isArray(value) || value.length > MAX_KEYWORDS) {
+    return { valid: false, value: [] };
   }
 
-  return value
-    .filter(
-      (item): item is string =>
-        typeof item === "string"
-    )
-    .map((item) =>
-      item.trim()
-    )
-    .filter(Boolean);
+  const result: string[] = [];
+  const seen = new Set<string>();
+  let totalLength = 0;
+
+  for (const item of value) {
+    if (typeof item !== "string") {
+      return { valid: false, value: [] };
+    }
+
+    const keyword = item.trim().toLowerCase();
+    if (!keyword) continue;
+    if (keyword.length > MAX_KEYWORD_LENGTH) {
+      return { valid: false, value: [] };
+    }
+    if (seen.has(keyword)) continue;
+
+    totalLength += keyword.length;
+    if (totalLength > MAX_KEYWORDS_TOTAL_LENGTH) {
+      return { valid: false, value: [] };
+    }
+
+    seen.add(keyword);
+    result.push(keyword);
+  }
+
+  return { valid: true, value: result };
 }
 
-function parseImageUrls(
-  value: unknown
-): string[] {
-  if (!Array.isArray(value)) {
-    return [];
+function isSafeImageUrl(value: string): boolean {
+  if (!value || value.length > 2000) return false;
+
+  try {
+    const url = new URL(value);
+    return (
+      (url.protocol === "http:" || url.protocol === "https:") &&
+      !url.username &&
+      !url.password
+    );
+  } catch {
+    return false;
+  }
+}
+
+function parseImages(
+  value: unknown,
+): { valid: boolean; value: ProductImageInput[] } {
+  if (!Array.isArray(value) || value.length > MAX_PRODUCT_IMAGES) {
+    return { valid: false, value: [] };
   }
 
-  return value
-    .filter(
-      (item): item is string =>
-        typeof item === "string"
-    )
-    .map((item) =>
-      item.trim()
-    )
-    .filter(Boolean);
+  const images: ProductImageInput[] = [];
+
+  for (let index = 0; index < value.length; index += 1) {
+    const item = value[index];
+    let url = "";
+    let publicId: string | null = null;
+    let sortOrder = index;
+
+    if (typeof item === "string") {
+      url = item.trim();
+    } else if (isRecord(item)) {
+      url = cleanString(item.url);
+
+      if (item.publicId !== undefined && item.publicId !== null) {
+        if (typeof item.publicId !== "string") {
+          return { valid: false, value: [] };
+        }
+        publicId = item.publicId.trim() || null;
+        if (publicId && publicId.length > 255) {
+          return { valid: false, value: [] };
+        }
+      }
+
+      if (item.sortOrder !== undefined && item.sortOrder !== null) {
+        const parsedOrder = parseOptionalInt(item.sortOrder);
+        if (!parsedOrder.valid || parsedOrder.value === null) {
+          return { valid: false, value: [] };
+        }
+        sortOrder = parsedOrder.value;
+      }
+    } else {
+      return { valid: false, value: [] };
+    }
+
+    if (!isSafeImageUrl(url)) {
+      return { valid: false, value: [] };
+    }
+
+    images.push({ url, publicId, sortOrder });
+  }
+
+  images.sort((a, b) => a.sortOrder - b.sortOrder);
+
+  const seenUrls = new Set<string>();
+  const uniqueImages: ProductImageInput[] = [];
+
+  for (const image of images) {
+    if (seenUrls.has(image.url)) continue;
+    seenUrls.add(image.url);
+    uniqueImages.push({
+      ...image,
+      sortOrder: uniqueImages.length,
+    });
+  }
+
+  return { valid: true, value: uniqueImages };
+}
+
+async function readJsonBody(
+  request: Request,
+  maximumBytes = MAX_REQUEST_BYTES,
+): Promise<JsonBodyResult> {
+  const contentLength = request.headers.get("content-length");
+  if (contentLength) {
+    const declaredLength = Number(contentLength);
+    if (Number.isFinite(declaredLength) && declaredLength > maximumBytes) {
+      return { ok: false, reason: "TOO_LARGE" };
+    }
+  }
+
+  if (!request.body) {
+    return { ok: false, reason: "INVALID_JSON" };
+  }
+
+  const reader = request.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let totalBytes = 0;
+
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (!value) continue;
+
+      totalBytes += value.byteLength;
+      if (totalBytes > maximumBytes) {
+        await reader.cancel().catch(() => undefined);
+        return { ok: false, reason: "TOO_LARGE" };
+      }
+
+      chunks.push(value);
+    }
+  } catch {
+    return { ok: false, reason: "INVALID_JSON" };
+  } finally {
+    try {
+      reader.releaseLock();
+    } catch {
+      // The stream may already have been cancelled.
+    }
+  }
+
+  try {
+    const bytes = new Uint8Array(totalBytes);
+    let offset = 0;
+    for (const chunk of chunks) {
+      bytes.set(chunk, offset);
+      offset += chunk.byteLength;
+    }
+
+    const decoded = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+    return { ok: true, value: JSON.parse(decoded) as unknown };
+  } catch {
+    return { ok: false, reason: "INVALID_JSON" };
+  }
+}
+
+function isPrismaErrorCode(error: unknown, code: string): boolean {
+  return (
+    error instanceof Prisma.PrismaClientKnownRequestError &&
+    error.code === code
+  );
+}
+
+async function notifyProductOwner(input: {
+  ownerId: string | null;
+  productId: string;
+  businessId: string;
+  businessName: string;
+  productName: string;
+}): Promise<void> {
+  if (!input.ownerId) return;
+
+  try {
+    await createNotification({
+      userId: input.ownerId,
+      type: NotificationType.PRODUCT_ADDED,
+      title: "New product added",
+      message: `A new product, "${input.productName}", has been added to ${input.businessName}.`,
+      priority: NotificationPriority.NORMAL,
+      data: {
+        productId: input.productId,
+        businessId: input.businessId,
+        href: `/seller/${input.businessId}`,
+      },
+      dedupeKey: `product:${input.productId}:added`,
+    });
+  } catch (error) {
+    console.error("Admin business product notification error:", error);
+  }
 }
 
 export async function GET(
   _request: NextRequest,
-  {
-    params,
-  }: {
-    params: Promise<{
-      id: string;
-    }>;
-  }
+  { params }: RouteContext,
 ) {
-  const auth =
-    await requireAdmin();
-
-  if (!auth.authorized) {
-    return auth.response;
-  }
-
-  const { id: businessId } =
-    await params;
-
-  if (!businessId) {
-    return NextResponse.json(
-      {
-        error:
-          "Business ID is required.",
-      },
-      {
-        status: 400,
-      }
-    );
-  }
+  const auth = await requireAdmin();
+  if (!auth.authorized) return auth.response;
 
   try {
-    const business =
-      await prisma.business.findUnique(
-        {
-          where: {
-            id: businessId,
-          },
-          select: {
-            id: true,
-          },
-        }
-      );
+    const { id: businessId } = await params;
+    if (!businessId) return jsonError("Business ID is required.", 400);
 
-    if (!business) {
-      return NextResponse.json(
-        {
-          error:
-            "Business not found.",
-        },
-        {
-          status: 404,
-        }
-      );
-    }
-
-    const products =
-      await prisma.product.findMany(
-        {
-          where: {
-            businessId,
-          },
-
-          include: {
-            category: true,
-
-            images: {
-              orderBy: [
-                {
-                  sortOrder:
-                    "asc",
-                },
-                {
-                  createdAt:
-                    "asc",
-                },
-              ],
-            },
-          },
-
-          orderBy: {
-            updatedAt:
-              "desc",
-          },
-        }
-      );
-
-    return NextResponse.json({
-      products,
+    const business = await prisma.business.findUnique({
+      where: { id: businessId },
+      select: { id: true },
     });
-  } catch (error) {
-    console.error(
-      "Admin products GET error:",
-      error
-    );
+
+    if (!business) return jsonError("Business not found.", 404);
+
+    const products = await prisma.product.findMany({
+      where: { businessId },
+      orderBy: { updatedAt: "desc" },
+      include: {
+        category: true,
+        images: {
+          orderBy: [{ sortOrder: "asc" }, { createdAt: "asc" }],
+        },
+      },
+    });
 
     return NextResponse.json(
-      {
-        error:
-          "Unable to load products.",
-      },
-      {
-        status: 500,
-      }
+      { products },
+      { headers: jsonHeaders() },
     );
+  } catch (error) {
+    console.error("Admin products GET error:", error);
+    return jsonError("Unable to load products.", 500);
   }
 }
 
 export async function POST(
   request: NextRequest,
-  {
-    params,
-  }: {
-    params: Promise<{
-      id: string;
-    }>;
-  }
+  { params }: RouteContext,
 ) {
-  const auth =
-    await requireAdmin();
-
-  if (!auth.authorized) {
-    return auth.response;
-  }
-
-  const { id: businessId } =
-    await params;
-
-  if (!businessId) {
-    return NextResponse.json(
-      {
-        error:
-          "Business ID is required.",
-      },
-      {
-        status: 400,
-      }
-    );
-  }
+  const auth = await requireAdmin();
+  if (!auth.authorized) return auth.response;
 
   try {
-    const rawBody: unknown =
-      await request.json();
+    const { id: businessId } = await params;
+    if (!businessId) return jsonError("Business ID is required.", 400);
 
-    if (
-      !rawBody ||
-      typeof rawBody !== "object" ||
-      Array.isArray(rawBody)
-    ) {
-      return NextResponse.json(
-        {
-          error:
-            "Invalid request body.",
-        },
-        {
-          status: 400,
-        }
-      );
+    const bodyResult = await readJsonBody(request);
+    if (!bodyResult.ok) {
+      return bodyResult.reason === "TOO_LARGE"
+        ? jsonError("Request body is too large.", 413)
+        : jsonError("Request body must contain valid JSON.", 400);
     }
 
-    const body =
-      rawBody as Record<
-        string,
-        unknown
-      >;
-
-    const name =
-      typeof body.name ===
-      "string"
-        ? body.name.trim()
-        : "";
-
-    if (!name) {
-      return NextResponse.json(
-        {
-          error:
-            "Product name is required.",
-        },
-        {
-          status: 400,
-        }
-      );
+    if (!isRecord(bodyResult.value)) {
+      return jsonError("Invalid request body.", 400);
     }
 
-    const business =
-      await prisma.business.findUnique(
-        {
-          where: {
-            id: businessId,
-          },
-          select: {
-            id: true,
-            deletedAt: true,
-          },
-        }
-      );
+    const body = bodyResult.value;
+    const name = cleanString(body.name);
 
-    if (!business) {
-      return NextResponse.json(
-        {
-          error:
-            "Business not found.",
-        },
-        {
-          status: 404,
-        }
-      );
+    if (!name) return jsonError("Product name is required.", 400);
+    if (name.length > 200) {
+      return jsonError("Product name must not exceed 200 characters.", 400);
     }
 
+    if (hasOwn(body, "description") && body.description !== null && typeof body.description !== "string") {
+      return jsonError("Product description must be a string or null.", 400);
+    }
+
+    const description = cleanString(body.description) || null;
+    if (description && description.length > 2000) {
+      return jsonError("Product description must not exceed 2,000 characters.", 400);
+    }
+
+    const business = await prisma.business.findUnique({
+      where: { id: businessId },
+      select: {
+        id: true,
+        name: true,
+        ownerId: true,
+        deletedAt: true,
+      },
+    });
+
+    if (!business) return jsonError("Business not found.", 404);
     if (business.deletedAt) {
-      return NextResponse.json(
-        {
-          error:
-            "This business has been deleted and cannot receive new products.",
-        },
-        {
-          status: 409,
-        }
+      return jsonError(
+        "This business has been deleted and cannot receive new products.",
+        409,
       );
     }
 
-    const categoryId =
-      typeof body.categoryId ===
-        "string" &&
-      body.categoryId.trim()
-        ? body.categoryId.trim()
-        : null;
+    let categoryId: string | null = null;
+    if (hasOwn(body, "categoryId")) {
+      if (body.categoryId !== null && typeof body.categoryId !== "string") {
+        return jsonError("Category ID must be a string or null.", 400);
+      }
 
-    if (categoryId) {
-      const category =
-        await prisma.category.findUnique(
-          {
-            where: {
-              id: categoryId,
-            },
-            select: {
-              id: true,
-            },
-          }
-        );
-
-      if (!category) {
-        return NextResponse.json(
-          {
-            error:
-              "Category not found.",
-          },
-          {
-            status: 400,
-          }
-        );
+      categoryId = cleanString(body.categoryId) || null;
+      if (categoryId) {
+        const category = await prisma.category.findFirst({
+          where: { id: categoryId, isActive: true },
+          select: { id: true },
+        });
+        if (!category) {
+          return jsonError("Selected category was not found or is inactive.", 400);
+        }
       }
     }
 
-    const price =
-      parseOptionalInt(
-        body.price
-      );
+    const parsedPrice = parseOptionalInt(body.price);
+    const parsedPriceMin = parseOptionalInt(body.priceMin);
+    const parsedPriceMax = parseOptionalInt(body.priceMax);
 
-    const priceMin =
-      parseOptionalInt(
-        body.priceMin
-      );
-
-    const priceMax =
-      parseOptionalInt(
-        body.priceMax
-      );
-
-    if (price === undefined) {
-      return NextResponse.json(
-        {
-          error:
-            "Price must be a valid integer.",
-        },
-        {
-          status: 400,
-        }
-      );
+    if (!parsedPrice.valid) {
+      return jsonError("Price must be a whole number between 0 and 2,147,483,647.", 400);
+    }
+    if (!parsedPriceMin.valid) {
+      return jsonError("Minimum price must be a whole number between 0 and 2,147,483,647.", 400);
+    }
+    if (!parsedPriceMax.valid) {
+      return jsonError("Maximum price must be a whole number between 0 and 2,147,483,647.", 400);
     }
 
-    if (
-      priceMin === undefined
-    ) {
-      return NextResponse.json(
-        {
-          error:
-            "Minimum price must be a valid integer.",
-        },
-        {
-          status: 400,
-        }
-      );
+    const price = parsedPrice.value;
+    const priceMin = parsedPriceMin.value;
+    const priceMax = parsedPriceMax.value;
+
+    const pricingError = validateProductPricing(price, priceMin, priceMax);
+    if (pricingError) return jsonError(pricingError, 400);
+
+    let availability: ProductAvailability = Availability.ASK_SELLER;
+    if (hasOwn(body, "availability")) {
+      if (!isAvailability(body.availability)) {
+        return jsonError("Invalid product availability value.", 400);
+      }
+      availability = body.availability;
     }
 
-    if (
-      priceMax === undefined
-    ) {
-      return NextResponse.json(
-        {
-          error:
-            "Maximum price must be a valid integer.",
-        },
-        {
-          status: 400,
-        }
-      );
+    let status: ProductStatus = BusinessStatus.ACTIVE;
+    if (hasOwn(body, "status")) {
+      if (!isProductStatus(body.status)) {
+        return jsonError("Invalid product status.", 400);
+      }
+      status = body.status;
     }
 
-    if (
-      price !== null &&
-      price < 0
-    ) {
-      return NextResponse.json(
-        {
-          error:
-            "Price cannot be negative.",
-        },
-        {
-          status: 400,
-        }
-      );
+    let keywords: string[] = [];
+    if (hasOwn(body, "keywords")) {
+      const parsedKeywords = parseKeywords(body.keywords);
+      if (!parsedKeywords.valid) {
+        return jsonError(
+          "Keywords must be an array of up to 30 strings. Each keyword may contain up to 80 characters, with 1,500 characters combined.",
+          400,
+        );
+      }
+      keywords = parsedKeywords.value;
     }
 
-    if (
-      priceMin !== null &&
-      priceMin < 0
-    ) {
-      return NextResponse.json(
-        {
-          error:
-            "Minimum price cannot be negative.",
-        },
-        {
-          status: 400,
-        }
-      );
+    let images: ProductImageInput[] = [];
+    if (hasOwn(body, "images")) {
+      const parsedImages = parseImages(body.images);
+      if (!parsedImages.valid) {
+        return jsonError(
+          "Images must be an array of up to 20 valid HTTP or HTTPS image URLs.",
+          400,
+        );
+      }
+      images = parsedImages.value;
+    } else if (hasOwn(body, "imageUrl") && body.imageUrl !== null && body.imageUrl !== "") {
+      if (typeof body.imageUrl !== "string" || !isSafeImageUrl(body.imageUrl.trim())) {
+        return jsonError("Image URL must be a valid HTTP or HTTPS URL.", 400);
+      }
+      images = [{ url: body.imageUrl.trim(), publicId: null, sortOrder: 0 }];
     }
 
-    if (
-      priceMax !== null &&
-      priceMax < 0
-    ) {
-      return NextResponse.json(
-        {
-          error:
-            "Maximum price cannot be negative.",
-        },
-        {
-          status: 400,
-        }
-      );
-    }
+    const imageUrl = images[0]?.url ?? null;
 
-    if (
-      priceMin !== null &&
-      priceMax !== null &&
-      priceMin > priceMax
-    ) {
-      return NextResponse.json(
-        {
-          error:
-            "Minimum price cannot exceed maximum price.",
-        },
-        {
-          status: 400,
-        }
-      );
-    }
+    const created = await createProductWithCapacityRetry({
+      businessId,
+      name,
+      description,
+      categoryId,
+      price,
+      priceMin,
+      priceMax,
+      availability,
+      keywords,
+      imageUrl,
+      images,
+      status,
+    });
 
-    const availability =
-      isAvailability(
-        body.availability
-      )
-        ? body.availability
-        : Availability.ASK_SELLER;
-
-    const status =
-      isBusinessStatus(
-        body.status
-      )
-        ? body.status
-        : BusinessStatus.ACTIVE;
-
-    const description =
-      typeof body.description ===
-      "string"
-        ? body.description.trim() ||
-          null
-        : null;
-
-    const keywords =
-      parseKeywords(
-        body.keywords
-      );
-
-    const requestedImages =
-      parseImageUrls(
-        body.images
-      );
-
-    const legacyImageUrl =
-      typeof body.imageUrl ===
-        "string" &&
-      body.imageUrl.trim()
-        ? body.imageUrl.trim()
-        : null;
-
-    const imageUrls =
-      requestedImages.length >
-      0
-        ? requestedImages
-        : legacyImageUrl
-          ? [legacyImageUrl]
-          : [];
-
-    const product =
-      await prisma.product.create(
-        {
-          data: {
-            businessId,
-
-            name,
-
-            description,
-
-            categoryId,
-
-            price,
-
-            priceMin,
-
-            priceMax,
-
-            availability,
-
-            keywords,
-
-            status,
-
-            imageUrl:
-              imageUrls[0] ??
-              null,
-
-            images:
-              imageUrls.length > 0
-                ? {
-                    create:
-                      imageUrls.map(
-                        (
-                          url,
-                          index
-                        ) => ({
-                          url,
-                          sortOrder:
-                            index,
-                        })
-                      ),
-                  }
-                : undefined,
-          },
-
-          include: {
-            category: true,
-
-            images: {
-              orderBy: [
-                {
-                  sortOrder:
-                    "asc",
-                },
-                {
-                  createdAt:
-                    "asc",
-                },
-              ],
-            },
-          },
-        }
-      );
+    await notifyProductOwner({
+      ownerId: created.business.ownerId,
+      productId: created.id,
+      businessId: created.business.id,
+      businessName: created.business.name,
+      productName: created.name,
+    });
 
     return NextResponse.json(
-      {
-        product,
-      },
-      {
-        status: 201,
-      }
+      { product: created },
+      { status: 201, headers: jsonHeaders() },
     );
   } catch (error) {
-    console.error(
-      "Admin products POST error:",
-      error
-    );
+    if (error instanceof ProductCapacityError) {
+      return NextResponse.json(
+        {
+          error: error.message,
+          code: "ACTIVE_PRODUCT_LIMIT",
+          activeProductCount: error.activeCount,
+          maxActiveProducts: error.maximum,
+          availableSlots: Math.max(0, error.maximum - error.activeCount),
+        },
+        { status: 409, headers: jsonHeaders() },
+      );
+    }
 
-    return NextResponse.json(
-      {
-        error:
-          "Unable to create product.",
-      },
-      {
-        status: 500,
-      }
-    );
+    if (error instanceof Error && error.message === "BUSINESS_DELETED") {
+      return jsonError(
+        "This business has been deleted and cannot receive new products.",
+        409,
+      );
+    }
+
+    if (isPrismaErrorCode(error, "P2034")) {
+      return jsonError(
+        "Product capacity changed during this request. Please retry.",
+        409,
+      );
+    }
+
+    console.error("Admin products POST error:", error);
+    return jsonError("Unable to create product.", 500);
   }
+}
+
+async function createProductWithCapacityRetry(input: {
+  businessId: string;
+  name: string;
+  description: string | null;
+  categoryId: string | null;
+  price: number | null;
+  priceMin: number | null;
+  priceMax: number | null;
+  availability: ProductAvailability;
+  keywords: string[];
+  imageUrl: string | null;
+  images: ProductImageInput[];
+  status: ProductStatus;
+}) {
+  const maximumAttempts = 3;
+
+  for (let attempt = 1; attempt <= maximumAttempts; attempt += 1) {
+    try {
+      return await prisma.$transaction(
+        async (tx) => {
+          const business = await tx.business.findUnique({
+            where: { id: input.businessId },
+            select: {
+              id: true,
+              name: true,
+              ownerId: true,
+              deletedAt: true,
+            },
+          });
+
+          if (!business) {
+            throw new Error("BUSINESS_NOT_FOUND");
+          }
+          if (business.deletedAt) {
+            throw new Error("BUSINESS_DELETED");
+          }
+
+          if (input.status === BusinessStatus.ACTIVE) {
+            const activeCount = await tx.product.count({
+              where: {
+                businessId: business.id,
+                status: BusinessStatus.ACTIVE,
+                deletedAt: null,
+              },
+            });
+
+            const referralBonusSlots = business.ownerId
+              ? await getGrantedProductSlotBonus(business.ownerId, tx)
+              : 0;
+
+            const maximum =
+              BASE_MAX_ACTIVE_PRODUCTS +
+              Math.max(0, Number(referralBonusSlots) || 0);
+
+            if (activeCount >= maximum) {
+              throw new ProductCapacityError(activeCount, maximum);
+            }
+          }
+
+          return tx.product.create({
+            data: {
+              businessId: business.id,
+              name: input.name,
+              description: input.description,
+              categoryId: input.categoryId,
+              price: input.price,
+              priceMin: input.priceMin,
+              priceMax: input.priceMax,
+              availability: input.availability,
+              keywords: input.keywords,
+              imageUrl: input.imageUrl,
+              status: input.status,
+              ...(input.images.length > 0
+                ? {
+                    images: {
+                      create: input.images.map((image) => ({
+                        url: image.url,
+                        publicId: image.publicId,
+                        sortOrder: image.sortOrder,
+                      })),
+                    },
+                  }
+                : {}),
+            },
+            include: {
+              category: true,
+              images: {
+                orderBy: [{ sortOrder: "asc" }, { createdAt: "asc" }],
+              },
+              business: {
+                select: { id: true, name: true, ownerId: true },
+              },
+            },
+          });
+        },
+        { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+      );
+    } catch (error) {
+      if (isPrismaErrorCode(error, "P2034") && attempt < maximumAttempts) {
+        continue;
+      }
+      throw error;
+    }
+  }
+
+  throw new Error("PRODUCT_CREATE_RETRIES_EXHAUSTED");
 }

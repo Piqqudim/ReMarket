@@ -34,7 +34,7 @@ function getLoginUrl(request: NextRequest): URL {
   return loginUrl;
 }
 
-export async function middleware(
+export async function proxy(
   request: NextRequest
 ) {
   const { pathname } = request.nextUrl;

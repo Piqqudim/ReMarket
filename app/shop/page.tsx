@@ -48,7 +48,7 @@ import {
 type ProductImage = {
   id: string;
   url: string;
-  publicId: string | null;
+  publicId?: string | null;
   sortOrder: number;
 };
 
@@ -63,6 +63,10 @@ type Product = {
   imageUrl: string | null;
   keywords: string[];
   images: ProductImage[];
+  category?: {
+    id: string;
+    name: string;
+  } | null;
 };
 
 type Business = {
@@ -104,6 +108,24 @@ const NAV_ITEMS = [
 
 function getProductImage(product: Product): string | null {
   return product.images?.[0]?.url ?? product.imageUrl ?? null;
+}
+
+function getBusinessCategory(business: Business): string {
+  const businessCategory = business.categories?.find(
+    (item) =>
+      typeof item.category?.name === "string" &&
+      item.category.name.trim().length > 0
+  )?.category.name;
+
+  if (businessCategory) return businessCategory.trim();
+
+  const productCategory = business.products?.find(
+    (product) =>
+      typeof product.category?.name === "string" &&
+      product.category.name.trim().length > 0
+  )?.category?.name;
+
+  return productCategory?.trim() || "Uncategorised";
 }
 
 function formatPrice(product: Product): string {
@@ -409,7 +431,7 @@ function ShopPageView({
       return;
     }
 
-    const categoryName = business.categories?.[0]?.category?.name ?? "Services";
+    const categoryName = getBusinessCategory(business);
 
     saveBusiness({
       id: business.id,
@@ -663,8 +685,7 @@ function ShopPageView({
                     <>
                       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
                         {businesses.map((business) => {
-                          const categoryName =
-                            business.categories?.[0]?.category?.name ?? "Services";
+                          const categoryName = getBusinessCategory(business);
                           const style = getCategoryStyle(categoryName);
                           const saved = Boolean(savedBusinesses[business.id]);
                           const products = Array.isArray(business.products)

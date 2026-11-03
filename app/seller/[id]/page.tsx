@@ -39,6 +39,7 @@ import {
 } from "lucide-react";
 
 import { trackContactEvent } from "@/lib/contact-event";
+import { trackBusinessView } from "@/lib/business-view";
 
 import {
   isBusinessSaved,
@@ -123,8 +124,7 @@ type SellerLocation = {
   area: string;
   street?: string | null;
   address?: string | null;
-  lat?: number | null;
-  long?: number | null;
+  hasDirections?: boolean;
 } | null;
 
 type Seller = {
@@ -159,7 +159,8 @@ type Review = {
   comment: string | null;
   createdAt: string;
   updatedAt: string;
-  user: { id: string; name: string };
+  isOwnReview: boolean;
+  user: { name: string };
 };
 
 type RatingBreakdown = { 1: number; 2: number; 3: number; 4: number; 5: number };
@@ -343,138 +344,14 @@ function normalizeNigerianPhone(value: string): string {
   return "";
 }
 
-function hasValidCoordinates(
-  latitude?: number | null,
-  longitude?: number | null
-): latitude is number {
-  return (
-    typeof latitude ===
-      "number" &&
-    Number.isFinite(latitude) &&
-    latitude >= -90 &&
-    latitude <= 90 &&
-    typeof longitude ===
-      "number" &&
-    Number.isFinite(longitude) &&
-    longitude >= -180 &&
-    longitude <= 180
-  );
-}
-
 /*
- * -----------------------------------------
- * GOOGLE MAPS DIRECTIONS
- * -----------------------------------------
- *
- * Destination resolution order:
- *
- * 1. Valid ReMarket business coordinates
- * 2. Existing ReMarket business address
- *
- * The business name is NEVER added to the
- * Google Maps destination.
- *
- * The address is also NOT rebuilt here.
- * It is passed exactly as the canonical
- * ReMarket Location.address value.
- *
- * Expected address format:
- *
- * Shop/House Number, Street, Area, City, Nigeria
- *
- * Origin is supplied when the buyer's current
- * browser location is available. A destination-only
- * fallback remains available when location access
- * is denied or unavailable.
+ * Directions are resolved by the server only after the visitor
+ * explicitly chooses the Directions action. This keeps exact
+ * business coordinates out of the public business JSON response.
  */
-function buildDirectionsUrl(
-  address: string | null | undefined,
-  latitude?: number | null,
-  longitude?: number | null,
-  originLatitude?: number | null,
-  originLongitude?: number | null
-): string {
-  let destination = "";
-
-  if (
-    hasValidCoordinates(
-      latitude,
-      longitude
-    )
-  ) {
-    /*
-     * Coordinates are the preferred destination
-     * because they represent the exact ReMarket
-     * business location.
-     */
-    destination = `${latitude},${longitude}`;
-  } else if (
-    typeof address ===
-      "string" &&
-    address.trim()
-  ) {
-    /*
-     * Text fallback.
-     *
-     * Do NOT add:
-     * - business name
-     * - area again
-     * - country again
-     *
-     * The Location.address value is already
-     * expected to contain the complete address.
-     */
-    destination =
-      address.trim();
-  }
-
-  if (!destination) {
-    return "#";
-  }
-
-  const params =
-    new URLSearchParams();
-
-  params.set(
-    "api",
-    "1"
-  );
-
-  params.set(
-    "destination",
-    destination
-  );
-
-  if (
-    hasValidCoordinates(
-      originLatitude,
-      originLongitude
-    )
-  ) {
-    params.set(
-      "origin",
-      `${originLatitude},${originLongitude}`
-    );
-  }
-
-  params.set(
-    "travelmode",
-    "driving"
-  );
-
-  params.set(
-    "dir_action",
-    "navigate"
-  );
-
-  return `https://www.google.com/maps/dir/?${params.toString()}`;
-}
-
 function buildContactUrl(
   platform: string,
   handle: string,
-  latitude?: number | null,
-  longitude?: number | null,
   address?: string | null
 ): string {
   const clean = handle
@@ -555,11 +432,9 @@ function buildContactUrl(
     }
 
     case "DIRECTIONS": {
-      return buildDirectionsUrl(
-        address,
-        latitude,
-        longitude
-      );
+      return address?.trim()
+        ? `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(address.trim())}`
+        : "#";
     }
 
     default:
@@ -674,12 +549,14 @@ function SellerPageContent({
 
   const [reviews, setReviews] = useState<Review[]>([]);
   const [reviewsLoading, setReviewsLoading] = useState(true);
+  const [reviewsLoadingMore, setReviewsLoadingMore] = useState(false);
+  const [reviewsHasMore, setReviewsHasMore] = useState(false);
+  const [reviewsPage, setReviewsPage] = useState(1);
   const [reviewError, setReviewError] = useState("");
   const [reviewSuccess, setReviewSuccess] = useState("");
   const [reviewRating, setReviewRating] = useState(0);
   const [reviewComment, setReviewComment] = useState("");
   const [reviewSubmitting, setReviewSubmitting] = useState(false);
-  const [currentUserId, setCurrentUserId] = useState<string | null>(null);
   const [currentUserRole, setCurrentUserRole] = useState<ReMarketRole | null>(null);
   const [currentUserLoading, setCurrentUserLoading] = useState(true);
   const [editingReviewId, setEditingReviewId] = useState<string | null>(null);
@@ -689,6 +566,7 @@ function SellerPageContent({
   const [reviewDeletingId, setReviewDeletingId] = useState<string | null>(null);
   const [ratingBreakdown, setRatingBreakdown] = useState<RatingBreakdown>({ 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 });
   const reviewRequestIdRef = useRef(0);
+  const trackedBusinessViewIdRef = useRef<string | null>(null);
 
   const [claimModalOpen, setClaimModalOpen] = useState(false);
   const [claimReason, setClaimReason] = useState("");
@@ -722,7 +600,6 @@ function SellerPageContent({
         const session = await getSession();
         if (cancelled) return;
         const user = session?.user;
-        setCurrentUserId(typeof user?.id === "string" ? user.id : null);
         setCurrentUserRole(
           user?.role === "ADMIN" || user?.role === "SELLER" || user?.role === "BUYER"
             ? user.role
@@ -731,7 +608,6 @@ function SellerPageContent({
       } catch (sessionError) {
         console.error("Seller page session lookup error:", sessionError);
         if (!cancelled) {
-          setCurrentUserId(null);
           setCurrentUserRole(null);
         }
       } finally {
@@ -1064,19 +940,9 @@ function SellerPageContent({
                     ? rawLocation.address
                     : null,
 
-                lat:
-                  "lat" in rawLocation &&
-                  typeof rawLocation.lat ===
-                    "number"
-                    ? rawLocation.lat
-                    : null,
-
-                long:
-                  "long" in rawLocation &&
-                  typeof rawLocation.long ===
-                    "number"
-                    ? rawLocation.long
-                    : null,
+                hasDirections:
+                  "hasDirections" in rawLocation &&
+                  rawLocation.hasDirections === true,
               }
             : null;
 
@@ -1209,6 +1075,34 @@ function SellerPageContent({
               ? rawBusiness.reviewCount
               : 0,
         });
+                /*
+         * -----------------------------------------
+         * TRACK SUCCESSFUL BUSINESS PROFILE VIEW
+         * -----------------------------------------
+         *
+         * Only track after the public business API
+         * response has been successfully fetched
+         * and the business data has been validated.
+         *
+         * The ref prevents duplicate calls during
+         * repeated effect execution for this page.
+         */
+
+        if (controller.signal.aborted) {
+          return;
+        }
+
+        const loadedBusinessId = rawBusiness.id as string;
+
+        if (
+          trackedBusinessViewIdRef.current !==
+          loadedBusinessId
+        ) {
+          trackedBusinessViewIdRef.current =
+            loadedBusinessId;
+
+          void trackBusinessView(loadedBusinessId);
+        }
       } catch (
         fetchError
       ) {
@@ -1287,14 +1181,17 @@ function SellerPageContent({
     return () => { cancelled = true; };
   }, [currentUserRole, id]);
 
-  const loadReviews = useCallback(async () => {
+  const loadReviews = useCallback(async (page = 1, append = false) => {
     if (!id) return;
     const requestId = ++reviewRequestIdRef.current;
 
     try {
-      setReviewsLoading(true);
+      if (!append) setReviewsLoading(true);
       setReviewError("");
-      const response = await fetch(`/api/businesses/${encodeURIComponent(id)}/reviews`, { cache: "no-store" });
+      const response = await fetch(
+        `/api/businesses/${encodeURIComponent(id)}/reviews?page=${page}&pageSize=10`,
+        { cache: "no-store" }
+      );
       let payload: unknown;
       try {
         payload = await response.json();
@@ -1321,8 +1218,8 @@ function SellerPageContent({
             comment: typeof review.comment === "string" ? review.comment : null,
             createdAt: typeof review.createdAt === "string" ? review.createdAt : "",
             updatedAt: typeof review.updatedAt === "string" ? review.updatedAt : "",
+            isOwnReview: review.isOwnReview === true,
             user: {
-              id: typeof user.id === "string" ? user.id : "",
               name: typeof user.name === "string" && user.name.trim() ? user.name : "ReMarket user",
             },
           };
@@ -1351,7 +1248,9 @@ function SellerPageContent({
       }
 
       if (requestId !== reviewRequestIdRef.current) return;
-      setReviews(normalizedReviews);
+      setReviews((current) => append ? [...current, ...normalizedReviews] : normalizedReviews);
+      setReviewsPage(typeof data.page === "number" && Number.isInteger(data.page) ? data.page : page);
+      setReviewsHasMore(data.hasMore === true);
       setRatingBreakdown(breakdown);
       setSeller((current) => current ? { ...current, averageRating, reviewCount } : current);
     } catch (reviewsFetchError) {
@@ -1359,9 +1258,19 @@ function SellerPageContent({
       console.error("Reviews load error:", reviewsFetchError);
       setReviewError(reviewsFetchError instanceof Error ? reviewsFetchError.message : "Unable to load reviews.");
     } finally {
-      if (requestId === reviewRequestIdRef.current) setReviewsLoading(false);
+      if (requestId === reviewRequestIdRef.current && !append) setReviewsLoading(false);
     }
   }, [id]);
+
+  async function loadMoreReviews() {
+    if (reviewsLoadingMore || reviewsLoading || !reviewsHasMore) return;
+    setReviewsLoadingMore(true);
+    try {
+      await loadReviews(reviewsPage + 1, true);
+    } finally {
+      setReviewsLoadingMore(false);
+    }
+  }
 
   useEffect(() => {
     void loadReviews();
@@ -1617,15 +1526,15 @@ function SellerPageContent({
   }
 
   function getDirectionsUrl() {
-    if (!seller) {
+    if (!seller?.id) {
       return "#";
     }
 
-    return buildDirectionsUrl(
-      seller.location?.address,
-      seller.location?.lat,
-      seller.location?.long
-    );
+    if (!seller.location?.hasDirections && !seller.location?.address) {
+      return "#";
+    }
+
+    return `/api/businesses/${encodeURIComponent(seller.id)}/directions`;
   }
 
   function handleDirectionsClick(
@@ -1637,9 +1546,7 @@ function SellerPageContent({
       return;
     }
 
-    const fallbackUrl =
-      getDirectionsUrl();
-
+    const fallbackUrl = getDirectionsUrl();
     if (fallbackUrl === "#") {
       return;
     }
@@ -1647,61 +1554,36 @@ function SellerPageContent({
     handleContactClick("DIRECTIONS");
     setDirectionsLoading(true);
 
-    const navigationWindow =
-      window.open(
-        fallbackUrl,
-        "_blank"
-      );
-
+    const navigationWindow = window.open("about:blank", "_blank");
     if (navigationWindow) {
       navigationWindow.opener = null;
     }
 
-    if (!navigator.geolocation) {
-      setDirectionsLoading(false);
+    const navigateToDirections = (origin?: GeolocationPosition) => {
+      const destinationUrl = new URL(fallbackUrl, window.location.origin);
 
-      if (!navigationWindow || navigationWindow.closed) {
-        window.location.assign(fallbackUrl);
+      if (origin) {
+        destinationUrl.searchParams.set("originLat", String(origin.coords.latitude));
+        destinationUrl.searchParams.set("originLng", String(origin.coords.longitude));
       }
 
+      if (navigationWindow && !navigationWindow.closed) {
+        navigationWindow.location.href = destinationUrl.toString();
+      } else {
+        window.location.assign(destinationUrl.toString());
+      }
+
+      setDirectionsLoading(false);
+    };
+
+    if (!navigator.geolocation) {
+      navigateToDirections();
       return;
     }
 
     navigator.geolocation.getCurrentPosition(
-      (position) => {
-        const exactUrl =
-          buildDirectionsUrl(
-            seller.location?.address,
-            seller.location?.lat,
-            seller.location?.long,
-            position.coords.latitude,
-            position.coords.longitude
-          );
-
-        if (
-          navigationWindow &&
-          !navigationWindow.closed
-        ) {
-          navigationWindow.location.href = exactUrl;
-        } else {
-          // Keep directions usable if the popup was blocked or closed.
-          window.location.assign(exactUrl);
-        }
-
-        setDirectionsLoading(false);
-      },
-      () => {
-        /*
-         * Location access can be denied or
-         * unavailable. The already-opened map keeps
-         * the existing destination-only fallback.
-         */
-        setDirectionsLoading(false);
-
-        if (!navigationWindow || navigationWindow.closed) {
-          window.location.assign(fallbackUrl);
-        }
-      },
+      (position) => navigateToDirections(position),
+      () => navigateToDirections(),
       {
         enableHighAccuracy: true,
         timeout: 10000,
@@ -2368,16 +2250,22 @@ function SellerPageContent({
                               >
                                 {getProductImages(product).length > 0 ? (
                                   <div>
-                                    <img
-                                      src={
-                                        getProductImages(product)[0]?.url ??
-                                        ""
-                                      }
-                                      alt={
-                                        product.name
-                                      }
-                                      className="h-40 w-full object-cover"
-                                    />
+                                    <Link
+                                      href={`/product/${encodeURIComponent(product.id)}`}
+                                      aria-label={`View ${product.name}`}
+                                      className="block"
+                                    >
+                                      <img
+                                        src={
+                                          getProductImages(product)[0]?.url ??
+                                          ""
+                                        }
+                                        alt={
+                                          product.name
+                                        }
+                                        className="h-40 w-full object-cover"
+                                      />
+                                    </Link>
 
                                     {getProductImages(product).length > 1 && (
                                       <div className="flex gap-2 overflow-x-auto border-t border-[#E8E4DE] bg-white p-2">
@@ -2418,9 +2306,12 @@ function SellerPageContent({
                                   <div className="flex items-start justify-between gap-3">
                                     <div className="min-w-0">
                                       <h3 className="text-[13px] font-bold text-[#2E2925]">
-                                        {
-                                          product.name
-                                        }
+                                        <Link
+                                          href={`/product/${encodeURIComponent(product.id)}`}
+                                          className="transition hover:text-[#9F2D18]"
+                                        >
+                                          {product.name}
+                                        </Link>
                                       </h3>
 
                                       {product.category?.name && (
@@ -2576,15 +2467,7 @@ function SellerPageContent({
                                   buildContactUrl(
                                     link.platform,
                                     link.handle,
-                                    seller
-                                      .location
-                                      ?.lat,
-                                    seller
-                                      .location
-                                      ?.long,
-                                    seller
-                                      .location
-                                      ?.address
+                                    seller.location?.address
                                   );
 
                                 const isPhone =
@@ -2839,8 +2722,20 @@ function SellerPageContent({
                         {currentUserLoading ? <div className="flex min-h-[160px] items-center justify-center gap-2 text-[11px] font-semibold text-[#817970]"><LoaderCircle size={15} className="animate-spin text-[#FF5A36]" />Checking your account...</div> : currentUserRole === "BUYER" ? <><h3 className="text-[13px] font-black text-[#17202A]">Leave a review</h3><p className="mt-1 text-[10px] leading-5 text-[#8B847E]">Share your experience with this business.</p><form onSubmit={submitReview} className="mt-4"><p className="text-[10px] font-bold uppercase tracking-[0.1em] text-[#8C8580]">Your rating</p><div className="mt-2 flex flex-wrap items-center gap-2"><div className="flex items-center gap-1">{[1,2,3,4,5].map((rating) => <button key={rating} type="button" aria-label={`Rate ${rating} out of 5`} aria-pressed={reviewRating === rating} onClick={() => setReviewRating(rating)} className="rounded-lg p-1 transition hover:bg-[#FFF0E9]"><Star size={22} className={rating <= reviewRating ? "fill-[#FFB300] text-[#FFB300]" : "text-[#D6CFC8]"} /></button>)}</div><span className="text-[10px] font-semibold text-[#8B847E]">{getRatingLabel(reviewRating)}</span></div><label htmlFor="review-comment" className="mt-4 block text-[10px] font-bold uppercase tracking-[0.1em] text-[#8C8580]">Review</label><textarea id="review-comment" value={reviewComment} onChange={(event) => setReviewComment(event.target.value)} rows={4} maxLength={2000} placeholder="What was your experience with this business?" className="mt-2 w-full resize-none rounded-xl border border-[#E8E4DE] bg-[#FCFAF6] px-3 py-3 text-[11px] leading-5 text-[#35302C] outline-none focus:border-[#FF9B86] focus:bg-white focus:ring-4 focus:ring-[#FF5A36]/10" /><div className="mt-1 flex justify-end"><span className="text-[9px] text-[#A29B94]">{reviewComment.length}/2000</span></div><div className="mt-4 flex justify-end"><button type="submit" disabled={reviewSubmitting} className="inline-flex items-center gap-2 rounded-xl bg-[#FF5A36] px-4 py-2.5 text-[11px] font-bold text-white disabled:cursor-not-allowed disabled:opacity-60">{reviewSubmitting ? <><LoaderCircle size={14} className="animate-spin" />Submitting...</> : "Submit review"}</button></div></form></> : currentUserRole === null ? <div className="flex min-h-[160px] flex-col items-center justify-center text-center"><Star size={22} className="fill-current text-[#FF5A36]" /><h3 className="mt-3 text-[13px] font-black text-[#17202A]">Sign in to leave a review</h3><p className="mt-1 max-w-[320px] text-[10px] leading-5 text-[#8B847E]">Sign in as a buyer to share your experience.</p><div className="mt-4 flex flex-wrap justify-center gap-2"><Link href="/buyer/login" className="rounded-xl bg-[#FF5A36] px-4 py-2.5 text-[10px] font-bold text-white">Sign in as buyer</Link><Link href="/buyer/signup" className="rounded-xl border border-[#E8E4DE] bg-white px-4 py-2.5 text-[10px] font-bold text-[#746D67]">Create buyer account</Link></div></div> : <div className="flex min-h-[160px] flex-col items-center justify-center text-center"><Star size={22} className="text-[#8B6960]" /><h3 className="mt-3 text-[13px] font-black text-[#17202A]">Buyer reviews only</h3><p className="mt-1 max-w-[320px] text-[10px] leading-5 text-[#8B847E]">Only buyer accounts can submit reviews.</p></div>}
                       </div>
                     </div>
-                    <div className="mt-6 border-t border-[#EAE6DF] pt-5"><div className="flex items-center justify-between"><div><h3 className="text-[14px] font-black text-[#17202A]">Customer reviews</h3><p className="mt-1 text-[10px] text-[#8B847E]">Recent feedback from ReMarket buyers.</p></div>{reviews.length > 0 && <span className="rounded-full bg-[#FCFAF6] px-2.5 py-1 text-[9px] font-bold text-[#746D67]">{reviews.length}</span>}</div>
-                      {reviewsLoading ? <div className="mt-4 flex items-center justify-center rounded-xl border border-dashed border-[#DDD6CE] bg-[#FCFAF6] px-5 py-8"><div className="flex items-center gap-2 text-[11px] font-semibold text-[#817970]"><LoaderCircle size={15} className="animate-spin text-[#FF5A36]" />Loading reviews...</div></div> : reviews.length === 0 ? <div className="mt-4 rounded-xl border border-dashed border-[#DDD6CE] bg-[#FCFAF6] px-5 py-8 text-center"><Star size={24} className="mx-auto text-[#B7AFA7]" /><p className="mt-3 text-[12px] font-bold text-[#625B55]">No reviews yet</p><p className="mt-1 text-[10px] leading-5 text-[#928A83]">Be the first customer to rate this business.</p></div> : <div className="mt-4 space-y-3">{reviews.map((review) => { const isOwnReview = currentUserRole === "BUYER" && Boolean(currentUserId && review.user.id === currentUserId); const isEditing = editingReviewId === review.id; return <article key={review.id} className="rounded-[15px] border border-[#E8E4DE] bg-[#FFFDFC] p-4"><div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between"><div className="min-w-0 flex-1"><div className="flex flex-wrap items-center gap-2"><div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[#FFE0D6] text-[10px] font-black text-[#9F2D18]">{getInitials(review.user.name)}</div><div><p className="text-[11px] font-bold text-[#3D3834]">{review.user.name}</p><p className="text-[9px] text-[#A29B94]">{formatReviewDate(review.createdAt)}{review.updatedAt !== review.createdAt && " · Edited"}</p></div></div>{!isEditing ? <><div className="mt-3"><ReviewStars rating={review.rating} size={15} /></div>{review.comment && <p className="mt-3 whitespace-pre-wrap break-words text-[11px] leading-5 text-[#68615C]">{review.comment}</p>}</> : <div className="mt-3"><div className="flex flex-wrap items-center gap-2"><div className="flex items-center gap-1">{[1,2,3,4,5].map((rating) => <button key={rating} type="button" aria-label={`Change rating to ${rating} out of 5`} onClick={() => setEditingRating(rating)} className="rounded-lg p-0.5 hover:bg-[#FFF0E9]"><Star size={18} className={rating <= editingRating ? "fill-[#FFB300] text-[#FFB300]" : "text-[#D6CFC8]"} /></button>)}</div><span className="text-[9px] font-semibold text-[#8B847E]">{getRatingLabel(editingRating)}</span></div><textarea value={editingComment} onChange={(event) => setEditingComment(event.target.value)} maxLength={2000} rows={4} className="mt-3 w-full resize-none rounded-xl border border-[#E8E4DE] bg-[#FCFAF6] px-3 py-3 text-[11px] leading-5 outline-none focus:border-[#FF9B86]" /><div className="mt-3 flex flex-wrap justify-end gap-2"><button type="button" onClick={cancelEditingReview} disabled={reviewUpdatingId === review.id} className="rounded-xl border border-[#E8E4DE] bg-white px-3 py-2 text-[10px] font-bold text-[#746D67] disabled:opacity-60">Cancel</button><button type="button" onClick={() => void updateReview(review.id)} disabled={reviewUpdatingId === review.id} className="inline-flex items-center gap-2 rounded-xl bg-[#FF5A36] px-3 py-2 text-[10px] font-bold text-white disabled:opacity-60">{reviewUpdatingId === review.id ? <><LoaderCircle size={13} className="animate-spin" />Saving...</> : "Save changes"}</button></div></div>}</div>{isOwnReview && !isEditing && <div className="flex shrink-0 items-center gap-1"><button type="button" onClick={() => startEditingReview(review)} className="inline-flex items-center gap-1 rounded-lg px-2 py-1.5 text-[9px] font-bold text-[#746D67] hover:bg-[#FFF0E9]"><Pencil size={12} />Edit</button><button type="button" onClick={() => void deleteReview(review.id)} disabled={reviewDeletingId === review.id} className="inline-flex items-center gap-1 rounded-lg px-2 py-1.5 text-[9px] font-bold text-[#9F2D18] hover:bg-[#FFF1ED] disabled:opacity-60">{reviewDeletingId === review.id ? <LoaderCircle size={12} className="animate-spin" /> : <Trash2 size={12} />}Delete</button></div>}</div></article>; })}</div>}
+                    <div className="mt-6 border-t border-[#EAE6DF] pt-5"><div className="flex items-center justify-between"><div><h3 className="text-[14px] font-black text-[#17202A]">Customer reviews</h3><p className="mt-1 text-[10px] text-[#8B847E]">Recent ratings and comments shared by ReMarket buyer accounts.</p></div>{seller.reviewCount > 0 && <span className="rounded-full bg-[#FCFAF6] px-2.5 py-1 text-[9px] font-bold text-[#746D67]">{seller.reviewCount} total</span>}</div>
+                      {reviewsLoading ? <div className="mt-4 flex items-center justify-center rounded-xl border border-dashed border-[#DDD6CE] bg-[#FCFAF6] px-5 py-8"><div className="flex items-center gap-2 text-[11px] font-semibold text-[#817970]"><LoaderCircle size={15} className="animate-spin text-[#FF5A36]" />Loading reviews...</div></div> : reviews.length === 0 ? <div className="mt-4 rounded-xl border border-dashed border-[#DDD6CE] bg-[#FCFAF6] px-5 py-8 text-center"><Star size={24} className="mx-auto text-[#B7AFA7]" /><p className="mt-3 text-[12px] font-bold text-[#625B55]">No reviews yet</p><p className="mt-1 text-[10px] leading-5 text-[#928A83]">Be the first customer to rate this business.</p></div> : <div className="mt-4 space-y-3">{reviews.map((review) => { const isOwnReview = currentUserRole === "BUYER" && review.isOwnReview; const isEditing = editingReviewId === review.id; return <article key={review.id} className="rounded-[15px] border border-[#E8E4DE] bg-[#FFFDFC] p-4"><div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between"><div className="min-w-0 flex-1"><div className="flex flex-wrap items-center gap-2"><div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[#FFE0D6] text-[10px] font-black text-[#9F2D18]">{getInitials(review.user.name)}</div><div><p className="text-[11px] font-bold text-[#3D3834]">{review.user.name}</p><p className="text-[9px] text-[#A29B94]">{formatReviewDate(review.createdAt)}{review.updatedAt !== review.createdAt && " · Edited"}</p></div></div>{!isEditing ? <><div className="mt-3"><ReviewStars rating={review.rating} size={15} /></div>{review.comment && <p className="mt-3 whitespace-pre-wrap break-words text-[11px] leading-5 text-[#68615C]">{review.comment}</p>}</> : <div className="mt-3"><div className="flex flex-wrap items-center gap-2"><div className="flex items-center gap-1">{[1,2,3,4,5].map((rating) => <button key={rating} type="button" aria-label={`Change rating to ${rating} out of 5`} onClick={() => setEditingRating(rating)} className="rounded-lg p-0.5 hover:bg-[#FFF0E9]"><Star size={18} className={rating <= editingRating ? "fill-[#FFB300] text-[#FFB300]" : "text-[#D6CFC8]"} /></button>)}</div><span className="text-[9px] font-semibold text-[#8B847E]">{getRatingLabel(editingRating)}</span></div><textarea value={editingComment} onChange={(event) => setEditingComment(event.target.value)} maxLength={2000} rows={4} className="mt-3 w-full resize-none rounded-xl border border-[#E8E4DE] bg-[#FCFAF6] px-3 py-3 text-[11px] leading-5 outline-none focus:border-[#FF9B86]" /><div className="mt-3 flex flex-wrap justify-end gap-2"><button type="button" onClick={cancelEditingReview} disabled={reviewUpdatingId === review.id} className="rounded-xl border border-[#E8E4DE] bg-white px-3 py-2 text-[10px] font-bold text-[#746D67] disabled:opacity-60">Cancel</button><button type="button" onClick={() => void updateReview(review.id)} disabled={reviewUpdatingId === review.id} className="inline-flex items-center gap-2 rounded-xl bg-[#FF5A36] px-3 py-2 text-[10px] font-bold text-white disabled:opacity-60">{reviewUpdatingId === review.id ? <><LoaderCircle size={13} className="animate-spin" />Saving...</> : "Save changes"}</button></div></div>}</div>{isOwnReview && !isEditing && <div className="flex shrink-0 items-center gap-1"><button type="button" onClick={() => startEditingReview(review)} className="inline-flex items-center gap-1 rounded-lg px-2 py-1.5 text-[9px] font-bold text-[#746D67] hover:bg-[#FFF0E9]"><Pencil size={12} />Edit</button><button type="button" onClick={() => void deleteReview(review.id)} disabled={reviewDeletingId === review.id} className="inline-flex items-center gap-1 rounded-lg px-2 py-1.5 text-[9px] font-bold text-[#9F2D18] hover:bg-[#FFF1ED] disabled:opacity-60">{reviewDeletingId === review.id ? <LoaderCircle size={12} className="animate-spin" /> : <Trash2 size={12} />}Delete</button></div>}</div></article>; })}</div>}
+                      {reviewsHasMore && !reviewsLoading && (
+                        <div className="mt-4 flex justify-center">
+                          <button
+                            type="button"
+                            onClick={() => void loadMoreReviews()}
+                            disabled={reviewsLoadingMore}
+                            className="inline-flex items-center gap-2 rounded-xl border border-[#E8E4DE] bg-white px-4 py-2.5 text-[10px] font-bold text-[#9F2D18] transition hover:bg-[#FFF7ED] disabled:cursor-not-allowed disabled:opacity-60"
+                          >
+                            {reviewsLoadingMore ? <><LoaderCircle size={13} className="animate-spin" />Loading more...</> : "Load more reviews"}
+                          </button>
+                        </div>
+                      )}
                     </div>
                   </section>
                 </>
