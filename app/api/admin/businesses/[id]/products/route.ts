@@ -5,6 +5,7 @@ import {
   NotificationPriority,
   NotificationType,
   Prisma,
+  Role,
 } from "@prisma/client";
 import { NextRequest, NextResponse } from "next/server";
 
@@ -12,7 +13,10 @@ import { requireAdmin } from "@/lib/admin-auth";
 import { createNotification } from "@/lib/notifications";
 import { validateProductPricing } from "@/lib/product-pricing";
 import { prisma } from "@/lib/prisma";
-import { getGrantedProductSlotBonus } from "@/lib/referrals";
+import {
+  getGrantedProductSlotBonus,
+  qualifyReferralForUser,
+} from "@/lib/referrals";
 
 const BASE_MAX_ACTIVE_PRODUCTS = 100;
 const MAX_REQUEST_BYTES = 256 * 1024;
@@ -137,13 +141,17 @@ function parseKeywords(
     }
 
     const keyword = item.trim().toLowerCase();
+
     if (!keyword) continue;
+
     if (keyword.length > MAX_KEYWORD_LENGTH) {
       return { valid: false, value: [] };
     }
+
     if (seen.has(keyword)) continue;
 
     totalLength += keyword.length;
+
     if (totalLength > MAX_KEYWORDS_TOTAL_LENGTH) {
       return { valid: false, value: [] };
     }
@@ -160,6 +168,7 @@ function isSafeImageUrl(value: string): boolean {
 
   try {
     const url = new URL(value);
+
     return (
       (url.protocol === "http:" || url.protocol === "https:") &&
       !url.username &&
@@ -181,6 +190,7 @@ function parseImages(
 
   for (let index = 0; index < value.length; index += 1) {
     const item = value[index];
+
     let url = "";
     let publicId: string | null = null;
     let sortOrder = index;
@@ -194,7 +204,9 @@ function parseImages(
         if (typeof item.publicId !== "string") {
           return { valid: false, value: [] };
         }
+
         publicId = item.publicId.trim() || null;
+
         if (publicId && publicId.length > 255) {
           return { valid: false, value: [] };
         }
@@ -202,9 +214,11 @@ function parseImages(
 
       if (item.sortOrder !== undefined && item.sortOrder !== null) {
         const parsedOrder = parseOptionalInt(item.sortOrder);
+
         if (!parsedOrder.valid || parsedOrder.value === null) {
           return { valid: false, value: [] };
         }
+
         sortOrder = parsedOrder.value;
       }
     } else {
@@ -215,7 +229,11 @@ function parseImages(
       return { valid: false, value: [] };
     }
 
-    images.push({ url, publicId, sortOrder });
+    images.push({
+      url,
+      publicId,
+      sortOrder,
+    });
   }
 
   images.sort((a, b) => a.sortOrder - b.sortOrder);
@@ -225,14 +243,19 @@ function parseImages(
 
   for (const image of images) {
     if (seenUrls.has(image.url)) continue;
+
     seenUrls.add(image.url);
+
     uniqueImages.push({
       ...image,
       sortOrder: uniqueImages.length,
     });
   }
 
-  return { valid: true, value: uniqueImages };
+  return {
+    valid: true,
+    value: uniqueImages,
+  };
 }
 
 async function readJsonBody(
@@ -240,15 +263,26 @@ async function readJsonBody(
   maximumBytes = MAX_REQUEST_BYTES,
 ): Promise<JsonBodyResult> {
   const contentLength = request.headers.get("content-length");
+
   if (contentLength) {
     const declaredLength = Number(contentLength);
-    if (Number.isFinite(declaredLength) && declaredLength > maximumBytes) {
-      return { ok: false, reason: "TOO_LARGE" };
+
+    if (
+      Number.isFinite(declaredLength) &&
+      declaredLength > maximumBytes
+    ) {
+      return {
+        ok: false,
+        reason: "TOO_LARGE",
+      };
     }
   }
 
   if (!request.body) {
-    return { ok: false, reason: "INVALID_JSON" };
+    return {
+      ok: false,
+      reason: "INVALID_JSON",
+    };
   }
 
   const reader = request.body.getReader();
@@ -258,19 +292,28 @@ async function readJsonBody(
   try {
     while (true) {
       const { done, value } = await reader.read();
+
       if (done) break;
       if (!value) continue;
 
       totalBytes += value.byteLength;
+
       if (totalBytes > maximumBytes) {
         await reader.cancel().catch(() => undefined);
-        return { ok: false, reason: "TOO_LARGE" };
+
+        return {
+          ok: false,
+          reason: "TOO_LARGE",
+        };
       }
 
       chunks.push(value);
     }
   } catch {
-    return { ok: false, reason: "INVALID_JSON" };
+    return {
+      ok: false,
+      reason: "INVALID_JSON",
+    };
   } finally {
     try {
       reader.releaseLock();
@@ -282,15 +325,25 @@ async function readJsonBody(
   try {
     const bytes = new Uint8Array(totalBytes);
     let offset = 0;
+
     for (const chunk of chunks) {
       bytes.set(chunk, offset);
       offset += chunk.byteLength;
     }
 
-    const decoded = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
-    return { ok: true, value: JSON.parse(decoded) as unknown };
+    const decoded = new TextDecoder("utf-8", {
+      fatal: true,
+    }).decode(bytes);
+
+    return {
+      ok: true,
+      value: JSON.parse(decoded) as unknown,
+    };
   } catch {
-    return { ok: false, reason: "INVALID_JSON" };
+    return {
+      ok: false,
+      reason: "INVALID_JSON",
+    };
   }
 }
 
@@ -325,7 +378,10 @@ async function notifyProductOwner(input: {
       dedupeKey: `product:${input.productId}:added`,
     });
   } catch (error) {
-    console.error("Admin business product notification error:", error);
+    console.error(
+      "Admin business product notification error:",
+      error,
+    );
   }
 }
 
@@ -334,18 +390,24 @@ export async function GET(
   { params }: RouteContext,
 ) {
   const auth = await requireAdmin();
+
   if (!auth.authorized) return auth.response;
 
   try {
     const { id: businessId } = await params;
-    if (!businessId) return jsonError("Business ID is required.", 400);
+
+    if (!businessId) {
+      return jsonError("Business ID is required.", 400);
+    }
 
     const business = await prisma.business.findUnique({
       where: { id: businessId },
       select: { id: true },
     });
 
-    if (!business) return jsonError("Business not found.", 404);
+    if (!business) {
+      return jsonError("Business not found.", 404);
+    }
 
     const products = await prisma.product.findMany({
       where: { businessId },
@@ -353,7 +415,10 @@ export async function GET(
       include: {
         category: true,
         images: {
-          orderBy: [{ sortOrder: "asc" }, { createdAt: "asc" }],
+          orderBy: [
+            { sortOrder: "asc" },
+            { createdAt: "asc" },
+          ],
         },
       },
     });
@@ -373,13 +438,18 @@ export async function POST(
   { params }: RouteContext,
 ) {
   const auth = await requireAdmin();
+
   if (!auth.authorized) return auth.response;
 
   try {
     const { id: businessId } = await params;
-    if (!businessId) return jsonError("Business ID is required.", 400);
+
+    if (!businessId) {
+      return jsonError("Business ID is required.", 400);
+    }
 
     const bodyResult = await readJsonBody(request);
+
     if (!bodyResult.ok) {
       return bodyResult.reason === "TOO_LARGE"
         ? jsonError("Request body is too large.", 413)
@@ -393,18 +463,35 @@ export async function POST(
     const body = bodyResult.value;
     const name = cleanString(body.name);
 
-    if (!name) return jsonError("Product name is required.", 400);
-    if (name.length > 200) {
-      return jsonError("Product name must not exceed 200 characters.", 400);
+    if (!name) {
+      return jsonError("Product name is required.", 400);
     }
 
-    if (hasOwn(body, "description") && body.description !== null && typeof body.description !== "string") {
-      return jsonError("Product description must be a string or null.", 400);
+    if (name.length > 200) {
+      return jsonError(
+        "Product name must not exceed 200 characters.",
+        400,
+      );
+    }
+
+    if (
+      hasOwn(body, "description") &&
+      body.description !== null &&
+      typeof body.description !== "string"
+    ) {
+      return jsonError(
+        "Product description must be a string or null.",
+        400,
+      );
     }
 
     const description = cleanString(body.description) || null;
+
     if (description && description.length > 2000) {
-      return jsonError("Product description must not exceed 2,000 characters.", 400);
+      return jsonError(
+        "Product description must not exceed 2,000 characters.",
+        400,
+      );
     }
 
     const business = await prisma.business.findUnique({
@@ -417,7 +504,10 @@ export async function POST(
       },
     });
 
-    if (!business) return jsonError("Business not found.", 404);
+    if (!business) {
+      return jsonError("Business not found.", 404);
+    }
+
     if (business.deletedAt) {
       return jsonError(
         "This business has been deleted and cannot receive new products.",
@@ -426,19 +516,34 @@ export async function POST(
     }
 
     let categoryId: string | null = null;
+
     if (hasOwn(body, "categoryId")) {
-      if (body.categoryId !== null && typeof body.categoryId !== "string") {
-        return jsonError("Category ID must be a string or null.", 400);
+      if (
+        body.categoryId !== null &&
+        typeof body.categoryId !== "string"
+      ) {
+        return jsonError(
+          "Category ID must be a string or null.",
+          400,
+        );
       }
 
       categoryId = cleanString(body.categoryId) || null;
+
       if (categoryId) {
         const category = await prisma.category.findFirst({
-          where: { id: categoryId, isActive: true },
+          where: {
+            id: categoryId,
+            isActive: true,
+          },
           select: { id: true },
         });
+
         if (!category) {
-          return jsonError("Selected category was not found or is inactive.", 400);
+          return jsonError(
+            "Selected category was not found or is inactive.",
+            400,
+          );
         }
       }
     }
@@ -448,65 +553,113 @@ export async function POST(
     const parsedPriceMax = parseOptionalInt(body.priceMax);
 
     if (!parsedPrice.valid) {
-      return jsonError("Price must be a whole number between 0 and 2,147,483,647.", 400);
+      return jsonError(
+        "Price must be a whole number between 0 and 2,147,483,647.",
+        400,
+      );
     }
+
     if (!parsedPriceMin.valid) {
-      return jsonError("Minimum price must be a whole number between 0 and 2,147,483,647.", 400);
+      return jsonError(
+        "Minimum price must be a whole number between 0 and 2,147,483,647.",
+        400,
+      );
     }
+
     if (!parsedPriceMax.valid) {
-      return jsonError("Maximum price must be a whole number between 0 and 2,147,483,647.", 400);
+      return jsonError(
+        "Maximum price must be a whole number between 0 and 2,147,483,647.",
+        400,
+      );
     }
 
     const price = parsedPrice.value;
     const priceMin = parsedPriceMin.value;
     const priceMax = parsedPriceMax.value;
 
-    const pricingError = validateProductPricing(price, priceMin, priceMax);
-    if (pricingError) return jsonError(pricingError, 400);
+    const pricingError = validateProductPricing(
+      price,
+      priceMin,
+      priceMax,
+    );
+
+    if (pricingError) {
+      return jsonError(pricingError, 400);
+    }
 
     let availability: ProductAvailability = Availability.ASK_SELLER;
+
     if (hasOwn(body, "availability")) {
       if (!isAvailability(body.availability)) {
-        return jsonError("Invalid product availability value.", 400);
+        return jsonError(
+          "Invalid product availability value.",
+          400,
+        );
       }
+
       availability = body.availability;
     }
 
     let status: ProductStatus = BusinessStatus.ACTIVE;
+
     if (hasOwn(body, "status")) {
       if (!isProductStatus(body.status)) {
         return jsonError("Invalid product status.", 400);
       }
+
       status = body.status;
     }
 
     let keywords: string[] = [];
+
     if (hasOwn(body, "keywords")) {
       const parsedKeywords = parseKeywords(body.keywords);
+
       if (!parsedKeywords.valid) {
         return jsonError(
           "Keywords must be an array of up to 30 strings. Each keyword may contain up to 80 characters, with 1,500 characters combined.",
           400,
         );
       }
+
       keywords = parsedKeywords.value;
     }
 
     let images: ProductImageInput[] = [];
+
     if (hasOwn(body, "images")) {
       const parsedImages = parseImages(body.images);
+
       if (!parsedImages.valid) {
         return jsonError(
           "Images must be an array of up to 20 valid HTTP or HTTPS image URLs.",
           400,
         );
       }
+
       images = parsedImages.value;
-    } else if (hasOwn(body, "imageUrl") && body.imageUrl !== null && body.imageUrl !== "") {
-      if (typeof body.imageUrl !== "string" || !isSafeImageUrl(body.imageUrl.trim())) {
-        return jsonError("Image URL must be a valid HTTP or HTTPS URL.", 400);
+    } else if (
+      hasOwn(body, "imageUrl") &&
+      body.imageUrl !== null &&
+      body.imageUrl !== ""
+    ) {
+      if (
+        typeof body.imageUrl !== "string" ||
+        !isSafeImageUrl(body.imageUrl.trim())
+      ) {
+        return jsonError(
+          "Image URL must be a valid HTTP or HTTPS URL.",
+          400,
+        );
       }
-      images = [{ url: body.imageUrl.trim(), publicId: null, sortOrder: 0 }];
+
+      images = [
+        {
+          url: body.imageUrl.trim(),
+          publicId: null,
+          sortOrder: 0,
+        },
+      ];
     }
 
     const imageUrl = images[0]?.url ?? null;
@@ -526,6 +679,22 @@ export async function POST(
       status,
     });
 
+    // Referral qualification is attempted after the product is created.
+    // It does not invalidate a successful product creation if qualification fails.
+    if (created.business.ownerId) {
+      try {
+        await qualifyReferralForUser(
+          created.business.ownerId,
+          Role.SELLER,
+        );
+      } catch (error) {
+        console.error(
+          "Admin-created product referral qualification error:",
+          error,
+        );
+      }
+    }
+
     await notifyProductOwner({
       ownerId: created.business.ownerId,
       productId: created.id,
@@ -536,7 +705,10 @@ export async function POST(
 
     return NextResponse.json(
       { product: created },
-      { status: 201, headers: jsonHeaders() },
+      {
+        status: 201,
+        headers: jsonHeaders(),
+      },
     );
   } catch (error) {
     if (error instanceof ProductCapacityError) {
@@ -546,13 +718,22 @@ export async function POST(
           code: "ACTIVE_PRODUCT_LIMIT",
           activeProductCount: error.activeCount,
           maxActiveProducts: error.maximum,
-          availableSlots: Math.max(0, error.maximum - error.activeCount),
+          availableSlots: Math.max(
+            0,
+            error.maximum - error.activeCount,
+          ),
         },
-        { status: 409, headers: jsonHeaders() },
+        {
+          status: 409,
+          headers: jsonHeaders(),
+        },
       );
     }
 
-    if (error instanceof Error && error.message === "BUSINESS_DELETED") {
+    if (
+      error instanceof Error &&
+      error.message === "BUSINESS_DELETED"
+    ) {
       return jsonError(
         "This business has been deleted and cannot receive new products.",
         409,
@@ -567,6 +748,7 @@ export async function POST(
     }
 
     console.error("Admin products POST error:", error);
+
     return jsonError("Unable to create product.", 500);
   }
 }
@@ -587,7 +769,11 @@ async function createProductWithCapacityRetry(input: {
 }) {
   const maximumAttempts = 3;
 
-  for (let attempt = 1; attempt <= maximumAttempts; attempt += 1) {
+  for (
+    let attempt = 1;
+    attempt <= maximumAttempts;
+    attempt += 1
+  ) {
     try {
       return await prisma.$transaction(
         async (tx) => {
@@ -604,6 +790,7 @@ async function createProductWithCapacityRetry(input: {
           if (!business) {
             throw new Error("BUSINESS_NOT_FOUND");
           }
+
           if (business.deletedAt) {
             throw new Error("BUSINESS_DELETED");
           }
@@ -618,7 +805,10 @@ async function createProductWithCapacityRetry(input: {
             });
 
             const referralBonusSlots = business.ownerId
-              ? await getGrantedProductSlotBonus(business.ownerId, tx)
+              ? await getGrantedProductSlotBonus(
+                  business.ownerId,
+                  tx,
+                )
               : 0;
 
             const maximum =
@@ -626,7 +816,10 @@ async function createProductWithCapacityRetry(input: {
               Math.max(0, Number(referralBonusSlots) || 0);
 
             if (activeCount >= maximum) {
-              throw new ProductCapacityError(activeCount, maximum);
+              throw new ProductCapacityError(
+                activeCount,
+                maximum,
+              );
             }
           }
 
@@ -658,20 +851,34 @@ async function createProductWithCapacityRetry(input: {
             include: {
               category: true,
               images: {
-                orderBy: [{ sortOrder: "asc" }, { createdAt: "asc" }],
+                orderBy: [
+                  { sortOrder: "asc" },
+                  { createdAt: "asc" },
+                ],
               },
               business: {
-                select: { id: true, name: true, ownerId: true },
+                select: {
+                  id: true,
+                  name: true,
+                  ownerId: true,
+                },
               },
             },
           });
         },
-        { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+        {
+          isolationLevel:
+            Prisma.TransactionIsolationLevel.Serializable,
+        },
       );
     } catch (error) {
-      if (isPrismaErrorCode(error, "P2034") && attempt < maximumAttempts) {
+      if (
+        isPrismaErrorCode(error, "P2034") &&
+        attempt < maximumAttempts
+      ) {
         continue;
       }
+
       throw error;
     }
   }

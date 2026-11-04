@@ -1,94 +1,42 @@
 "use client";
+
 import {
   type FormEvent,
-  type MouseEvent,
   useEffect,
-  useMemo,
   useRef,
   useState,
-  useSyncExternalStore,
 } from "react";
-import {useRouter} from "next/navigation";
+import { useRouter } from "next/navigation";
 import { getSession, signOut } from "next-auth/react";
+import Link from "next/link";
 import {
   Home,
   ShoppingBag,
-  ClipboardList,
-  Heart,
-  Search,
+  Wrench,
   UserCircle,
+  Search,
   ArrowRight,
-  ChevronLeft,
-  ChevronRight,
-  Navigation,
-  MoreHorizontal,
   Package,
-  MapPin,
-  Bookmark,
-  Store,
   Loader2,
   LogOut,
   Share2,
+  Store,
+  Sparkles,
 } from "lucide-react";
-import Link from "next/link";
+
 import NotificationBell from "@/components/NotificationBell";
-import {
-  getSavedBusinesses,
-  saveBusiness,
-  removeSavedBusiness,
-  SAVED_BUSINESSES_CHANGED_EVENT,
-} from "@/lib/saved";
-import {
-  DEFAULT_CATEGORIES,
-  mergeCategories,
-  type ReMarketCategory,
-} from "@/lib/categories";
-type FeaturedBusiness = {
-  id: string;
-  name: string;
-  ownerName?: string | null;
-  description?: string | null;
-  imageUrl?: string | null;
-  area: string;
-  availability:
-  | "AVAILABLE"
-  | "ASK_SELLER"
-  | "UNAVAILABLE";
-  verification:
-  | "VERIFIED"
-  | "UNVERIFIED";
-  category: string;
-  categories: string[];
-  productCount: number;
-  products: {
-    id: string;
-    name: string;
-    description: string | null;
-    price: number | null;
-    priceMin: number | null;
-    priceMax: number | null;
-    availability:
-    | "AVAILABLE"
-    | "ASK_SELLER"
-    | "UNAVAILABLE";
-    imageUrl: string | null;
-  }[];
-  socialLinks: {
-    platform: string;
-    handle: string;
-  }[];
+
+type AccountRole = "ADMIN" | "BUYER" | "SELLER";
+
+type HomepageAccount = {
+  id: string | null;
+  name: string | null;
+  email: string | null;
+  role: AccountRole | null;
 };
-type NearbyBusiness = {
-  id: string;
-  name: string;
-  area: string | null;
-  distanceKm: number | null;
-  category: string | null;
-  productCount: number | null;
-  verified: boolean;
-  availability?: string;
-  imageUrl?: string | null;
-};
+
+type DiscoveryMode = "ALL" | "PRODUCTS" | "SERVICES";
+
 type RecentProduct = {
   id: string;
   name: string;
@@ -98,70 +46,246 @@ type RecentProduct = {
   priceMax: number | null;
   availability: "AVAILABLE" | "ASK_SELLER" | "UNAVAILABLE";
   imageUrl: string | null;
-  createdAt: string;
-  category: { id: string; name: string } | null;
-  business: {
-    id: string;
-    name: string;
-    availability: "AVAILABLE" | "ASK_SELLER" | "UNAVAILABLE";
-    verification: "VERIFIED" | "UNVERIFIED";
-    location: { area: string; street: string | null } | null;
-  };
+  category: string | null;
+  businessName: string | null;
 };
+
+type RecentService = {
+  id: string;
+  name: string;
+  description: string | null;
+  price: number | null;
+  priceMin: number | null;
+  priceMax: number | null;
+  imageUrl: string | null;
+  category: string | null;
+  businessName: string | null;
+};
+
+type JsonResult = Record<string, unknown> | null;
+
+const PRODUCT_FEED_URL =
+  "/api/recent-products?page=1&pageSize=8";
+
 /*
- * -----------------------------------------
- * DISTANCE PRESENTATION
- * -----------------------------------------
+ * The service feed is expected to return:
  *
- * The Near Me API uses Haversine distance
- * for first-stage nearby filtering.
+ * {
+ *   services: [
+ *     {
+ *       id, name, description, price, priceMin, priceMax,
+ *       imageUrl, category, business
+ *     }
+ *   ]
+ * }
  *
- * This formatter keeps that distinction clear
- * and presents the value in a user-friendly way.
- *
- * It does NOT describe the value as driving
- * distance.
+ * If this endpoint has not been implemented yet, the homepage
+ * will display the service empty state instead of fake listings.
  */
-function getDistanceLabel(
-  distanceKm: number | null
-): string | null {
+const SERVICE_FEED_URL =
+  "/api/recent-services?page=1&pageSize=8";
+
+const MAX_HOME_PRODUCTS = 8;
+const MAX_HOME_SERVICES = 8;
+
+function isRecord(
+  value: unknown,
+): value is Record<string, unknown> {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    !Array.isArray(value)
+  );
+}
+
+function cleanString(value: unknown): string | null {
+  if (typeof value !== "string") {
+    return null;
+  }
+
+  const cleaned = value.trim();
+  return cleaned || null;
+}
+
+function parseOptionalNumber(value: unknown): number | null {
   if (
-    typeof distanceKm !== "number" ||
-    !Number.isFinite(distanceKm) ||
-    distanceKm < 0
+    typeof value !== "number" ||
+    !Number.isFinite(value)
   ) {
     return null;
   }
-  if (distanceKm < 1) {
-    const distanceMetres =
-      Math.round(
-        distanceKm * 1000
-      );
-    if (distanceMetres < 1) {
-      return "Less than 1 m away";
-    }
-    return `${distanceMetres.toLocaleString()} m away`;
-  }
-  if (distanceKm < 10) {
-    return `${distanceKm.toFixed(1)} km away`;
-  }
-  return `${Math.round(
-    distanceKm
-  ).toLocaleString()} km away`;
+
+  return value;
 }
 
-function formatRecentProductPrice(product: RecentProduct): string {
-  const formatNaira = (amount: number) =>
-    `₦${amount.toLocaleString("en-NG")}`;
+function parseAvailability(
+  value: unknown,
+): RecentProduct["availability"] {
+  if (
+    value === "AVAILABLE" ||
+    value === "UNAVAILABLE" ||
+    value === "ASK_SELLER"
+  ) {
+    return value;
+  }
 
+  return "ASK_SELLER";
+}
+
+function parseCategoryName(value: unknown): string | null {
+  if (typeof value === "string") {
+    return cleanString(value);
+  }
+
+  if (isRecord(value)) {
+    return cleanString(value.name);
+  }
+
+  return null;
+}
+
+function parseRecentProduct(
+  value: unknown,
+): RecentProduct | null {
+  if (!isRecord(value)) {
+    return null;
+  }
+
+  if (
+    typeof value.id !== "string" ||
+    typeof value.name !== "string"
+  ) {
+    return null;
+  }
+
+  const business = isRecord(value.business)
+    ? value.business
+    : null;
+
+  return {
+    id: value.id,
+    name: value.name,
+    description: cleanString(value.description),
+    price: parseOptionalNumber(value.price),
+    priceMin: parseOptionalNumber(value.priceMin),
+    priceMax: parseOptionalNumber(value.priceMax),
+    availability: parseAvailability(value.availability),
+    imageUrl: cleanString(value.imageUrl),
+    category: parseCategoryName(value.category),
+    businessName: business
+      ? cleanString(business.name)
+      : null,
+  };
+}
+
+function parseRecentService(
+  value: unknown,
+): RecentService | null {
+  if (!isRecord(value)) {
+    return null;
+  }
+
+  const id =
+    typeof value.id === "string"
+      ? value.id
+      : null;
+
+  const name =
+    cleanString(value.name) ??
+    cleanString(value.title);
+
+  if (!id || !name) {
+    return null;
+  }
+
+  const business = isRecord(value.business)
+    ? value.business
+    : null;
+
+  return {
+    id,
+    name,
+    description: cleanString(value.description),
+    price: parseOptionalNumber(value.price),
+    priceMin: parseOptionalNumber(value.priceMin),
+    priceMax: parseOptionalNumber(value.priceMax),
+    imageUrl:
+      cleanString(value.imageUrl) ??
+      cleanString(value.coverImage),
+    category: parseCategoryName(value.category),
+    businessName: business
+      ? cleanString(business.name)
+      : null,
+  };
+}
+
+async function fetchHomepageJson(
+  url: string,
+  signal: AbortSignal,
+  label: string,
+): Promise<JsonResult> {
+  try {
+    const response = await fetch(url, {
+      cache: "no-store",
+      signal,
+    });
+
+    // A missing service endpoint should not break the homepage.
+    if (response.status === 404) {
+      return null;
+    }
+
+    if (!response.ok) {
+      throw new Error(
+        `${label} returned HTTP ${response.status}.`,
+      );
+    }
+
+    const data: unknown = await response.json();
+
+    return isRecord(data) ? data : null;
+  } catch (error) {
+    if (!signal.aborted) {
+      console.error(`Failed to load ${label}:`, error);
+    }
+
+    return null;
+  }
+}
+
+function parseAccountRole(
+  value: unknown,
+): AccountRole | null {
+  if (
+    value === "ADMIN" ||
+    value === "BUYER" ||
+    value === "SELLER"
+  ) {
+    return value;
+  }
+
+  return null;
+}
+
+function formatNaira(amount: number): string {
+  return `₦${amount.toLocaleString("en-NG")}`;
+}
+
+function formatProductPrice(
+  product: RecentProduct,
+): string {
   if (product.price !== null) {
     return formatNaira(product.price);
   }
 
-  if (product.priceMin !== null && product.priceMax !== null) {
+  if (
+    product.priceMin !== null &&
+    product.priceMax !== null
+  ) {
     if (product.priceMin === product.priceMax) {
       return formatNaira(product.priceMin);
     }
+
     return `${formatNaira(product.priceMin)} – ${formatNaira(product.priceMax)}`;
   }
 
@@ -175,237 +299,164 @@ function formatRecentProductPrice(product: RecentProduct): string {
 
   return "Price unavailable";
 }
-const NAV_ITEMS = [
-  {
-    label: "Home",
-    href: "/",
-    icon: Home,
-  },
-  {
-    label: "Shop",
-    href: "/shop",
-    icon: ShoppingBag,
-  },
-  {
-    label: "Requests",
-    href: "/my-requests",
-    icon: ClipboardList,
-  },
-  {
-    label: "Saved",
-    href: "/saved",
-    icon: Heart,
-  },
-];
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
 
-async function fetchHomepageJson<T>(
-  url: string,
-  signal: AbortSignal,
-  label: string,
-): Promise<T | null> {
-  try {
-    const response = await fetch(url, {
-      cache: "no-store",
-      signal,
-    });
-
-    if (!response.ok) {
-      throw new Error(`${label} returned HTTP ${response.status}.`);
-    }
-
-    return (await response.json()) as T;
-  } catch (error) {
-    if (!signal.aborted) {
-      console.error(`Failed to load ${label}:`, error);
-    }
-    return null;
-  }
-}
-
-function parseNearbyBusiness(value: unknown): NearbyBusiness | null {
-  if (!isRecord(value)) return null;
-  if (typeof value.id !== "string" || typeof value.name !== "string") {
-    return null;
+function formatServicePrice(
+  service: RecentService,
+): string {
+  if (service.price !== null) {
+    return formatNaira(service.price);
   }
 
-  let category: string | null =
-    typeof value.category === "string" ? value.category : null;
-
-  // The current Near Me API returns categories as nested records.
-  // Normalise the first available category for the homepage card.
-  if (!category && Array.isArray(value.categories)) {
-    for (const item of value.categories) {
-      if (!isRecord(item) || !isRecord(item.category)) continue;
-      if (typeof item.category.name === "string") {
-        category = item.category.name;
-        break;
-      }
-    }
-  }
-
-  return {
-    id: value.id,
-    name: value.name,
-    area: typeof value.area === "string" ? value.area : null,
-    distanceKm: typeof value.distanceKm === "number" && Number.isFinite(value.distanceKm)
-      ? value.distanceKm
-      : null,
-    category,
-    // The existing Near Me endpoint does not return a total product count.
-    // Keep it unknown rather than presenting the one-product preview as a total.
-    productCount: typeof value.productCount === "number" ? value.productCount : null,
-    verified: value.verified === true,
-    availability: typeof value.availability === "string" ? value.availability : undefined,
-    imageUrl: typeof value.imageUrl === "string" ? value.imageUrl : null,
-  };
-}
-
-type HomepageAccountRole = "ADMIN" | "BUYER" | "SELLER";
-
-type HomepageAccount = {
-  id: string | null;
-  name: string | null;
-  email: string | null;
-  role: HomepageAccountRole | null;
-};
-
-function parseHomepageAccountRole(
-  value: unknown
-): HomepageAccountRole | null {
-  if (value === "ADMIN" || value === "BUYER" || value === "SELLER") {
-    return value;
-  }
-
-  return null;
-}
-
-/*
- * -----------------------------------------
- * SAVED BUSINESS STORE
- * -----------------------------------------
- *
- * The snapshot is represented as a stable
- * primitive string so useSyncExternalStore
- * can safely detect changes.
- */
-function getSavedBusinessIdsSnapshot(): string {
   if (
-    typeof window === "undefined"
+    service.priceMin !== null &&
+    service.priceMax !== null
   ) {
-    return "";
-  }
-  const saved =
-    getSavedBusinesses();
-  return saved
-    .map(
-      (business) =>
-        business.id
-    )
-    .sort()
-    .join("|");
-}
-function subscribeSavedBusinesses(
-  onStoreChange: () => void
-) {
-  window.addEventListener(
-    SAVED_BUSINESSES_CHANGED_EVENT,
-    onStoreChange
-  );
-  window.addEventListener(
-    "storage",
-    onStoreChange
-  );
-  return () => {
-    window.removeEventListener(
-      SAVED_BUSINESSES_CHANGED_EVENT,
-      onStoreChange
-    );
-    window.removeEventListener(
-      "storage",
-      onStoreChange
-    );
-  };
-}
-export default function HomePage() {
-  const [shareFeedback, setShareFeedback] = useState("");
-  const [q, setQ] =
-    useState("");
-  const [
-    categories,
-    setCategories,
-  ] =
-    useState<ReMarketCategory[]>(
-      DEFAULT_CATEGORIES
-    );
-  const [
-    featuredBusinesses,
-    setFeaturedBusinesses,
-  ] =
-    useState<FeaturedBusiness[]>(
-      []
-    );
-  const [recentProducts, setRecentProducts] =
-    useState<RecentProduct[]>([]);
-  const [recentProductsLoading, setRecentProductsLoading] =
-    useState(true);
-  const [
-    businessLoading,
-    setBusinessLoading,
-  ] =
-    useState(true);
-  const [activeFeaturedIndex, setActiveFeaturedIndex] =
-    useState(0);
-  const [
-    nearbyBusinesses,
-    setNearbyBusiness,
-  ] =
-    useState<NearbyBusiness[]>(
-      []
-    );
-  const [
-    nearbyLoading,
-    setNearbyLoading,
-  ] =
-    useState(false);
-  const [
-    nearbyLocationRequested,
-    setNearbyLocationRequested,
-  ] =
-    useState(false);
-  const [
-    nearbyError,
-    setNearbyError,
-  ] =
-    useState("");
-  const router =
-    useRouter();
+    if (service.priceMin === service.priceMax) {
+      return formatNaira(service.priceMin);
+    }
 
-  /*
-   * -----------------------------------------
-   * ACCOUNT SESSION AND HEADER MENU
-   * -----------------------------------------
-   */
+    return `${formatNaira(service.priceMin)} – ${formatNaira(service.priceMax)}`;
+  }
+
+  if (service.priceMin !== null) {
+    return `From ${formatNaira(service.priceMin)}`;
+  }
+
+  if (service.priceMax !== null) {
+    return `Up to ${formatNaira(service.priceMax)}`;
+  }
+
+  return "Contact for price";
+}
+
+export default function HomePage() {
+  const router = useRouter();
+
+  const [searchQuery, setSearchQuery] = useState("");
+  const [discoveryMode, setDiscoveryMode] =
+    useState<DiscoveryMode>("ALL");
+
+  const [products, setProducts] =
+    useState<RecentProduct[]>([]);
+  const [services, setServices] =
+    useState<RecentService[]>([]);
+
+  const [productsLoading, setProductsLoading] =
+    useState(true);
+  const [servicesLoading, setServicesLoading] =
+    useState(true);
+
+  const [shareFeedback, setShareFeedback] = useState("");
+
   const [currentAccount, setCurrentAccount] =
     useState<HomepageAccount | null>(null);
   const [accountStatusLoading, setAccountStatusLoading] =
     useState(true);
   const [accountSessionError, setAccountSessionError] =
     useState(false);
+
   const [accountMenuOpen, setAccountMenuOpen] =
     useState(false);
-  const [loggingOut, setLoggingOut] =
-    useState(false);
+  const [loggingOut, setLoggingOut] = useState(false);
   const [accountMenuError, setAccountMenuError] =
     useState("");
+
   const accountMenuRef =
     useRef<HTMLDivElement | null>(null);
   const accountRequestVersionRef = useRef(0);
-  const nearbyRequestVersionRef = useRef(0);
-  const nearbyAbortControllerRef = useRef<AbortController | null>(null);
 
+  /*
+   * -----------------------------------------
+   * LOAD PRODUCT AND SERVICE FEEDS
+   * -----------------------------------------
+   *
+   * Products and services load independently.
+   * If one endpoint fails, the other section can
+   * still display its available listings.
+   */
+  useEffect(() => {
+    const controller = new AbortController();
+
+    async function loadHomepageFeeds() {
+      const [productData, serviceData] =
+        await Promise.all([
+          fetchHomepageJson(
+            PRODUCT_FEED_URL,
+            controller.signal,
+            "homepage products",
+          ),
+          fetchHomepageJson(
+            SERVICE_FEED_URL,
+            controller.signal,
+            "homepage services",
+          ),
+        ]);
+
+      if (controller.signal.aborted) {
+        return;
+      }
+
+      const rawProducts = Array.isArray(
+        productData?.products,
+      )
+        ? productData.products
+        : [];
+
+      const parsedProducts = rawProducts
+        .map(parseRecentProduct)
+        .filter(
+          (item): item is RecentProduct =>
+            item !== null,
+        )
+        .slice(0, MAX_HOME_PRODUCTS);
+
+      setProducts(parsedProducts);
+      setProductsLoading(false);
+
+      const rawServices = Array.isArray(
+        serviceData?.services,
+      )
+        ? serviceData.services
+        : [];
+
+      const parsedServices = rawServices
+        .map(parseRecentService)
+        .filter(
+          (item): item is RecentService =>
+            item !== null,
+        )
+        .slice(0, MAX_HOME_SERVICES);
+
+      setServices(parsedServices);
+      setServicesLoading(false);
+    }
+
+    void loadHomepageFeeds().catch((error) => {
+      if (controller.signal.aborted) {
+        return;
+      }
+
+      console.error(
+        "Unexpected homepage loading error:",
+        error,
+      );
+
+      setProducts([]);
+      setServices([]);
+      setProductsLoading(false);
+      setServicesLoading(false);
+    });
+
+    return () => {
+      controller.abort();
+    };
+  }, []);
+
+  /*
+   * -----------------------------------------
+   * ACCOUNT SESSION
+   * -----------------------------------------
+   */
   useEffect(() => {
     let cancelled = false;
 
@@ -418,18 +469,19 @@ export default function HomePage() {
 
         if (
           cancelled ||
-          requestVersion !== accountRequestVersionRef.current
+          requestVersion !==
+            accountRequestVersionRef.current
         ) {
           return;
         }
 
         const rawUser = session?.user as
-          | (Record<string, unknown> & {
+          | {
               id?: unknown;
               name?: unknown;
               email?: unknown;
               role?: unknown;
-            })
+            }
           | undefined;
 
         if (!rawUser) {
@@ -439,16 +491,26 @@ export default function HomePage() {
         }
 
         setCurrentAccount({
-          id: typeof rawUser.id === "string" ? rawUser.id : null,
-          name: typeof rawUser.name === "string" ? rawUser.name : null,
-          email: typeof rawUser.email === "string" ? rawUser.email : null,
-          role: parseHomepageAccountRole(rawUser.role),
+          id:
+            typeof rawUser.id === "string"
+              ? rawUser.id
+              : null,
+          name:
+            typeof rawUser.name === "string"
+              ? rawUser.name
+              : null,
+          email:
+            typeof rawUser.email === "string"
+              ? rawUser.email
+              : null,
+          role: parseAccountRole(rawUser.role),
         });
+
         setAccountSessionError(false);
       } catch (error) {
         console.error(
           "Unable to load homepage account session:",
-          error
+          error,
         );
 
         if (!cancelled) {
@@ -457,7 +519,8 @@ export default function HomePage() {
       } finally {
         if (
           !cancelled &&
-          requestVersion === accountRequestVersionRef.current
+          requestVersion ===
+            accountRequestVersionRef.current
         ) {
           setAccountStatusLoading(false);
         }
@@ -469,23 +532,27 @@ export default function HomePage() {
     }
 
     void refreshAccountSession();
-    window.addEventListener("focus", handleWindowFocus);
+
+    window.addEventListener(
+      "focus",
+      handleWindowFocus,
+    );
 
     return () => {
       cancelled = true;
       accountRequestVersionRef.current += 1;
-      window.removeEventListener("focus", handleWindowFocus);
+
+      window.removeEventListener(
+        "focus",
+        handleWindowFocus,
+      );
     };
   }, []);
 
-  useEffect(() => {
-    return () => {
-      nearbyRequestVersionRef.current += 1;
-      nearbyAbortControllerRef.current?.abort();
-      nearbyAbortControllerRef.current = null;
-    };
-  }, []);
-
+  /*
+   * Close the account menu when the user
+   * clicks outside it or presses Escape.
+   */
   useEffect(() => {
     if (!accountMenuOpen) {
       return;
@@ -509,12 +576,26 @@ export default function HomePage() {
       }
     }
 
-    document.addEventListener("pointerdown", handlePointerDown);
-    document.addEventListener("keydown", handleKeyDown);
+    document.addEventListener(
+      "pointerdown",
+      handlePointerDown,
+    );
+
+    document.addEventListener(
+      "keydown",
+      handleKeyDown,
+    );
 
     return () => {
-      document.removeEventListener("pointerdown", handlePointerDown);
-      document.removeEventListener("keydown", handleKeyDown);
+      document.removeEventListener(
+        "pointerdown",
+        handlePointerDown,
+      );
+
+      document.removeEventListener(
+        "keydown",
+        handleKeyDown,
+      );
     };
   }, [accountMenuOpen]);
 
@@ -525,6 +606,84 @@ export default function HomePage() {
         ? "/admin"
         : "/profile";
 
+  /*
+   * -----------------------------------------
+   * SEARCH
+   * -----------------------------------------
+   */
+  function handleSearch(
+    event: FormEvent<HTMLFormElement>,
+  ) {
+    event.preventDefault();
+
+    const query = searchQuery.trim();
+
+    if (!query) {
+      return;
+    }
+
+    const params = new URLSearchParams({
+      q: query,
+    });
+
+    if (discoveryMode === "PRODUCTS") {
+      params.set("type", "product");
+    } else if (discoveryMode === "SERVICES") {
+      params.set("type", "service");
+    }
+
+    router.push(`/search?${params.toString()}`);
+  }
+
+  function renderSearchForm(
+    variant: "desktop" | "mobile",
+  ) {
+    return (
+      <form
+        onSubmit={handleSearch}
+        role="search"
+        className={`flex h-12 items-center rounded-full border border-[#EAE6DF] bg-[#FCFAF6] p-1.5 transition focus-within:border-[#FF9A81] focus-within:bg-white focus-within:ring-2 focus-within:ring-[#FF5A36]/10 ${
+          variant === "desktop"
+            ? "w-full max-w-[590px]"
+            : "w-full"
+        }`}
+      >
+        <Search
+          className="ml-3 h-5 w-5 shrink-0 text-[#81766C]"
+          aria-hidden="true"
+        />
+
+        <input
+          type="search"
+          value={searchQuery}
+          onChange={(event) =>
+            setSearchQuery(event.target.value)
+          }
+          placeholder="Search for products or services..."
+          aria-label="Search for products or services"
+          autoComplete="off"
+          className="min-w-0 flex-1 bg-transparent px-3 text-sm text-[#17202A] outline-none placeholder:text-[#91877E]"
+        />
+
+        <button
+          type="submit"
+          aria-label="Search ReMarket"
+          className="flex h-9 w-10 shrink-0 items-center justify-center rounded-full bg-[#FF5A36] text-white transition hover:bg-[#E94A28] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#FF5A36] focus-visible:ring-offset-2"
+        >
+          <Search
+            className="h-4 w-4"
+            aria-hidden="true"
+          />
+        </button>
+      </form>
+    );
+  }
+
+  /*
+   * -----------------------------------------
+   * ACCOUNT ACTIONS
+   * -----------------------------------------
+   */
   async function handleAccountLogout() {
     if (loggingOut) {
       return;
@@ -542,12 +701,17 @@ export default function HomePage() {
       setCurrentAccount(null);
       setAccountSessionError(false);
       setAccountMenuOpen(false);
+
       router.replace("/");
       router.refresh();
     } catch (error) {
-      console.error("Homepage logout failed:", error);
+      console.error(
+        "Homepage logout failed:",
+        error,
+      );
+
       setAccountMenuError(
-        "We couldn't log you out. Please try again."
+        "We couldn't log you out. Please try again.",
       );
     } finally {
       setLoggingOut(false);
@@ -556,368 +720,113 @@ export default function HomePage() {
 
   /*
    * -----------------------------------------
-   * SAVED BUSINESSES
+   * SHARE REMARKET
    * -----------------------------------------
-   */
-  const savedBusinessIdsSnapshot =
-    useSyncExternalStore(
-      subscribeSavedBusinesses,
-      getSavedBusinessIdsSnapshot,
-      () => ""
-    );
-  const savedBusinessIds =
-    useMemo(
-      () =>
-        new Set(
-          savedBusinessIdsSnapshot
-            ? savedBusinessIdsSnapshot.split(
-              "|"
-            )
-            : []
-        ),
-      [savedBusinessIdsSnapshot]
-    );
-  /*
-   * -----------------------------------------
-   * CATEGORY VISUAL
-   * -----------------------------------------
-   */
-  function getCategoryVisual(
-    name: string
-  ) {
-    const category =
-      categories.find(
-        (item) =>
-          item.name
-            .trim()
-            .toLowerCase() ===
-          name
-            .trim()
-            .toLowerCase()
-      );
-    if (!category) {
-      return {
-        bg: "#EEF1F4",
-        icon: (
-          <MoreHorizontal className="h-6 w-6" />
-        ),
-      };
-    }
-    const Icon =
-      category.icon;
-    return {
-      bg: category.bg,
-      icon: (
-        <Icon className="h-6 w-6" />
-      ),
-    };
-  }
-  /*
-   * -----------------------------------------
-   * LOAD HOMEPAGE DATA
-   * -----------------------------------------
-   * Each public feed fails independently. A categories
-   * response error must not prevent products or featured
-   * businesses from loading.
-   */
-  useEffect(() => {
-    const controller = new AbortController();
-
-    async function loadHomeData() {
-      const [categoryData, featuredData, recentProductsData] = await Promise.all([
-        fetchHomepageJson<{ categories?: unknown }>(
-          "/api/categories",
-          controller.signal,
-          "homepage categories",
-        ),
-        fetchHomepageJson<{ businesses?: unknown }>(
-          "/api/featured",
-          controller.signal,
-          "featured businesses",
-        ),
-        fetchHomepageJson<{ products?: unknown }>(
-          "/api/recent-products?page=1&pageSize=8",
-          controller.signal,
-          "recently added products",
-        ),
-      ]);
-
-      if (controller.signal.aborted) return;
-
-      if (Array.isArray(categoryData?.categories)) {
-        const mergedCategories = mergeCategories(categoryData.categories as Parameters<typeof mergeCategories>[0]);
-        if (mergedCategories.length > 0) {
-          setCategories(mergedCategories);
-        }
-      }
-
-      setFeaturedBusinesses(
-        Array.isArray(featuredData?.businesses)
-          ? (featuredData.businesses as FeaturedBusiness[]).slice(0, 5)
-          : [],
-      );
-
-      setRecentProducts(
-        Array.isArray(recentProductsData?.products)
-          ? (recentProductsData.products as RecentProduct[]).slice(0, 8)
-          : [],
-      );
-
-      setBusinessLoading(false);
-      setRecentProductsLoading(false);
-    }
-
-    void loadHomeData().catch((error) => {
-      if (!controller.signal.aborted) {
-        console.error("Unexpected homepage data loading error:", error);
-        setFeaturedBusinesses([]);
-        setRecentProducts([]);
-        setBusinessLoading(false);
-        setRecentProductsLoading(false);
-      }
-    });
-
-    return () => controller.abort();
-  }, []);
-  /*
-   * Keep the selected spotlight index valid when
-   * the featured business list changes.
-   * Buyers control the spotlight with the arrows/dots.
-   */
-  useEffect(() => {
-    if (featuredBusinesses.length === 0 || activeFeaturedIndex >= featuredBusinesses.length) {
-      setActiveFeaturedIndex(0);
-    }
-  }, [featuredBusinesses.length, activeFeaturedIndex]);
-  /*
-   * -----------------------------------------
-   * CATEGORY
-   * -----------------------------------------
-   */
-  function handleCategory(
-    category: string
-  ) {
-    router.push(
-      `/shop?category=${encodeURIComponent(
-        category
-      )}`
-    );
-  }
-  /*
-   * -----------------------------------------
-   * SAVE / UNSAVE BUSINESS
-   * -----------------------------------------
-   */
-  function handleSaveBusiness(
-    event: MouseEvent<HTMLButtonElement>,
-    business: FeaturedBusiness,
-    category: string,
-    location: string
-  ) {
-    event.preventDefault();
-    event.stopPropagation();
-    const alreadySaved =
-      savedBusinessIds.has(
-        business.id
-      );
-    if (alreadySaved) {
-      removeSavedBusiness(
-        business.id
-      );
-      return;
-    }
-    saveBusiness({
-      id: business.id,
-      name: business.name,
-      area: location,
-      category,
-      verified:
-        business.verification ===
-        "VERIFIED",
-      availability:
-        business.availability,
-      imageUrl:
-        business.imageUrl ??
-        null,
-    });
-  }
-  /*
-   * -----------------------------------------
-   * FIND NEARBY BUSINESSES
-   * -----------------------------------------
-   * Location is requested only after the buyer presses
-   * the button. Earlier requests are aborted/ignored so
-   * an older GPS result cannot overwrite a newer search.
-   */
-  const loadNearbyBusinesses = () => {
-    const requestVersion = ++nearbyRequestVersionRef.current;
-    nearbyAbortControllerRef.current?.abort();
-    nearbyAbortControllerRef.current = null;
-
-    if (!navigator.geolocation) {
-      setNearbyLocationRequested(true);
-      setNearbyLoading(false);
-      setNearbyBusiness([]);
-      setNearbyError("Location is not supported by this browser. You can still browse businesses by area.");
-      return;
-    }
-
-    setNearbyLocationRequested(true);
-    setNearbyLoading(true);
-    setNearbyError("");
-    setNearbyBusiness([]);
-
-    navigator.geolocation.getCurrentPosition(
-      async (position) => {
-        if (requestVersion !== nearbyRequestVersionRef.current) return;
-
-        const controller = new AbortController();
-        nearbyAbortControllerRef.current = controller;
-
-        try {
-          const { latitude, longitude } = position.coords;
-          const params = new URLSearchParams({
-            lat: String(latitude),
-            lng: String(longitude),
-            page: "1",
-            pageSize: "4",
-          });
-          const response = await fetch(`/api/near-me?${params.toString()}`, {
-            cache: "no-store",
-            signal: controller.signal,
-          });
-
-          if (!response.ok) {
-            throw new Error(`Nearby businesses returned HTTP ${response.status}.`);
-          }
-
-          const data: unknown = await response.json();
-          if (requestVersion !== nearbyRequestVersionRef.current || controller.signal.aborted) return;
-
-          const rawBusinesses = isRecord(data) ? data.businesses : null;
-          const businesses = Array.isArray(rawBusinesses)
-            ? rawBusinesses
-                .map(parseNearbyBusiness)
-                .filter((business): business is NearbyBusiness => business !== null)
-                .slice(0, 4)
-            : [];
-
-          setNearbyBusiness(businesses);
-          setNearbyError("");
-        } catch (error) {
-          if (controller.signal.aborted || requestVersion !== nearbyRequestVersionRef.current) return;
-
-          console.error("Failed to load nearby businesses:", error);
-          setNearbyBusiness([]);
-          setNearbyError("We couldn't load nearby sellers right now. Please try again or browse by area.");
-        } finally {
-          if (requestVersion === nearbyRequestVersionRef.current) {
-            setNearbyLoading(false);
-            nearbyAbortControllerRef.current = null;
-          }
-        }
-      },
-      (error) => {
-        if (requestVersion !== nearbyRequestVersionRef.current) return;
-
-        console.warn("Geolocation request did not complete:", error.message);
-        setNearbyBusiness([]);
-        setNearbyError(
-          error.code === error.PERMISSION_DENIED
-            ? "Location access was not allowed. You can enable it in your browser settings or browse businesses by area."
-            : error.code === error.POSITION_UNAVAILABLE
-              ? "Your current location is unavailable. Please try again or browse by area."
-              : "We couldn't get your location in time. Please try again or browse by area."
-        );
-        setNearbyLoading(false);
-      },
-      {
-        enableHighAccuracy: false,
-        timeout: 15000,
-        maximumAge: 300000,
-      }
-    );
-  };
-  /*
-   * -----------------------------------------
-   * SEARCH
-   * -----------------------------------------
-   */
-  const submit = (
-    event: FormEvent<HTMLFormElement>
-  ) => {
-    event.preventDefault();
-    const query =
-      q.trim();
-    if (!query) {
-      return;
-    }
-    router.push(
-      `/search?q=${encodeURIComponent(
-        query
-      )}`
-    );
-  };
-
-  /*
-   * Share the public ReMarket website.
-   * This is a basic share action, not a tracked referral programme.
    */
   async function handleShareReMarket() {
     const shareUrl = "https://remarket.com.ng";
+
     const shareData = {
       title: "ReMarket — Find it nearby",
-      text: "Discover products and local businesses around you on ReMarket.",
+      text: "Discover products and services around you on ReMarket.",
       url: shareUrl,
     };
 
     setShareFeedback("");
 
-    if (typeof navigator !== "undefined" && typeof navigator.share === "function") {
+    if (
+      typeof navigator !== "undefined" &&
+      typeof navigator.share === "function"
+    ) {
       try {
         await navigator.share(shareData);
-        setShareFeedback("Thanks for sharing ReMarket.");
+
+        setShareFeedback(
+          "Thanks for sharing ReMarket.",
+        );
+
         return;
       } catch (error) {
-        if (error instanceof Error && error.name === "AbortError") {
+        if (
+          error instanceof Error &&
+          error.name === "AbortError"
+        ) {
           return;
         }
       }
     }
 
     try {
-      if (typeof navigator !== "undefined" && navigator.clipboard?.writeText) {
-        await navigator.clipboard.writeText(shareUrl);
-        setShareFeedback("ReMarket link copied. Share it with someone.");
+      if (
+        typeof navigator !== "undefined" &&
+        navigator.clipboard?.writeText
+      ) {
+        await navigator.clipboard.writeText(
+          shareUrl,
+        );
+
+        setShareFeedback(
+          "ReMarket link copied. Share it with someone.",
+        );
+
         return;
       }
     } catch (error) {
-      console.error("Unable to copy the ReMarket link:", error);
+      console.error(
+        "Unable to copy the ReMarket link:",
+        error,
+      );
     }
 
-    setShareFeedback(`Copy this website address to share: ${shareUrl}`);
+    setShareFeedback(
+      `Copy this website address to share: ${shareUrl}`,
+    );
   }
 
+  /*
+   * -----------------------------------------
+   * ACCOUNT MENU
+   * -----------------------------------------
+   */
   const accountMenu = (
-    <div ref={accountMenuRef} className="relative shrink-0">
+    <div
+      ref={accountMenuRef}
+      className="relative shrink-0"
+    >
       <button
         type="button"
         onClick={() => {
           setAccountMenuError("");
           setAccountMenuOpen((open) => !open);
         }}
-        aria-label={currentAccount ? "Open account menu" : "Login or create an account"}
+        aria-label={
+          currentAccount
+            ? "Open account menu"
+            : "Login or create an account"
+        }
         aria-expanded={accountMenuOpen}
         aria-haspopup="menu"
-        title={currentAccount ? "My account" : "Login or create an account"}
-        className={`flex h-9 w-9 items-center justify-center rounded-full transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#FF5A36] focus-visible:ring-offset-2 ${
-          currentAccount ? "bg-[#FFE0D6] text-[#9F2D18]" : "bg-gray-100 text-gray-700 hover:bg-[#FFF0D9]"
+        title={
+          currentAccount
+            ? "My account"
+            : "Login or create an account"
+        }
+        className={`flex h-10 w-10 items-center justify-center rounded-full transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#FF5A36] focus-visible:ring-offset-2 ${
+          currentAccount
+            ? "bg-[#FFE0D6] text-[#9F2D18]"
+            : "bg-[#FCFAF6] text-[#5F554D] hover:bg-[#FFF0D9]"
         }`}
       >
         {currentAccount?.role === "SELLER" ? (
-          <Store className="h-5 w-5" aria-hidden="true" />
+          <Store
+            className="h-5 w-5"
+            aria-hidden="true"
+          />
         ) : (
-          <UserCircle className="h-6 w-6" aria-hidden="true" />
+          <UserCircle
+            className="h-6 w-6"
+            aria-hidden="true"
+          />
         )}
       </button>
 
@@ -925,24 +834,35 @@ export default function HomePage() {
         <div
           role="menu"
           aria-label="Account menu"
-          className="absolute right-0 top-full z-[80] mt-2 w-72 max-w-[calc(100vw-2rem)] overflow-hidden rounded-2xl border border-[#EAE6DF] bg-white shadow-[0_14px_40px_rgba(23,32,42,0.16)]"
+          className="absolute right-0 top-full z-[90] mt-2 w-72 max-w-[calc(100vw-2rem)] overflow-hidden rounded-2xl border border-[#EAE6DF] bg-white shadow-[0_14px_40px_rgba(23,32,42,0.16)]"
         >
           {accountStatusLoading ? (
-            <div role="status" className="flex items-center gap-2 p-4 text-sm text-[#756B61]">
-              <Loader2 className="h-4 w-4 animate-spin text-[#FF5A36]" aria-hidden="true" />
+            <div
+              role="status"
+              className="flex items-center gap-2 p-4 text-sm text-[#756B61]"
+            >
+              <Loader2
+                className="h-4 w-4 animate-spin text-[#FF5A36]"
+                aria-hidden="true"
+              />
               Checking your account...
             </div>
           ) : currentAccount ? (
             <>
               <div className="border-b border-[#EAE6DF] bg-[#FCFAF6] p-4">
                 <p className="truncate text-sm font-bold text-[#17202A]">
-                  {currentAccount.name || currentAccount.email || "My account"}
+                  {currentAccount.name ||
+                    currentAccount.email ||
+                    "My account"}
                 </p>
-                {currentAccount.name && currentAccount.email && (
-                  <p className="mt-0.5 truncate text-xs text-[#756B61]">
-                    {currentAccount.email}
-                  </p>
-                )}
+
+                {currentAccount.name &&
+                  currentAccount.email && (
+                    <p className="mt-0.5 truncate text-xs text-[#756B61]">
+                      {currentAccount.email}
+                    </p>
+                  )}
+
                 <span className="mt-2 inline-flex rounded-full bg-[#FFE0D6] px-2.5 py-1 text-[10px] font-bold text-[#9F2D18]">
                   {currentAccount.role === "ADMIN"
                     ? "Administrator"
@@ -952,9 +872,12 @@ export default function HomePage() {
                         ? "Buyer account"
                         : "Account"}
                 </span>
+
                 {currentAccount.role === null && (
                   <p className="mt-2 text-[11px] leading-4 text-[#756B61]">
-                    Your session has no recognized account role. Some account links may be unavailable.
+                    Your session has no recognized
+                    account role. Some account links
+                    may be unavailable.
                   </p>
                 )}
               </div>
@@ -963,10 +886,15 @@ export default function HomePage() {
                 <Link
                   href="/admin"
                   role="menuitem"
-                  onClick={() => setAccountMenuOpen(false)}
+                  onClick={() =>
+                    setAccountMenuOpen(false)
+                  }
                   className="flex items-center gap-3 px-4 py-3 text-sm font-semibold text-[#17202A] transition hover:bg-[#FCFAF6] hover:text-[#9F2D18]"
                 >
-                  <Store className="h-4 w-4 text-[#FF5A36]" aria-hidden="true" />
+                  <Store
+                    className="h-4 w-4 text-[#FF5A36]"
+                    aria-hidden="true"
+                  />
                   Admin dashboard
                 </Link>
               ) : currentAccount.role === "SELLER" ? (
@@ -974,19 +902,30 @@ export default function HomePage() {
                   <Link
                     href="/seller"
                     role="menuitem"
-                    onClick={() => setAccountMenuOpen(false)}
+                    onClick={() =>
+                      setAccountMenuOpen(false)
+                    }
                     className="flex items-center gap-3 px-4 py-3 text-sm font-semibold text-[#17202A] transition hover:bg-[#FCFAF6] hover:text-[#9F2D18]"
                   >
-                    <Store className="h-4 w-4 text-[#FF5A36]" aria-hidden="true" />
+                    <Store
+                      className="h-4 w-4 text-[#FF5A36]"
+                      aria-hidden="true"
+                    />
                     Seller dashboard
                   </Link>
+
                   <Link
                     href="/seller/profile"
                     role="menuitem"
-                    onClick={() => setAccountMenuOpen(false)}
+                    onClick={() =>
+                      setAccountMenuOpen(false)
+                    }
                     className="flex items-center gap-3 px-4 py-3 text-sm text-[#17202A] transition hover:bg-[#FCFAF6] hover:text-[#9F2D18]"
                   >
-                    <UserCircle className="h-4 w-4 text-[#756B61]" aria-hidden="true" />
+                    <UserCircle
+                      className="h-4 w-4 text-[#756B61]"
+                      aria-hidden="true"
+                    />
                     Seller profile
                   </Link>
                 </>
@@ -994,10 +933,15 @@ export default function HomePage() {
                 <Link
                   href="/profile"
                   role="menuitem"
-                  onClick={() => setAccountMenuOpen(false)}
+                  onClick={() =>
+                    setAccountMenuOpen(false)
+                  }
                   className="flex items-center gap-3 px-4 py-3 text-sm font-semibold text-[#17202A] transition hover:bg-[#FCFAF6] hover:text-[#9F2D18]"
                 >
-                  <UserCircle className="h-4 w-4 text-[#FF5A36]" aria-hidden="true" />
+                  <UserCircle
+                    className="h-4 w-4 text-[#FF5A36]"
+                    aria-hidden="true"
+                  />
                   My profile
                 </Link>
               )}
@@ -1007,19 +951,30 @@ export default function HomePage() {
                   <Link
                     href="/my-requests"
                     role="menuitem"
-                    onClick={() => setAccountMenuOpen(false)}
+                    onClick={() =>
+                      setAccountMenuOpen(false)
+                    }
                     className="flex items-center gap-3 px-4 py-3 text-sm text-[#17202A] transition hover:bg-[#FCFAF6] hover:text-[#9F2D18]"
                   >
-                    <ClipboardList className="h-4 w-4 text-[#756B61]" aria-hidden="true" />
+                    <Package
+                      className="h-4 w-4 text-[#756B61]"
+                      aria-hidden="true"
+                    />
                     My requests
                   </Link>
+
                   <Link
                     href="/saved"
                     role="menuitem"
-                    onClick={() => setAccountMenuOpen(false)}
+                    onClick={() =>
+                      setAccountMenuOpen(false)
+                    }
                     className="flex items-center gap-3 px-4 py-3 text-sm text-[#17202A] transition hover:bg-[#FCFAF6] hover:text-[#9F2D18]"
                   >
-                    <Heart className="h-4 w-4 text-[#756B61]" aria-hidden="true" />
+                    <ShoppingBag
+                      className="h-4 w-4 text-[#756B61]"
+                      aria-hidden="true"
+                    />
                     Saved items
                   </Link>
                 </>
@@ -1030,14 +985,25 @@ export default function HomePage() {
                   <Link
                     href="/profile#seller-onboarding"
                     role="menuitem"
-                    onClick={() => setAccountMenuOpen(false)}
+                    onClick={() =>
+                      setAccountMenuOpen(false)
+                    }
                     className="flex items-center justify-between gap-3 rounded-xl bg-[#FFF0D9] p-3 transition hover:bg-[#FFE0D6]"
                   >
                     <span className="min-w-0">
-                      <span className="block text-xs font-bold text-[#9F2D18]">Have a business?</span>
-                      <span className="mt-1 block text-[11px] leading-4 text-[#756B61]">Start selling on ReMarket.</span>
+                      <span className="block text-xs font-bold text-[#9F2D18]">
+                        Have a business?
+                      </span>
+
+                      <span className="mt-1 block text-[11px] leading-4 text-[#756B61]">
+                        Start selling on ReMarket.
+                      </span>
                     </span>
-                    <ArrowRight className="h-4 w-4 shrink-0 text-[#9F2D18]" aria-hidden="true" />
+
+                    <ArrowRight
+                      className="h-4 w-4 shrink-0 text-[#9F2D18]"
+                      aria-hidden="true"
+                    />
                   </Link>
                 </div>
               )}
@@ -1047,18 +1013,33 @@ export default function HomePage() {
                   type="button"
                   role="menuitem"
                   disabled={loggingOut}
-                  onClick={() => { void handleAccountLogout(); }}
+                  onClick={() => {
+                    void handleAccountLogout();
+                  }}
                   className="flex w-full items-center gap-3 rounded-xl px-3 py-3 text-left text-sm font-semibold text-[#9F2D18] transition hover:bg-[#FFF0D9] disabled:cursor-not-allowed disabled:opacity-60"
                 >
                   {loggingOut ? (
-                    <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
+                    <Loader2
+                      className="h-4 w-4 animate-spin"
+                      aria-hidden="true"
+                    />
                   ) : (
-                    <LogOut className="h-4 w-4" aria-hidden="true" />
+                    <LogOut
+                      className="h-4 w-4"
+                      aria-hidden="true"
+                    />
                   )}
-                  {loggingOut ? "Logging out..." : "Log out"}
+
+                  {loggingOut
+                    ? "Logging out..."
+                    : "Log out"}
                 </button>
+
                 {accountMenuError && (
-                  <p role="alert" className="px-3 pb-2 text-xs leading-5 text-red-600">
+                  <p
+                    role="alert"
+                    className="px-3 pb-2 text-xs leading-5 text-red-600"
+                  >
                     {accountMenuError}
                   </p>
                 )}
@@ -1067,45 +1048,74 @@ export default function HomePage() {
           ) : (
             <>
               <div className="border-b border-[#EAE6DF] bg-[#FCFAF6] p-4">
-                <p className="text-sm font-bold text-[#17202A]">Welcome to ReMarket</p>
-                <p className="mt-1 text-xs leading-5 text-[#756B61]">
-                  Sign in to access your account, manage your activity, and find your saved items.
+                <p className="text-sm font-bold text-[#17202A]">
+                  Welcome to ReMarket
                 </p>
+
+                <p className="mt-1 text-xs leading-5 text-[#756B61]">
+                  Sign in to access your account,
+                  manage your activity and find your
+                  saved items.
+                </p>
+
                 {accountSessionError && (
-                  <p role="alert" className="mt-2 text-[11px] leading-4 text-[#9F2D18]">
-                    We could not verify your session. Refresh this page if you have already signed in.
+                  <p
+                    role="alert"
+                    className="mt-2 text-[11px] leading-4 text-[#9F2D18]"
+                  >
+                    We could not verify your
+                    session. Refresh this page if
+                    you have already signed in.
                   </p>
                 )}
               </div>
+
               <Link
                 href="/buyer/login"
                 role="menuitem"
-                onClick={() => setAccountMenuOpen(false)}
+                onClick={() =>
+                  setAccountMenuOpen(false)
+                }
                 className="flex items-center gap-3 px-4 py-3 text-sm font-semibold text-[#17202A] transition hover:bg-[#FCFAF6]"
               >
-                <UserCircle className="h-4 w-4 text-[#FF5A36]" aria-hidden="true" />
+                <UserCircle
+                  className="h-4 w-4 text-[#FF5A36]"
+                  aria-hidden="true"
+                />
                 Buyer login
               </Link>
+
               <Link
                 href="/seller/login"
                 role="menuitem"
-                onClick={() => setAccountMenuOpen(false)}
+                onClick={() =>
+                  setAccountMenuOpen(false)
+                }
                 className="flex items-center gap-3 px-4 py-3 text-sm text-[#17202A] transition hover:bg-[#FCFAF6]"
               >
-                <Store className="h-4 w-4 text-[#756B61]" aria-hidden="true" />
+                <Store
+                  className="h-4 w-4 text-[#756B61]"
+                  aria-hidden="true"
+                />
                 Seller login
               </Link>
+
               <div className="border-t border-[#EAE6DF] p-3">
                 <Link
                   href="/buyer/signup"
-                  onClick={() => setAccountMenuOpen(false)}
+                  onClick={() =>
+                    setAccountMenuOpen(false)
+                  }
                   className="flex min-h-10 items-center justify-center rounded-xl bg-[#FF5A36] px-4 py-2.5 text-sm font-bold text-white transition hover:bg-[#E94A28]"
                 >
                   Create buyer account
                 </Link>
+
                 <Link
                   href="/seller/signup"
-                  onClick={() => setAccountMenuOpen(false)}
+                  onClick={() =>
+                    setAccountMenuOpen(false)
+                  }
                   className="mt-2 flex min-h-10 items-center justify-center rounded-xl border border-[#EAE6DF] bg-white px-4 py-2.5 text-sm font-semibold text-[#9F2D18] transition hover:bg-[#FFF7ED]"
                 >
                   Register as a seller
@@ -1118,990 +1128,634 @@ export default function HomePage() {
     </div>
   );
 
+  /*
+   * -----------------------------------------
+   * DISCOVERY FILTERS
+   * -----------------------------------------
+   */
+  const discoveryFilters: {
+    label: string;
+    value: DiscoveryMode;
+  }[] = [
+    {
+      label: "All",
+      value: "ALL",
+    },
+    {
+      label: "Products",
+      value: "PRODUCTS",
+    },
+    {
+      label: "Services",
+      value: "SERVICES",
+    },
+  ];
+
+  const showProducts =
+    discoveryMode === "ALL" ||
+    discoveryMode === "PRODUCTS";
+
+  const showServices =
+    discoveryMode === "ALL" ||
+    discoveryMode === "SERVICES";
+
   return (
-    <main className="min-h-dvh w-full overflow-x-clip bg-[#FFFDFC]">
-      <div className="min-h-dvh w-full">
-        <div className="min-h-dvh w-full bg-[#FFFDFC]">
-          {/* Header */}
-          <header className="flex h-[64px] items-center justify-between border-b border-[#EAE6DF] bg-white px-4 sm:px-6 lg:h-[66px] lg:px-6">
-            <div className="flex min-w-0 items-center gap-2.5">
-              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-[#FF5A36] text-white shadow-sm">
-                <Store className="h-5 w-5" />
-              </div>
-              <div className="min-w-0">
-                <p className="truncate text-sm font-bold tracking-tight text-[#17202A]">
-                  ReMarket
-                </p>
-                <p className="truncate text-[10px] leading-none text-muted sm:text-[10px]">
-                  Find it nearby
-                </p>
-              </div>
-            </div>
-            {/* Desktop Navigation */}
-            <nav className="hidden items-center gap-1 md:flex lg:hidden">
-              {NAV_ITEMS.map(
-                (item) => (
-                  <button
-                    key={
-                      item.label
-                    }
-                    type="button"
-                    onClick={() =>
-                      router.push(
-                        item.href
-                      )
-                    }
-                    className="rounded-xl px-4 py-2 text-xs font-semibold text-gray-700 transition hover:bg-gray-50"
-                  >
-                    {
-                      item.label
-                    }
-                  </button>
-                )
-              )}
-            </nav>
-            {/* Right Action */}
-            <div className="flex shrink-0 items-center gap-1.5 sm:gap-3">
-              {/* Saved */}
-              <button
-                type="button"
-                onClick={() =>
-                  router.push(
-                    "/saved"
-                  )
-                }
-                className="hidden h-9 w-9 items-center justify-center rounded-full hover:bg-gray-50 sm:flex"
-                aria-label="Saved"
-              >
-                <Heart className="h-[19px] w-[19px] text-gray-700" />
-              </button>
-              {/* Notifications */}
-              <div className="shrink-0">
-                <NotificationBell />
-              </div>
-              {/* Account menu: visible on mobile and desktop. */}
+    <main className="min-h-dvh overflow-x-clip bg-[#FFFDFC] pb-24 text-[#17202A] lg:pb-0">
+      {/* =====================================
+          HEADER
+          Google Play-inspired search layout
+         ===================================== */}
+      <header className="sticky top-0 z-40 border-b border-[#EAE6DF] bg-white/95 shadow-[0_2px_12px_rgba(23,32,42,0.035)] backdrop-blur">
+        {/* Desktop header */}
+        <div className="mx-auto hidden min-h-[76px] max-w-[1600px] items-center gap-7 px-6 lg:flex xl:px-10">
+          <Link
+            href="/"
+            aria-label="ReMarket home"
+            className="flex w-[205px] shrink-0 items-center gap-3"
+          >
+            <span className="flex h-11 w-11 items-center justify-center rounded-xl bg-[#FF5A36] text-white shadow-sm">
+              <ShoppingBag
+                className="h-6 w-6"
+                aria-hidden="true"
+              />
+            </span>
+
+            <span className="text-[22px] font-extrabold tracking-tight text-[#9F2D18]">
+              ReMarket
+            </span>
+          </Link>
+
+          <div className="flex min-w-0 flex-1 items-center justify-center">
+            {renderSearchForm("desktop")}
+          </div>
+
+          <nav
+            aria-label="Main navigation"
+            className="flex shrink-0 items-center gap-2"
+          >
+            <Link
+              href="/shop"
+              className="rounded-full px-4 py-2.5 text-sm font-semibold text-[#514840] transition hover:bg-[#FFF1ED] hover:text-[#9F2D18]"
+            >
+              Products
+            </Link>
+
+            <Link
+              href="/services"
+              className="rounded-full px-4 py-2.5 text-sm font-semibold text-[#514840] transition hover:bg-[#FFF1ED] hover:text-[#9F2D18]"
+            >
+              Services
+            </Link>
+          </nav>
+
+          <div className="flex shrink-0 items-center gap-3">
+            <NotificationBell />
+            {accountMenu}
+          </div>
+        </div>
+
+        {/* Mobile header */}
+        <div className="mx-auto max-w-[900px] px-4 py-3 lg:hidden">
+          <div className="flex items-center justify-between gap-3">
+            <Link
+              href="/"
+              aria-label="ReMarket home"
+              className="flex min-w-0 items-center gap-2.5"
+            >
+              <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-[#FF5A36] text-white">
+                <ShoppingBag
+                  className="h-5 w-5"
+                  aria-hidden="true"
+                />
+              </span>
+
+              <span className="truncate text-xl font-extrabold tracking-tight text-[#9F2D18]">
+                ReMarket
+              </span>
+            </Link>
+
+            <div className="flex shrink-0 items-center gap-3">
+              <NotificationBell />
               {accountMenu}
-              {/* Request */}
-              <button
-                type="button"
-                onClick={() =>
-                  router.push(
-                    "/request"
-                  )
-                }
-                className="shrink-0 whitespace-nowrap rounded-xl bg-[#FF5A36] px-2.5 py-2.5 text-[10px] font-bold text-white shadow-sm transition hover:opacity-90 sm:px-4 sm:text-xs"
-              >
-                <span className="sm:hidden">
-                  Request
-                </span>
-                <span className="hidden sm:inline">
-                  Request something
-                </span>
-              </button>
-            </div>
-          </header>
-          {/* Left Sidebar */}
-          <div className="flex">
-            <aside className="hidden w-[190px] shrink-0 border-r border-[#EAE6DF] bg-[#FCFAF6] px-3 py-5 lg:block">
-              <nav className="space-y-1">
-                {NAV_ITEMS.map(
-                  (item) => {
-                    const Icon =
-                      item.icon;
-                    return (
-                      <button
-                        key={
-                          item.label
-                        }
-                        type="button"
-                        onClick={() =>
-                          router.push(
-                            item.href
-                          )
-                        }
-                        className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-sm font-medium text-gray-700 transition hover:bg-white"
-                      >
-                        <Icon className="h-[18px] w-[18px]" />
-                        <span>
-                          {
-                            item.label
-                          }
-                        </span>
-                      </button>
-                    );
-                  }
-                )}
-              </nav>
-              <div className="my-5 h-px bg-[#E7E2DB]" />
-              <div>
-                <p className="px-3 text-[10px] font-bold uppercase tracking-[0.12em] text-gray-400">
-                  Categories
-                </p>
-                <div className="mt-3 space-y-1">
-                  {categories.map(
-                    (category) => {
-                      const Icon =
-                        category.icon;
-                      return (
-                        <button
-                          key={
-                            category.id
-                          }
-                          type="button"
-                          onClick={() =>
-                            handleCategory(
-                              category.name
-                            )
-                          }
-                          className="flex w-full items-center gap-3 rounded-xl px-3 py-2 text-left transition hover:bg-white"
-                        >
-                          <span
-                            className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full"
-                            style={{
-                              backgroundColor:
-                                category.bg,
-                            }}
-                          >
-                            <Icon className="h-4 w-4 text-[#9F2D18]" />
-                          </span>
-                          <span className="truncate text-xs font-medium text-gray-700">
-                            {
-                              category.name
-                            }
-                          </span>
-                        </button>
-                      );
-                    }
-                  )}
-                  <button
-                    type="button"
-                    onClick={() =>
-                      router.push(
-                        "/shop"
-                      )
-                    }
-                    className="flex w-full items-center gap-3 rounded-xl px-3 py-2 text-left transition hover:bg-white"
-                  >
-                    <span className="flex h-7 w-7 items-center justify-center rounded-full bg-gray-100">
-                      <MoreHorizontal className="h-4 w-4 text-gray-500" />
-                    </span>
-                    <span className="text-xs font-medium text-gray-700">
-                      More
-                    </span>
-                  </button>
-                </div>
-              </div>
-            </aside>
-            {/* Page Content */}
-            <div className="min-w-0 flex-1">
-              <div className="px-4 pb-24 pt-4 sm:px-6 sm:pt-6 lg:px-6 lg:pb-8">
-                {/* Hero */}
-                <section className="relative min-h-[260px] overflow-hidden rounded-[18px] bg-[#FF5A36] px-6 py-7 text-white shadow-soft sm:min-h-[275px] sm:px-8 sm:py-9 lg:min-h-[275px] lg:px-8">
-                  {/* Signed-in account shortcut */}
-                  {!accountStatusLoading && currentAccount && (
-                    <Link
-                      href={accountDestination}
-                      aria-label={
-                        currentAccount.role === "SELLER"
-                          ? "Open seller dashboard"
-                          : currentAccount.role === "ADMIN"
-                            ? "Open admin dashboard"
-                            : "Open my profile"
-                      }
-                      title={
-                        currentAccount.role === "SELLER"
-                          ? "Seller dashboard"
-                          : currentAccount.role === "ADMIN"
-                            ? "Admin dashboard"
-                            : "My profile"
-                      }
-                      className="absolute right-4 top-4 z-20 flex h-10 w-10 items-center justify-center rounded-full bg-white/15 text-white backdrop-blur-sm transition hover:bg-white/25 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white focus-visible:ring-offset-2 focus-visible:ring-offset-[#FF5A36] sm:right-5 sm:top-5"
-                    >
-                      {currentAccount.role === "SELLER" ? (
-                        <Store className="h-5 w-5" aria-hidden="true" />
-                      ) : (
-                        <UserCircle className="h-5 w-5" aria-hidden="true" />
-                      )}
-                    </Link>
-                  )}
-                  <div className="absolute -right-16 -top-24 h-[260px] w-[260px] rounded-full bg-white/5">
-                    <div className="pointer-events-none absolute right-6 top-7 hidden opacity-90 md:block lg:right-12">
-                      <div className="relative h-[190px] w-[220px]">
-                        <div className="absolute bottom-3 left-8 h-[110px] w-[105px] rotate-[-8deg] rounded-b-xl bg-white/70" />
-                        <div className="absolute left-[55px] top-3 h-[80px] w-[65px] rounded-t-[40px] border-[10px] border-white/60 border-b-0" />
-                        <div className="absolute bottom-0 right-3 flex h-[82px] w-[65px] rotate-[8deg] items-center justify-center rounded-[28px_28px_35px_35px] bg-white/40">
-                          <div className="h-10 w-10 rounded-full border-[8px] border-white/90" />
-                        </div>
-                        <div className="absolute right-0 top-[95px] h-12 w-12 rotate-45 rounded-t-[28px] rounded-br-[28px] bg-white/70">
-                          <div className="absolute left-1/2 top-1/2 h-4 w-4 -translate-x-1/2 -translate-y-1/2 rounded-full bg-[#FF5A36]" />
-                        </div>
-                        <div className="absolute right-[105px] top-0 h-4 w-1 rotate-[-35deg] bg-white/70" />
-                        <div className="absolute right-[130px] top-5 h-3 w-1 rotate-[-50deg] bg-white/70" />
-                      </div>
-                    </div>
-                  </div>
-                  <div className="relative z-10 max-w-[600px]">
-                    <div className="mb-4 inline-flex items-center rounded-full bg-white px-4 py-2 text-[10px] font-medium text-[#9F2D18]">
-                      Your local marketplace
-                    </div>
-                    <h1 className="max-w-[520px] text-[29px] font-bold leading-[1.1] tracking-tight sm:text-[34px] lg:text-[36px]">
-                      Find what you need,
-                      <br />
-                      right around you
-                    </h1>
-                    <p className="mt-3 max-w-[470px] text-xs leading-5 text-white/85 sm:text-sm">
-                      Discover products and local businesses around you. Find what you need from sellers in your area.
-                    </p>
-                    <form
-                      onSubmit={
-                        submit
-                      }
-                      className="mt-5 flex h-[48px] w-full max-w-[455px] items-center rounded-full bg-white p-1.5 shadow-sm"
-                    >
-                      <Search className="ml-3 h-[18px] w-[18px] shrink-0 text-gray-500" />
-                      <input
-                        id="homepage-search"
-                        type="search"
-                        autoComplete="off"
-                        aria-label="Search for products or local businesses"
-                        value={q}
-                        onChange={(
-                          event
-                        ) =>
-                          setQ(
-                            event.target
-                              .value
-                          )
-                        }
-                        placeholder="What are you looking for?"
-                        className="min-w-0 flex-1 bg-transparent px-3 text-xs text-gray-800 outline-none placeholder:text-gray-400"
-                      />
-                      <button
-                        type="submit"
-                        className="flex h-[38px] items-center rounded-full bg-[#FF5A36] px-5 text-xs font-bold text-white transition hover:opacity-90"
-                      >
-                        Search
-                      </button>
-                    </form>
-                  </div>
-                </section>
-                {/* Categories */}
-                <section className="mt-5 sm:mt-6">
-                  <div className="mb-3 flex items-end justify-between">
-                    <div>
-                      <h2 className="text-lg font-bold text-[#17202A]">
-                        Explore categories
-                      </h2>
-                      <p className="mt-0.5 text-xs text-muted">
-                        Start with something you need
-                      </p>
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() =>
-                        router.push(
-                          "/shop"
-                        )
-                      }
-                      className="flex items-center gap-1 text-xs font-medium text-[#9F2D18]"
-                    >
-                      View all
-                      <ArrowRight className="h-3.5 w-3.5" />
-                    </button>
-                  </div>
-                  <div className="grid grid-cols-3 gap-2.5 sm:grid-cols-3 lg:grid-cols-6">
-                    {categories.map(
-                      (category) => {
-                        const Icon =
-                          category.icon;
-                        return (
-                          <button
-                            key={
-                              category.id
-                            }
-                            type="button"
-                            onClick={() =>
-                              handleCategory(
-                                category.name
-                              )
-                            }
-                            className="group flex min-h-[112px] flex-col items-center justify-center rounded-xl border border-[#E8E4DE] bg-white px-2 py-2 transition hover:-translate-y-0.5 hover:shadow-md"
-                          >
-                            <span
-                              className="flex h-[58px] w-[58px] items-center justify-center rounded-full transition group-hover:scale-105"
-                              style={{
-                                background:
-                                  category.bg,
-                              }}
-                            >
-                              <Icon className="h-6 w-6" />
-                            </span>
-                            <span className="mt-3 max-w-full truncate text-xs font-medium text-gray-800">
-                              {
-                                category.name
-                              }
-                            </span>
-                          </button>
-                        );
-                      }
-                    )}
-                  </div>
-                </section>
-                {/* Share / Invite */}
-                <section className="mt-5 flex flex-col gap-3 rounded-xl border border-[#EAE6DF] bg-[#FCFAF6] px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
-                  <div className="flex items-center gap-3">
-                    <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-[#FFE0D6] text-[#9F2D18]">
-                      <Share2 className="h-5 w-5" aria-hidden="true" />
-                    </div>
-                    <div>
-                      <h2 className="text-sm font-bold text-[#17202A]">
-                        Know someone looking for local products?
-                      </h2>
-                      <p className="mt-0.5 text-[11px] text-[#756B61]">
-                        Share ReMarket so they can discover nearby businesses too.
-                      </p>
-                    </div>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => { void handleShareReMarket(); }}
-                    className="flex shrink-0 items-center justify-center gap-2 rounded-xl border border-[#FFD1C5] bg-white px-5 py-3 text-xs font-bold text-[#9F2D18] transition hover:bg-[#FFF1ED] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#FF5A36] focus-visible:ring-offset-2"
-                  >
-                    <Share2 className="h-4 w-4" aria-hidden="true" />
-                    Share ReMarket
-                  </button>
-                  {shareFeedback && (
-                    <p role="status" className="text-[11px] leading-4 text-[#756B61] sm:basis-full sm:text-right">
-                      {shareFeedback}
-                    </p>
-                  )}
-                </section>
-                {/* Nearby Businesses */}
-                <section className="mt-8">
-                  <div className="flex items-end justify-between">
-                    <div>
-                      <div className="flex items-center gap-2">
-                        <div className="flex h-8 w-8 items-center justify-center rounded-xl bg-orange-100 text-[#9F2D18]">
-                          <MapPin size={16} />
-                        </div>
-                        <h2 className="text-lg font-bold">
-                          Near you
-                        </h2>
-                      </div>
-                      <p className="mt-1 text-xs text-muted">
-                        Discover businesses closest to you
-                      </p>
-                    </div>
-                    <Link
-                      href="/near-me"
-                      className="flex shrink-0 items-center gap-1 text-xs font-semibold text-[#9F2D18]"
-                    >
-                      View All
-                      <ArrowRight size={14} />
-                    </Link>
-                  </div>
-                  {!nearbyLocationRequested &&
-                    !nearbyLoading && (
-                      <div className="mt-4 rounded-2xl border border-orange-100 bg-white p-5 shadow-card">
-                        <div className="flex flex-col items-center text-center sm:flex-row sm:text-left">
-                          <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-orange-50 text-[#FF5A36]">
-                            <Navigation size={21} />
-                          </div>
-                          <div className="mt-3 sm:ml-4 sm:mt-0">
-                            <p className="text-sm font-bold">
-                              Find businesses near you
-                            </p>
-                            <p className="mt-1 text-xs leading-5 text-muted">
-                              Allow location access to see local sellers closest to you.
-                            </p>
-                          </div>
-                          <button
-                            type="button"
-                            onClick={
-                              loadNearbyBusinesses
-                            }
-                            className="mt-4 w-full rounded-xl bg-[#FF5A36] px-4 py-3 text-xs font-semibold text-white transition hover:opacity-90 sm:ml-auto sm:mt-0 sm:w-auto"
-                          >
-                            Find near me
-                          </button>
-                        </div>
-                      </div>
-                    )}
-                  {nearbyLoading && (
-                    <div className="mt-4 flex min-h-[150px] items-center justify-center rounded-2xl border border-orange-100 bg-white shadow-card">
-                      <div className="flex items-center gap-2 text-sm text-muted">
-                        <Loader2
-                          size={17}
-                          className="animate-spin text-[#FF5A36]"
-                        />
-                        Finding businesses near me
-                      </div>
-                    </div>
-                  )}
-                  {!!nearbyError &&
-                    !nearbyLoading && (
-                      <div className="mt-4 rounded-2xl border border-orange-100 bg-white p-5 text-center shadow-card">
-                        <MapPin
-                          size={22}
-                          className="mx-auto text-[#FF5A36]"
-                        />
-                        <p className="mt-3 text-sm font-semibold">
-                          We couldn&apos;t find your location
-                        </p>
-                        <p className="mt-1 text-xs text-muted">
-                          {
-                            nearbyError
-                          }
-                        </p>
-                        <Link
-                          href="/near-me"
-                          className="mt-4 inline-flex items-center gap-2 rounded-xl bg-[#FF5A36] px-4 py-2.5 text-xs font-semibold text-white"
-                        >
-                          Open Near Me
-                          <ArrowRight size={14} />
-                        </Link>
-                      </div>
-                    )}
-                  {!nearbyLoading &&
-                    nearbyLocationRequested &&
-                    !nearbyError &&
-                    nearbyBusinesses.length ===
-                    0 && (
-                      <div className="mt-4 rounded-2xl border border-orange-100 bg-white p-6 text-center shadow-card">
-                        <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-2xl bg-orange-50 text-[#FF5A36]">
-                          <MapPin size={21} />
-                        </div>
-                        <p className="mt-3 text-sm font-bold">
-                          No businesses found near you yet
-                        </p>
-                        <p className="mx-auto mt-1 max-w-[380px] text-xs leading-5 text-muted">
-                          We don&apos;t have businesses registered around your current location yet. You can explore all businesses or search for another area.
-                        </p>
-                        <div className="mt-4 flex flex-col justify-center gap-2 sm:flex-row">
-                          <Link
-                            href="/near-me"
-                            className="inline-flex items-center justify-center gap-2 rounded-xl bg-[#FF5A36] px-4 py-2.5 text-xs font-semibold text-white transition hover:opacity-90"
-                          >
-                            Open Near Me
-                            <ArrowRight size={14} />
-                          </Link>
-                          <Link
-                            href="/shop"
-                            className="inline-flex items-center justify-center gap-2 rounded-xl border border-[#E8E4DE] bg-white px-4 py-2.5 text-xs font-semibold text-[#9F2D18] transition hover:bg-orange-50"
-                          >
-                            Browse all businesses
-                          </Link>
-                          <Link
-                            href="#recent-products"
-                            className="inline-flex items-center justify-center gap-2 rounded-xl border border-[#E8E4DE] bg-white px-4 py-2.5 text-xs font-semibold text-[#9F2D18] transition hover:bg-orange-50"
-                          >
-                            See recently added products
-                          </Link>
-                        </div>
-                      </div>
-                    )}
-                  {!nearbyLoading &&
-                    nearbyBusinesses.length >
-                    0 && (
-                      <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-                        {nearbyBusinesses.map(
-                          (
-                            business
-                          ) => {
-                            const distanceLabel =
-                              getDistanceLabel(
-                                business.distanceKm
-                              );
-                            return (
-                              <Link
-                                key={
-                                  business.id
-                                }
-                                href={`/seller/${business.id}`}
-                                className="group rounded-2xl border border-orange-100 bg-white p-4 shadow-card transition hover:-translate-y-0.5 hover:shadow-soft"
-                              >
-                                <div className="flex items-start justify-between gap-3">
-                                  <div className="flex min-w-0 items-center gap-3">
-                                    <div className="h-10 w-10 shrink-0 overflow-hidden rounded-full bg-orange-100">
-                                      {business.imageUrl ? (
-                                        <img
-                                          src={
-                                            business.imageUrl
-                                          }
-                                          alt={
-                                            business.name
-                                          }
-                                          className="h-full w-full object-cover"
-                                        />
-                                      ) : (
-                                        <div className="flex h-full w-full items-center justify-center text-xs font-bold text-[#9F2D18]">
-                                          {business.name
-                                            .slice(
-                                              0,
-                                              2
-                                            )
-                                            .toUpperCase()}
-                                        </div>
-                                      )}
-                                    </div>
-                                    <div className="min-w-0">
-                                      <p className="truncate text-sm font-bold">
-                                        {
-                                          business.name
-                                        }
-                                      </p>
-                                      <p className="mt-0.5 truncate text-[11px] text-muted">
-                                        {
-                                          business.category ??
-                                          "Local business"
-                                        }
-                                      </p>
-                                    </div>
-                                  </div>
-                                  <Store
-                                    size={16}
-                                    className="shrink-0 text-gray-400 transition group-hover:text-[#FF5A36]"
-                                  />
-                                </div>
-                                <div className="mt-4 flex items-center gap-2 text-xs text-gray-600">
-                                  {business.area && (
-                                    <span className="truncate">
-                                      {
-                                        business.area
-                                      }
-                                    </span>
-                                  )}
-                                  {distanceLabel !==
-                                    null && (
-                                      <>
-                                        {business.area && (
-                                          <span className="text-gray-300">
-                                            ·
-                                          </span>
-                                        )}
-                                        <span className="shrink-0">
-                                          {
-                                            distanceLabel
-                                          }
-                                        </span>
-                                      </>
-                                    )}
-                                </div>
-                                {business.productCount !== null && (
-                                  <div className="mt-2 text-[11px] text-muted">
-                                    {business.productCount}{" "}
-                                    {business.productCount === 1 ? "product" : "products"}
-                                  </div>
-                                )}
-                              </Link>
-                            );
-                          }
-                        )}
-                      </div>
-                    )}
-                  {!nearbyLoading &&
-                    nearbyBusinesses.length >
-                    0 && (
-                      <Link
-                        href="/near-me"
-                        className="mt-4 flex items-center justify-center gap-2 rounded-xl border border-orange-100 bg-white py-3 text-xs font-semibold text-[#9F2D18] transition hover:bg-orange-50"
-                      >
-                        Explore all nearby businesses
-                        <ArrowRight size={14} />
-                      </Link>
-                    )}
-                </section>
-                {/* Recently Added Products */}
-                <section
-                  id="recent-products"
-                  className="mt-8 scroll-mt-5"
-                  aria-labelledby="recent-products-heading"
-                >
-                  <div className="mb-4 flex items-end justify-between gap-3">
-                    <div>
-                      <div className="mb-1.5 inline-flex items-center gap-1.5 rounded-full border border-[#FFD9CE] bg-[#FFF1ED] px-2.5 py-1 text-[9px] font-bold uppercase tracking-[0.14em] text-[#9F2D18]">
-                        <span className="h-1.5 w-1.5 rounded-full bg-[#FF5A36]" />
-                        Fresh listings
-                      </div>
-                      <h2
-                        id="recent-products-heading"
-                        className="text-lg font-bold tracking-tight text-[#17202A] sm:text-xl"
-                      >
-                        Recently added products
-                      </h2>
-                      <p className="mt-1 text-xs text-gray-500 sm:text-sm">
-                        Explore products recently added by nearby businesses.
-                      </p>
-                    </div>
-                    <Link
-                      href="/shop"
-                      className="inline-flex shrink-0 items-center gap-1.5 rounded-full border border-[#EAE6DF] bg-white px-3 py-2 text-[11px] font-semibold text-[#9F2D18] transition hover:border-[#FFB9A7] hover:bg-[#FFF7F4] sm:px-4 sm:text-xs"
-                    >
-                      Browse products
-                      <ArrowRight className="h-3.5 w-3.5" />
-                    </Link>
-                  </div>
-
-                  {recentProductsLoading && (
-                    <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
-                      {Array.from({ length: 4 }).map((_, index) => (
-                        <div
-                          key={`recent-product-skeleton-${index}`}
-                          className="overflow-hidden rounded-2xl border border-[#EAE6DF] bg-white"
-                          aria-hidden="true"
-                        >
-                          <div className="aspect-square animate-pulse bg-[#F2EEE9]" />
-                          <div className="space-y-2 p-3">
-                            <div className="h-3 w-4/5 animate-pulse rounded bg-[#F2EEE9]" />
-                            <div className="h-3 w-2/5 animate-pulse rounded bg-[#F2EEE9]" />
-                            <div className="h-2.5 w-3/5 animate-pulse rounded bg-[#F2EEE9]" />
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-
-                  {!recentProductsLoading && recentProducts.length > 0 && (
-                    <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
-                      {recentProducts.map((product) => {
-                        const productImage = product.imageUrl;
-                        const productArea = product.business.location?.area;
-                        const availabilityLabel =
-                          product.availability === "AVAILABLE"
-                            ? "Available"
-                            : product.availability === "UNAVAILABLE"
-                              ? "Unavailable"
-                              : "Ask seller";
-
-                        return (
-                          <Link
-                            key={product.id}
-                            href={`/seller/${product.business.id}`}
-                            aria-label={`View ${product.name} from ${product.business.name}`}
-                            className="group min-w-0 overflow-hidden rounded-2xl border border-[#EAE6DF] bg-white shadow-[0_4px_18px_rgba(23,32,42,0.04)] transition hover:-translate-y-0.5 hover:border-[#FFD0C3] hover:shadow-[0_10px_28px_rgba(23,32,42,0.08)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#FF5A36]"
-                          >
-                            <div className="relative aspect-square overflow-hidden bg-[#FCFAF6]">
-                              {productImage ? (
-                                <img
-                                  src={productImage}
-                                  alt={product.name}
-                                  loading="lazy"
-                                  className="h-full w-full object-cover transition-transform duration-300 group-hover:scale-[1.03]"
-                                />
-                              ) : (
-                                <div className="flex h-full w-full items-center justify-center text-[#C3B9AE]">
-                                  <Package className="h-10 w-10" />
-                                </div>
-                              )}
-                              <span className="absolute left-2 top-2 rounded-full border border-white/80 bg-white/95 px-2 py-1 text-[9px] font-bold text-[#9F2D18] shadow-sm">
-                                New listing
-                              </span>
-                            </div>
-                            <div className="p-3 sm:p-3.5">
-                              <p className="line-clamp-2 min-h-9 text-xs font-bold leading-4 text-[#17202A] transition group-hover:text-[#9F2D18] sm:text-sm">
-                                {product.name}
-                              </p>
-                              <p className="mt-2 line-clamp-1 text-[11px] font-bold text-[#9F2D18] sm:text-xs">
-                                {formatRecentProductPrice(product)}
-                              </p>
-                              <div className="mt-3 border-t border-[#F0ECE7] pt-2.5">
-                                <p className="truncate text-[10px] font-semibold text-[#4C5560] sm:text-[11px]">
-                                  {product.business.name}
-                                </p>
-                                <p className="mt-1 flex items-center gap-1 truncate text-[10px] text-gray-500">
-                                  <MapPin className="h-3 w-3 shrink-0 text-[#FF5A36]" />
-                                  <span className="truncate">
-                                    {productArea || "Location not added"}
-                                  </span>
-                                </p>
-                                <p className="mt-2 text-[9px] font-medium text-gray-500">
-                                  {availabilityLabel}
-                                  {product.category?.name ? ` · ${product.category.name}` : ""}
-                                </p>
-                              </div>
-                            </div>
-                          </Link>
-                        );
-                      })}
-                    </div>
-                  )}
-
-                  {!recentProductsLoading && recentProducts.length === 0 && (
-                    <div className="rounded-2xl border border-dashed border-[#E8E4DE] bg-[#FCFAF6] px-5 py-7 text-center">
-                      <div className="mx-auto flex h-11 w-11 items-center justify-center rounded-2xl bg-white text-[#FF5A36] shadow-sm">
-                        <Package className="h-5 w-5" />
-                      </div>
-                      <p className="mt-3 text-sm font-bold text-[#17202A]">
-                        New products are coming
-                      </p>
-                      <p className="mx-auto mt-1 max-w-md text-xs leading-5 text-gray-500">
-                        As local businesses add listings, they will appear here. You can still browse businesses or search for a product.
-                      </p>
-                      <Link
-                        href="/shop"
-                        className="mt-4 inline-flex min-h-10 items-center justify-center gap-2 rounded-xl bg-[#FF5A36] px-4 py-2.5 text-xs font-bold text-white transition hover:bg-[#E94A28]"
-                      >
-                        Browse ReMarket
-                        <ArrowRight className="h-3.5 w-3.5" />
-                      </Link>
-                    </div>
-                  )}
-                </section>
-                {/* Featured Businesses Slideshow */}
-                <section
-                  className="mt-7"
-                  aria-label="Featured businesses"
-                  aria-roledescription="carousel"
-                >
-                  <div className="mb-4 flex items-end justify-between gap-3">
-                    <div>
-                      <div className="mb-1.5 inline-flex items-center gap-1.5 rounded-full border border-[#FFD9CE] bg-[#FFF1ED] px-2.5 py-1 text-[9px] font-bold uppercase tracking-[0.14em] text-[#9F2D18]">
-                        <span className="h-1.5 w-1.5 rounded-full bg-[#FF5A36]" />
-                        Local spotlight
-                      </div>
-                      <h2 className="text-lg font-bold tracking-tight text-[#17202A] sm:text-xl">
-                        Featured businesses
-                      </h2>
-                      <p className="mt-1 text-xs text-gray-500 sm:text-sm">
-                        Get to know local businesses and what they offer.
-                      </p>
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() => router.push("/shop")}
-                      className="inline-flex shrink-0 items-center gap-1.5 rounded-full border border-[#EAE6DF] bg-white px-3 py-2 text-[11px] font-semibold text-[#9F2D18] transition hover:border-[#FFB9A7] hover:bg-[#FFF7F4] sm:px-4 sm:text-xs"
-                    >
-                      View all
-                      <ArrowRight className="h-3.5 w-3.5" />
-                    </button>
-                  </div>
-
-                  {businessLoading && (
-                    <div className="overflow-hidden rounded-2xl border border-[#EAE6DF] bg-white shadow-sm">
-                      <div className="grid animate-pulse md:grid-cols-[0.95fr_1.05fr]">
-                        <div className="min-h-[220px] bg-[#F2EEE8] sm:min-h-[270px]" />
-                        <div className="flex flex-col justify-center gap-4 p-5 sm:p-8">
-                          <div className="h-3 w-28 rounded bg-gray-200" />
-                          <div className="h-6 w-3/4 rounded bg-gray-200" />
-                          <div className="h-3 w-full rounded bg-gray-100" />
-                          <div className="h-3 w-2/3 rounded bg-gray-100" />
-                          <div className="mt-2 h-10 w-36 rounded-xl bg-gray-200" />
-                        </div>
-                      </div>
-                    </div>
-                  )}
-
-                  {!businessLoading && featuredBusinesses.length === 0 && (
-                    <div className="rounded-2xl border border-dashed border-[#E8E4DE] bg-white px-5 py-10 text-center sm:py-12">
-                      <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-[#FFF1ED] text-[#FF5A36]">
-                        <Store className="h-7 w-7" />
-                      </div>
-                      <p className="mt-4 text-sm font-semibold text-[#17202A]">
-                        No businesses to feature yet
-                      </p>
-                      <p className="mx-auto mt-1 max-w-sm text-xs leading-5 text-gray-500">
-                        Local businesses will appear here as their profiles are added to ReMarket.
-                      </p>
-                    </div>
-                  )}
-
-                  {!businessLoading && featuredBusinesses.length > 0 && (() => {
-                    const business = featuredBusinesses[activeFeaturedIndex] ?? featuredBusinesses[0];
-                    const category = business.category || business.categories?.[0] || "Services";
-                    const style = getCategoryVisual(category);
-                    const location = business.area || "Local";
-                    const isSaved = savedBusinessIds.has(business.id);
-                    const availabilityLabel = business.availability === "AVAILABLE"
-                      ? "Available"
-                      : business.availability === "UNAVAILABLE"
-                        ? "Check later"
-                        : "Ask the seller";
-
-                    return (
-                      <div className="overflow-hidden rounded-2xl border border-[#EAE6DF] bg-white shadow-[0_10px_35px_rgba(23,32,42,0.06)] transition-shadow duration-300 hover:shadow-[0_14px_42px_rgba(23,32,42,0.09)]">
-                        <div className="grid md:grid-cols-[0.95fr_1.05fr]">
-                          <Link
-                            href={`/seller/${business.id}`}
-                            aria-label={`View ${business.name}`}
-                            className="group relative isolate flex min-h-[220px] items-center justify-center overflow-hidden sm:min-h-[280px] md:min-h-[318px]"
-                            style={{ backgroundColor: style.bg }}
-                          >
-                            {business.imageUrl ? (
-                              <img
-                                src={business.imageUrl}
-                                alt={business.name}
-                                className="absolute inset-0 h-full w-full object-cover transition-transform duration-700 group-hover:scale-[1.04]"
-                              />
-                            ) : (
-                              <div className="flex h-24 w-24 items-center justify-center rounded-[28px] border border-white/70 bg-white/75 text-[#17202A]/70 shadow-lg backdrop-blur-sm sm:h-28 sm:w-28">
-                                <Store className="h-11 w-11 sm:h-12 sm:w-12" />
-                              </div>
-                            )}
-                            <div className="absolute inset-0 bg-gradient-to-t from-[#17202A]/65 via-[#17202A]/10 to-[#17202A]/5" />
-                            <div className="absolute left-4 top-4 flex items-center gap-1.5 rounded-full border border-white/40 bg-white/90 px-3 py-1.5 text-[9px] font-bold uppercase tracking-[0.12em] text-[#17202A] shadow-sm backdrop-blur-sm sm:left-5 sm:top-5">
-                              <span className="h-1.5 w-1.5 rounded-full bg-[#FF5A36]" />
-                              Business spotlight
-                            </div>
-                            <div className="absolute inset-x-4 bottom-4 text-left sm:inset-x-5 sm:bottom-5">
-                              <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-white/80">Discover around you</p>
-                              <p className="mt-1 line-clamp-1 text-xl font-bold tracking-tight text-white drop-shadow sm:text-2xl">
-                                {business.name}
-                              </p>
-                            </div>
-                          </Link>
-
-                          <div className="flex min-w-0 flex-col justify-between p-5 sm:p-7 lg:p-8">
-                            <div>
-                              <div className="flex flex-wrap items-center gap-2">
-                                <span className="rounded-full px-3 py-1 text-[10px] font-semibold text-[#17202A]" style={{ backgroundColor: style.bg }}>
-                                  {category}
-                                </span>
-                                {business.verification === "VERIFIED" && (
-                                  <span className="inline-flex items-center gap-1 rounded-full bg-[#DDF5EA] px-2.5 py-1 text-[10px] font-semibold text-[#137A59]">
-                                    <span aria-hidden="true">✓</span> Verified
-                                  </span>
-                                )}
-                              </div>
-                              <Link
-                                href={`/seller/${business.id}`}
-                                className="mt-4 block text-xl font-bold leading-tight tracking-tight text-[#17202A] transition hover:text-[#9F2D18] sm:text-2xl lg:text-[28px]"
-                              >
-                                {business.name}
-                              </Link>
-                              <p className="mt-2 flex items-center gap-1.5 text-xs font-medium text-gray-500">
-                                <MapPin className="h-3.5 w-3.5 shrink-0 text-[#FF5A36]" />
-                                <span className="truncate">{location}</span>
-                              </p>
-                              <p className="mt-4 line-clamp-3 text-sm leading-6 text-gray-600">
-                                {business.description?.trim() || `Discover what ${business.name} offers on ReMarket and explore its local business profile.`}
-                              </p>
-                            </div>
-
-                            <div className="mt-6">
-                              <div className="flex flex-wrap items-center gap-x-4 gap-y-2 border-t border-[#F0ECE7] pt-4 text-[11px] text-gray-500">
-                                <span className="inline-flex items-center gap-1.5">
-                                  <Package className="h-3.5 w-3.5 text-[#FF5A36]" />
-                                  <strong className="font-semibold text-[#17202A]">{business.productCount}</strong>
-                                  {business.productCount === 1 ? "listing" : "listings"}
-                                </span>
-                                <span className="inline-flex items-center gap-1.5">
-                                  <span className={`h-1.5 w-1.5 rounded-full ${business.availability === "AVAILABLE" ? "bg-[#1B9A6C]" : business.availability === "UNAVAILABLE" ? "bg-gray-400" : "bg-[#E2A32B]"}`} />
-                                  {availabilityLabel}
-                                </span>
-                              </div>
-                              <div className="mt-4 flex items-center gap-3">
-                                <Link
-                                  href={`/seller/${business.id}`}
-                                  className="inline-flex min-h-11 flex-1 items-center justify-center gap-2 rounded-xl bg-[#FF5A36] px-4 py-3 text-xs font-bold text-white shadow-sm transition hover:bg-[#E94A28] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#FF5A36] focus-visible:ring-offset-2 sm:flex-none sm:min-w-[170px]"
-                                >
-                                  Explore business
-                                  <ArrowRight className="h-4 w-4" />
-                                </Link>
-                                <button
-                                  type="button"
-                                  aria-label={isSaved ? `Remove ${business.name} from saved` : `Save ${business.name}`}
-                                  aria-pressed={isSaved}
-                                  onClick={(event) => handleSaveBusiness(event, business, category, location)}
-                                  className={`inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#FF5A36] focus-visible:ring-offset-2 ${isSaved ? "border-[#FFD1C5] bg-[#FFF1ED] text-[#FF5A36]" : "border-[#EAE6DF] bg-white text-gray-500 hover:border-[#FFB9A7] hover:text-[#9F2D18]"}`}
-                                >
-                                  <Bookmark className="h-4 w-4" fill={isSaved ? "currentColor" : "none"} />
-                                </button>
-                              </div>
-                            </div>
-                          </div>
-                        </div>
-
-                        {featuredBusinesses.length > 1 && (
-                          <div className="flex flex-wrap items-center justify-between gap-3 border-t border-[#F0ECE7] bg-[#FCFAF6] px-4 py-3 sm:px-5">
-                            <div className="flex items-center gap-2" aria-label={`Slide ${activeFeaturedIndex + 1} of ${featuredBusinesses.length}`}>
-                              <span className="font-mono text-xs font-bold tabular-nums text-[#9F2D18]">{String(activeFeaturedIndex + 1).padStart(2, "0")}</span>
-                              <span className="text-xs text-gray-400">/ {String(featuredBusinesses.length).padStart(2, "0")}</span>
-                              <div className="ml-2 flex items-center gap-1.5" aria-label="Choose featured business">
-                                {featuredBusinesses.map((item, index) => (
-                                  <button
-                                    key={item.id}
-                                    type="button"
-                                    aria-label={`Show featured business ${index + 1}: ${item.name}`}
-                                    aria-current={index === activeFeaturedIndex ? "true" : undefined}
-                                    onClick={() => setActiveFeaturedIndex(index)}
-                                    className={`h-1.5 rounded-full transition-all duration-300 ${index === activeFeaturedIndex ? "w-7 bg-[#FF5A36]" : "w-1.5 bg-[#D8D2CA] hover:bg-[#B7ADA1]"}`}
-                                  />
-                                ))}
-                              </div>
-                            </div>
-                            <div className="flex items-center gap-2">
-                              <button
-                                type="button"
-                                aria-label="Previous featured business"
-                                onClick={() => setActiveFeaturedIndex((index) => (index - 1 + featuredBusinesses.length) % featuredBusinesses.length)}
-                                className="inline-flex h-9 w-9 items-center justify-center rounded-full border border-[#EAE6DF] bg-white text-[#17202A] transition hover:border-[#FFB9A7] hover:bg-[#FFF1ED] hover:text-[#9F2D18] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#FF5A36]"
-                              >
-                                <ChevronLeft className="h-4 w-4" />
-                              </button>
-                              <button
-                                type="button"
-                                aria-label="Next featured business"
-                                onClick={() => setActiveFeaturedIndex((index) => (index + 1) % featuredBusinesses.length)}
-                                className="inline-flex h-9 w-9 items-center justify-center rounded-full border border-[#EAE6DF] bg-white text-[#17202A] transition hover:border-[#FFB9A7] hover:bg-[#FFF1ED] hover:text-[#9F2D18] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#FF5A36]"
-                              >
-                                <ChevronRight className="h-4 w-4" />
-                              </button>
-                            </div>
-                          </div>
-                        )}
-                      </div>
-                    );
-                  })()}
-                </section>
-                {/* Footer */}
-                <footer className="mt-7 flex items-center justify-center gap-3 text-[10px] text-gray-400">
-                  <span className="h-px w-16 bg-gray-200" />
-                  <span>
-                    ReMarket · Find it nearby
-                  </span>
-                  <span className="h-px w-16 bg-gray-200" />
-                </footer>
-              </div>
             </div>
           </div>
-          {/* Mobile Navigation */}
-          <nav className="fixed inset-x-0 bottom-0 z-50 border-t border-gray-200 bg-white/95 px-2 pb-[max(6px,env(safe-area-inset-bottom))] pt-1.5 backdrop-blur lg:hidden">
-            <div className="grid w-full grid-cols-4">
-              {NAV_ITEMS.map(
-                (item) => {
-                  const Icon =
-                    item.icon;
+
+          <div className="mt-3">
+            {renderSearchForm("mobile")}
+          </div>
+        </div>
+      </header>
+
+      {/* =====================================
+          PAGE CONTENT
+         ===================================== */}
+      <div className="mx-auto max-w-[1600px] px-4 pb-8 pt-4 sm:px-6 sm:pt-6 lg:px-8 lg:pt-7 xl:px-10">
+        {/* =====================================
+            HERO
+           ===================================== */}
+        <section className="relative isolate overflow-hidden rounded-[26px] border border-[#FFE0D5] bg-gradient-to-r from-[#FFF0E7] via-[#FFF4EC] to-[#FFE0D4] px-5 py-7 sm:px-8 sm:py-9 lg:min-h-[300px] lg:px-11 lg:py-10">
+          {/* Decorative background shapes */}
+          <div
+            aria-hidden="true"
+            className="pointer-events-none absolute -right-20 -top-28 hidden h-[420px] w-[420px] rounded-full bg-[#FF5A36]/10 lg:block"
+          />
+
+          <div
+            aria-hidden="true"
+            className="pointer-events-none absolute -right-8 bottom-[-170px] hidden h-[330px] w-[330px] rounded-full bg-[#FF8A65]/20 lg:block"
+          />
+
+          <div
+            aria-hidden="true"
+            className="pointer-events-none absolute right-[18%] top-12 hidden h-16 w-16 rotate-12 rounded-2xl border border-[#FF8B6E]/30 lg:block"
+          />
+
+          <div className="relative z-10 grid items-center gap-8 lg:grid-cols-[1.1fr_0.9fr]">
+            <div className="max-w-[680px]">
+              <div className="mb-4 inline-flex items-center gap-2 rounded-full border border-[#FFD1C5] bg-white/80 px-3.5 py-2 text-[10px] font-bold uppercase tracking-[0.13em] text-[#9F2D18] shadow-sm sm:text-[11px]">
+                <Sparkles
+                  className="h-3.5 w-3.5 text-[#FF5A36]"
+                  aria-hidden="true"
+                />
+                Discover on ReMarket
+              </div>
+
+              <h1 className="max-w-[620px] text-[32px] font-extrabold leading-[1.08] tracking-tight text-[#401B13] sm:text-[42px] lg:text-[48px]">
+                Discover Local
+                <span className="block text-[#FF5A36]">
+                  Products &amp; Services
+                </span>
+              </h1>
+
+              <p className="mt-4 max-w-[510px] text-sm leading-6 text-[#66564C] sm:text-base sm:leading-7">
+                Shop what you need. Book the services
+                you love. Discover more possibilities
+                around you with ReMarket.
+              </p>
+
+              <div className="mt-6 flex flex-wrap items-center gap-2">
+                {discoveryFilters.map((filter) => {
+                  const isActive =
+                    discoveryMode === filter.value;
+
                   return (
                     <button
-                      key={
-                        item.label
-                      }
+                      key={filter.value}
                       type="button"
+                      aria-pressed={isActive}
                       onClick={() =>
-                        router.push(
-                          item.href
-                        )
+                        setDiscoveryMode(filter.value)
                       }
-                      className={`flex flex-col items-center justify-center gap-1 rounded-xl py-2 ${item.label ===
-                        "Home"
-                        ? "text-[#9F2D18]"
-                        : "text-gray-500"
-                        }`}
+                      className={`inline-flex min-h-10 items-center justify-center rounded-full px-5 text-xs font-bold transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#FF5A36] focus-visible:ring-offset-2 ${
+                        isActive
+                          ? "bg-[#FF5A36] text-white shadow-sm"
+                          : "border border-[#F3D6CA] bg-white/85 text-[#4D342B] hover:border-[#FF9A81] hover:bg-white"
+                      }`}
                     >
-                      <Icon className="h-[19px] w-[19px]" />
-                      <span className="text-[9px] font-medium">
-                        {
-                          item.label
-                        }
-                      </span>
+                      {filter.label}
                     </button>
                   );
-                }
-              )}
+                })}
+              </div>
             </div>
-          </nav>
-        </div>
+
+            {/* Decorative product and service visual */}
+            <div
+              aria-hidden="true"
+              className="relative hidden min-h-[220px] items-center justify-center lg:flex"
+            >
+              <div className="absolute h-[240px] w-[240px] rounded-full bg-[#FFB18F]/35" />
+
+              <div className="relative flex h-[170px] w-[170px] items-center justify-center rounded-[42px] border border-white/80 bg-white/75 shadow-[0_20px_50px_rgba(159,45,24,0.10)] backdrop-blur">
+                <div className="flex h-[110px] w-[110px] items-center justify-center rounded-[32px] bg-[#FF5A36] text-white shadow-lg">
+                  <ShoppingBag className="h-14 w-14" />
+                </div>
+              </div>
+
+              <div className="absolute right-[10%] top-[5%] flex h-16 w-16 items-center justify-center rounded-2xl border border-[#FFD1C5] bg-white text-[#9F2D18] shadow-md">
+                <Wrench className="h-8 w-8" />
+              </div>
+
+              <div className="absolute bottom-[2%] left-[12%] flex h-16 w-16 items-center justify-center rounded-2xl border border-[#FFD1C5] bg-white text-[#9F2D18] shadow-md">
+                <Package className="h-8 w-8" />
+              </div>
+
+              <span className="absolute right-[7%] top-[55%] h-3 w-3 rounded-full bg-[#FF5A36]" />
+              <span className="absolute left-[20%] top-[10%] h-2.5 w-2.5 rounded-full bg-[#FF9A81]" />
+            </div>
+          </div>
+        </section>
+
+        {/* =====================================
+            POPULAR PRODUCTS
+           ===================================== */}
+        {showProducts && (
+          <section
+            id="popular-products"
+            className="mt-8 scroll-mt-24 sm:mt-10"
+            aria-labelledby="popular-products-heading"
+          >
+            <div className="mb-4 flex items-end justify-between gap-3">
+              <div>
+                <div className="mb-1.5 inline-flex items-center gap-1.5 rounded-full border border-[#FFD9CE] bg-[#FFF1ED] px-2.5 py-1 text-[9px] font-bold uppercase tracking-[0.14em] text-[#9F2D18]">
+                  <span className="h-1.5 w-1.5 rounded-full bg-[#FF5A36]" />
+                  Discover products
+                </div>
+
+                <h2
+                  id="popular-products-heading"
+                  className="text-xl font-extrabold tracking-tight text-[#401B13] sm:text-2xl"
+                >
+                  Popular Products
+                </h2>
+
+                <p className="mt-1 text-xs text-[#756B61] sm:text-sm">
+                  Explore products available on ReMarket.
+                </p>
+              </div>
+
+              <Link
+                href="/shop"
+                className="inline-flex shrink-0 items-center gap-1.5 rounded-full px-3 py-2 text-xs font-bold text-[#9F2D18] transition hover:bg-[#FFF1ED]"
+              >
+                View all
+                <ArrowRight className="h-3.5 w-3.5" />
+              </Link>
+            </div>
+
+            {productsLoading && (
+              <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-4">
+                {Array.from({ length: 4 }).map(
+                  (_, index) => (
+                    <div
+                      key={`product-skeleton-${index}`}
+                      className="overflow-hidden rounded-2xl border border-[#EAE6DF] bg-white"
+                      aria-hidden="true"
+                    >
+                      <div className="aspect-square animate-pulse bg-[#F2EEE9]" />
+
+                      <div className="space-y-2 p-3">
+                        <div className="h-3 w-4/5 animate-pulse rounded bg-[#F2EEE9]" />
+                        <div className="h-3 w-2/5 animate-pulse rounded bg-[#F2EEE9]" />
+                        <div className="h-2.5 w-3/5 animate-pulse rounded bg-[#F2EEE9]" />
+                      </div>
+                    </div>
+                  ),
+                )}
+              </div>
+            )}
+
+            {!productsLoading && products.length > 0 && (
+              <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-4">
+                {products.map((product) => (
+                  <Link
+                    key={product.id}
+                    href={`/product/${product.id}`}
+                    aria-label={`View ${product.name}`}
+                    className="group min-w-0 overflow-hidden rounded-2xl border border-[#EAE6DF] bg-white shadow-[0_4px_18px_rgba(23,32,42,0.04)] transition hover:-translate-y-1 hover:border-[#FFD0C3] hover:shadow-[0_12px_28px_rgba(23,32,42,0.09)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#FF5A36]"
+                  >
+                    <div className="relative aspect-square overflow-hidden bg-[#FCFAF6]">
+                      {product.imageUrl ? (
+                        <img
+                          src={product.imageUrl}
+                          alt={product.name}
+                          loading="lazy"
+                          className="h-full w-full object-cover transition-transform duration-300 group-hover:scale-[1.04]"
+                        />
+                      ) : (
+                        <div className="flex h-full w-full items-center justify-center text-[#C3B9AE]">
+                          <Package className="h-12 w-12" />
+                        </div>
+                      )}
+
+                      {product.category && (
+                        <span className="absolute bottom-2 left-2 max-w-[calc(100%-1rem)] truncate rounded-full border border-white/70 bg-white/95 px-2.5 py-1 text-[9px] font-bold text-[#9F2D18] shadow-sm">
+                          {product.category}
+                        </span>
+                      )}
+                    </div>
+
+                    <div className="p-3 sm:p-3.5">
+                      <p className="line-clamp-2 min-h-9 text-xs font-bold leading-4 text-[#17202A] transition group-hover:text-[#9F2D18] sm:text-sm">
+                        {product.name}
+                      </p>
+
+                      <p className="mt-2 line-clamp-1 text-[11px] font-extrabold text-[#9F2D18] sm:text-sm">
+                        {formatProductPrice(product)}
+                      </p>
+
+                      {product.businessName && (
+                        <p className="mt-2 truncate border-t border-[#F0ECE7] pt-2 text-[10px] text-[#756B61] sm:text-[11px]">
+                          {product.businessName}
+                        </p>
+                      )}
+
+                      <span className="mt-3 inline-flex items-center gap-1 text-[10px] font-bold text-[#FF5A36] transition group-hover:gap-2">
+                        View product
+                        <ArrowRight className="h-3 w-3" />
+                      </span>
+                    </div>
+                  </Link>
+                ))}
+              </div>
+            )}
+
+            {!productsLoading && products.length === 0 && (
+              <div className="rounded-2xl border border-dashed border-[#E8E4DE] bg-[#FCFAF6] px-5 py-9 text-center">
+                <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-2xl bg-white text-[#FF5A36] shadow-sm">
+                  <Package className="h-6 w-6" />
+                </div>
+
+                <p className="mt-3 text-sm font-bold text-[#17202A]">
+                  Products will appear here
+                </p>
+
+                <p className="mx-auto mt-1 max-w-md text-xs leading-5 text-[#756B61]">
+                  As products are added to ReMarket,
+                  you will be able to discover them here.
+                </p>
+
+                <Link
+                  href="/shop"
+                  className="mt-4 inline-flex min-h-10 items-center justify-center gap-2 rounded-xl bg-[#FF5A36] px-4 py-2.5 text-xs font-bold text-white transition hover:bg-[#E94A28]"
+                >
+                  Browse products
+                  <ArrowRight className="h-3.5 w-3.5" />
+                </Link>
+              </div>
+            )}
+          </section>
+        )}
+
+        {/* =====================================
+            OUR SERVICES
+           ===================================== */}
+        {showServices && (
+          <section
+            id="our-services"
+            className="mt-9 scroll-mt-24 sm:mt-11"
+            aria-labelledby="our-services-heading"
+          >
+            <div className="mb-4 flex items-end justify-between gap-3">
+              <div>
+                <div className="mb-1.5 inline-flex items-center gap-1.5 rounded-full border border-[#FFD9CE] bg-[#FFF1ED] px-2.5 py-1 text-[9px] font-bold uppercase tracking-[0.14em] text-[#9F2D18]">
+                  <Wrench
+                    className="h-3 w-3"
+                    aria-hidden="true"
+                  />
+                  Find a service
+                </div>
+
+                <h2
+                  id="our-services-heading"
+                  className="text-xl font-extrabold tracking-tight text-[#401B13] sm:text-2xl"
+                >
+                  Our Services
+                </h2>
+
+                <p className="mt-1 text-xs text-[#756B61] sm:text-sm">
+                  Find service providers for the things
+                  you need done.
+                </p>
+              </div>
+
+              <Link
+                href="/services"
+                className="inline-flex shrink-0 items-center gap-1.5 rounded-full px-3 py-2 text-xs font-bold text-[#9F2D18] transition hover:bg-[#FFF1ED]"
+              >
+                View all
+                <ArrowRight className="h-3.5 w-3.5" />
+              </Link>
+            </div>
+
+            {servicesLoading && (
+              <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
+                {Array.from({ length: 4 }).map(
+                  (_, index) => (
+                    <div
+                      key={`service-skeleton-${index}`}
+                      className="overflow-hidden rounded-2xl border border-[#EAE6DF] bg-white"
+                      aria-hidden="true"
+                    >
+                      <div className="aspect-[4/3] animate-pulse bg-[#F2EEE9]" />
+
+                      <div className="space-y-2 p-3">
+                        <div className="h-3 w-4/5 animate-pulse rounded bg-[#F2EEE9]" />
+                        <div className="h-3 w-2/5 animate-pulse rounded bg-[#F2EEE9]" />
+                      </div>
+                    </div>
+                  ),
+                )}
+              </div>
+            )}
+
+            {!servicesLoading && services.length > 0 && (
+              <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
+                {services.map((service) => (
+                  <Link
+                    key={service.id}
+                    href={`/services/${service.id}`}
+                    aria-label={`View ${service.name}`}
+                    className="group min-w-0 overflow-hidden rounded-2xl border border-[#EAE6DF] bg-white shadow-[0_4px_18px_rgba(23,32,42,0.04)] transition hover:-translate-y-1 hover:border-[#FFD0C3] hover:shadow-[0_12px_28px_rgba(23,32,42,0.09)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#FF5A36]"
+                  >
+                    <div className="relative aspect-[4/3] overflow-hidden bg-[#FCFAF6]">
+                      {service.imageUrl ? (
+                        <img
+                          src={service.imageUrl}
+                          alt={service.name}
+                          loading="lazy"
+                          className="h-full w-full object-cover transition-transform duration-300 group-hover:scale-[1.04]"
+                        />
+                      ) : (
+                        <div className="flex h-full w-full items-center justify-center text-[#C3B9AE]">
+                          <Wrench className="h-11 w-11" />
+                        </div>
+                      )}
+
+                      {service.category && (
+                        <span className="absolute bottom-2 left-2 max-w-[calc(100%-1rem)] truncate rounded-full border border-white/70 bg-white/95 px-2.5 py-1 text-[9px] font-bold text-[#9F2D18] shadow-sm">
+                          {service.category}
+                        </span>
+                      )}
+                    </div>
+
+                    <div className="p-3 sm:p-3.5">
+                      <p className="line-clamp-2 min-h-9 text-xs font-bold leading-4 text-[#17202A] transition group-hover:text-[#9F2D18] sm:text-sm">
+                        {service.name}
+                      </p>
+
+                      <p className="mt-2 line-clamp-1 text-[11px] font-extrabold text-[#9F2D18] sm:text-sm">
+                        {formatServicePrice(service)}
+                      </p>
+
+                      {service.businessName && (
+                        <p className="mt-2 truncate border-t border-[#F0ECE7] pt-2 text-[10px] text-[#756B61] sm:text-[11px]">
+                          {service.businessName}
+                        </p>
+                      )}
+
+                      <span className="mt-3 inline-flex items-center gap-1 text-[10px] font-bold text-[#FF5A36] transition group-hover:gap-2">
+                        View service
+                        <ArrowRight className="h-3 w-3" />
+                      </span>
+                    </div>
+                  </Link>
+                ))}
+              </div>
+            )}
+
+            {!servicesLoading && services.length === 0 && (
+              <div className="rounded-2xl border border-dashed border-[#E8E4DE] bg-[#FCFAF6] px-5 py-9 text-center">
+                <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-2xl bg-white text-[#FF5A36] shadow-sm">
+                  <Wrench className="h-6 w-6" />
+                </div>
+
+                <p className="mt-3 text-sm font-bold text-[#17202A]">
+                  Services are coming to ReMarket
+                </p>
+
+                <p className="mx-auto mt-1 max-w-md text-xs leading-5 text-[#756B61]">
+                  Service listings will appear here as
+                  providers add their services.
+                </p>
+              </div>
+            )}
+          </section>
+        )}
+
+        {/* =====================================
+            SHARE / INVITE
+           ===================================== */}
+        <section className="relative mt-9 overflow-hidden rounded-[22px] bg-gradient-to-r from-[#FF713F] via-[#FF5A36] to-[#F04B2B] px-5 py-6 text-white shadow-[0_12px_30px_rgba(255,90,54,0.14)] sm:mt-11 sm:px-8 sm:py-7">
+          <div
+            aria-hidden="true"
+            className="pointer-events-none absolute -right-12 -top-20 h-56 w-56 rounded-full border-[28px] border-white/10"
+          />
+
+          <div className="relative z-10 flex flex-col gap-5 sm:flex-row sm:items-center sm:justify-between">
+            <div className="flex items-center gap-4">
+              <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl bg-white/15 text-white ring-1 ring-white/20">
+                <Share2 className="h-7 w-7" />
+              </div>
+
+              <div>
+                <h2 className="text-lg font-extrabold tracking-tight sm:text-xl">
+                  Invite Friends, Grow ReMarket
+                </h2>
+
+                <p className="mt-1 max-w-lg text-xs leading-5 text-white/90 sm:text-sm">
+                  Share ReMarket and help more people
+                  discover products and services nearby.
+                </p>
+              </div>
+            </div>
+
+            <button
+              type="button"
+              onClick={() => {
+                void handleShareReMarket();
+              }}
+              className="inline-flex min-h-11 shrink-0 items-center justify-center gap-2 rounded-full bg-white px-6 py-3 text-xs font-extrabold text-[#9F2D18] transition hover:bg-[#FFF7ED] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white focus-visible:ring-offset-2 focus-visible:ring-offset-[#FF5A36]"
+            >
+              Invite Now
+              <ArrowRight className="h-4 w-4" />
+            </button>
+          </div>
+
+          {shareFeedback && (
+            <p
+              role="status"
+              className="relative z-10 mt-3 text-xs text-white"
+            >
+              {shareFeedback}
+            </p>
+          )}
+        </section>
+
+        {/* =====================================
+            FOOTER
+           ===================================== */}
+        <footer className="mt-9 flex items-center justify-center gap-3 pb-3 text-[10px] text-[#9B9188]">
+          <span className="h-px w-12 bg-[#EAE6DF]" />
+          <span>
+            ReMarket · Shop. Discover. Support Local.
+          </span>
+          <span className="h-px w-12 bg-[#EAE6DF]" />
+        </footer>
       </div>
+
+      {/* =====================================
+          MOBILE BOTTOM NAVIGATION
+          Exactly four tabs:
+          Home / Products / Services / Account
+         ===================================== */}
+      <nav
+        aria-label="Mobile navigation"
+        className="fixed inset-x-0 bottom-0 z-50 border-t border-[#EAE6DF] bg-white/95 px-2 pt-2 backdrop-blur lg:hidden"
+        style={{
+          paddingBottom:
+            "max(8px, env(safe-area-inset-bottom))",
+        }}
+      >
+        <div className="mx-auto grid w-full max-w-[600px] grid-cols-4">
+          <Link
+            href="/"
+            aria-current="page"
+            className="flex min-h-[54px] flex-col items-center justify-center gap-1 rounded-xl text-[#FF5A36]"
+          >
+            <Home
+              className="h-5 w-5"
+              aria-hidden="true"
+            />
+            <span className="text-[10px] font-bold">
+              Home
+            </span>
+          </Link>
+
+          <Link
+            href="/shop"
+            className="flex min-h-[54px] flex-col items-center justify-center gap-1 rounded-xl text-[#756B61] transition hover:bg-[#FFF7F4] hover:text-[#9F2D18]"
+          >
+            <ShoppingBag
+              className="h-5 w-5"
+              aria-hidden="true"
+            />
+            <span className="text-[10px] font-semibold">
+              Products
+            </span>
+          </Link>
+
+          <Link
+            href="/services"
+            className="flex min-h-[54px] flex-col items-center justify-center gap-1 rounded-xl text-[#756B61] transition hover:bg-[#FFF7F4] hover:text-[#9F2D18]"
+          >
+            <Wrench
+              className="h-5 w-5"
+              aria-hidden="true"
+            />
+            <span className="text-[10px] font-semibold">
+              Services
+            </span>
+          </Link>
+
+          <Link
+            href={
+              currentAccount
+                ? accountDestination
+                : "/buyer/login"
+            }
+            className="flex min-h-[54px] flex-col items-center justify-center gap-1 rounded-xl text-[#756B61] transition hover:bg-[#FFF7F4] hover:text-[#9F2D18]"
+          >
+            <UserCircle
+              className="h-5 w-5"
+              aria-hidden="true"
+            />
+            <span className="text-[10px] font-semibold">
+              Account
+            </span>
+          </Link>
+        </div>
+      </nav>
     </main>
   );
 }
