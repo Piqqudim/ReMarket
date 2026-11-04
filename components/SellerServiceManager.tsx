@@ -1,0 +1,797 @@
+
+"use client";
+
+import { useCallback, useEffect, useState, type FormEvent } from "react";
+import {
+  Plus, X, LoaderCircle, RefreshCw, BriefcaseBusiness,
+  Clock3, ImageIcon, AlertCircle, CheckCircle2,
+  Pencil, Trash2, Package,
+} from "lucide-react";
+import ProductImageUpload from "@/components/ProductImageUpload";
+import { validateProductPricing } from "@/lib/product-pricing";
+
+type Category = { id: string; name: string };
+type Availability = "AVAILABLE" | "ASK_SELLER" | "UNAVAILABLE";
+type FulfillmentType = "AT_PROVIDER" | "AT_CUSTOMER" | "REMOTE" | "FLEXIBLE";
+
+type SellerService = {
+  id: string;
+  name: string;
+  description: string | null;
+  price: number | null;
+  priceMin: number | null;
+  priceMax: number | null;
+  durationMinutes: number | null;
+  availability: Availability;
+  fulfillmentType: FulfillmentType;
+  keywords: string[];
+  imageUrl: string | null;
+  status: string;
+  category: Category | null;
+  images: { id: string; url: string; sortOrder: number }[];
+};
+
+type ServiceForm = {
+  name: string;
+  description: string;
+  categoryId: string;
+  price: string;
+  priceMin: string;
+  priceMax: string;
+  durationMinutes: string;
+  availability: Availability;
+  fulfillmentType: FulfillmentType;
+  keywords: string;
+  images: string[];
+};
+
+const INITIAL_FORM: ServiceForm = {
+  name: "",
+  description: "",
+  categoryId: "",
+  price: "",
+  priceMin: "",
+  priceMax: "",
+  durationMinutes: "",
+  availability: "ASK_SELLER",
+  fulfillmentType: "FLEXIBLE",
+  keywords: "",
+  images: [],
+};
+
+const inputClass =
+  "h-12 w-full min-w-0 rounded-xl border border-[#D9DEE5] bg-white px-4 text-sm text-[#17202A] outline-none transition placeholder:text-gray-400 focus:border-[#FF694F] focus:ring-4 focus:ring-[#FF694F]/10 disabled:bg-gray-50";
+
+const labelClass = "mb-2 block text-xs font-bold text-gray-700";
+
+const primaryButtonClass =
+  "inline-flex items-center justify-center gap-2 rounded-xl bg-[#FF5A36] px-4 py-2.5 text-xs font-bold text-white transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60";
+
+const secondaryButtonClass =
+  "inline-flex items-center justify-center gap-2 rounded-xl border border-[#E8E4DE] bg-white px-4 py-2.5 text-xs font-bold text-gray-700 transition hover:bg-[#FFF7ED] hover:text-[#9F2D18] disabled:cursor-not-allowed disabled:opacity-50";
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function getError(data: unknown, fallback: string): string {
+  return isRecord(data) && typeof data.error === "string"
+    ? data.error : fallback;
+}
+
+function numberOrNull(value: unknown): number | null {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value === "string" && value.trim() && Number.isFinite(Number(value))) {
+    return Number(value);
+  }
+  return null;
+}
+
+function normalizeService(value: unknown): SellerService | null {
+  if (!isRecord(value) || typeof value.id !== "string") return null;
+
+  const category = isRecord(value.category)
+    ? {
+        id: typeof value.category.id === "string" ? value.category.id : "",
+        name: typeof value.category.name === "string" ? value.category.name : "",
+      }
+    : null;
+
+  const images = Array.isArray(value.images)
+    ? value.images.filter(isRecord).map((image) => ({
+        id: typeof image.id === "string" ? image.id : "",
+        url: typeof image.url === "string" ? image.url : "",
+        sortOrder: typeof image.sortOrder === "number" ? image.sortOrder : 0,
+      })).filter((image) => image.url)
+    : [];
+
+  const availability: Availability =
+    value.availability === "AVAILABLE" || value.availability === "UNAVAILABLE"
+      ? value.availability : "ASK_SELLER";
+
+  const fulfillmentType: FulfillmentType = [
+    "AT_PROVIDER", "AT_CUSTOMER", "REMOTE", "FLEXIBLE",
+  ].includes(String(value.fulfillmentType))
+    ? value.fulfillmentType as FulfillmentType : "FLEXIBLE";
+
+  return {
+    id: value.id,
+    name: typeof value.name === "string" ? value.name : "Service",
+    description: typeof value.description === "string" ? value.description : null,
+    price: numberOrNull(value.price),
+    priceMin: numberOrNull(value.priceMin),
+    priceMax: numberOrNull(value.priceMax),
+    durationMinutes: numberOrNull(value.durationMinutes),
+    availability,
+    fulfillmentType,
+    keywords: Array.isArray(value.keywords)
+      ? value.keywords.filter((item): item is string => typeof item === "string")
+      : [],
+    imageUrl: typeof value.imageUrl === "string" ? value.imageUrl : null,
+    status: typeof value.status === "string" ? value.status : "ACTIVE",
+    category,
+    images,
+  };
+}
+
+function formatPrice(service: SellerService): string {
+  if (service.price !== null) return `₦${service.price.toLocaleString("en-NG")}`;
+  if (service.priceMin !== null && service.priceMax !== null) {
+    return `₦${service.priceMin.toLocaleString("en-NG")} – ₦${service.priceMax.toLocaleString("en-NG")}`;
+  }
+  if (service.priceMin !== null) return `From ₦${service.priceMin.toLocaleString("en-NG")}`;
+  if (service.priceMax !== null) return `Up to ₦${service.priceMax.toLocaleString("en-NG")}`;
+  return "Price not set";
+}
+
+const fulfillmentLabels: Record<FulfillmentType, string> = {
+  AT_PROVIDER: "At provider",
+  AT_CUSTOMER: "At customer location",
+  REMOTE: "Online / remotely",
+  FLEXIBLE: "Flexible",
+};
+
+function formatAvailability(value: Availability): string {
+  return value === "AVAILABLE" ? "Available"
+    : value === "UNAVAILABLE" ? "Unavailable" : "Ask seller";
+}
+
+export default function SellerServiceManager({
+  categories,
+}: {
+  categories: Category[];
+}) {
+  const [services, setServices] = useState<SellerService[]>([]);
+  const [form, setForm] = useState<ServiceForm>(INITIAL_FORM);
+  const [showForm, setShowForm] = useState(false);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [deletingId, setDeletingId] = useState("");
+  const [error, setError] = useState("");
+  const [success, setSuccess] = useState("");
+
+  const updateField = <K extends keyof ServiceForm>(
+    field: K,
+    value: ServiceForm[K],
+  ) => {
+    setForm((current) => ({ ...current, [field]: value }));
+    setError("");
+    setSuccess("");
+  };
+
+  const loadServices = useCallback(async (showSpinner = true) => {
+    if (showSpinner) setLoading(true);
+    else setRefreshing(true);
+
+    setError("");
+
+    try {
+      const response = await fetch("/api/seller/services", {
+        cache: "no-store",
+      });
+      const data: unknown = await response.json().catch(() => null);
+
+      if (response.status === 401 || response.status === 403) {
+        throw new Error("Your seller session has expired. Please sign in again.");
+      }
+      if (!response.ok) {
+        throw new Error(getError(data, "Unable to load your services."));
+      }
+      if (!isRecord(data) || !Array.isArray(data.services)) {
+        throw new Error("The service response was invalid.");
+      }
+
+      setServices(
+        data.services.map(normalizeService)
+          .filter((item): item is SellerService => item !== null),
+      );
+    } catch (loadError) {
+      setError(loadError instanceof Error ? loadError.message : "Unable to load services.");
+    } finally {
+      setLoading(false);
+      setRefreshing(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void loadServices();
+  }, [loadServices]);
+
+  function openAddForm() {
+    setEditingId(null);
+    setForm(INITIAL_FORM);
+    setError("");
+    setSuccess("");
+    setShowForm(true);
+  }
+
+  function openEditForm(service: SellerService) {
+    setEditingId(service.id);
+    setForm({
+      name: service.name,
+      description: service.description ?? "",
+      categoryId: service.category?.id ?? "",
+      price: service.price !== null ? String(service.price) : "",
+      priceMin: service.priceMin !== null ? String(service.priceMin) : "",
+      priceMax: service.priceMax !== null ? String(service.priceMax) : "",
+      durationMinutes: service.durationMinutes !== null
+        ? String(service.durationMinutes) : "",
+      availability: service.availability,
+      fulfillmentType: service.fulfillmentType,
+      keywords: service.keywords.join(", "),
+      images: service.images.length
+        ? [...service.images].sort((a, b) => a.sortOrder - b.sortOrder).map((image) => image.url)
+        : service.imageUrl ? [service.imageUrl] : [],
+    });
+    setError("");
+    setSuccess("");
+    setShowForm(true);
+  }
+
+  function closeForm() {
+    if (saving) return;
+    setShowForm(false);
+    setEditingId(null);
+    setForm(INITIAL_FORM);
+    setError("");
+  }
+
+  function getFormPayload() {
+    const price = form.price.trim() ? Number(form.price) : null;
+    const priceMin = form.priceMin.trim() ? Number(form.priceMin) : null;
+    const priceMax = form.priceMax.trim() ? Number(form.priceMax) : null;
+    const durationMinutes = form.durationMinutes.trim()
+      ? Number(form.durationMinutes) : null;
+
+    return { price, priceMin, priceMax, durationMinutes };
+  }
+
+  function validateForm(): boolean {
+    if (!form.name.trim()) {
+      setError("Service name is required.");
+      return false;
+    }
+
+    const { price, priceMin, priceMax, durationMinutes } = getFormPayload();
+
+    for (const amount of [price, priceMin, priceMax]) {
+      if (
+        amount !== null &&
+        (!Number.isSafeInteger(amount) || amount < 0 || amount > 2_147_483_647)
+      ) {
+        setError("Prices must be valid whole numbers.");
+        return false;
+      }
+    }
+
+    const pricingError = validateProductPricing(price, priceMin, priceMax);
+    if (pricingError) {
+      setError(pricingError);
+      return false;
+    }
+
+    if (
+      durationMinutes !== null &&
+      (!Number.isSafeInteger(durationMinutes) ||
+        durationMinutes <= 0 ||
+        durationMinutes > 2_147_483_647)
+    ) {
+      setError("Duration must be a whole number greater than zero.");
+      return false;
+    }
+
+    const keywords = form.keywords.split(",").map((word) => word.trim()).filter(Boolean);
+
+    if (keywords.length > 30 || keywords.some((word) => word.length > 80)) {
+      setError("Use up to 30 keywords, with no more than 80 characters each.");
+      return false;
+    }
+
+    if (keywords.reduce((total, word) => total + word.length, 0) > 1500) {
+      setError("Your combined keywords are too long.");
+      return false;
+    }
+
+    if (form.description.length > 4000) {
+      setError("Service description cannot exceed 4,000 characters.");
+      return false;
+    }
+
+    return true;
+  }
+
+  async function saveService(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (saving) return;
+
+    setError("");
+    setSuccess("");
+
+    if (!validateForm()) return;
+
+    const { price, priceMin, priceMax, durationMinutes } = getFormPayload();
+    const keywords = form.keywords.split(",").map((word) => word.trim()).filter(Boolean);
+
+    const payload = {
+      name: form.name.trim(),
+      description: form.description.trim(),
+      categoryId: form.categoryId || null,
+      price,
+      priceMin,
+      priceMax,
+      durationMinutes,
+      availability: form.availability,
+      fulfillmentType: form.fulfillmentType,
+      keywords,
+      images: form.images,
+    };
+
+    setSaving(true);
+
+    try {
+      const response = await fetch(
+        editingId
+          ? `/api/seller/services/${encodeURIComponent(editingId)}`
+          : "/api/seller/services",
+        {
+          method: editingId ? "PATCH" : "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        },
+      );
+
+      const data: unknown = await response.json().catch(() => null);
+
+      if (response.status === 401 || response.status === 403) {
+        throw new Error("Your seller session has expired. Please sign in again.");
+      }
+      if (!response.ok) {
+        throw new Error(getError(
+          data,
+          editingId ? "Unable to update service." : "Unable to create service.",
+        ));
+      }
+
+      setShowForm(false);
+      setEditingId(null);
+      setForm(INITIAL_FORM);
+
+      await loadServices(false);
+      setSuccess(editingId ? "Service updated successfully." : "Service added successfully.");
+    } catch (saveError) {
+      setError(saveError instanceof Error ? saveError.message : "Unable to save service.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function deleteService(service: SellerService) {
+    if (deletingId || saving) return;
+
+    const confirmed = window.confirm(
+      `Remove "${service.name}" from your services? Existing booking records will be preserved.`,
+    );
+    if (!confirmed) return;
+
+    setDeletingId(service.id);
+    setError("");
+    setSuccess("");
+
+    try {
+      const response = await fetch(
+        `/api/seller/services/${encodeURIComponent(service.id)}`,
+        { method: "DELETE" },
+      );
+
+      const data: unknown = await response.json().catch(() => null);
+
+      if (response.status === 401 || response.status === 403) {
+        throw new Error("Your seller session has expired. Please sign in again.");
+      }
+      if (!response.ok) {
+        throw new Error(getError(data, "Unable to delete service."));
+      }
+
+      setServices((current) => current.filter((item) => item.id !== service.id));
+
+      if (editingId === service.id) closeForm();
+
+      setSuccess("Service removed successfully.");
+    } catch (deleteError) {
+      setError(deleteError instanceof Error ? deleteError.message : "Unable to delete service.");
+    } finally {
+      setDeletingId("");
+    }
+  }
+
+  return (
+    <section
+      id="services-section"
+      className="mt-5 scroll-mt-24 overflow-visible rounded-[22px] border border-[#E8E4DE] bg-white shadow-sm"
+    >
+      <div className="border-b border-[#EAE6DF] px-5 py-5 sm:px-6">
+        <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <p className="text-xs font-semibold uppercase tracking-[0.12em] text-[#FF5A36]">
+              Service management
+            </p>
+            <h2 className="mt-1 text-lg font-bold">Your services</h2>
+            <p className="mt-1 text-xs leading-5 text-gray-500">
+              Add and manage the services customers can discover and book.
+            </p>
+          </div>
+
+          <div className="flex flex-wrap gap-2">
+            <button
+              type="button"
+              onClick={() => void loadServices(false)}
+              disabled={loading || refreshing || saving || Boolean(deletingId)}
+              className={secondaryButtonClass}
+            >
+              <RefreshCw className={`h-4 w-4 ${refreshing ? "animate-spin" : ""}`} />
+              Refresh
+            </button>
+
+            <button
+              type="button"
+              onClick={showForm ? closeForm : openAddForm}
+              disabled={saving || Boolean(deletingId)}
+              className={primaryButtonClass}
+            >
+              {showForm
+                ? <><X className="h-4 w-4" /> Close form</>
+                : <><Plus className="h-4 w-4" /> Add service</>}
+            </button>
+          </div>
+        </div>
+
+        <div className="mt-4 flex items-center gap-2 rounded-xl bg-[#FCFAF6] px-3 py-3">
+          <BriefcaseBusiness className="h-4 w-4 text-[#FF5A36]" />
+          <p className="text-xs text-gray-600">
+            <strong>{services.length}</strong> {services.length === 1 ? "service" : "services"} listed.
+            <span className="ml-1 text-gray-400">Services do not use your product listing slots.</span>
+          </p>
+        </div>
+      </div>
+
+      <div className="p-5 sm:p-6">
+        {(error || success) && (
+          <div
+            role={error ? "alert" : "status"}
+            className={`mb-4 flex items-start gap-2 rounded-xl px-3 py-3 text-xs ${
+              error
+                ? "border border-[#F1D5D0] bg-[#FFF0EE] text-[#C5402D]"
+                : "border border-[#BDE8D8] bg-[#EFFBF6] text-[#137A59]"
+            }`}
+          >
+            {error
+              ? <AlertCircle className="h-4 w-4 shrink-0" />
+              : <CheckCircle2 className="h-4 w-4 shrink-0" />}
+            <span>{error || success}</span>
+          </div>
+        )}
+
+        {showForm && (
+          <form
+            onSubmit={saveService}
+            className="mb-6 space-y-5 rounded-2xl border border-[#E8E4DE] bg-[#FCFAF6] p-4 sm:p-5"
+          >
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <h3 className="text-sm font-bold">
+                  {editingId ? "Edit service" : "Add a new service"}
+                </h3>
+                <p className="mt-1 text-xs leading-5 text-gray-500">
+                  {editingId
+                    ? "Update the details customers see when they discover this service."
+                    : "Add clear information so customers know what they can book."}
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={closeForm}
+                disabled={saving}
+                aria-label="Close service form"
+                className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-[#E8E4DE] bg-white text-gray-500"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+
+            <div className="grid gap-4 sm:grid-cols-2">
+              <div>
+                <label htmlFor="service-name" className={labelClass}>Service name *</label>
+                <input
+                  id="service-name"
+                  className={inputClass}
+                  value={form.name}
+                  onChange={(event) => updateField("name", event.target.value)}
+                  placeholder="e.g. Large format printing"
+                  maxLength={200}
+                  required
+                  disabled={saving}
+                />
+              </div>
+
+              <div>
+                <label htmlFor="service-category" className={labelClass}>Category</label>
+                <select
+                  id="service-category"
+                  className={inputClass}
+                  value={form.categoryId}
+                  onChange={(event) => updateField("categoryId", event.target.value)}
+                  disabled={saving}
+                >
+                  <option value="">Select category</option>
+                  {categories.map((category) => (
+                    <option key={category.id} value={category.id}>{category.name}</option>
+                  ))}
+                </select>
+              </div>
+            </div>
+
+            <div>
+              <label htmlFor="service-description" className={labelClass}>Description</label>
+              <textarea
+                id="service-description"
+                className="w-full resize-y rounded-xl border border-[#D9DEE5] bg-white px-4 py-3 text-sm outline-none focus:border-[#FF694F] focus:ring-4 focus:ring-[#FF694F]/10 disabled:bg-gray-50"
+                value={form.description}
+                onChange={(event) => updateField("description", event.target.value)}
+                placeholder="Explain what the service includes."
+                rows={4}
+                maxLength={4000}
+                disabled={saving}
+              />
+            </div>
+
+            <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+              {([
+                ["price", "Exact price (₦)", "Fixed price"],
+                ["priceMin", "Minimum price (₦)", "Starting price"],
+                ["priceMax", "Maximum price (₦)", "Optional upper limit"],
+                ["durationMinutes", "Duration (minutes)", "Optional"],
+              ] as const).map(([field, label, placeholder]) => (
+                <div key={field}>
+                  <label htmlFor={`service-${field}`} className={labelClass}>{label}</label>
+                  <input
+                    id={`service-${field}`}
+                    className={inputClass}
+                    type="number"
+                    min={field === "durationMinutes" ? "1" : "0"}
+                    step="1"
+                    value={form[field]}
+                    onChange={(event) => updateField(field, event.target.value)}
+                    placeholder={placeholder}
+                    disabled={saving}
+                  />
+                </div>
+              ))}
+            </div>
+
+            <div className="grid gap-4 sm:grid-cols-2">
+              <div>
+                <label htmlFor="service-availability" className={labelClass}>Availability</label>
+                <select
+                  id="service-availability"
+                  className={inputClass}
+                  value={form.availability}
+                  onChange={(event) => updateField("availability", event.target.value as Availability)}
+                  disabled={saving}
+                >
+                  <option value="AVAILABLE">Available</option>
+                  <option value="ASK_SELLER">Ask seller</option>
+                  <option value="UNAVAILABLE">Unavailable</option>
+                </select>
+              </div>
+
+              <div>
+                <label htmlFor="service-fulfillment" className={labelClass}>
+                  Where is the service provided?
+                </label>
+                <select
+                  id="service-fulfillment"
+                  className={inputClass}
+                  value={form.fulfillmentType}
+                  onChange={(event) => updateField("fulfillmentType", event.target.value as FulfillmentType)}
+                  disabled={saving}
+                >
+                  <option value="FLEXIBLE">Flexible</option>
+                  <option value="AT_PROVIDER">At my business location</option>
+                  <option value="AT_CUSTOMER">At customer's location</option>
+                  <option value="REMOTE">Online / remotely</option>
+                </select>
+              </div>
+            </div>
+
+            <div>
+              <label htmlFor="service-keywords" className={labelClass}>Search keywords</label>
+              <input
+                id="service-keywords"
+                className={inputClass}
+                value={form.keywords}
+                onChange={(event) => updateField("keywords", event.target.value)}
+                placeholder="e.g. printing, banners, flyers, branding"
+                disabled={saving}
+              />
+              <p className="mt-1 text-[10px] text-gray-400">
+                Separate keywords with commas. Up to 30 keywords.
+              </p>
+            </div>
+
+            <div className="rounded-2xl border border-[#E8E4DE] bg-white p-4">
+              <div className="flex items-center gap-2">
+                <ImageIcon className="h-4 w-4 text-[#FF5A36]" />
+                <p className="text-xs font-bold">Service images</p>
+              </div>
+              <p className="mt-1 text-[10px] text-gray-500">
+                Add examples of your work. The first image becomes the cover.
+              </p>
+              <div className="mt-3 min-w-0">
+                <ProductImageUpload
+                  value={form.images}
+                  onChange={(images) => updateField("images", images)}
+                  disabled={saving}
+                />
+              </div>
+            </div>
+
+            <div className="flex flex-col gap-3 border-t border-[#EAE6DF] pt-4 sm:flex-row sm:items-center sm:justify-between">
+              <p className="text-[10px] leading-5 text-gray-500">
+                {editingId ? "Your changes will update this service." : "Your new service will be created as active."}
+              </p>
+              <button
+                type="submit"
+                disabled={saving}
+                className={`${primaryButtonClass} min-h-11 w-full px-6 sm:w-auto`}
+              >
+                {saving
+                  ? <><LoaderCircle className="h-4 w-4 animate-spin" /> Saving...</>
+                  : editingId
+                    ? <><CheckCircle2 className="h-4 w-4" /> Save changes</>
+                    : <><Plus className="h-4 w-4" /> Add service</>}
+              </button>
+            </div>
+          </form>
+        )}
+
+        {loading ? (
+          <div className="flex items-center justify-center gap-2 py-10 text-sm text-gray-500">
+            <LoaderCircle className="h-5 w-5 animate-spin text-[#FF5A36]" />
+            Loading services...
+          </div>
+        ) : services.length === 0 ? (
+          <div className="rounded-2xl border border-dashed border-[#D9DEE5] bg-[#FCFAF6] px-5 py-10 text-center">
+            <BriefcaseBusiness className="mx-auto h-9 w-9 text-gray-300" />
+            <h3 className="mt-3 text-sm font-bold">No services yet</h3>
+            <p className="mx-auto mt-1 max-w-md text-xs leading-5 text-gray-500">
+              Add your first service so nearby customers can discover and request it.
+            </p>
+            <button type="button" onClick={openAddForm} className={`${primaryButtonClass} mt-4 min-h-10`}>
+              <Plus className="h-4 w-4" /> Add your first service
+            </button>
+          </div>
+        ) : (
+          <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
+            {services.map((service) => {
+              const cover = service.images
+                .slice()
+                .sort((a, b) => a.sortOrder - b.sortOrder)[0]?.url || service.imageUrl;
+
+              return (
+                <article
+                  key={service.id}
+                  className="flex min-w-0 flex-col overflow-hidden rounded-2xl border border-[#E8E4DE] bg-white"
+                >
+                  <div className="flex h-[170px] items-center justify-center overflow-hidden bg-[#FCFAF6]">
+                    {cover ? (
+                      <img src={cover} alt={service.name} loading="lazy" className="h-full w-full object-cover" />
+                    ) : (
+                      <BriefcaseBusiness className="h-10 w-10 text-gray-300" />
+                    )}
+                  </div>
+
+                  <div className="flex flex-1 flex-col p-4">
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="min-w-0">
+                        <h3 className="break-words text-sm font-bold">{service.name}</h3>
+                        <p className="mt-1 text-[11px] text-gray-500">
+                          {service.category?.name || "No category"}
+                        </p>
+                      </div>
+                      <span className={`shrink-0 rounded-full px-2 py-1 text-[9px] font-bold ${
+                        service.status === "ACTIVE"
+                          ? "bg-[#DDF5EA] text-[#137A59]"
+                          : "bg-[#FFF0EE] text-[#C5402D]"
+                      }`}>
+                        {service.status}
+                      </span>
+                    </div>
+
+                    <p className="mt-3 line-clamp-3 min-h-[54px] text-xs leading-5 text-gray-500">
+                      {service.description || "No description added."}
+                    </p>
+
+                    <p className="mt-3 text-sm font-bold text-[#9F2D18]">
+                      {formatPrice(service)}
+                    </p>
+
+                    <div className="mt-3 grid gap-2 border-t border-[#F0ECE6] pt-3">
+                      <p className="text-[11px] text-gray-500">
+                        Availability: <strong className="text-gray-700">{formatAvailability(service.availability)}</strong>
+                      </p>
+                      <p className="text-[11px] text-gray-500">
+                        Fulfilment: <strong className="text-gray-700">{fulfillmentLabels[service.fulfillmentType]}</strong>
+                      </p>
+                      {service.durationMinutes !== null && (
+                        <p className="flex items-center gap-1.5 text-[11px] text-gray-500">
+                          <Clock3 className="h-3.5 w-3.5" />
+                          {service.durationMinutes} minutes
+                        </p>
+                      )}
+                    </div>
+
+                    {service.keywords.length > 0 && (
+                      <div className="mt-3 flex flex-wrap gap-1.5">
+                        {service.keywords.slice(0, 5).map((keyword) => (
+                          <span key={keyword} className="rounded-full bg-[#FCFAF6] px-2 py-1 text-[9px] text-gray-500">
+                            {keyword}
+                          </span>
+                        ))}
+                      </div>
+                    )}
+
+                    <div className="mt-auto flex gap-2 border-t border-[#F0ECE6] pt-4">
+                      <button
+                        type="button"
+                        onClick={() => openEditForm(service)}
+                        disabled={saving || Boolean(deletingId)}
+                        className={`${secondaryButtonClass} min-h-10 min-w-0 flex-1`}
+                      >
+                        <Pencil className="h-3.5 w-3.5" /> Edit
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => void deleteService(service)}
+                        disabled={saving || Boolean(deletingId)}
+                        aria-label={`Delete ${service.name}`}
+                        className="inline-flex min-h-10 items-center justify-center gap-2 rounded-xl border border-[#F1D5D0] px-3 text-xs font-bold text-[#C5402D] hover:bg-[#FFF0EE] disabled:opacity-50"
+                      >
+                        {deletingId === service.id
+                          ? <LoaderCircle className="h-4 w-4 animate-spin" />
+                          : <Trash2 className="h-4 w-4" />}
+                        <span className="hidden sm:inline">Delete</span>
+                      </button>
+                    </div>
+                  </div>
+                </article>
+              );
+            })}
+          </div>
+        )}
+      </div>
+    </section>
+  );
+}

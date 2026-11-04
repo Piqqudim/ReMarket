@@ -83,6 +83,27 @@ enum ReferralRewardStatus {
 }
 
 /**
+ * ============================================================
+ * SERVICES ENUMS
+ * ============================================================
+ */
+
+enum ServiceFulfillmentType {
+  AT_PROVIDER
+  AT_CUSTOMER
+  REMOTE
+  FLEXIBLE
+}
+
+enum ServiceBookingStatus {
+  PENDING
+  ACCEPTED
+  DECLINED
+  CANCELLED
+  COMPLETED
+}
+
+/**
  * Notification priority.
  */
 enum NotificationPriority {
@@ -133,6 +154,7 @@ enum NotificationType {
   BUSINESS_DELETION_REQUESTED
   BUSINESS_DELETION_APPROVED
   BUSINESS_DELETION_REJECTED
+
   BUSINESS_REPORTED
 
   CLAIM_SUBMITTED
@@ -143,6 +165,17 @@ enum NotificationType {
   PRODUCT_UPDATED
   PRODUCT_REMOVED
   PRODUCT_AVAILABILITY_CHANGED
+
+  // Service listing notifications.
+  SERVICE_ADDED
+  SERVICE_UPDATED
+  SERVICE_REMOVED
+  SERVICE_AVAILABILITY_CHANGED
+
+  // Service booking and conversation notifications.
+  SERVICE_BOOKING_CREATED
+  SERVICE_BOOKING_UPDATED
+  SERVICE_BOOKING_MESSAGE
 
   REVIEW_RECEIVED
   REVIEW_REPLIED
@@ -193,6 +226,12 @@ enum AdminContentStatus {
   ARCHIVED
 }
 
+/**
+ * ============================================================
+ * USERS
+ * ============================================================
+ */
+
 model User {
   id        String   @id @default(cuid())
   email     String   @unique
@@ -200,7 +239,7 @@ model User {
   role      Role     @default(BUYER)
   name      String?
   createdAt DateTime @default(now())
-
+  savedListings SavedListing[]
   /**
    * REFERRALS
    * Nullable so existing users do not require
@@ -226,6 +265,15 @@ model User {
 
   // Products soft-deleted by this user.
   deletedProducts Product[] @relation("ProductDeletedBy")
+
+  // Services soft-deleted by this user.
+  servicesDeleted Service[] @relation("ServiceDeletedBy")
+
+  // Service bookings created by this buyer.
+  serviceBookings ServiceBooking[] @relation("ServiceBookingBuyer")
+
+  // Messages sent in service-booking conversations.
+  serviceBookingMessages ServiceBookingMessage[] @relation("ServiceBookingMessageSender")
 
   // Business deletion requests created by this user.
   deletionRequestsRequested BusinessDeletionRequest[] @relation("BusinessDeletionRequestedBy")
@@ -258,6 +306,12 @@ model User {
   // Social content created by this admin account.
   adminContents AdminContent[] @relation("AdminContentCreatedBy")
 }
+
+/**
+ * ============================================================
+ * REFERRALS
+ * ============================================================
+ */
 
 /**
  * REFERRAL ATTRIBUTION
@@ -305,18 +359,13 @@ model Referral {
 
 /**
  * REFERRAL REWARD LEDGER
- * Rewards must be created by trusted server-side
- * code after qualification.
+ * Rewards must be created by trusted server-side code
+ * after qualification.
  * PRODUCT_SLOTS represents additional seller product
  * capacity and must be included by the existing
  * product-capacity calculation.
  * BUYER_MILESTONE represents a non-cash buyer benefit.
  * rewardKey is an application-generated idempotency key.
- * Use a deterministic value for each intended reward so
- * retries cannot grant the same benefit twice.
- * Example keys:
- * referral:<referralId>:PRODUCT_SLOTS
- * user:<userId>:BUYER_MILESTONE:<milestoneNumber>
  */
 model ReferralReward {
   id String @id @default(cuid())
@@ -394,6 +443,12 @@ model Location {
   @@index([verification])
 }
 
+/**
+ * ============================================================
+ * BUSINESS SOCIAL LINKS
+ * ============================================================
+ */
+
 model BusinessSocialLink {
   id String @id @default(cuid())
 
@@ -407,6 +462,12 @@ model BusinessSocialLink {
   @@index([businessId])
   @@index([businessId, platform])
 }
+
+/**
+ * ============================================================
+ * CATEGORIES
+ * ============================================================
+ */
 
 model Category {
   id String @id @default(cuid())
@@ -425,6 +486,7 @@ model Category {
 
   business BusinessCategory[]
   products Product[]
+  services Service[]
   requests BuyerRequest[]
 
   @@index([isActive, sortOrder])
@@ -488,9 +550,11 @@ model Business {
   // null = active
   // timestamp = soft-deleted
   deletedAt DateTime?
+  showContactInfo Boolean @default(false)
 
   categories       BusinessCategory[]
   products         Product[]
+  services         Service[]
   socialLinks      BusinessSocialLink[]
   matches          Match[]
   contactEvents    ContactEvent[]
@@ -506,6 +570,12 @@ model Business {
   @@index([ownerId])
   @@index([locationId])
 }
+
+/**
+ * ============================================================
+ * BUSINESS REVIEWS
+ * ============================================================
+ */
 
 model BusinessReview {
   id String @id @default(cuid())
@@ -559,6 +629,8 @@ model Product {
   priceMin Int?
   priceMax Int?
 
+  savedBy SavedListing[]
+
   availability Availability @default(ASK_SELLER)
 
   keywords String[] @default([])
@@ -578,9 +650,8 @@ model Product {
 
   deletedBy User? @relation("ProductDeletedBy", fields: [deletedById], references: [id], onDelete: SetNull)
 
-  // New: original listing timestamp, supplied by the database.
-  // This allows the public Recently Added feed to sort by listing date
-  // instead of updatedAt, which changes whenever a product is edited.
+  // Original listing timestamp.
+  // Used by the Recently Added public product feed.
   createdAt DateTime @default(now())
 
   updatedAt DateTime @updatedAt
@@ -608,6 +679,196 @@ model ProductImage {
 
   @@index([productId])
   @@index([productId, sortOrder])
+}
+
+/**
+ * ============================================================
+ * SERVICES
+ * ============================================================
+ * Services are independent listings.
+ * They:
+ * - Belong to an existing Business.
+ * - Reuse the existing Category model.
+ * - Have independent availability and moderation status.
+ * - Have their own image records.
+ * - Do not consume product listing slots.
+ * - Support soft deletion.
+ */
+
+model Service {
+  id String @id @default(cuid())
+
+  businessId String
+
+  business Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+
+  name        String
+  description String?
+
+  categoryId String?
+
+  category Category? @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+
+  // Fixed price or optional price range.
+  // These fields can all be null when the seller quotes a price.
+  price    Int?
+  priceMin Int?
+  priceMax Int?
+
+  savedBy SavedListing[]
+
+  // Optional service duration, expressed in minutes.
+  durationMinutes Int?
+
+  // Where the service can be delivered.
+  fulfillmentType ServiceFulfillmentType @default(FLEXIBLE)
+
+  availability Availability @default(ASK_SELLER)
+
+  keywords String[] @default([])
+
+  // Compatibility mirror of the first ServiceImage.
+  imageUrl String?
+
+  images ServiceImage[]
+
+  // Admin-controlled public listing status.
+  status BusinessStatus @default(ACTIVE)
+
+  // Soft delete.
+  deletedAt DateTime?
+
+  // Audit: which authenticated user deleted the service?
+  deletedById String?
+
+  deletedBy User? @relation("ServiceDeletedBy", fields: [deletedById], references: [id], onDelete: SetNull)
+
+  // Customer booking records.
+  bookings ServiceBooking[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([businessId])
+  @@index([businessId, status, deletedAt])
+  @@index([categoryId])
+  @@index([status, deletedAt, createdAt])
+  @@index([availability])
+  @@index([fulfillmentType])
+}
+
+/**
+ * ============================================================
+ * SERVICE IMAGES
+ * ============================================================
+ * Multiple images can be attached to a service.
+ * The first image is mirrored to Service.imageUrl
+ * for compatibility with simple listing cards.
+ */
+
+model ServiceImage {
+  id String @id @default(cuid())
+
+  serviceId String
+
+  service Service @relation(fields: [serviceId], references: [id], onDelete: Cascade)
+
+  url      String
+  publicId String?
+
+  sortOrder Int @default(0)
+
+  createdAt DateTime @default(now())
+
+  @@index([serviceId])
+  @@index([serviceId, sortOrder])
+}
+
+/**
+ * ============================================================
+ * SERVICE BOOKINGS
+ * ============================================================
+ * A booking is separate from a service listing.
+ * A single service can receive multiple bookings.
+ * Each buyer can have multiple bookings.
+ * The seller is resolved through:
+ * Service -> Business -> ownerId
+ * Booking records are retained instead of being
+ * automatically deleted with a service.
+ */
+
+model ServiceBooking {
+  id String @id @default(cuid())
+
+  serviceId String
+
+  service Service @relation(fields: [serviceId], references: [id], onDelete: Restrict)
+
+  buyerId String
+
+  buyer User @relation("ServiceBookingBuyer", fields: [buyerId], references: [id], onDelete: Restrict)
+
+  status ServiceBookingStatus @default(PENDING)
+
+  // Requested service date/time, if supplied by the buyer.
+  requestedFor DateTime?
+
+  // Number of units, sessions or items requested.
+  quantity Int @default(1)
+
+  // Optional contact number supplied for this booking.
+  contactPhone String?
+
+  // Initial enquiry from the buyer.
+  buyerMessage String?
+
+  acceptedAt  DateTime?
+  declinedAt  DateTime?
+  cancelledAt DateTime?
+  completedAt DateTime?
+
+  messages ServiceBookingMessage[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([serviceId, status, createdAt])
+  @@index([buyerId, status, createdAt])
+  @@index([status, createdAt])
+  @@index([requestedFor])
+}
+
+/**
+ * ============================================================
+ * SERVICE BOOKING MESSAGES
+ * ============================================================
+ * Messages belong to a specific booking.
+ * The application must verify that the sender is
+ * either the booking's buyer or the owner of the
+ * service's business before creating a message.
+ */
+
+model ServiceBookingMessage {
+  id String @id @default(cuid())
+
+  bookingId String
+
+  booking ServiceBooking @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+
+  senderId String
+
+  sender User @relation("ServiceBookingMessageSender", fields: [senderId], references: [id], onDelete: Restrict)
+
+  body String
+
+  // Set when the recipient has read the message.
+  readAt DateTime?
+
+  createdAt DateTime @default(now())
+
+  @@index([bookingId, createdAt])
+  @@index([senderId, createdAt])
+  @@index([bookingId, readAt])
 }
 
 /**
@@ -1033,4 +1294,25 @@ model AdminContent {
 
   @@index([status, updatedAt])
   @@index([createdById, createdAt])
+}
+
+model SavedListing {
+  id String @id @default(cuid())
+
+  userId String
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  productId String?
+  product Product? @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  serviceId String?
+  service Service? @relation(fields: [serviceId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+
+  @@unique([userId, productId])
+  @@unique([userId, serviceId])
+  @@index([userId, createdAt])
+  @@index([productId])
+  @@index([serviceId])
 }

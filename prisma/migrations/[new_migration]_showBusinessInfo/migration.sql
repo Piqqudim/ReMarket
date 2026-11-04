@@ -1,0 +1,2 @@
+ALTER TABLE "Business"
+ADD COLUMN "showContactInfo" BOOLEAN NOT NULL DEFAULT false;
