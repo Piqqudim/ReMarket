@@ -120,7 +120,257 @@ function jsonError(
     }
   );
 }
+/**
+ * Product price filtering.
+ *
+ * Supports:
+ * - Fixed product prices.
+ * - Product price ranges.
+ * - Products with only a starting price.
+ * - Products with only an ending price.
+ *
+ * A range matches when it overlaps the requested
+ * minimum/maximum price range.
+ */
+function buildProductPriceConditions(
+  filters: SearchFilters
+): Prisma.ProductWhereInput[] {
+  const { minPrice, maxPrice } = filters;
 
+  if (minPrice === null && maxPrice === null) {
+    return [];
+  }
+
+  if (
+    minPrice !== null &&
+    maxPrice !== null
+  ) {
+    return [
+      {
+        OR: [
+          // Fixed price.
+          {
+            price: {
+              gte: minPrice,
+              lte: maxPrice,
+            },
+          },
+
+          // Product with a starting price and
+          // optional maximum price.
+          {
+            AND: [
+              {
+                priceMin: {
+                  lte: maxPrice,
+                },
+              },
+              {
+                OR: [
+                  {
+                    priceMax: {
+                      gte: minPrice,
+                    },
+                  },
+                  {
+                    priceMax: null,
+                  },
+                ],
+              },
+            ],
+          },
+
+          // Product with only an ending price.
+          {
+            AND: [
+              {
+                priceMin: null,
+              },
+              {
+                priceMax: {
+                  gte: minPrice,
+                  lte: maxPrice,
+                },
+              },
+            ],
+          },
+        ],
+      },
+    ];
+  }
+
+  if (minPrice !== null) {
+    return [
+      {
+        OR: [
+          {
+            price: {
+              gte: minPrice,
+            },
+          },
+          {
+            priceMax: {
+              gte: minPrice,
+            },
+          },
+          {
+            AND: [
+              {
+                priceMax: null,
+              },
+              {
+                priceMin: {
+                  gte: minPrice,
+                },
+              },
+            ],
+          },
+        ],
+      },
+    ];
+  }
+
+  return [
+    {
+      OR: [
+        {
+          price: {
+            lte: maxPrice!,
+          },
+        },
+        {
+          priceMin: {
+            lte: maxPrice!,
+          },
+        },
+        {
+          AND: [
+            {
+              priceMin: null,
+            },
+            {
+              priceMax: {
+                lte: maxPrice!,
+              },
+            },
+          ],
+        },
+      ],
+    },
+  ];
+}
+
+/**
+ * Business price filtering.
+ *
+ * Business priceMin and priceMax represent
+ * the business's advertised price range.
+ */
+function buildBusinessPriceConditions(
+  filters: SearchFilters
+): Prisma.BusinessWhereInput[] {
+  const { minPrice, maxPrice } = filters;
+
+  if (minPrice === null && maxPrice === null) {
+    return [];
+  }
+
+  if (
+    minPrice !== null &&
+    maxPrice !== null
+  ) {
+    return [
+      {
+        OR: [
+          {
+            AND: [
+              {
+                priceMin: {
+                  lte: maxPrice,
+                },
+              },
+              {
+                OR: [
+                  {
+                    priceMax: {
+                      gte: minPrice,
+                    },
+                  },
+                  {
+                    priceMax: null,
+                  },
+                ],
+              },
+            ],
+          },
+          {
+            AND: [
+              {
+                priceMin: null,
+              },
+              {
+                priceMax: {
+                  gte: minPrice,
+                  lte: maxPrice,
+                },
+              },
+            ],
+          },
+        ],
+      },
+    ];
+  }
+
+  if (minPrice !== null) {
+    return [
+      {
+        OR: [
+          {
+            priceMax: {
+              gte: minPrice,
+            },
+          },
+          {
+            AND: [
+              {
+                priceMax: null,
+              },
+              {
+                priceMin: {
+                  gte: minPrice,
+                },
+              },
+            ],
+          },
+        ],
+      },
+    ];
+  }
+
+  return [
+    {
+      OR: [
+        {
+          priceMin: {
+            lte: maxPrice!,
+          },
+        },
+        {
+          AND: [
+            {
+              priceMin: null,
+            },
+            {
+              priceMax: {
+                lte: maxPrice!,
+              },
+            },
+          ],
+        },
+      ],
+    },
+  ];
+}
 /**
  * Accept whole-number naira values, optionally
  * entered with comma separators.

@@ -330,6 +330,7 @@ function subscribeSavedBusinesses(
   };
 }
 export default function HomePage() {
+  const [shareFeedback, setShareFeedback] = useState("");
   const [q, setQ] =
     useState("");
   const [
