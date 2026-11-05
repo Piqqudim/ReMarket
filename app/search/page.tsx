@@ -28,6 +28,7 @@ import {
   MoreHorizontal,
   ChevronLeft,
   ChevronRight,
+  Wrench,
 } from "lucide-react";
 
 import Link from "next/link";
@@ -50,6 +51,12 @@ import {
 const PAGE_SIZE = 12;
 
 type Category = ReMarketCategory;
+type SearchType = "" | "product" | "service";
+
+type Availability =
+  | "AVAILABLE"
+  | "ASK_SELLER"
+  | "UNAVAILABLE";
 
 type ProductImage = {
   id: string;
@@ -66,24 +73,10 @@ type ProductCategory = {
   sortOrder?: number;
 } | null;
 
-type Product = {
-  id: string;
-  name: string;
-  description?: string | null;
-  price: number | null;
-  priceMin: number | null;
-  priceMax: number | null;
-  availability: "AVAILABLE" | "ASK_SELLER" | "UNAVAILABLE";
-  imageUrl: string | null;
-  images?: ProductImage[];
-  category?: ProductCategory;
-  keywords?: string[];
-  matchScore?: number;
-};
-
 type BusinessLocation = {
   id?: string;
   area?: string | null;
+  street?: string | null;
   address?: string | null;
   verification?: string;
   lat?: number | null;
@@ -97,11 +90,12 @@ type SaveableBusiness = {
   description: string | null;
   imageUrl: string | null;
   location: BusinessLocation;
-  availability: "AVAILABLE" | "ASK_SELLER" | "UNAVAILABLE";
+  availability: Availability;
   verification: "VERIFIED" | "UNVERIFIED";
   verified?: boolean;
   categories: string[];
   category?: string;
+  showContactInfo?: boolean;
   socialLinks: {
     id?: string;
     platform: string;
@@ -109,15 +103,63 @@ type SaveableBusiness = {
   }[];
 };
 
+type Product = {
+  id: string;
+  name: string;
+  description?: string | null;
+  price: number | null;
+  priceMin: number | null;
+  priceMax: number | null;
+  availability: Availability;
+  imageUrl: string | null;
+  images?: ProductImage[];
+  category?: ProductCategory;
+  keywords?: string[];
+  matchScore?: number;
+};
+
+type Service = {
+  id: string;
+  name: string;
+  description?: string | null;
+  price: number | null;
+  priceMin: number | null;
+  priceMax: number | null;
+  availability: Availability;
+  imageUrl: string | null;
+  images?: ProductImage[];
+  category?: ProductCategory;
+  keywords?: string[];
+  durationMinutes?: number | null;
+  fulfillmentType?: string | null;
+  matchScore?: number;
+};
+
 type ProductSearchResult = Product & {
   business: SaveableBusiness;
   matchScore: number;
 };
 
-type Business = SaveableBusiness & {
-  products: Product[];
-  matchScore?: number;
+type ServiceSearchResult = Service & {
+  business: SaveableBusiness;
+  matchScore: number;
 };
+
+type SearchListing =
+  | {
+      type: "PRODUCT";
+      id: string;
+      matchScore: number;
+      name: string;
+      product: ProductSearchResult;
+    }
+  | {
+      type: "SERVICE";
+      id: string;
+      matchScore: number;
+      name: string;
+      service: ServiceSearchResult;
+    };
 
 type SearchFilterValues = {
   query: string;
@@ -127,6 +169,7 @@ type SearchFilterValues = {
   maxPrice: string;
   availability: string;
   verified: boolean;
+  type: SearchType;
 };
 
 type SearchPageViewProps = {
@@ -138,6 +181,13 @@ type SearchPageViewProps = {
   initialAvailability: string;
   initialVerified: boolean;
   initialPage: number;
+  initialType: SearchType;
+};
+
+type SearchResultMeta = {
+  totalProducts: number;
+  totalServices: number;
+  truncated: boolean;
 };
 
 const NAV_ITEMS = [
@@ -147,6 +197,293 @@ const NAV_ITEMS = [
   { label: "Saved", href: "/saved", icon: Heart },
 ];
 
+/*
+ * =========================================
+ * GENERAL HELPERS
+ * =========================================
+ */
+
+function isRecord(
+  value: unknown,
+): value is Record<string, unknown> {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    !Array.isArray(value)
+  );
+}
+
+function cleanString(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+
+  const cleaned = value.trim();
+  return cleaned.length > 0 ? cleaned : null;
+}
+
+function parseNumber(value: unknown): number | null {
+  if (typeof value === "number") {
+    return Number.isFinite(value) && value >= 0
+      ? value
+      : null;
+  }
+
+  if (typeof value === "string") {
+    const cleaned = value.trim().replace(/,/g, "");
+
+    if (!cleaned) return null;
+
+    const parsed = Number(cleaned);
+
+    return Number.isFinite(parsed) && parsed >= 0
+      ? parsed
+      : null;
+  }
+
+  return null;
+}
+
+function parseAvailability(value: unknown): Availability {
+  if (
+    value === "AVAILABLE" ||
+    value === "ASK_SELLER" ||
+    value === "UNAVAILABLE"
+  ) {
+    return value;
+  }
+
+  return "ASK_SELLER";
+}
+
+function parseCategory(value: unknown): ProductCategory {
+  if (
+    !isRecord(value) ||
+    typeof value.id !== "string" ||
+    typeof value.name !== "string"
+  ) {
+    return null;
+  }
+
+  return {
+    id: value.id,
+    name: value.name,
+    iconKey: cleanString(value.iconKey) ?? undefined,
+    isActive:
+      typeof value.isActive === "boolean"
+        ? value.isActive
+        : undefined,
+    sortOrder:
+      typeof value.sortOrder === "number"
+        ? value.sortOrder
+        : undefined,
+  };
+}
+
+function parseImages(value: unknown): ProductImage[] {
+  if (!Array.isArray(value)) return [];
+
+  return value.flatMap((item) => {
+    if (
+      !isRecord(item) ||
+      typeof item.id !== "string" ||
+      typeof item.url !== "string"
+    ) {
+      return [];
+    }
+
+    return [{
+      id: item.id,
+      url: item.url,
+      publicId: cleanString(item.publicId),
+      sortOrder:
+        typeof item.sortOrder === "number"
+          ? item.sortOrder
+          : 0,
+    }];
+  });
+}
+
+function parseBusiness(value: unknown): SaveableBusiness | null {
+  if (
+    !isRecord(value) ||
+    typeof value.id !== "string" ||
+    typeof value.name !== "string"
+  ) {
+    return null;
+  }
+
+  const rawLocation = isRecord(value.location)
+    ? value.location
+    : null;
+
+  const location: BusinessLocation = rawLocation
+    ? {
+        id: cleanString(rawLocation.id) ?? undefined,
+        area: cleanString(rawLocation.area),
+        street: cleanString(rawLocation.street),
+        address: cleanString(rawLocation.address),
+        verification:
+          cleanString(rawLocation.verification) ?? undefined,
+        lat: parseNumber(rawLocation.lat),
+        long: parseNumber(rawLocation.long),
+      }
+    : null;
+
+  const categories = Array.isArray(value.categories)
+    ? value.categories.flatMap((item) => {
+        const category = cleanString(item);
+        return category ? [category] : [];
+      })
+    : [];
+
+  const socialLinks = Array.isArray(value.socialLinks)
+    ? value.socialLinks.flatMap((item) => {
+        if (!isRecord(item)) return [];
+
+        const platform = cleanString(item.platform);
+        const handle = cleanString(item.handle);
+
+        if (!platform || !handle) return [];
+
+        return [{
+          id: cleanString(item.id) ?? undefined,
+          platform,
+          handle,
+        }];
+      })
+    : [];
+
+  return {
+    id: value.id,
+    name: value.name,
+    ownerName: cleanString(value.ownerName),
+    description: cleanString(value.description),
+    imageUrl: cleanString(value.imageUrl),
+    location,
+    availability: parseAvailability(value.availability),
+    verification:
+      value.verification === "VERIFIED"
+        ? "VERIFIED"
+        : "UNVERIFIED",
+    verified: value.verification === "VERIFIED",
+    categories,
+    category: categories[0] ?? "Uncategorised",
+    showContactInfo: value.showContactInfo === true,
+    socialLinks,
+  };
+}
+
+/*
+ * =========================================
+ * SEARCH RESULT PARSERS
+ * =========================================
+ */
+
+function parseSearchProduct(
+  value: unknown,
+): ProductSearchResult | null {
+  if (!isRecord(value)) return null;
+
+  const id = cleanString(value.id);
+  const name = cleanString(value.name);
+
+  const business = parseBusiness(
+    value.seller ?? value.business,
+  );
+
+  if (!id || !name || !business) return null;
+
+  return {
+    id,
+    name,
+    description: cleanString(value.description),
+    price: parseNumber(value.price),
+    priceMin: parseNumber(value.priceMin),
+    priceMax: parseNumber(value.priceMax),
+    availability: parseAvailability(value.availability),
+    imageUrl: cleanString(value.imageUrl),
+    images: parseImages(value.images),
+    category: parseCategory(value.category),
+    keywords: Array.isArray(value.keywords)
+      ? value.keywords.filter(
+          (item): item is string =>
+            typeof item === "string",
+        )
+      : [],
+    matchScore: parseNumber(value.matchScore) ?? 0,
+    business,
+  };
+}
+
+function parseSearchService(
+  value: unknown,
+): ServiceSearchResult | null {
+  if (!isRecord(value)) return null;
+
+  const id = cleanString(value.id);
+  const name = cleanString(value.name);
+
+  const business = parseBusiness(
+    value.seller ?? value.business,
+  );
+
+  if (!id || !name || !business) return null;
+
+  return {
+    id,
+    name,
+    description: cleanString(value.description),
+    price: parseNumber(value.price),
+    priceMin: parseNumber(value.priceMin),
+    priceMax: parseNumber(value.priceMax),
+    availability: parseAvailability(value.availability),
+    imageUrl: cleanString(value.imageUrl),
+    images: parseImages(value.images),
+    category: parseCategory(value.category),
+    keywords: Array.isArray(value.keywords)
+      ? value.keywords.filter(
+          (item): item is string =>
+            typeof item === "string",
+        )
+      : [],
+    durationMinutes: parseNumber(value.durationMinutes),
+    fulfillmentType: cleanString(value.fulfillmentType),
+    matchScore: parseNumber(value.matchScore) ?? 0,
+    business,
+  };
+}
+
+function parseResultMeta(
+  value: unknown,
+  productCount: number,
+  serviceCount: number,
+): SearchResultMeta {
+  const meta = isRecord(value) ? value : {};
+
+  return {
+    totalProducts:
+      typeof meta.totalProducts === "number" &&
+      Number.isSafeInteger(meta.totalProducts) &&
+      meta.totalProducts >= 0
+        ? meta.totalProducts
+        : productCount,
+
+    totalServices:
+      typeof meta.totalServices === "number" &&
+      Number.isSafeInteger(meta.totalServices) &&
+      meta.totalServices >= 0
+        ? meta.totalServices
+        : serviceCount,
+
+    truncated: meta.truncated === true,
+  };
+}
+
+/*
+ * =========================================
+ * PRICE AND DISPLAY HELPERS
+ * =========================================
+ */
+
 function isUsablePrice(value: unknown): value is number {
   return (
     typeof value === "number" &&
@@ -155,90 +492,143 @@ function isUsablePrice(value: unknown): value is number {
   );
 }
 
-function formatPrice(product: Product): string {
-  const price = product.price;
-  const priceMin = product.priceMin;
-  const priceMax = product.priceMax;
+function formatNaira(amount: number): string {
+  return `₦${amount.toLocaleString("en-NG")}`;
+}
+
+function formatPrice(
+  listing: {
+    price: number | null;
+    priceMin: number | null;
+    priceMax: number | null;
+  },
+  fallback = "Ask seller",
+): string {
+  const { price, priceMin, priceMax } = listing;
 
   if (isUsablePrice(price)) {
-    return `₦${price.toLocaleString("en-NG")}`;
+    return formatNaira(price);
   }
 
-  if (isUsablePrice(priceMin) && isUsablePrice(priceMax)) {
-    return `₦${priceMin.toLocaleString("en-NG")} - ₦${priceMax.toLocaleString("en-NG")}`;
+  if (
+    isUsablePrice(priceMin) &&
+    isUsablePrice(priceMax)
+  ) {
+    if (priceMin === priceMax) {
+      return formatNaira(priceMin);
+    }
+
+    return `${formatNaira(priceMin)} - ${formatNaira(priceMax)}`;
   }
 
   if (isUsablePrice(priceMin)) {
-    return `From ₦${priceMin.toLocaleString("en-NG")}`;
+    return `From ${formatNaira(priceMin)}`;
   }
 
   if (isUsablePrice(priceMax)) {
-    return `Up to ₦${priceMax.toLocaleString("en-NG")}`;
+    return `Up to ${formatNaira(priceMax)}`;
   }
 
-  return "Ask seller";
+  return fallback;
 }
 
-function getProductImage(product: Product): string | null {
-  return product.images?.[0]?.url ?? product.imageUrl ?? null;
+function getListingImage(
+  listing: {
+    images?: ProductImage[];
+    imageUrl: string | null;
+  },
+): string | null {
+  return listing.images?.[0]?.url ?? listing.imageUrl ?? null;
 }
 
-function getBusinessCategory(business: {
-  categories?: string[];
-  category?: string;
-  products?: Array<{
-    category?: {
-      name?: string | null;
-    } | null;
-  }>;
-}): string {
-  const firstCategory = business.categories?.find(
-    (value) => typeof value === "string" && value.trim().length > 0
+function getBusinessCategory(
+  business: SaveableBusiness,
+): string {
+  const firstCategory = business.categories.find(
+    (value) =>
+      typeof value === "string" &&
+      value.trim().length > 0,
   );
 
   if (firstCategory) return firstCategory.trim();
 
-  const savedCategory =
-    typeof business.category === "string"
-      ? business.category.trim()
-      : "";
+  const category = business.category?.trim();
 
-  if (savedCategory && savedCategory.toLowerCase() !== "uncategorised") {
-    return savedCategory;
+  if (
+    category &&
+    category.toLowerCase() !== "uncategorised"
+  ) {
+    return category;
   }
 
-  const productCategory = business.products?.find(
-    (product) =>
-      typeof product.category?.name === "string" &&
-      product.category.name.trim().length > 0
-  )?.category?.name;
-
-  return productCategory?.trim() || savedCategory || "Uncategorised";
+  return "Uncategorised";
 }
 
-function getAvailabilityStatus(availability: string | null | undefined) {
+function getAvailabilityStatus(
+  availability: Availability | null | undefined,
+) {
   if (availability === "AVAILABLE") {
-    return { label: "Available", className: "bg-[#DDF5EA] text-[#137A59]" };
+    return {
+      label: "Available",
+      className: "bg-[#DDF5EA] text-[#137A59]",
+    };
   }
 
   if (availability === "UNAVAILABLE") {
-    return { label: "Unavailable", className: "bg-[#F3E8E8] text-[#9F2D18]" };
+    return {
+      label: "Unavailable",
+      className: "bg-[#F3E8E8] text-[#9F2D18]",
+    };
   }
 
-  // Unknown or missing status should not be presented as definitely unavailable.
-  return { label: "Ask seller", className: "bg-[#FFF0C7] text-[#8A671D]" };
+  return {
+    label: "Ask seller",
+    className: "bg-[#FFF0C7] text-[#8A671D]",
+  };
 }
 
-function buildSearchParams(values: SearchFilterValues): URLSearchParams {
+/*
+ * =========================================
+ * SEARCH PARAMETER HELPERS
+ * =========================================
+ */
+
+function buildSearchParams(
+  values: SearchFilterValues,
+): URLSearchParams {
   const params = new URLSearchParams();
 
-  if (values.query.trim()) params.set("q", values.query.trim());
-  if (values.category.trim()) params.set("category", values.category.trim());
-  if (values.location.trim()) params.set("location", values.location.trim());
-  if (values.minPrice.trim()) params.set("minPrice", values.minPrice.trim());
-  if (values.maxPrice.trim()) params.set("maxPrice", values.maxPrice.trim());
-  if (values.availability) params.set("availability", values.availability);
-  if (values.verified) params.set("verified", "true");
+  if (values.query.trim()) {
+    params.set("q", values.query.trim());
+  }
+
+  if (values.category.trim()) {
+    params.set("category", values.category.trim());
+  }
+
+  if (values.location.trim()) {
+    params.set("location", values.location.trim());
+  }
+
+  if (values.minPrice.trim()) {
+    params.set("minPrice", values.minPrice.trim());
+  }
+
+  if (values.maxPrice.trim()) {
+    params.set("maxPrice", values.maxPrice.trim());
+  }
+
+  if (values.availability) {
+    params.set("availability", values.availability);
+  }
+
+  if (values.verified) {
+    params.set("verified", "true");
+  }
+
+  if (values.type) {
+    params.set("type", values.type);
+  }
 
   return params;
 }
@@ -247,17 +637,36 @@ function getPositivePage(value: string | null): number {
   if (!value) return 1;
 
   const parsed = Number(value);
-  if (!Number.isSafeInteger(parsed) || parsed < 1) return 1;
+
+  if (!Number.isSafeInteger(parsed) || parsed < 1) {
+    return 1;
+  }
 
   return parsed;
 }
 
-function subscribeToSavedBusinesses(callback: () => void) {
-  window.addEventListener(SAVED_BUSINESSES_CHANGED_EVENT, callback);
+/*
+ * =========================================
+ * SAVED BUSINESSES
+ * =========================================
+ */
+
+function subscribeToSavedBusinesses(
+  callback: () => void,
+) {
+  window.addEventListener(
+    SAVED_BUSINESSES_CHANGED_EVENT,
+    callback,
+  );
+
   window.addEventListener("storage", callback);
 
   return () => {
-    window.removeEventListener(SAVED_BUSINESSES_CHANGED_EVENT, callback);
+    window.removeEventListener(
+      SAVED_BUSINESSES_CHANGED_EVENT,
+      callback,
+    );
+
     window.removeEventListener("storage", callback);
   };
 }
@@ -266,13 +675,19 @@ function getSavedBusinessesSnapshot(): string {
   return JSON.stringify(
     getSavedBusinesses()
       .map((business) => business.id)
-      .sort()
+      .sort(),
   );
 }
 
 function getSavedBusinessesServerSnapshot(): string {
   return "[]";
 }
+
+/*
+ * =========================================
+ * PRODUCT RESULT CARD
+ * =========================================
+ */
 
 function ProductResultCard({
   product,
@@ -286,10 +701,14 @@ function ProductResultCard({
   onToggleSaved: (business: SaveableBusiness) => void;
 }) {
   const business = product.business;
-  const image = getProductImage(product);
+  const image = getListingImage(product);
   const businessCategory = getBusinessCategory(business);
-  const productAvailability = getAvailabilityStatus(product.availability);
-  const verified = business.verification === "VERIFIED";
+  const productAvailability = getAvailabilityStatus(
+    product.availability,
+  );
+
+  const verified =
+    business.verification === "VERIFIED";
 
   return (
     <article className="min-w-0 overflow-hidden rounded-xl border border-[#E8E4DE] bg-white transition hover:-translate-y-0.5 hover:shadow-md">
@@ -297,31 +716,52 @@ function ProductResultCard({
         className="relative flex h-[175px] w-full items-center justify-center overflow-hidden"
         style={{ backgroundColor: categoryBackground }}
       >
-        {image ? (
-          <img
-            src={image}
-            alt={product.name}
-            loading="lazy"
-            className="absolute inset-0 h-full w-full object-cover"
-          />
-        ) : (
-          <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-white/75 shadow-sm">
-            <Package className="h-7 w-7 text-gray-600" />
-          </div>
-        )}
+        <Link
+          href={`/product/${product.id}`}
+          aria-label={`View ${product.name}`}
+          className="absolute inset-0 z-0"
+        >
+          {image ? (
+            <img
+              src={image}
+              alt={product.name}
+              loading="lazy"
+              className="h-full w-full object-cover"
+            />
+          ) : (
+            <div className="flex h-full w-full items-center justify-center">
+              <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-white/75 shadow-sm">
+                <Package className="h-7 w-7 text-gray-600" />
+              </div>
+            </div>
+          )}
+        </Link>
 
-        <span className={`absolute left-3 top-3 rounded-full px-2.5 py-1 text-[9px] font-semibold ${productAvailability.className}`}>
+        <span
+          className={`pointer-events-none absolute left-3 top-3 z-10 rounded-full px-2.5 py-1 text-[9px] font-semibold ${productAvailability.className}`}
+        >
           {productAvailability.label}
         </span>
 
         <button
           type="button"
-          aria-label={saved ? `Remove ${business.name} from saved businesses` : `Save ${business.name}`}
+          aria-label={
+            saved
+              ? `Remove ${business.name} from saved businesses`
+              : `Save ${business.name}`
+          }
           aria-pressed={saved}
           onClick={() => onToggleSaved(business)}
-          className={`absolute right-3 top-3 flex h-8 w-8 items-center justify-center rounded-full bg-white/95 shadow-sm transition ${saved ? "text-[#9F2D18]" : "text-gray-600 hover:text-[#9F2D18]"}`}
+          className={`absolute right-3 top-3 z-20 flex h-8 w-8 items-center justify-center rounded-full bg-white/95 shadow-sm transition ${
+            saved
+              ? "text-[#9F2D18]"
+              : "text-gray-600 hover:text-[#9F2D18]"
+          }`}
         >
-          <Bookmark className="h-4 w-4" fill={saved ? "currentColor" : "none"} />
+          <Bookmark
+            className="h-4 w-4"
+            fill={saved ? "currentColor" : "none"}
+          />
         </button>
       </div>
 
@@ -330,9 +770,12 @@ function ProductResultCard({
           {product.category?.name ?? businessCategory}
         </p>
 
-        <h4 className="mt-1 line-clamp-2 min-h-[40px] break-words text-sm font-bold text-[#17202A]">
+        <Link
+          href={`/product/${product.id}`}
+          className="mt-1 block line-clamp-2 min-h-[40px] break-words text-sm font-bold text-[#17202A] hover:text-[#9F2D18]"
+        >
           {product.name}
-        </h4>
+        </Link>
 
         <p className="mt-2 break-words text-sm font-bold text-[#9F2D18]">
           {formatPrice(product)}
@@ -352,7 +795,12 @@ function ProductResultCard({
               className="flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-lg border border-[#ECE7E0] bg-[#FCFAF6]"
             >
               {business.imageUrl ? (
-                <img src={business.imageUrl} alt="" loading="lazy" className="h-full w-full object-cover" />
+                <img
+                  src={business.imageUrl}
+                  alt=""
+                  loading="lazy"
+                  className="h-full w-full object-cover"
+                />
               ) : (
                 <Store className="h-4 w-4 text-gray-500" />
               )}
@@ -368,22 +816,29 @@ function ProductResultCard({
 
               <p className="mt-1 flex min-w-0 items-center gap-1 text-[10px] text-gray-400">
                 <MapPin className="h-3 w-3 shrink-0" />
-                <span className="truncate">{business.location?.area ?? "Local"}</span>
+                <span className="truncate">
+                  {business.location?.area ?? "Local"}
+                </span>
               </p>
             </div>
 
             {verified && (
-              <span title="Verified business" aria-label="Verified business" className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-[#DDF5EA] text-[#137A59]">
+              <span
+                title="Verified business"
+                aria-label="Verified business"
+                className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-[#DDF5EA] text-[#137A59]"
+              >
                 <Check className="h-3.5 w-3.5" />
               </span>
             )}
           </div>
 
           <Link
-            href={`/seller/${business.id}`}
+            href={`/product/${product.id}`}
             className="mt-3 flex w-full items-center justify-center gap-2 rounded-lg bg-[#FFF1ED] py-2.5 text-[11px] font-bold text-[#9F2D18] transition hover:bg-[#FFE6DF]"
           >
-            View seller <ArrowRight className="h-3.5 w-3.5" />
+            View product
+            <ArrowRight className="h-3.5 w-3.5" />
           </Link>
         </div>
       </div>
@@ -391,114 +846,182 @@ function ProductResultCard({
   );
 }
 
-function BusinessResultCard({
-  business,
+/*
+ * =========================================
+ * SERVICE RESULT CARD
+ * =========================================
+ */
+
+function ServiceResultCard({
+  service,
   saved,
   categoryBackground,
   onToggleSaved,
 }: {
-  business: Business;
+  service: ServiceSearchResult;
   saved: boolean;
   categoryBackground: string;
   onToggleSaved: (business: SaveableBusiness) => void;
 }) {
+  const business = service.business;
+  const image = getListingImage(service);
+
+  const serviceAvailability = getAvailabilityStatus(
+    service.availability,
+  );
+
   const businessCategory = getBusinessCategory(business);
-  const firstProduct = business.products?.[0] ?? null;
-  const productImage = firstProduct ? getProductImage(firstProduct) : null;
-  const availableProductCount = (business.products ?? []).filter(
-    (product) => product.availability === "AVAILABLE"
-  ).length;
-  const availabilityStatus = getAvailabilityStatus(business.availability);
-  const verified = business.verification === "VERIFIED";
+  const verified =
+    business.verification === "VERIFIED";
 
   return (
     <article className="min-w-0 overflow-hidden rounded-xl border border-[#E8E4DE] bg-white transition hover:-translate-y-0.5 hover:shadow-md">
-      <Link
-        href={`/seller/${business.id}`}
-        className="relative flex h-[120px] w-full items-center justify-center overflow-hidden"
+      <div
+        className="relative flex h-[175px] w-full items-center justify-center overflow-hidden"
         style={{ backgroundColor: categoryBackground }}
       >
-        {business.imageUrl ? (
-          <img src={business.imageUrl} alt={business.name} loading="lazy" className="absolute inset-0 h-full w-full object-cover" />
-        ) : (
-          <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-white/75 shadow-sm">
-            <Store className="h-7 w-7 text-gray-700" />
-          </div>
-        )}
-
-        <span className={`absolute right-3 top-3 rounded-full px-2.5 py-1 text-[9px] font-semibold ${availabilityStatus.className}`}>
-          {availabilityStatus.label}
-        </span>
-      </Link>
-
-      <div className="min-w-0 p-3.5">
-        <div className="flex min-w-0 items-start justify-between gap-2">
-          <div className="min-w-0 flex-1">
-            <Link href={`/seller/${business.id}`} className="block truncate text-sm font-bold text-[#17202A] hover:text-[#9F2D18]">
-              {business.name}
-            </Link>
-
-            <p className="mt-1 flex min-w-0 items-center gap-1 text-[10px] text-muted">
-              <span className="shrink-0 truncate">{businessCategory}</span>
-              <span aria-hidden="true">·</span>
-              <span className="flex min-w-0 items-center gap-1 truncate">
-                <MapPin className="h-3 w-3 shrink-0" />
-                <span className="truncate">{business.location?.area ?? "Local"}</span>
-              </span>
-            </p>
-          </div>
-
-          <button
-            type="button"
-            aria-label={saved ? `Remove ${business.name} from saved businesses` : `Save ${business.name}`}
-            aria-pressed={saved}
-            onClick={() => onToggleSaved(business)}
-            className={`shrink-0 transition ${saved ? "text-[#9F2D18]" : "text-gray-500 hover:text-[#9F2D18]"}`}
-          >
-            <Bookmark className="h-4 w-4" fill={saved ? "currentColor" : "none"} />
-          </button>
-        </div>
-
-        <div className="mt-3 flex min-w-0 items-center justify-between gap-2">
-          <div className={`flex min-w-0 items-center gap-1 ${verified ? "text-[#137A59]" : "text-gray-500"}`}>
-            {verified ? <Check className="h-4 w-4 shrink-0" /> : <Store className="h-4 w-4 shrink-0" />}
-            <span className="truncate text-[10px] font-semibold">{verified ? "Verified" : "Local seller"}</span>
-          </div>
-
-          <div className="flex shrink-0 items-center gap-1 text-[10px] text-gray-400">
-            <Package className="h-3 w-3" />
-            <span>{availableProductCount} available</span>
-          </div>
-        </div>
-
-        {firstProduct && (
-          <div className="mt-3 border-t border-[#F0ECE6] pt-3">
-            <div className="flex min-w-0 items-center gap-2.5">
-              {productImage ? (
-                <div className="h-10 w-10 shrink-0 overflow-hidden rounded-lg border border-[#ECE7E0] bg-[#FCFAF6]">
-                  <img src={productImage} alt={firstProduct.name} loading="lazy" className="h-full w-full object-cover" />
-                </div>
-              ) : (
-                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-[#FCFAF6] text-gray-400">
-                  <Package className="h-4 w-4" />
-                </div>
-              )}
-
-              <div className="min-w-0">
-                <p className="truncate text-[10px] font-semibold text-gray-600">{firstProduct.name}</p>
-                <p className="mt-1 break-words text-[10px] text-gray-400">{formatPrice(firstProduct)}</p>
+        <Link
+          href={`/services/${service.id}`}
+          aria-label={`View ${service.name}`}
+          className="absolute inset-0 z-0"
+        >
+          {image ? (
+            <img
+              src={image}
+              alt={service.name}
+              loading="lazy"
+              className="h-full w-full object-cover"
+            />
+          ) : (
+            <div className="flex h-full w-full items-center justify-center">
+              <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-white/75 shadow-sm">
+                <Wrench className="h-7 w-7 text-gray-600" />
               </div>
             </div>
-          </div>
+          )}
+        </Link>
+
+        <span
+          className={`pointer-events-none absolute left-3 top-3 z-10 rounded-full px-2.5 py-1 text-[9px] font-semibold ${serviceAvailability.className}`}
+        >
+          {serviceAvailability.label}
+        </span>
+
+        <button
+          type="button"
+          aria-label={
+            saved
+              ? `Remove ${business.name} from saved businesses`
+              : `Save ${business.name}`
+          }
+          aria-pressed={saved}
+          onClick={() => onToggleSaved(business)}
+          className={`absolute right-3 top-3 z-20 flex h-8 w-8 items-center justify-center rounded-full bg-white/95 shadow-sm transition ${
+            saved
+              ? "text-[#9F2D18]"
+              : "text-gray-600 hover:text-[#9F2D18]"
+          }`}
+        >
+          <Bookmark
+            className="h-4 w-4"
+            fill={saved ? "currentColor" : "none"}
+          />
+        </button>
+      </div>
+
+      <div className="min-w-0 p-3.5">
+        <p className="truncate text-[10px] font-medium text-gray-500">
+          {service.category?.name ?? businessCategory}
+        </p>
+
+        <Link
+          href={`/services/${service.id}`}
+          className="mt-1 block line-clamp-2 min-h-[40px] break-words text-sm font-bold text-[#17202A] hover:text-[#9F2D18]"
+        >
+          {service.name}
+        </Link>
+
+        <p className="mt-2 break-words text-sm font-bold text-[#9F2D18]">
+          {formatPrice(service, "Contact for price")}
+        </p>
+
+        {service.description && (
+          <p className="mt-1 line-clamp-2 break-words text-[10px] leading-4 text-gray-500">
+            {service.description}
+          </p>
         )}
 
-        <Link href={`/seller/${business.id}`} className="mt-3 flex w-full items-center justify-center gap-2 rounded-lg bg-[#FFF1ED] py-2.5 text-[11px] font-bold text-[#9F2D18] transition hover:bg-[#FFE6DF]">
-          Browse <ArrowRight className="h-3.5 w-3.5" />
-        </Link>
+        {typeof service.durationMinutes === "number" &&
+          service.durationMinutes > 0 && (
+            <p className="mt-2 text-[10px] text-gray-500">
+              Duration: {service.durationMinutes} minutes
+            </p>
+          )}
+
+        <div className="mt-3 border-t border-[#F0ECE6] pt-3">
+          <div className="flex min-w-0 items-center gap-2.5">
+            <Link
+              href={`/seller/${business.id}`}
+              aria-label={`View ${business.name}`}
+              className="flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-lg border border-[#ECE7E0] bg-[#FCFAF6]"
+            >
+              {business.imageUrl ? (
+                <img
+                  src={business.imageUrl}
+                  alt=""
+                  loading="lazy"
+                  className="h-full w-full object-cover"
+                />
+              ) : (
+                <Store className="h-4 w-4 text-gray-500" />
+              )}
+            </Link>
+
+            <div className="min-w-0 flex-1">
+              <Link
+                href={`/seller/${business.id}`}
+                className="block truncate text-[11px] font-bold text-gray-700 hover:text-[#9F2D18]"
+              >
+                {business.name}
+              </Link>
+
+              <p className="mt-1 flex min-w-0 items-center gap-1 text-[10px] text-gray-400">
+                <MapPin className="h-3 w-3 shrink-0" />
+                <span className="truncate">
+                  {business.location?.area ?? "Local"}
+                </span>
+              </p>
+            </div>
+
+            {verified && (
+              <span
+                title="Verified business"
+                aria-label="Verified business"
+                className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-[#DDF5EA] text-[#137A59]"
+              >
+                <Check className="h-3.5 w-3.5" />
+              </span>
+            )}
+          </div>
+
+          <Link
+            href={`/services/${service.id}`}
+            className="mt-3 flex w-full items-center justify-center gap-2 rounded-lg bg-[#FFF1ED] py-2.5 text-[11px] font-bold text-[#9F2D18] transition hover:bg-[#FFE6DF]"
+          >
+            View service
+            <ArrowRight className="h-3.5 w-3.5" />
+          </Link>
+        </div>
       </div>
     </article>
   );
 }
+
+/*
+ * =========================================
+ * SEARCH PAGE URL
+ * =========================================
+ */
 
 function SearchPageContent() {
   const router = useRouter();
@@ -509,29 +1032,53 @@ function SearchPageContent() {
   const initialLocation = searchParams.get("location") ?? "";
   const initialMinPrice = searchParams.get("minPrice") ?? "";
   const initialMaxPrice = searchParams.get("maxPrice") ?? "";
-  const initialAvailability = searchParams.get("availability") ?? "";
-  const initialVerified = searchParams.get("verified") === "true";
-  const initialPage = getPositivePage(searchParams.get("page"));
+  const initialAvailability =
+    searchParams.get("availability") ?? "";
+
+  const initialVerified =
+    searchParams.get("verified") === "true";
+
+  const rawType = searchParams.get("type");
+
+  const initialType: SearchType =
+    rawType === "product" || rawType === "service"
+      ? rawType
+      : "";
+
+  const initialPage = getPositivePage(
+    searchParams.get("page"),
+  );
 
   const allSearchParams = searchParams.toString();
   const stableParams = new URLSearchParams(allSearchParams);
+
   stableParams.delete("page");
+
   const searchKey = stableParams.toString();
 
   useEffect(() => {
     const rawPage = searchParams.get("page");
+
     if (rawPage === null) return;
 
     const parsedPage = Number(rawPage);
-    if (Number.isSafeInteger(parsedPage) && parsedPage >= 1) return;
+
+    if (
+      Number.isSafeInteger(parsedPage) &&
+      parsedPage >= 1
+    ) {
+      return;
+    }
 
     const params = new URLSearchParams(allSearchParams);
     params.delete("page");
+
     const queryString = params.toString();
 
-    router.replace(queryString ? `/search?${queryString}` : "/search", {
-      scroll: false,
-    });
+    router.replace(
+      queryString ? `/search?${queryString}` : "/search",
+      { scroll: false },
+    );
   }, [allSearchParams, router, searchParams]);
 
   return (
@@ -545,9 +1092,16 @@ function SearchPageContent() {
       initialAvailability={initialAvailability}
       initialVerified={initialVerified}
       initialPage={initialPage}
+      initialType={initialType}
     />
   );
 }
+
+/*
+ * =========================================
+ * SEARCH PAGE VIEW
+ * =========================================
+ */
 
 function SearchPageView({
   initialQuery,
@@ -558,19 +1112,36 @@ function SearchPageView({
   initialAvailability,
   initialVerified,
   initialPage,
+  initialType,
 }: SearchPageViewProps) {
   const router = useRouter();
+
   const [query, setQuery] = useState(initialQuery);
   const [category, setCategory] = useState(initialCategory);
   const [location, setLocation] = useState(initialLocation);
   const [minPrice, setMinPrice] = useState(initialMinPrice);
   const [maxPrice, setMaxPrice] = useState(initialMaxPrice);
-  const [availability, setAvailability] = useState(initialAvailability);
+  const [availability, setAvailability] =
+    useState(initialAvailability);
+
   const [verified, setVerified] = useState(initialVerified);
-  const [categories, setCategories] = useState<Category[]>(DEFAULT_CATEGORIES);
-  const [businesses, setBusinesses] = useState<Business[]>([]);
-  const [products, setProducts] = useState<ProductSearchResult[]>([]);
-  const [resultsTruncated, setResultsTruncated] = useState(false);
+
+  const [categories, setCategories] =
+    useState<Category[]>(DEFAULT_CATEGORIES);
+
+  const [products, setProducts] =
+    useState<ProductSearchResult[]>([]);
+
+  const [services, setServices] =
+    useState<ServiceSearchResult[]>([]);
+
+  const [resultMeta, setResultMeta] =
+    useState<SearchResultMeta>({
+      totalProducts: 0,
+      totalServices: 0,
+      truncated: false,
+    });
+
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [showFilters, setShowFilters] = useState(false);
@@ -583,37 +1154,69 @@ function SearchPageView({
     maxPrice: initialMaxPrice,
     availability: initialAvailability,
     verified: initialVerified,
+    type: initialType,
   };
+
+  /*
+   * =========================================
+   * SAVED BUSINESS STATE
+   * =========================================
+   */
 
   const savedSnapshot = useSyncExternalStore(
     subscribeToSavedBusinesses,
     getSavedBusinessesSnapshot,
-    getSavedBusinessesServerSnapshot
+    getSavedBusinessesServerSnapshot,
   );
 
   const savedBusinessIds = useMemo(() => {
     try {
       const ids: unknown = JSON.parse(savedSnapshot);
-      if (!Array.isArray(ids)) return new Set<string>();
+
+      if (!Array.isArray(ids)) {
+        return new Set<string>();
+      }
+
       return new Set<string>(
-        ids.filter((value): value is string => typeof value === "string")
+        ids.filter(
+          (value): value is string =>
+            typeof value === "string",
+        ),
       );
     } catch {
       return new Set<string>();
     }
   }, [savedSnapshot]);
 
+  /*
+   * =========================================
+   * SEARCH NAVIGATION
+   * =========================================
+   */
+
   function navigateToSearch(values: SearchFilterValues) {
     const params = buildSearchParams(values);
     const queryString = params.toString();
-    router.push(queryString ? `/search?${queryString}` : "/search");
+
+    router.push(
+      queryString ? `/search?${queryString}` : "/search",
+    );
   }
 
-  function navigateToPage(requestedPage: number, replace = false) {
+  function navigateToPage(
+    requestedPage: number,
+    replace = false,
+  ) {
     const params = buildSearchParams(appliedFilters);
-    if (requestedPage > 1) params.set("page", String(requestedPage));
+
+    if (requestedPage > 1) {
+      params.set("page", String(requestedPage));
+    }
+
     const queryString = params.toString();
-    const url = queryString ? `/search?${queryString}` : "/search";
+    const url = queryString
+      ? `/search?${queryString}`
+      : "/search";
 
     if (replace) {
       router.replace(url, { scroll: false });
@@ -623,32 +1226,64 @@ function SearchPageView({
     router.push(url, { scroll: false });
   }
 
-  function applyAppliedFilterChanges(overrides: Partial<SearchFilterValues>) {
-    navigateToSearch({ ...appliedFilters, ...overrides });
+  function applyAppliedFilterChanges(
+    overrides: Partial<SearchFilterValues>,
+  ) {
+    navigateToSearch({
+      ...appliedFilters,
+      ...overrides,
+    });
   }
+
+  /*
+   * =========================================
+   * LOAD CATEGORIES
+   * =========================================
+   */
 
   useEffect(() => {
     let cancelled = false;
 
     async function loadCategories() {
       try {
-        const response = await fetch("/api/categories", { cache: "no-store" });
-        if (!response.ok) return;
-        const data = await response.json();
+        const response = await fetch(
+          "/api/categories",
+          { cache: "no-store" },
+        );
 
-        if (!cancelled && Array.isArray(data.categories)) {
-          setCategories(mergeCategories(data.categories));
+        if (!response.ok) return;
+
+        const data: unknown = await response.json();
+
+        if (
+          !cancelled &&
+          isRecord(data) &&
+          Array.isArray(data.categories)
+        ) {
+          setCategories(
+            mergeCategories(data.categories),
+          );
         }
       } catch (categoryError) {
-        console.error("Failed to load categories:", categoryError);
+        console.error(
+          "Failed to load categories:",
+          categoryError,
+        );
       }
     }
 
     void loadCategories();
+
     return () => {
       cancelled = true;
     };
   }, []);
+
+  /*
+   * =========================================
+   * LOAD SEARCH RESULTS
+   * =========================================
+   */
 
   useEffect(() => {
     const controller = new AbortController();
@@ -666,48 +1301,107 @@ function SearchPageView({
           maxPrice: initialMaxPrice,
           availability: initialAvailability,
           verified: initialVerified,
+          type: initialType,
         });
+
         const queryString = params.toString();
 
         const response = await fetch(
           `/api/search${queryString ? `?${queryString}` : ""}`,
-          { cache: "no-store", signal: controller.signal }
+          {
+            cache: "no-store",
+            signal: controller.signal,
+          },
         );
-        const data = await response.json();
+
+        const data: unknown = await response.json();
 
         if (!response.ok) {
-          throw new Error(
-            typeof data?.error === "string"
+          const message =
+            isRecord(data) &&
+            typeof data.error === "string"
               ? data.error
-              : "Unable to complete search."
-          );
+              : "Unable to complete search.";
+
+          throw new Error(message);
         }
+
         if (controller.signal.aborted) return;
 
-        setBusinesses(Array.isArray(data.businesses) ? data.businesses : []);
-        setProducts(Array.isArray(data.products) ? data.products : []);
-        setResultsTruncated(data?.resultMeta?.truncated === true);
+        const rawProducts =
+          isRecord(data) && Array.isArray(data.products)
+            ? data.products
+            : [];
+
+        const rawServices =
+          isRecord(data) && Array.isArray(data.services)
+            ? data.services
+            : [];
+
+        const parsedProducts = rawProducts
+          .map(parseSearchProduct)
+          .filter(
+            (item): item is ProductSearchResult =>
+              item !== null,
+          );
+
+        const parsedServices = rawServices
+          .map(parseSearchService)
+          .filter(
+            (item): item is ServiceSearchResult =>
+              item !== null,
+          );
+
+        setProducts(parsedProducts);
+        setServices(parsedServices);
+
+        setResultMeta(
+          parseResultMeta(
+            isRecord(data) ? data.resultMeta : null,
+            parsedProducts.length,
+            parsedServices.length,
+          ),
+        );
       } catch (searchError) {
-        if (searchError instanceof DOMException && searchError.name === "AbortError") {
+        if (
+          searchError instanceof DOMException &&
+          searchError.name === "AbortError"
+        ) {
           return;
         }
 
-        console.error("Search loading error:", searchError);
-        setBusinesses([]);
+        console.error(
+          "Search loading error:",
+          searchError,
+        );
+
         setProducts([]);
-        setResultsTruncated(false);
+        setServices([]);
+
+        setResultMeta({
+          totalProducts: 0,
+          totalServices: 0,
+          truncated: false,
+        });
+
         setError(
-          searchError instanceof Error && searchError.message
+          searchError instanceof Error &&
+            searchError.message
             ? searchError.message
-            : "We couldn't complete your search right now."
+            : "We couldn't complete your search right now.",
         );
       } finally {
-        if (!controller.signal.aborted) setLoading(false);
+        if (!controller.signal.aborted) {
+          setLoading(false);
+        }
       }
     }
 
     void loadSearchResults();
-    return () => controller.abort();
+
+    return () => {
+      controller.abort();
+    };
   }, [
     initialQuery,
     initialCategory,
@@ -716,15 +1410,44 @@ function SearchPageView({
     initialMaxPrice,
     initialAvailability,
     initialVerified,
+    initialType,
   ]);
 
-  function submitSearch(event: FormEvent<HTMLFormElement>) {
+  /*
+   * =========================================
+   * SEARCH FORM AND FILTER ACTIONS
+   * =========================================
+   */
+
+  function submitSearch(
+    event: FormEvent<HTMLFormElement>,
+  ) {
     event.preventDefault();
-    navigateToSearch({ query, category, location, minPrice, maxPrice, availability, verified });
+
+    navigateToSearch({
+      query,
+      category,
+      location,
+      minPrice,
+      maxPrice,
+      availability,
+      verified,
+      type: initialType,
+    });
   }
 
   function applyFilters() {
-    navigateToSearch({ query, category, location, minPrice, maxPrice, availability, verified });
+    navigateToSearch({
+      query,
+      category,
+      location,
+      minPrice,
+      maxPrice,
+      availability,
+      verified,
+      type: initialType,
+    });
+
     setShowFilters(false);
   }
 
@@ -755,9 +1478,17 @@ function SearchPageView({
       maxPrice: "",
       availability: "",
       verified: false,
+      type: initialType,
     });
+
     setShowFilters(false);
   }
+
+  /*
+   * =========================================
+   * SAVE BUSINESS
+   * =========================================
+   */
 
   function toggleSaved(business: SaveableBusiness) {
     if (isBusinessSaved(business.id)) {
@@ -776,40 +1507,91 @@ function SearchPageView({
     });
   }
 
-  const productBusinessIds = useMemo(
-    () => new Set(products.map((product) => product.business.id)),
-    [products]
-  );
-
-  const additionalBusinesses = useMemo(
-    () => businesses.filter((business) => !productBusinessIds.has(business.id)),
-    [businesses, productBusinessIds]
-  );
-
-  /**
-   * Paginate the combined result collection, not each collection separately.
-   * This keeps each page to PAGE_SIZE items and prevents results being skipped.
+  /*
+   * =========================================
+   * COMBINE PRODUCT AND SERVICE RESULTS
+   * =========================================
    */
-  const totalResults = products.length + additionalBusinesses.length;
-  const totalPages = Math.max(1, Math.ceil(totalResults / PAGE_SIZE));
-  const currentPage = Math.min(Math.max(1, initialPage), totalPages);
+
+  const allListings = useMemo<SearchListing[]>(() => {
+    const combined: SearchListing[] = [
+      ...products.map((product) => ({
+        type: "PRODUCT" as const,
+        id: product.id,
+        name: product.name,
+        matchScore: product.matchScore,
+        product,
+      })),
+
+      ...services.map((service) => ({
+        type: "SERVICE" as const,
+        id: service.id,
+        name: service.name,
+        matchScore: service.matchScore,
+        service,
+      })),
+    ];
+
+    combined.sort(
+      (a, b) =>
+        b.matchScore - a.matchScore ||
+        a.name.localeCompare(b.name),
+    );
+
+    return combined;
+  }, [products, services]);
+
+  /*
+   * The header's search mode is preserved through the URL.
+   * The API currently returns both collections, so this
+   * provides the corresponding display filter here.
+   */
+  const visibleListings = useMemo(() => {
+    if (initialType === "product") {
+      return allListings.filter(
+        (item) => item.type === "PRODUCT",
+      );
+    }
+
+    if (initialType === "service") {
+      return allListings.filter(
+        (item) => item.type === "SERVICE",
+      );
+    }
+
+    return allListings;
+  }, [allListings, initialType]);
+
+  /*
+   * =========================================
+   * PAGINATION
+   * =========================================
+   */
+
+  const totalLoadedResults = visibleListings.length;
+
+  const totalPages = Math.max(
+    1,
+    Math.ceil(totalLoadedResults / PAGE_SIZE),
+  );
+
+  const currentPage = Math.min(
+    Math.max(1, initialPage),
+    totalPages,
+  );
+
   const pageStart = (currentPage - 1) * PAGE_SIZE;
   const pageEnd = pageStart + PAGE_SIZE;
 
-  const displayedProducts = useMemo(
-    () => products.slice(pageStart, Math.min(pageEnd, products.length)),
-    [products, pageStart, pageEnd]
-  );
-
-  const businessPageStart = Math.max(0, pageStart - products.length);
-  const businessPageEnd = Math.max(0, pageEnd - products.length);
-  const displayedBusinesses = useMemo(
-    () => additionalBusinesses.slice(businessPageStart, businessPageEnd),
-    [additionalBusinesses, businessPageStart, businessPageEnd]
+  const displayedListings = visibleListings.slice(
+    pageStart,
+    pageEnd,
   );
 
   useEffect(() => {
-    if (loading || currentPage === initialPage) return;
+    if (loading || currentPage === initialPage) {
+      return;
+    }
 
     const params = buildSearchParams({
       query: initialQuery,
@@ -819,11 +1601,18 @@ function SearchPageView({
       maxPrice: initialMaxPrice,
       availability: initialAvailability,
       verified: initialVerified,
+      type: initialType,
     });
 
-    if (currentPage > 1) params.set("page", String(currentPage));
+    if (currentPage > 1) {
+      params.set("page", String(currentPage));
+    }
+
     const queryString = params.toString();
-    const url = queryString ? `/search?${queryString}` : "/search";
+
+    const url = queryString
+      ? `/search?${queryString}`
+      : "/search";
 
     router.replace(url, { scroll: false });
   }, [
@@ -837,12 +1626,21 @@ function SearchPageView({
     initialMaxPrice,
     initialAvailability,
     initialVerified,
+    initialType,
     router,
   ]);
 
-  const totalProductResults = products.length;
-  const totalAdditionalBusinesses = additionalBusinesses.length;
-  const hasResults = totalResults > 0;
+  const totalProductResults =
+    initialType === "service"
+      ? 0
+      : resultMeta.totalProducts;
+
+  const totalServiceResults =
+    initialType === "product"
+      ? 0
+      : resultMeta.totalServices;
+
+  const hasResults = visibleListings.length > 0;
 
   const activeFilterCount =
     Number(Boolean(initialCategory)) +
@@ -852,78 +1650,157 @@ function SearchPageView({
     Number(Boolean(initialAvailability)) +
     Number(initialVerified);
 
-  function getCategoryBackground(categoryName: string): string {
+  function getCategoryBackground(
+    categoryName: string,
+  ): string {
+    const normalized = categoryName.toLowerCase();
+
     return (
-      categories.find((item) => item.name.toLowerCase() === categoryName.toLowerCase())?.bg ??
-      DEFAULT_CATEGORIES.find((item) => item.name.toLowerCase() === categoryName.toLowerCase())?.bg ??
+      categories.find(
+        (item) => item.name.toLowerCase() === normalized,
+      )?.bg ??
+      DEFAULT_CATEGORIES.find(
+        (item) => item.name.toLowerCase() === normalized,
+      )?.bg ??
       "#EEF1F4"
     );
   }
+
+  const resultSummary =
+    initialType === "product"
+      ? `${resultMeta.totalProducts} ${
+          resultMeta.totalProducts === 1
+            ? "product"
+            : "products"
+        } found`
+      : initialType === "service"
+        ? `${resultMeta.totalServices} ${
+            resultMeta.totalServices === 1
+              ? "service"
+              : "services"
+          } found`
+        : `${resultMeta.totalProducts} ${
+            resultMeta.totalProducts === 1
+              ? "product"
+              : "products"
+          } · ${resultMeta.totalServices} ${
+            resultMeta.totalServices === 1
+              ? "service"
+              : "services"
+          }`;
+
+  /*
+   * =========================================
+   * PAGE UI
+   * =========================================
+   */
 
   return (
     <main className="min-h-dvh w-full overflow-x-clip bg-[#FFF7ED]">
       <div className="mx-auto min-h-dvh w-full min-w-0 max-w-[1500px] px-0 py-0 sm:px-5 sm:py-5">
         <div className="min-h-dvh w-full min-w-0 overflow-hidden rounded-none border-0 bg-[#FFFDFC] shadow-none sm:min-h-[calc(100dvh-40px)] sm:rounded-[22px] sm:border sm:border-[#FF5A36] sm:shadow-sm">
+
           {/* HEADER */}
+
           <header className="flex h-[62px] min-w-0 items-center justify-between gap-2 border-b border-[#EAE6DF] bg-white px-3 sm:h-[66px] sm:px-6">
-            <Link href="/" className="flex min-w-0 shrink-0 items-center gap-2 sm:gap-2.5">
+            <Link
+              href="/"
+              className="flex min-w-0 shrink-0 items-center gap-2 sm:gap-2.5"
+            >
               <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-[#FF5A36] text-white sm:h-10 sm:w-10">
                 <Store className="h-5 w-5" />
               </div>
+
               <div className="min-w-0">
-                <p className="text-sm font-bold tracking-tight">ReMarket</p>
-                <p className="whitespace-nowrap text-[10px] leading-none text-muted">Find it nearby</p>
+                <p className="text-sm font-bold tracking-tight">
+                  ReMarket
+                </p>
+
+                <p className="whitespace-nowrap text-[10px] leading-none text-muted">
+                  Find it nearby
+                </p>
               </div>
             </Link>
 
             {/* DESKTOP NAVIGATION */}
-            <nav aria-label="Primary navigation" className="hidden shrink-0 items-center gap-1 lg:flex">
+
+            <nav
+              aria-label="Primary navigation"
+              className="hidden shrink-0 items-center gap-1 lg:flex"
+            >
               {NAV_ITEMS.map((item) => (
-                <button
+                <Link
                   key={item.label}
-                  type="button"
-                  onClick={() => router.push(item.href)}
-                  aria-current={item.label === "Shop" ? "page" : undefined}
-                  className={`whitespace-nowrap rounded-xl px-3 py-2 text-xs font-semibold transition hover:bg-gray-50 xl:px-4 ${item.label === "Shop" ? "bg-[#FFF1ED] text-[#9F2D18]" : "text-gray-700"}`}
+                  href={item.href}
+                  aria-current={
+                    item.label === "Shop"
+                      ? "page"
+                      : undefined
+                  }
+                  className={`whitespace-nowrap rounded-xl px-3 py-2 text-xs font-semibold transition hover:bg-gray-50 xl:px-4 ${
+                    item.label === "Shop"
+                      ? "bg-[#FFF1ED] text-[#9F2D18]"
+                      : "text-gray-700"
+                  }`}
                 >
                   {item.label}
-                </button>
+                </Link>
               ))}
             </nav>
 
             <div className="flex min-w-0 shrink-0 items-center justify-end gap-2 sm:gap-3">
-              <button
-                type="button"
-                onClick={() => router.push("/request")}
+              <Link
+                href="/request"
                 className="shrink-0 rounded-xl bg-[#FF5A36] px-3 py-2.5 text-[10px] font-bold text-white shadow-sm transition hover:opacity-90 sm:px-4 sm:text-xs"
               >
                 <span className="sm:hidden">Request</span>
-                <span className="hidden sm:inline">Request something</span>
-              </button>
+                <span className="hidden sm:inline">
+                  Request something
+                </span>
+              </Link>
 
-              <button type="button" aria-label="Profile" className="hidden h-9 w-9 shrink-0 items-center justify-center rounded-full bg-gray-100 sm:flex">
+              <Link
+                href="/profile"
+                aria-label="My profile"
+                className="hidden h-9 w-9 shrink-0 items-center justify-center rounded-full bg-gray-100 sm:flex"
+              >
                 <UserCircle className="h-6 w-6 text-gray-700" />
-              </button>
+              </Link>
             </div>
           </header>
 
           <div className="flex min-w-0">
+
             {/* SIDEBAR */}
+
             <aside className="hidden w-[190px] shrink-0 border-r border-[#EAE6DF] bg-[#FCFAF6] px-3 py-5 lg:block">
-              <nav aria-label="Sidebar navigation" className="space-y-1">
+              <nav
+                aria-label="Sidebar navigation"
+                className="space-y-1"
+              >
                 {NAV_ITEMS.map((item) => {
                   const Icon = item.icon;
+
                   return (
-                    <button
+                    <Link
                       key={item.label}
-                      type="button"
-                      onClick={() => router.push(item.href)}
-                      aria-current={item.label === "Shop" ? "page" : undefined}
-                      className={`flex w-full min-w-0 items-center gap-3 rounded-xl px-3 py-2.5 text-left text-sm font-medium transition hover:bg-white ${item.label === "Shop" ? "bg-white text-[#9F2D18]" : "text-gray-700"}`}
+                      href={item.href}
+                      aria-current={
+                        item.label === "Shop"
+                          ? "page"
+                          : undefined
+                      }
+                      className={`flex w-full min-w-0 items-center gap-3 rounded-xl px-3 py-2.5 text-left text-sm font-medium transition hover:bg-white ${
+                        item.label === "Shop"
+                          ? "bg-white text-[#9F2D18]"
+                          : "text-gray-700"
+                      }`}
                     >
                       <Icon className="h-[18px] w-[18px] shrink-0" />
-                      <span className="truncate">{item.label}</span>
-                    </button>
+                      <span className="truncate">
+                        {item.label}
+                      </span>
+                    </Link>
                   );
                 })}
               </nav>
@@ -931,59 +1808,109 @@ function SearchPageView({
               <div className="my-5 h-px bg-[#E7E2DB]" />
 
               <div>
-                <p className="px-3 text-[10px] font-bold uppercase tracking-[0.12em] text-gray-400">Categories</p>
+                <p className="px-3 text-[10px] font-bold uppercase tracking-[0.12em] text-gray-400">
+                  Categories
+                </p>
+
                 <div className="mt-3 space-y-1">
                   {categories.map((item) => {
                     const Icon = item.icon;
-                    const active = initialCategory === item.name;
+                    const active =
+                      initialCategory === item.name;
+
                     return (
                       <button
                         key={item.id}
                         type="button"
-                        onClick={() => applyAppliedFilterChanges({ category: active ? "" : item.name })}
+                        onClick={() =>
+                          applyAppliedFilterChanges({
+                            category: active
+                              ? ""
+                              : item.name,
+                          })
+                        }
                         aria-pressed={active}
-                        className={`flex w-full min-w-0 items-center gap-3 rounded-xl px-3 py-2 text-left transition hover:bg-white ${active ? "bg-white text-[#9F2D18]" : "text-gray-700"}`}
+                        className={`flex w-full min-w-0 items-center gap-3 rounded-xl px-3 py-2 text-left transition hover:bg-white ${
+                          active
+                            ? "bg-white text-[#9F2D18]"
+                            : "text-gray-700"
+                        }`}
                       >
-                        <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full" style={{ backgroundColor: item.bg }}>
+                        <span
+                          className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full"
+                          style={{
+                            backgroundColor: item.bg,
+                          }}
+                        >
                           <Icon className="h-3.5 w-3.5" />
                         </span>
-                        <span className="truncate text-xs font-medium">{item.name}</span>
+
+                        <span className="truncate text-xs font-medium">
+                          {item.name}
+                        </span>
                       </button>
                     );
                   })}
 
-                  <button type="button" onClick={() => router.push("/shop")} className="flex w-full items-center gap-3 rounded-xl px-3 py-2 text-left transition hover:bg-white">
+                  <Link
+                    href="/shop"
+                    className="flex w-full items-center gap-3 rounded-xl px-3 py-2 text-left transition hover:bg-white"
+                  >
                     <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-gray-100">
                       <MoreHorizontal className="h-4 w-4 text-gray-500" />
                     </span>
-                    <span className="text-xs font-medium text-gray-700">More</span>
-                  </button>
+
+                    <span className="text-xs font-medium text-gray-700">
+                      More
+                    </span>
+                  </Link>
                 </div>
               </div>
             </aside>
 
             {/* MAIN CONTENT */}
+
             <div className="min-w-0 flex-1">
               <div className="min-w-0 px-3 pb-24 pt-3 sm:px-6 sm:pt-6 lg:px-6 lg:pb-8">
+
                 {/* HERO */}
+
                 <section className="min-w-0 rounded-[18px] bg-[#FF5A36] px-4 py-5 text-white shadow-soft sm:px-7 sm:py-7">
                   <div className="max-w-[720px]">
-                    <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-white/75">Search ReMarket</p>
-                    <h1 className="mt-2 text-[24px] font-bold leading-tight sm:text-[30px]">Find what you need</h1>
-                    <p className="mt-2 max-w-[520px] text-xs leading-5 text-white/80 sm:text-sm">
-                      Discover products and local businesses around you.
+                    <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-white/75">
+                      Search ReMarket
                     </p>
 
-                    <form onSubmit={submitSearch} className="mt-5 flex h-[48px] w-full min-w-0 items-center rounded-full bg-white p-1.5 shadow-sm">
+                    <h1 className="mt-2 text-[24px] font-bold leading-tight sm:text-[30px]">
+                      Find what you need
+                    </h1>
+
+                    <p className="mt-2 max-w-[520px] text-xs leading-5 text-white/80 sm:text-sm">
+                      Discover products, services and local
+                      businesses around you.
+                    </p>
+
+                    <form
+                      onSubmit={submitSearch}
+                      className="mt-5 flex h-[48px] w-full min-w-0 items-center rounded-full bg-white p-1.5 shadow-sm"
+                    >
                       <Search className="ml-2 h-[18px] w-[18px] shrink-0 text-gray-500 sm:ml-3" />
+
                       <input
                         value={query}
-                        onChange={(event) => setQuery(event.target.value)}
+                        onChange={(event) =>
+                          setQuery(event.target.value)
+                        }
                         placeholder="What are you looking for?"
-                        aria-label="Search products and businesses"
+                        aria-label="Search products and services"
                         className="min-w-0 flex-1 bg-transparent px-2 text-xs text-gray-800 outline-none placeholder:text-gray-400 sm:px-3"
                       />
-                      <button type="submit" className="flex h-[38px] shrink-0 items-center rounded-full bg-[#FF5A36] px-3 text-xs font-bold text-white transition hover:opacity-90 sm:px-5">
+
+                      <button
+                        type="submit"
+                        disabled={!query.trim()}
+                        className="flex h-[38px] shrink-0 items-center rounded-full bg-[#FF5A36] px-3 text-xs font-bold text-white transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60 sm:px-5"
+                      >
                         Search
                       </button>
                     </form>
@@ -991,25 +1918,38 @@ function SearchPageView({
                 </section>
 
                 {/* RESULTS HEADER */}
+
                 <section className="mt-5 min-w-0">
                   <div className="flex min-w-0 flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                     <div className="min-w-0">
-                      <h2 className="text-lg font-bold text-[#17202A]">Search results</h2>
+                      <h2 className="text-lg font-bold text-[#17202A]">
+                        {initialType === "product"
+                          ? "Product results"
+                          : initialType === "service"
+                            ? "Service results"
+                            : "Search results"}
+                      </h2>
+
                       <p className="mt-0.5 break-words text-xs text-muted">
                         {loading
-                          ? "Finding products and local businesses..."
-                          : `${totalProductResults} ${totalProductResults === 1 ? "product" : "products"} · ${totalAdditionalBusinesses} additional ${totalAdditionalBusinesses === 1 ? "business" : "businesses"}`}
+                          ? "Finding products and services..."
+                          : resultSummary}
                       </p>
                     </div>
 
                     <button
                       type="button"
                       onClick={() => setShowFilters(true)}
-                      aria-label={`Open filters${activeFilterCount > 0 ? `, ${activeFilterCount} active` : ""}`}
+                      aria-label={`Open filters${
+                        activeFilterCount > 0
+                          ? `, ${activeFilterCount} active`
+                          : ""
+                      }`}
                       className="inline-flex w-full shrink-0 items-center justify-center gap-2 rounded-xl border border-[#E8E4DE] bg-white px-4 py-2.5 text-xs font-semibold text-gray-700 transition hover:border-[#FFB09B] hover:text-[#9F2D18] sm:w-auto"
                     >
                       <SlidersHorizontal className="h-4 w-4" />
                       Filters
+
                       {activeFilterCount > 0 && (
                         <span className="flex h-5 min-w-5 items-center justify-center rounded-full bg-[#FF5A36] px-1.5 text-[9px] font-bold text-white">
                           {activeFilterCount}
@@ -1018,43 +1958,106 @@ function SearchPageView({
                     </button>
                   </div>
 
-                  {!loading && !error && resultsTruncated && (
-                    <div
-                      role="status"
-                      className="mt-3 rounded-xl border border-[#F1D7A7] bg-[#FFF8E8] px-3.5 py-3 text-[11px] leading-5 text-[#76551A]"
-                    >
-                      We found more matches than we can load at once. These results show a limited selection.
-                      Add a category, location or price filter to narrow your search.
-                    </div>
-                  )}
+                  {!loading &&
+                    !error &&
+                    resultMeta.truncated && (
+                      <div
+                        role="status"
+                        className="mt-3 rounded-xl border border-[#F1D7A7] bg-[#FFF8E8] px-3.5 py-3 text-[11px] leading-5 text-[#76551A]"
+                      >
+                        We found more matches than we can load at
+                        once. These results show a limited
+                        selection. Add a category, location or
+                        price filter to narrow your search.
+                      </div>
+                    )}
 
                   {/* APPLIED FILTER CHIPS */}
+
                   {activeFilterCount > 0 && (
                     <div className="mt-3 flex min-w-0 flex-wrap gap-2">
                       {initialCategory && (
-                        <button type="button" onClick={() => applyAppliedFilterChanges({ category: "" })} className="flex max-w-full items-center gap-1.5 rounded-full bg-[#FFE0D6] px-3 py-1.5 text-[10px] font-semibold text-[#9F2D18]">
-                          <span className="truncate">{initialCategory}</span><X className="h-3 w-3 shrink-0" />
+                        <button
+                          type="button"
+                          onClick={() =>
+                            applyAppliedFilterChanges({
+                              category: "",
+                            })
+                          }
+                          className="flex max-w-full items-center gap-1.5 rounded-full bg-[#FFE0D6] px-3 py-1.5 text-[10px] font-semibold text-[#9F2D18]"
+                        >
+                          <span className="truncate">
+                            {initialCategory}
+                          </span>
+                          <X className="h-3 w-3 shrink-0" />
                         </button>
                       )}
+
                       {initialLocation && (
-                        <button type="button" onClick={() => applyAppliedFilterChanges({ location: "" })} className="flex max-w-full items-center gap-1.5 rounded-full bg-[#E9EDF0] px-3 py-1.5 text-[10px] font-semibold text-gray-700">
-                          <span className="truncate">{initialLocation}</span><X className="h-3 w-3 shrink-0" />
+                        <button
+                          type="button"
+                          onClick={() =>
+                            applyAppliedFilterChanges({
+                              location: "",
+                            })
+                          }
+                          className="flex max-w-full items-center gap-1.5 rounded-full bg-[#E9EDF0] px-3 py-1.5 text-[10px] font-semibold text-gray-700"
+                        >
+                          <span className="truncate">
+                            {initialLocation}
+                          </span>
+                          <X className="h-3 w-3 shrink-0" />
                         </button>
                       )}
+
                       {(initialMinPrice || initialMaxPrice) && (
-                        <button type="button" onClick={() => applyAppliedFilterChanges({ minPrice: "", maxPrice: "" })} className="flex items-center gap-1.5 rounded-full bg-[#FFF0C7] px-3 py-1.5 text-[10px] font-semibold text-[#8A671D]">
-                          Price <X className="h-3 w-3" />
-                        </button>
-                      )}
-                      {initialAvailability && (
-                        <button type="button" onClick={() => applyAppliedFilterChanges({ availability: "" })} className="flex items-center gap-1.5 rounded-full bg-[#DDF5EA] px-3 py-1.5 text-[10px] font-semibold text-[#137A59]">
-                          {initialAvailability === "AVAILABLE" ? "Available" : initialAvailability === "ASK_SELLER" ? "Ask seller" : "Unavailable"}
+                        <button
+                          type="button"
+                          onClick={() =>
+                            applyAppliedFilterChanges({
+                              minPrice: "",
+                              maxPrice: "",
+                            })
+                          }
+                          className="flex items-center gap-1.5 rounded-full bg-[#FFF0C7] px-3 py-1.5 text-[10px] font-semibold text-[#8A671D]"
+                        >
+                          Price
                           <X className="h-3 w-3" />
                         </button>
                       )}
+
+                      {initialAvailability && (
+                        <button
+                          type="button"
+                          onClick={() =>
+                            applyAppliedFilterChanges({
+                              availability: "",
+                            })
+                          }
+                          className="flex items-center gap-1.5 rounded-full bg-[#DDF5EA] px-3 py-1.5 text-[10px] font-semibold text-[#137A59]"
+                        >
+                          {initialAvailability === "AVAILABLE"
+                            ? "Available"
+                            : initialAvailability === "ASK_SELLER"
+                              ? "Ask seller"
+                              : "Unavailable"}
+
+                          <X className="h-3 w-3" />
+                        </button>
+                      )}
+
                       {initialVerified && (
-                        <button type="button" onClick={() => applyAppliedFilterChanges({ verified: false })} className="flex items-center gap-1.5 rounded-full bg-[#E7E5FF] px-3 py-1.5 text-[10px] font-semibold text-[#62559B]">
-                          Verified <X className="h-3 w-3" />
+                        <button
+                          type="button"
+                          onClick={() =>
+                            applyAppliedFilterChanges({
+                              verified: false,
+                            })
+                          }
+                          className="flex items-center gap-1.5 rounded-full bg-[#E7E5FF] px-3 py-1.5 text-[10px] font-semibold text-[#62559B]"
+                        >
+                          Verified
+                          <X className="h-3 w-3" />
                         </button>
                       )}
                     </div>
@@ -1062,11 +2065,18 @@ function SearchPageView({
                 </section>
 
                 {/* RESULTS */}
+
                 <section className="mt-5 min-w-0">
                   {loading && (
                     <div className="grid min-w-0 grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4">
-                      {Array.from({ length: 8 }, (_, index) => index).map((item) => (
-                        <div key={item} className="h-[280px] min-w-0 animate-pulse rounded-xl border border-[#E8E4DE] bg-white" />
+                      {Array.from(
+                        { length: 8 },
+                        (_, index) => index,
+                      ).map((item) => (
+                        <div
+                          key={item}
+                          className="h-[280px] min-w-0 animate-pulse rounded-xl border border-[#E8E4DE] bg-white"
+                        />
                       ))}
                     </div>
                   )}
@@ -1074,101 +2084,189 @@ function SearchPageView({
                   {!loading && error && (
                     <div className="rounded-xl border border-[#E8E4DE] bg-white px-5 py-12 text-center">
                       <Search className="mx-auto h-8 w-8 text-gray-300" />
-                      <p className="mt-3 text-sm font-semibold text-gray-700">Search unavailable</p>
-                      <p className="mt-1 text-xs text-gray-400">{error}</p>
-                      <button type="button" onClick={() => window.location.reload()} className="mt-4 rounded-xl bg-[#FF5A36] px-4 py-2.5 text-xs font-semibold text-white">Try again</button>
+
+                      <p className="mt-3 text-sm font-semibold text-gray-700">
+                        Search unavailable
+                      </p>
+
+                      <p className="mt-1 text-xs text-gray-400">
+                        {error}
+                      </p>
+
+                      <button
+                        type="button"
+                        onClick={() => window.location.reload()}
+                        className="mt-4 rounded-xl bg-[#FF5A36] px-4 py-2.5 text-xs font-semibold text-white"
+                      >
+                        Try again
+                      </button>
                     </div>
                   )}
 
                   {!loading && !error && !hasResults && (
                     <div className="rounded-xl border border-[#E8E4DE] bg-white px-5 py-12 text-center">
                       <Search className="mx-auto h-8 w-8 text-gray-300" />
-                      <p className="mt-3 text-sm font-semibold text-gray-700">We couldn&apos;t find that</p>
-                      <p className="mt-1 text-xs leading-5 text-gray-400">Try another search or adjust your filters.</p>
-                      <button type="button" onClick={() => setShowFilters(true)} className="mt-4 inline-flex items-center gap-2 rounded-xl bg-[#FF5A36] px-4 py-2.5 text-xs font-semibold text-white">
-                        Adjust filters <SlidersHorizontal className="h-3.5 w-3.5" />
+
+                      <p className="mt-3 text-sm font-semibold text-gray-700">
+                        We couldn&apos;t find that
+                      </p>
+
+                      <p className="mt-1 text-xs leading-5 text-gray-400">
+                        Try another search or adjust your filters.
+                      </p>
+
+                      <button
+                        type="button"
+                        onClick={() => setShowFilters(true)}
+                        className="mt-4 inline-flex items-center gap-2 rounded-xl bg-[#FF5A36] px-4 py-2.5 text-xs font-semibold text-white"
+                      >
+                        Adjust filters
+                        <SlidersHorizontal className="h-3.5 w-3.5" />
                       </button>
                     </div>
                   )}
 
-                  {/* PRODUCT RESULTS */}
-                  {!loading && !error && displayedProducts.length > 0 && (
-                    <div className="min-w-0">
-                      <div className="mb-3 flex items-center justify-between gap-3">
-                        <h3 className="text-sm font-bold text-[#17202A]">Products</h3>
-                        <span className="text-[10px] text-gray-400">{totalProductResults} found</span>
-                      </div>
+                  {!loading &&
+                    !error &&
+                    displayedListings.length > 0 && (
+                      <div className="min-w-0">
+                        <div className="mb-3 flex items-center justify-between gap-3">
+                          <h3 className="text-sm font-bold text-[#17202A]">
+                            {initialType === "product"
+                              ? "Products"
+                              : initialType === "service"
+                                ? "Services"
+                                : "Products and services"}
+                          </h3>
 
-                      <div className="grid min-w-0 grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4">
-                        {displayedProducts.map((product) => {
-                          const businessCategory =
-                            product.category?.name ?? getBusinessCategory(product.business);
-                          return (
-                            <ProductResultCard
-                              key={product.id}
-                              product={product}
-                              saved={savedBusinessIds.has(product.business.id)}
-                              categoryBackground={getCategoryBackground(businessCategory)}
-                              onToggleSaved={toggleSaved}
-                            />
-                          );
-                        })}
-                      </div>
-                    </div>
-                  )}
+                          <span className="text-[10px] text-gray-400">
+                            Showing {pageStart + 1}–
+                            {Math.min(
+                              pageEnd,
+                              totalLoadedResults,
+                            )}{" "}
+                            of {totalLoadedResults} loaded
+                          </span>
+                        </div>
 
-                  {/* ADDITIONAL BUSINESS RESULTS */}
-                  {!loading && !error && displayedBusinesses.length > 0 && (
-                    <div className={displayedProducts.length > 0 ? "mt-8 min-w-0 border-t border-[#EAE6DF] pt-6" : "min-w-0"}>
-                      <div className="mb-3 flex items-center justify-between gap-3">
-                        <h3 className="text-sm font-bold text-[#17202A]">Businesses to explore</h3>
-                        <span className="text-[10px] text-gray-400">{totalAdditionalBusinesses} found</span>
-                      </div>
+                        <div className="grid min-w-0 grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4">
+                          {displayedListings.map((listing) => {
+                            if (listing.type === "PRODUCT") {
+                              const product =
+                                listing.product;
 
-                      <div className="grid min-w-0 grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4">
-                        {displayedBusinesses.map((business) => (
-                          <BusinessResultCard
-                            key={business.id}
-                            business={business}
-                            saved={savedBusinessIds.has(business.id)}
-                            categoryBackground={getCategoryBackground(getBusinessCategory(business))}
-                            onToggleSaved={toggleSaved}
-                          />
-                        ))}
+                              const categoryName =
+                                product.category?.name ??
+                                getBusinessCategory(
+                                  product.business,
+                                );
+
+                              return (
+                                <ProductResultCard
+                                  key={`product-${product.id}`}
+                                  product={product}
+                                  saved={savedBusinessIds.has(
+                                    product.business.id,
+                                  )}
+                                  categoryBackground={getCategoryBackground(
+                                    categoryName,
+                                  )}
+                                  onToggleSaved={toggleSaved}
+                                />
+                              );
+                            }
+
+                            const service = listing.service;
+
+                            const categoryName =
+                              service.category?.name ??
+                              getBusinessCategory(
+                                service.business,
+                              );
+
+                            return (
+                              <ServiceResultCard
+                                key={`service-${service.id}`}
+                                service={service}
+                                saved={savedBusinessIds.has(
+                                  service.business.id,
+                                )}
+                                categoryBackground={getCategoryBackground(
+                                  categoryName,
+                                )}
+                                onToggleSaved={toggleSaved}
+                              />
+                            );
+                          })}
+                        </div>
                       </div>
-                    </div>
-                  )}
+                    )}
 
                   {/* PAGINATION */}
-                  {!loading && !error && hasResults && totalPages > 1 && (
-                    <nav aria-label="Search result pages" className="mt-8 flex flex-wrap items-center justify-center gap-3 border-t border-[#EAE6DF] pt-5">
-                      <button
-                        type="button"
-                        disabled={currentPage <= 1}
-                        onClick={() => navigateToPage(currentPage - 1)}
-                        className="inline-flex items-center gap-1.5 rounded-xl border border-[#E8E4DE] bg-white px-3 py-2.5 text-xs font-semibold text-gray-700 transition hover:border-[#FFB09B] hover:text-[#9F2D18] disabled:cursor-not-allowed disabled:opacity-40"
-                      >
-                        <ChevronLeft className="h-4 w-4" /> Previous
-                      </button>
 
-                      <span aria-live="polite" className="text-xs font-medium text-gray-500">Page {currentPage} of {totalPages}</span>
-
-                      <button
-                        type="button"
-                        disabled={currentPage >= totalPages}
-                        onClick={() => navigateToPage(currentPage + 1)}
-                        className="inline-flex items-center gap-1.5 rounded-xl border border-[#E8E4DE] bg-white px-3 py-2.5 text-xs font-semibold text-gray-700 transition hover:border-[#FFB09B] hover:text-[#9F2D18] disabled:cursor-not-allowed disabled:opacity-40"
+                  {!loading &&
+                    !error &&
+                    hasResults &&
+                    totalPages > 1 && (
+                      <nav
+                        aria-label="Search result pages"
+                        className="mt-8 flex flex-wrap items-center justify-center gap-3 border-t border-[#EAE6DF] pt-5"
                       >
-                        Next <ChevronRight className="h-4 w-4" />
-                      </button>
-                    </nav>
-                  )}
+                        <button
+                          type="button"
+                          disabled={currentPage <= 1}
+                          onClick={() =>
+                            navigateToPage(currentPage - 1)
+                          }
+                          className="inline-flex items-center gap-1.5 rounded-xl border border-[#E8E4DE] bg-white px-3 py-2.5 text-xs font-semibold text-gray-700 transition hover:border-[#FFB09B] hover:text-[#9F2D18] disabled:cursor-not-allowed disabled:opacity-40"
+                        >
+                          <ChevronLeft className="h-4 w-4" />
+                          Previous
+                        </button>
+
+                        <span
+                          aria-live="polite"
+                          className="text-xs font-medium text-gray-500"
+                        >
+                          Page {currentPage} of {totalPages}
+                        </span>
+
+                        <button
+                          type="button"
+                          disabled={currentPage >= totalPages}
+                          onClick={() =>
+                            navigateToPage(currentPage + 1)
+                          }
+                          className="inline-flex items-center gap-1.5 rounded-xl border border-[#E8E4DE] bg-white px-3 py-2.5 text-xs font-semibold text-gray-700 transition hover:border-[#FFB09B] hover:text-[#9F2D18] disabled:cursor-not-allowed disabled:opacity-40"
+                        >
+                          Next
+                          <ChevronRight className="h-4 w-4" />
+                        </button>
+                      </nav>
+                    )}
+
+                  {/* SERVER RESULT COUNTS */}
+
+                  {!loading &&
+                    !error &&
+                    hasResults && (
+                      <p className="mt-4 text-center text-[10px] text-gray-400">
+                        {initialType === "product"
+                          ? `${totalProductResults} matching products`
+                          : initialType === "service"
+                            ? `${totalServiceResults} matching services`
+                            : `${totalProductResults} products and ${totalServiceResults} services`}
+                      </p>
+                    )}
                 </section>
 
                 {/* FOOTER */}
+
                 <footer className="mt-7 flex items-center justify-center gap-3 text-[10px] text-gray-400">
                   <span className="h-px w-10 bg-gray-200 sm:w-16" />
-                  <span className="text-center">ReMarket · Find it nearby</span>
+                  <span className="text-center">
+                    ReMarket · Find it nearby
+                  </span>
                   <span className="h-px w-10 bg-gray-200 sm:w-16" />
                 </footer>
               </div>
@@ -1176,41 +2274,90 @@ function SearchPageView({
           </div>
 
           {/* FILTER DRAWER */}
+
           {showFilters && (
             <div className="fixed inset-0 z-[60]">
-              <button type="button" aria-label="Close filters" onClick={closeFilters} className="absolute inset-0 bg-black/20 backdrop-blur-[1px]" />
+              <button
+                type="button"
+                aria-label="Close filters"
+                onClick={closeFilters}
+                className="absolute inset-0 bg-black/20 backdrop-blur-[1px]"
+              />
 
-              <div role="dialog" aria-modal="true" aria-labelledby="search-filters-title" className="absolute bottom-0 left-0 right-0 max-h-[88dvh] overflow-y-auto overscroll-contain rounded-t-[24px] border-t border-[#E8E4DE] bg-[#FFFDFC] p-4 pb-[max(20px,env(safe-area-inset-bottom))] shadow-2xl sm:bottom-4 sm:left-auto sm:right-4 sm:top-4 sm:max-h-none sm:w-[380px] sm:rounded-[22px] sm:border sm:p-5 sm:pb-5">
+              <div
+                role="dialog"
+                aria-modal="true"
+                aria-labelledby="search-filters-title"
+                className="absolute bottom-0 left-0 right-0 max-h-[88dvh] overflow-y-auto overscroll-contain rounded-t-[24px] border-t border-[#E8E4DE] bg-[#FFFDFC] p-4 pb-[max(20px,env(safe-area-inset-bottom))] shadow-2xl sm:bottom-4 sm:left-auto sm:right-4 sm:top-4 sm:max-h-none sm:w-[380px] sm:rounded-[22px] sm:border sm:p-5 sm:pb-5"
+              >
                 <div className="flex items-center justify-between gap-3">
                   <div>
-                    <h2 id="search-filters-title" className="text-base font-bold text-[#17202A]">Filters</h2>
-                    <p className="mt-0.5 text-[11px] text-muted">Narrow down your results</p>
+                    <h2
+                      id="search-filters-title"
+                      className="text-base font-bold text-[#17202A]"
+                    >
+                      Filters
+                    </h2>
+
+                    <p className="mt-0.5 text-[11px] text-muted">
+                      Narrow down your results
+                    </p>
                   </div>
-                  <button type="button" onClick={closeFilters} className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-gray-100 text-gray-600" aria-label="Close filters">
+
+                  <button
+                    type="button"
+                    onClick={closeFilters}
+                    className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-gray-100 text-gray-600"
+                    aria-label="Close filters"
+                  >
                     <X className="h-4 w-4" />
                   </button>
                 </div>
 
                 {/* CATEGORY */}
+
                 <div className="mt-6">
-                  <label className="text-xs font-bold text-gray-700">Category</label>
+                  <label className="text-xs font-bold text-gray-700">
+                    Category
+                  </label>
+
                   <div className="mt-2 grid grid-cols-2 gap-2">
                     {categories.map((item) => {
                       const Icon = item.icon;
                       const active = category === item.name;
+
                       return (
                         <button
                           key={item.id}
                           type="button"
                           aria-pressed={active}
-                          onClick={() => setCategory(active ? "" : item.name)}
-                          className={`flex min-w-0 items-center gap-2 rounded-xl border px-2.5 py-2.5 text-left text-[11px] font-semibold transition sm:px-3 ${active ? "border-[#FFB09B] bg-[#FFF1ED] text-[#9F2D18]" : "border-[#E8E4DE] bg-white text-gray-700 hover:bg-gray-50"}`}
+                          onClick={() =>
+                            setCategory(
+                              active ? "" : item.name,
+                            )
+                          }
+                          className={`flex min-w-0 items-center gap-2 rounded-xl border px-2.5 py-2.5 text-left text-[11px] font-semibold transition sm:px-3 ${
+                            active
+                              ? "border-[#FFB09B] bg-[#FFF1ED] text-[#9F2D18]"
+                              : "border-[#E8E4DE] bg-white text-gray-700 hover:bg-gray-50"
+                          }`}
                         >
-                          <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full" style={{ backgroundColor: item.bg }}>
+                          <span
+                            className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full"
+                            style={{
+                              backgroundColor: item.bg,
+                            }}
+                          >
                             <Icon className="h-4 w-4" />
                           </span>
-                          <span className="min-w-0 flex-1 truncate">{item.name}</span>
-                          {active && <Check className="h-3.5 w-3.5 shrink-0" />}
+
+                          <span className="min-w-0 flex-1 truncate">
+                            {item.name}
+                          </span>
+
+                          {active && (
+                            <Check className="h-3.5 w-3.5 shrink-0" />
+                          )}
                         </button>
                       );
                     })}
@@ -1218,78 +2365,207 @@ function SearchPageView({
                 </div>
 
                 {/* LOCATION */}
+
                 <div className="mt-5">
-                  <label htmlFor="search-location-filter" className="text-xs font-bold text-gray-700">Location</label>
+                  <label
+                    htmlFor="search-location-filter"
+                    className="text-xs font-bold text-gray-700"
+                  >
+                    Location
+                  </label>
+
                   <div className="relative mt-2">
                     <MapPin className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" />
-                    <input id="search-location-filter" value={location} onChange={(event) => setLocation(event.target.value)} placeholder="e.g. Ikeja" className="h-11 w-full min-w-0 rounded-xl border border-[#E8E4DE] bg-white pl-10 pr-3 text-xs outline-none focus:border-[#FF9B82]" />
+
+                    <input
+                      id="search-location-filter"
+                      value={location}
+                      onChange={(event) =>
+                        setLocation(event.target.value)
+                      }
+                      placeholder="e.g. Ikeja"
+                      className="h-11 w-full min-w-0 rounded-xl border border-[#E8E4DE] bg-white pl-10 pr-3 text-xs outline-none focus:border-[#FF9B82]"
+                    />
                   </div>
                 </div>
 
                 {/* PRICE RANGE */}
+
                 <div className="mt-5">
-                  <label htmlFor="search-min-price" className="text-xs font-bold text-gray-700">Price range</label>
+                  <label
+                    htmlFor="search-min-price"
+                    className="text-xs font-bold text-gray-700"
+                  >
+                    Price range
+                  </label>
+
                   <div className="mt-2 grid grid-cols-2 gap-2">
-                    <input id="search-min-price" value={minPrice} onChange={(event) => setMinPrice(event.target.value)} inputMode="numeric" placeholder="Min price" aria-label="Minimum price" className="h-11 min-w-0 w-full rounded-xl border border-[#E8E4DE] bg-white px-3 text-xs outline-none focus:border-[#FF9B82]" />
-                    <input id="search-max-price" value={maxPrice} onChange={(event) => setMaxPrice(event.target.value)} inputMode="numeric" placeholder="Max price" aria-label="Maximum price" className="h-11 min-w-0 w-full rounded-xl border border-[#E8E4DE] bg-white px-3 text-xs outline-none focus:border-[#FF9B82]" />
+                    <input
+                      id="search-min-price"
+                      value={minPrice}
+                      onChange={(event) =>
+                        setMinPrice(event.target.value)
+                      }
+                      inputMode="numeric"
+                      placeholder="Min price"
+                      aria-label="Minimum price"
+                      className="h-11 min-w-0 w-full rounded-xl border border-[#E8E4DE] bg-white px-3 text-xs outline-none focus:border-[#FF9B82]"
+                    />
+
+                    <input
+                      id="search-max-price"
+                      value={maxPrice}
+                      onChange={(event) =>
+                        setMaxPrice(event.target.value)
+                      }
+                      inputMode="numeric"
+                      placeholder="Max price"
+                      aria-label="Maximum price"
+                      className="h-11 min-w-0 w-full rounded-xl border border-[#E8E4DE] bg-white px-3 text-xs outline-none focus:border-[#FF9B82]"
+                    />
                   </div>
                 </div>
 
                 {/* AVAILABILITY */}
+
                 <div className="mt-5">
-                  <label htmlFor="search-availability" className="text-xs font-bold text-gray-700">Availability</label>
+                  <label
+                    htmlFor="search-availability"
+                    className="text-xs font-bold text-gray-700"
+                  >
+                    Availability
+                  </label>
+
                   <div className="relative mt-2">
-                    <select id="search-availability" value={availability} onChange={(event) => setAvailability(event.target.value)} className="h-11 w-full appearance-none rounded-xl border border-[#E8E4DE] bg-white px-3 pr-9 text-xs text-gray-700 outline-none focus:border-[#FF9B82]">
+                    <select
+                      id="search-availability"
+                      value={availability}
+                      onChange={(event) =>
+                        setAvailability(event.target.value)
+                      }
+                      className="h-11 w-full appearance-none rounded-xl border border-[#E8E4DE] bg-white px-3 pr-9 text-xs text-gray-700 outline-none focus:border-[#FF9B82]"
+                    >
                       <option value="">Any availability</option>
-                      <option value="AVAILABLE">Available now</option>
-                      <option value="ASK_SELLER">Ask seller</option>
-                      <option value="UNAVAILABLE">Unavailable</option>
+                      <option value="AVAILABLE">
+                        Available now
+                      </option>
+                      <option value="ASK_SELLER">
+                        Ask seller
+                      </option>
+                      <option value="UNAVAILABLE">
+                        Unavailable
+                      </option>
                     </select>
+
                     <ChevronDown className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" />
                   </div>
                 </div>
 
                 {/* VERIFIED BUSINESS TOGGLE */}
-                <button type="button" aria-pressed={verified} onClick={() => setVerified(!verified)} className={`mt-5 flex w-full items-center justify-between gap-3 rounded-xl border px-4 py-3 ${verified ? "border-[#BFE7D0] bg-[#F0FBF5]" : "border-[#E8E4DE] bg-white"}`}>
+
+                <button
+                  type="button"
+                  aria-pressed={verified}
+                  onClick={() => setVerified(!verified)}
+                  className={`mt-5 flex w-full items-center justify-between gap-3 rounded-xl border px-4 py-3 ${
+                    verified
+                      ? "border-[#BFE7D0] bg-[#F0FBF5]"
+                      : "border-[#E8E4DE] bg-white"
+                  }`}
+                >
                   <div className="flex min-w-0 items-center gap-3">
-                    <div className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full ${verified ? "bg-[#DDF5EA] text-[#137A59]" : "bg-gray-100 text-gray-500"}`}>
+                    <div
+                      className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full ${
+                        verified
+                          ? "bg-[#DDF5EA] text-[#137A59]"
+                          : "bg-gray-100 text-gray-500"
+                      }`}
+                    >
                       <Check className="h-4 w-4" />
                     </div>
+
                     <div className="min-w-0 text-left">
-                      <p className="text-xs font-bold text-gray-700">Verified businesses</p>
-                      <p className="mt-0.5 text-[10px] text-gray-400">Show verified sellers only</p>
+                      <p className="text-xs font-bold text-gray-700">
+                        Verified businesses
+                      </p>
+
+                      <p className="mt-0.5 text-[10px] text-gray-400">
+                        Show verified sellers only
+                      </p>
                     </div>
                   </div>
-                  <div className={`flex h-5 w-9 shrink-0 items-center rounded-full p-0.5 transition-colors ${verified ? "bg-[#FF5A36]" : "bg-gray-200"}`}>
-                    <div className={`h-4 w-4 rounded-full bg-white shadow-sm transition-transform ${verified ? "translate-x-4" : "translate-x-0"}`} />
+
+                  <div
+                    className={`flex h-5 w-9 shrink-0 items-center rounded-full p-0.5 transition-colors ${
+                      verified
+                        ? "bg-[#FF5A36]"
+                        : "bg-gray-200"
+                    }`}
+                  >
+                    <div
+                      className={`h-4 w-4 rounded-full bg-white shadow-sm transition-transform ${
+                        verified
+                          ? "translate-x-4"
+                          : "translate-x-0"
+                      }`}
+                    />
                   </div>
                 </button>
 
                 {/* DRAWER ACTIONS */}
+
                 <div className="mt-6 flex gap-2 border-t border-[#EAE6DF] pt-5">
-                  <button type="button" onClick={clearFilters} className="flex-1 rounded-xl border border-[#E8E4DE] bg-white py-3 text-xs font-bold text-gray-700 transition hover:bg-gray-50">Clear</button>
-                  <button type="button" onClick={applyFilters} className="flex-[1.5] rounded-xl bg-[#FF5A36] py-3 text-xs font-bold text-white transition hover:opacity-90">Apply filters</button>
+                  <button
+                    type="button"
+                    onClick={clearFilters}
+                    className="flex-1 rounded-xl border border-[#E8E4DE] bg-white py-3 text-xs font-bold text-gray-700 transition hover:bg-gray-50"
+                  >
+                    Clear
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={applyFilters}
+                    className="flex-[1.5] rounded-xl bg-[#FF5A36] py-3 text-xs font-bold text-white transition hover:opacity-90"
+                  >
+                    Apply filters
+                  </button>
                 </div>
               </div>
             </div>
           )}
 
           {/* MOBILE / TABLET BOTTOM NAVIGATION */}
-          <nav aria-label="Mobile navigation" className="fixed bottom-0 left-0 right-0 z-50 border-t border-gray-200 bg-white/95 px-2 pt-1.5 pb-[max(6px,env(safe-area-inset-bottom))] backdrop-blur lg:hidden">
+
+          <nav
+            aria-label="Mobile navigation"
+            className="fixed bottom-0 left-0 right-0 z-50 border-t border-gray-200 bg-white/95 px-2 pt-1.5 pb-[max(6px,env(safe-area-inset-bottom))] backdrop-blur lg:hidden"
+          >
             <div className="mx-auto grid w-full max-w-md grid-cols-4">
               {NAV_ITEMS.map((item) => {
                 const Icon = item.icon;
+
                 return (
-                  <button
+                  <Link
                     key={item.label}
-                    type="button"
-                    onClick={() => router.push(item.href)}
-                    aria-current={item.label === "Shop" ? "page" : undefined}
-                    className={`flex min-w-0 flex-col items-center justify-center gap-1 rounded-xl py-2 ${item.label === "Shop" ? "text-[#9F2D18]" : "text-gray-500"}`}
+                    href={item.href}
+                    aria-current={
+                      item.label === "Shop"
+                        ? "page"
+                        : undefined
+                    }
+                    className={`flex min-w-0 flex-col items-center justify-center gap-1 rounded-xl py-2 ${
+                      item.label === "Shop"
+                        ? "text-[#9F2D18]"
+                        : "text-gray-500"
+                    }`}
                   >
                     <Icon className="h-[19px] w-[19px]" />
-                    <span className="text-[9px] font-medium">{item.label}</span>
-                  </button>
+
+                    <span className="text-[9px] font-medium">
+                      {item.label}
+                    </span>
+                  </Link>
                 );
               })}
             </div>
@@ -1299,6 +2575,12 @@ function SearchPageView({
     </main>
   );
 }
+
+/*
+ * =========================================
+ * PAGE EXPORT
+ * =========================================
+ */
 
 export default function SearchPage() {
   return (

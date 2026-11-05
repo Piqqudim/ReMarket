@@ -1,7 +1,7 @@
 
 import {
-  Prisma,
-  ServiceBookingStatus,
+  NotificationPriority,
+  NotificationType,
 } from "@prisma/client";
 import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
@@ -9,6 +9,7 @@ import { getServerSession } from "next-auth";
 import { prisma } from "@/lib/prisma";
 import { authOptions } from "@/lib/auth";
 import { checkPublicRateLimit } from "@/lib/rate-limit";
+import { createNotification } from "@/lib/notifications";
 
 const MAX_BODY_SIZE = 2_000;
 const MAX_BOOKING_ID_LENGTH = 100;
@@ -17,11 +18,15 @@ type RouteContext = {
   params: Promise<{ id: string }>;
 };
 
+type RequestedStatus = "ACCEPTED" | "DECLINED";
+
 function responseHeaders(baseHeaders?: HeadersInit): Headers {
   const headers = new Headers(baseHeaders);
+
   headers.set("Cache-Control", "no-store, max-age=0, must-revalidate");
   headers.set("Pragma", "no-cache");
   headers.set("Expires", "0");
+
   return headers;
 }
 
@@ -45,6 +50,39 @@ function isRecord(value: unknown): value is Record<string, unknown> {
     value !== null &&
     !Array.isArray(value)
   );
+}
+
+/*
+ * Notify the buyer after a successful seller decision.
+ * Notification failure must not undo the booking update.
+ */
+async function notifyBuyer(
+  buyerId: string,
+  bookingId: string,
+  serviceName: string,
+  status: RequestedStatus,
+) {
+  const accepted = status === "ACCEPTED";
+
+  try {
+    await createNotification({
+      userId: buyerId,
+      type: NotificationType.SERVICE_BOOKING_UPDATED,
+      title: accepted ? "Booking accepted" : "Booking declined",
+      message: accepted
+        ? `Your booking request for ${serviceName} has been accepted.`
+        : `Your booking request for ${serviceName} has been declined.`,
+      priority: NotificationPriority.NORMAL,
+      data: {
+        bookingId,
+        status,
+        href: "/bookings",
+      },
+      dedupeKey: `service-booking:${bookingId}:status:${status}:user:${buyerId}`,
+    });
+  } catch (error) {
+    console.error("Seller booking notification error:", error);
+  }
 }
 
 export async function PATCH(
@@ -121,10 +159,7 @@ export async function PATCH(
     const { id } = await context.params;
     const bookingId = typeof id === "string" ? id.trim() : "";
 
-    if (
-      !bookingId ||
-      bookingId.length > MAX_BOOKING_ID_LENGTH
-    ) {
+    if (!bookingId || bookingId.length > MAX_BOOKING_ID_LENGTH) {
       return jsonError(
         "Invalid booking ID.",
         400,
@@ -182,7 +217,18 @@ export async function PATCH(
       );
     }
 
-    const requestedStatus = body.status;
+    if (Object.keys(body).some((key) => key !== "status")) {
+      return jsonError(
+        "Only the booking status can be updated.",
+        400,
+        rateLimit.headers,
+      );
+    }
+
+    const requestedStatus =
+      typeof body.status === "string"
+        ? body.status.trim().toUpperCase()
+        : "";
 
     if (
       requestedStatus !== "ACCEPTED" &&
@@ -195,43 +241,40 @@ export async function PATCH(
       );
     }
 
-    const nextStatus =
-      requestedStatus === "ACCEPTED"
-        ? ServiceBookingStatus.ACCEPTED
-        : ServiceBookingStatus.DECLINED;
+    const nextStatus = requestedStatus as RequestedStatus;
 
     /* UPDATE BOOKING ATOMICALLY */
 
     const now = new Date();
 
     const result = await prisma.$transaction(async (tx) => {
-      // Check that this booking belongs to a service
-      // owned by the currently authenticated seller.
-      const existingBooking =
-        await tx.serviceBooking.findFirst({
-          where: {
-            id: bookingId,
-            service: {
-              is: {
-                businessId: business.id,
-              },
+      const existingBooking = await tx.serviceBooking.findFirst({
+        where: {
+          id: bookingId,
+          service: {
+            is: {
+              businessId: business.id,
             },
           },
-          select: {
-            id: true,
-            status: true,
+        },
+        select: {
+          id: true,
+          status: true,
+          buyerId: true,
+          service: {
+            select: {
+              id: true,
+              name: true,
+            },
           },
-        });
+        },
+      });
 
       if (!existingBooking) {
         return { outcome: "NOT_FOUND" as const };
       }
 
-      // Only pending bookings may be accepted or declined.
-      if (
-        existingBooking.status !==
-        ServiceBookingStatus.PENDING
-      ) {
+      if (existingBooking.status !== "PENDING") {
         return {
           outcome: "INVALID_STATE" as const,
           currentStatus: existingBooking.status,
@@ -239,24 +282,24 @@ export async function PATCH(
       }
 
       /*
-       * Conditional update prevents two concurrent actions
-       * from changing the same pending booking.
+       * Check booking status and seller ownership
+       * during the update to prevent concurrent changes.
        */
       const updateResult = await tx.serviceBooking.updateMany({
         where: {
           id: bookingId,
-          status: ServiceBookingStatus.PENDING,
+          buyerId: existingBooking.buyerId,
+          status: "PENDING",
+          service: {
+            is: {
+              businessId: business.id,
+            },
+          },
         },
         data: {
           status: nextStatus,
-          acceptedAt:
-            nextStatus === ServiceBookingStatus.ACCEPTED
-              ? now
-              : null,
-          declinedAt:
-            nextStatus === ServiceBookingStatus.DECLINED
-              ? now
-              : null,
+          acceptedAt: nextStatus === "ACCEPTED" ? now : null,
+          declinedAt: nextStatus === "DECLINED" ? now : null,
         },
       });
 
@@ -264,34 +307,32 @@ export async function PATCH(
         return { outcome: "CONFLICT" as const };
       }
 
-      const updatedBooking =
-        await tx.serviceBooking.findUnique({
-          where: { id: bookingId },
-          select: {
-            id: true,
-            status: true,
-            acceptedAt: true,
-            declinedAt: true,
-            updatedAt: true,
-            service: {
-              select: {
-                id: true,
-                name: true,
-              },
-            },
-            buyer: {
-              select: {
-                id: true,
-                name: true,
-              },
+      const updatedBooking = await tx.serviceBooking.findUnique({
+        where: { id: bookingId },
+        select: {
+          id: true,
+          status: true,
+          acceptedAt: true,
+          declinedAt: true,
+          updatedAt: true,
+          buyerId: true,
+          service: {
+            select: {
+              id: true,
+              name: true,
             },
           },
-        });
+          buyer: {
+            select: {
+              id: true,
+              name: true,
+            },
+          },
+        },
+      });
 
       if (!updatedBooking) {
-        throw new Error(
-          "Updated booking could not be retrieved.",
-        );
+        throw new Error("Updated booking could not be retrieved.");
       }
 
       return {
@@ -326,10 +367,21 @@ export async function PATCH(
       );
     }
 
+    /* NOTIFY BUYER */
+
+    await notifyBuyer(
+      result.booking.buyerId,
+      result.booking.id,
+      result.booking.service.name,
+      nextStatus,
+    );
+
+    /* RETURN UPDATED BOOKING */
+
     return NextResponse.json(
       {
         message:
-          nextStatus === ServiceBookingStatus.ACCEPTED
+          nextStatus === "ACCEPTED"
             ? "Booking accepted successfully."
             : "Booking declined successfully.",
 
@@ -351,10 +403,7 @@ export async function PATCH(
       },
     );
   } catch (error) {
-    console.error(
-      "Seller service booking update error:",
-      error,
-    );
+    console.error("Seller service booking update error:", error);
 
     return jsonError(
       "Unable to update this booking. Please try again.",

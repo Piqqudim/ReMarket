@@ -1,3 +1,4 @@
+
 import {
   NextRequest,
   NextResponse,
@@ -17,8 +18,9 @@ import { authOptions } from "@/lib/auth";
 function jsonHeaders() {
   return {
     "Content-Type": "application/json",
-    "Cache-Control": "no-store",
+    "Cache-Control": "no-store, no-cache, must-revalidate",
     Pragma: "no-cache",
+    Vary: "Cookie",
   };
 }
 
@@ -28,9 +30,7 @@ function jsonHeaders() {
  * ---------------------------------------------------------
  */
 
-function cleanString(
-  value: unknown
-): string {
+function cleanString(value: unknown): string {
   return typeof value === "string"
     ? value.trim()
     : "";
@@ -41,20 +41,20 @@ function parsePositiveInteger(
   fallback: number,
   maximum: number
 ): number {
-  const parsed =
-    Number(value);
+  if (!value || !/^\d+$/.test(value)) {
+    return fallback;
+  }
+
+  const parsed = Number(value);
 
   if (
-    !Number.isInteger(parsed) ||
+    !Number.isSafeInteger(parsed) ||
     parsed < 1
   ) {
     return fallback;
   }
 
-  return Math.min(
-    parsed,
-    maximum
-  );
+  return Math.min(parsed, maximum);
 }
 
 /*
@@ -67,6 +67,8 @@ type PatchNotificationBody = {
   notificationId?: unknown;
   action?: unknown;
 };
+
+const MAX_PATCH_BODY_SIZE = 4096;
 
 /*
  * ---------------------------------------------------------
@@ -83,31 +85,22 @@ type PatchNotificationBody = {
  * ?unread=true
  *
  * unreadCount always represents the user's total
- * unread notifications, regardless of the current
- * list filter.
+ * unread notifications, regardless of the list filter.
  * ---------------------------------------------------------
  */
 
-export async function GET(
-  request: NextRequest
-) {
+export async function GET(request: NextRequest) {
   try {
     /*
-     * -----------------------------------------------------
      * AUTHENTICATION
-     * -----------------------------------------------------
      */
 
-    const session =
-      await getServerSession(
-        authOptions
-      );
+    const session = await getServerSession(authOptions);
 
     if (!session?.user?.id) {
       return NextResponse.json(
         {
-          error:
-            "You must be logged in to view notifications.",
+          error: "You must be logged in to view notifications.",
         },
         {
           status: 401,
@@ -116,75 +109,50 @@ export async function GET(
       );
     }
 
-    const userId =
-      session.user.id;
+    const userId = session.user.id;
 
     /*
-     * -----------------------------------------------------
      * QUERY PARAMETERS
-     * -----------------------------------------------------
      */
 
-    const { searchParams } =
-      new URL(request.url);
+    const { searchParams } = new URL(request.url);
 
-    const page =
-      parsePositiveInteger(
-        searchParams.get("page"),
-        1,
-        10_000
-      );
+    const page = parsePositiveInteger(
+      searchParams.get("page"),
+      1,
+      10_000
+    );
 
-    const limit =
-      parsePositiveInteger(
-        searchParams.get("limit"),
-        20,
-        50
-      );
+    const limit = parsePositiveInteger(
+      searchParams.get("limit"),
+      20,
+      50
+    );
 
-    const unreadParameter =
-      cleanString(
-        searchParams.get("unread")
-      ).toLowerCase();
+    const unreadParameter = cleanString(
+      searchParams.get("unread")
+    ).toLowerCase();
 
-    let unreadFilter:
-      | boolean
-      | undefined;
+    let unreadFilter: boolean | undefined;
 
-    if (
-      unreadParameter ===
-      "true"
-    ) {
+    if (unreadParameter === "true") {
       unreadFilter = true;
-    } else if (
-      unreadParameter ===
-      "false"
-    ) {
+    } else if (unreadParameter === "false") {
       unreadFilter = false;
     }
 
     /*
-     * -----------------------------------------------------
-     * WHERE CLAUSE
-     * -----------------------------------------------------
-     *
-     * userId is always required.
-     *
-     * A client therefore cannot request another
-     * user's notification records.
-     * -----------------------------------------------------
+     * USER-SCOPED WHERE CLAUSE
      */
 
     const where = {
       userId,
 
-      ...(unreadFilter ===
-      true
+      ...(unreadFilter === true
         ? {
             readAt: null,
           }
-        : unreadFilter ===
-          false
+        : unreadFilter === false
         ? {
             readAt: {
               not: null,
@@ -194,99 +162,74 @@ export async function GET(
     };
 
     /*
-     * -----------------------------------------------------
      * TOTAL
-     * -----------------------------------------------------
      */
 
-    const total =
-      await prisma.notification.count({
-        where,
-      });
+    const total = await prisma.notification.count({
+      where,
+    });
 
     const totalPages =
       total === 0
         ? 0
-        : Math.ceil(
-            total / limit
-          );
+        : Math.ceil(total / limit);
 
-    /*
-     * If a requested page is beyond the available
-     * pages, return an empty list rather than exposing
-     * records outside the requested page.
-     */
     const safePage =
       totalPages > 0
-        ? Math.min(
-            page,
-            totalPages
-          )
+        ? Math.min(page, totalPages)
         : 1;
 
-    const skip =
-      (safePage - 1) *
-      limit;
+    const skip = (safePage - 1) * limit;
 
     /*
-     * -----------------------------------------------------
      * NOTIFICATIONS
-     * -----------------------------------------------------
      */
 
     const notifications =
-      await prisma.notification.findMany(
-        {
-          where,
+      await prisma.notification.findMany({
+        where,
 
-          orderBy: {
+        orderBy: [
+          {
             createdAt: "desc",
           },
-
-          skip,
-
-          take: limit,
-
-          select: {
-            id: true,
-            type: true,
-            title: true,
-            message: true,
-            priority: true,
-            data: true,
-            readAt: true,
-            announcementId: true,
-            createdAt: true,
+          {
+            id: "desc",
           },
-        }
-      );
+        ],
 
-    /*
-     * -----------------------------------------------------
-     * UNREAD COUNT
-     * -----------------------------------------------------
-     *
-     * This deliberately does not use the current
-     * unreadFilter.
-     *
-     * It represents the total unread count for the
-     * authenticated user, which is what the bell badge
-     * needs.
-     * -----------------------------------------------------
-     */
+        skip,
+        take: limit,
 
-    const unreadCount =
-      await prisma.notification.count({
-        where: {
-          userId,
-          readAt: null,
+        select: {
+          id: true,
+          type: true,
+          title: true,
+          message: true,
+          priority: true,
+          data: true,
+          readAt: true,
+          announcementId: true,
+          createdAt: true,
         },
       });
+
+    /*
+     * TOTAL UNREAD COUNT
+     *
+     * Independent of the current list filter.
+     */
+
+    const unreadCount = await prisma.notification.count({
+      where: {
+        userId,
+        readAt: null,
+      },
+    });
 
     return NextResponse.json(
       {
         notifications,
-
         unreadCount,
 
         pagination: {
@@ -294,12 +237,12 @@ export async function GET(
           limit,
           total,
           totalPages,
+
           hasNextPage:
             totalPages > 0 &&
-            safePage <
-              totalPages,
-          hasPreviousPage:
-            safePage > 1,
+            safePage < totalPages,
+
+          hasPreviousPage: safePage > 1,
         },
       },
       {
@@ -308,15 +251,11 @@ export async function GET(
       }
     );
   } catch (error) {
-    console.error(
-      "Notifications GET error:",
-      error
-    );
+    console.error("Notifications GET error:", error);
 
     return NextResponse.json(
       {
-        error:
-          "Unable to load notifications.",
+        error: "Unable to load notifications.",
       },
       {
         status: 500,
@@ -333,46 +272,34 @@ export async function GET(
  *
  * Supported operations:
  *
- * 1. Mark one notification as read:
- *
+ * MARK_ONE:
  * {
  *   "action": "MARK_ONE",
  *   "notificationId": "..."
  * }
  *
- * 2. Mark all notifications as read:
- *
+ * MARK_ALL:
  * {
  *   "action": "MARK_ALL"
  * }
  *
- * The authenticated user's ID is always taken from
+ * The authenticated user's ID always comes from
  * the server-side session.
- *
- * A client cannot choose another user's notifications.
  * ---------------------------------------------------------
  */
 
-export async function PATCH(
-  request: NextRequest
-) {
+export async function PATCH(request: NextRequest) {
   try {
     /*
-     * -----------------------------------------------------
      * AUTHENTICATION
-     * -----------------------------------------------------
      */
 
-    const session =
-      await getServerSession(
-        authOptions
-      );
+    const session = await getServerSession(authOptions);
 
     if (!session?.user?.id) {
       return NextResponse.json(
         {
-          error:
-            "You must be logged in to update notifications.",
+          error: "You must be logged in to update notifications.",
         },
         {
           status: 401,
@@ -381,31 +308,58 @@ export async function PATCH(
       );
     }
 
-    const userId =
-      session.user.id;
+    const userId = session.user.id;
 
     /*
-     * -----------------------------------------------------
-     * READ REQUEST BODY
-     * -----------------------------------------------------
+     * READ AND VALIDATE REQUEST BODY
      */
 
     let body: PatchNotificationBody;
 
     try {
-      const parsed: unknown =
-        await request.json();
+      const contentLength = Number(
+        request.headers.get("content-length") ?? 0
+      );
+
+      if (
+        Number.isFinite(contentLength) &&
+        contentLength > MAX_PATCH_BODY_SIZE
+      ) {
+        return NextResponse.json(
+          {
+            error: "Request body is too large.",
+          },
+          {
+            status: 413,
+            headers: jsonHeaders(),
+          }
+        );
+      }
+
+      const rawBody = await request.text();
+
+      if (rawBody.length > MAX_PATCH_BODY_SIZE) {
+        return NextResponse.json(
+          {
+            error: "Request body is too large.",
+          },
+          {
+            status: 413,
+            headers: jsonHeaders(),
+          }
+        );
+      }
+
+      const parsed: unknown = JSON.parse(rawBody);
 
       if (
         !parsed ||
-        typeof parsed !==
-          "object" ||
+        typeof parsed !== "object" ||
         Array.isArray(parsed)
       ) {
         return NextResponse.json(
           {
-            error:
-              "Invalid request body.",
+            error: "Invalid request body.",
           },
           {
             status: 400,
@@ -414,13 +368,11 @@ export async function PATCH(
         );
       }
 
-      body =
-        parsed as PatchNotificationBody;
+      body = parsed as PatchNotificationBody;
     } catch {
       return NextResponse.json(
         {
-          error:
-            "Invalid JSON request body.",
+          error: "Invalid JSON request body.",
         },
         {
           status: 400,
@@ -430,18 +382,10 @@ export async function PATCH(
     }
 
     /*
-     * -----------------------------------------------------
      * PARSE ACTION
-     * -----------------------------------------------------
      */
 
-    const action =
-      typeof body.action ===
-      "string"
-        ? body.action
-            .trim()
-            .toUpperCase()
-        : "";
+    const action = cleanString(body.action).toUpperCase();
 
     /*
      * -----------------------------------------------------
@@ -449,19 +393,12 @@ export async function PATCH(
      * -----------------------------------------------------
      */
 
-    if (
-      action ===
-      "MARK_ONE"
-    ) {
-      const notificationId =
-        typeof body.notificationId ===
-        "string"
-          ? body.notificationId.trim()
-          : "";
+    if (action === "MARK_ONE") {
+      const notificationId = cleanString(
+        body.notificationId
+      );
 
-      if (
-        !notificationId
-      ) {
+      if (!notificationId) {
         return NextResponse.json(
           {
             error:
@@ -475,120 +412,96 @@ export async function PATCH(
       }
 
       /*
-       * The userId condition is essential.
-       *
-       * It means the notification can only be updated
-       * when it belongs to the currently authenticated user.
+       * Only update an unread notification belonging
+       * to the authenticated user.
        */
-      const result =
-        await prisma.notification.updateMany(
-          {
-            where: {
-              id: notificationId,
-              userId,
-              readAt: null,
-            },
 
-            data: {
-              readAt:
-                new Date(),
-            },
-          }
-        );
+      const result = await prisma.notification.updateMany({
+        where: {
+          id: notificationId,
+          userId,
+          readAt: null,
+        },
+
+        data: {
+          readAt: new Date(),
+        },
+      });
 
       /*
-       * count === 0 means either:
-       *
-       * - the notification does not exist,
-       * - it belongs to another user,
-       * - or it was already read.
+       * Already read, missing, or owned by another user.
        */
-      if (
-        result.count ===
-        0
-      ) {
-        const existing =
-          await prisma.notification.findFirst(
-            {
-              where: {
-                id: notificationId,
-                userId,
-              },
 
-              select: {
-                id: true,
-                readAt: true,
-              },
-            }
-          );
+      if (result.count === 0) {
+        const existing = await prisma.notification.findFirst({
+          where: {
+            id: notificationId,
+            userId,
+          },
+
+          select: {
+            id: true,
+            readAt: true,
+          },
+        });
 
         if (!existing) {
           return NextResponse.json(
             {
-              error:
-                "Notification not found.",
+              error: "Notification not found.",
             },
             {
               status: 404,
-              headers:
-                jsonHeaders(),
+              headers: jsonHeaders(),
             }
           );
         }
 
         return NextResponse.json(
           {
-            message:
-              "Notification was already marked as read.",
-
-            notification:
-              existing,
-
+            message: "Notification was already marked as read.",
+            notification: existing,
             updated: false,
           },
           {
             status: 200,
-            headers:
-              jsonHeaders(),
+            headers: jsonHeaders(),
           }
         );
       }
 
-      const notification =
-        await prisma.notification.findFirst(
-          {
-            where: {
-              id: notificationId,
-              userId,
-            },
+      /*
+       * Return the updated notification.
+       */
 
-            select: {
-              id: true,
-              type: true,
-              title: true,
-              message: true,
-              priority: true,
-              data: true,
-              readAt: true,
-              announcementId: true,
-              createdAt: true,
-            },
-          }
-        );
+      const notification = await prisma.notification.findFirst({
+        where: {
+          id: notificationId,
+          userId,
+        },
+
+        select: {
+          id: true,
+          type: true,
+          title: true,
+          message: true,
+          priority: true,
+          data: true,
+          readAt: true,
+          announcementId: true,
+          createdAt: true,
+        },
+      });
 
       return NextResponse.json(
         {
-          message:
-            "Notification marked as read.",
-
+          message: "Notification marked as read.",
           notification,
-
           updated: true,
         },
         {
           status: 200,
-          headers:
-            jsonHeaders(),
+          headers: jsonHeaders(),
         }
       );
     }
@@ -599,39 +512,28 @@ export async function PATCH(
      * -----------------------------------------------------
      */
 
-    if (
-      action ===
-      "MARK_ALL"
-    ) {
-      const now =
-        new Date();
+    if (action === "MARK_ALL") {
+      const now = new Date();
 
-      const result =
-        await prisma.notification.updateMany(
-          {
-            where: {
-              userId,
-              readAt: null,
-            },
+      const result = await prisma.notification.updateMany({
+        where: {
+          userId,
+          readAt: null,
+        },
 
-            data: {
-              readAt: now,
-            },
-          }
-        );
+        data: {
+          readAt: now,
+        },
+      });
 
       return NextResponse.json(
         {
-          message:
-            "All unread notifications have been marked as read.",
-
-          updatedCount:
-            result.count,
+          message: "All unread notifications have been marked as read.",
+          updatedCount: result.count,
         },
         {
           status: 200,
-          headers:
-            jsonHeaders(),
+          headers: jsonHeaders(),
         }
       );
     }
@@ -644,8 +546,7 @@ export async function PATCH(
 
     return NextResponse.json(
       {
-        error:
-          "Invalid notification action. Use MARK_ONE or MARK_ALL.",
+        error: "Invalid notification action. Use MARK_ONE or MARK_ALL.",
       },
       {
         status: 400,
@@ -653,15 +554,11 @@ export async function PATCH(
       }
     );
   } catch (error) {
-    console.error(
-      "Notifications PATCH error:",
-      error
-    );
+    console.error("Notifications PATCH error:", error);
 
     return NextResponse.json(
       {
-        error:
-          "Unable to update notifications.",
+        error: "Unable to update notifications.",
       },
       {
         status: 500,

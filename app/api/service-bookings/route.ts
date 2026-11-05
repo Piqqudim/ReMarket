@@ -1,9 +1,7 @@
-
 import {
   NotificationPriority,
   NotificationType,
   Prisma,
-  ServiceBookingStatus,
 } from "@prisma/client";
 import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
@@ -17,6 +15,7 @@ const MAX_BODY_SIZE = 12_000;
 const MAX_MESSAGE_LENGTH = 2_000;
 const MAX_PHONE_LENGTH = 32;
 const MAX_BOOKING_QUANTITY = 1_000;
+
 const DEFAULT_PAGE = 1;
 const DEFAULT_PAGE_SIZE = 12;
 const MAX_PAGE_SIZE = 50;
@@ -35,6 +34,7 @@ const bookingInclude = {
       fulfillmentType: true,
       availability: true,
       imageUrl: true,
+
       category: {
         select: {
           id: true,
@@ -42,6 +42,7 @@ const bookingInclude = {
           iconKey: true,
         },
       },
+
       images: {
         select: {
           id: true,
@@ -53,6 +54,7 @@ const bookingInclude = {
           { createdAt: "asc" },
         ],
       },
+
       business: {
         select: {
           id: true,
@@ -60,6 +62,7 @@ const bookingInclude = {
           ownerName: true,
           imageUrl: true,
           verification: true,
+
           location: {
             select: {
               area: true,
@@ -70,6 +73,7 @@ const bookingInclude = {
       },
     },
   },
+
   _count: {
     select: {
       messages: true,
@@ -81,56 +85,210 @@ type BookingRecord = Prisma.ServiceBookingGetPayload<{
   include: typeof bookingInclude;
 }>;
 
+/*
+ * ---------------------------------------------------------
+ * RESPONSE HEADERS
+ * ---------------------------------------------------------
+ */
+
 function responseHeaders(baseHeaders?: HeadersInit): Headers {
   const headers = new Headers(baseHeaders);
-  headers.set("Cache-Control", "no-store, max-age=0, must-revalidate");
+
+  headers.set(
+    "Cache-Control",
+    "no-store, max-age=0, must-revalidate"
+  );
+
   headers.set("Pragma", "no-cache");
   headers.set("Expires", "0");
+
   return headers;
 }
 
 function jsonError(
   message: string,
   status: number,
-  headers?: HeadersInit,
+  headers?: HeadersInit
 ) {
   return NextResponse.json(
-    { error: message },
+    {
+      error: message,
+    },
     {
       status,
       headers: responseHeaders(headers),
-    },
+    }
   );
 }
 
+/*
+ * ---------------------------------------------------------
+ * GENERAL HELPERS
+ * ---------------------------------------------------------
+ */
+
 function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    !Array.isArray(value)
+  );
 }
 
 function clean(value: unknown): string {
-  return typeof value === "string" ? value.trim() : "";
+  return typeof value === "string"
+    ? value.trim()
+    : "";
 }
+
+/*
+ * ---------------------------------------------------------
+ * REQUEST BODY SIZE PROTECTION
+ * ---------------------------------------------------------
+ */
+
+class RequestBodyTooLargeError extends Error {
+  constructor() {
+    super("Request body is too large.");
+    this.name = "RequestBodyTooLargeError";
+  }
+}
+
+/**
+ * Reads a request body while enforcing a byte limit.
+ *
+ * This also protects requests that do not provide a
+ * Content-Length header.
+ */
+async function readLimitedRequestBody(
+  request: NextRequest,
+  maximumBytes: number
+): Promise<string> {
+  const stream = request.body;
+
+  if (!stream) {
+    return "";
+  }
+
+  const reader = stream.getReader();
+
+  const chunks: Uint8Array[] = [];
+  let totalBytes = 0;
+
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+
+      if (done) {
+        break;
+      }
+
+      totalBytes += value.byteLength;
+
+      if (totalBytes > maximumBytes) {
+        try {
+          await reader.cancel();
+        } catch {
+          // The stream may already have been closed.
+        }
+
+        throw new RequestBodyTooLargeError();
+      }
+
+      chunks.push(value);
+    }
+  } finally {
+    reader.releaseLock();
+  }
+
+  const completeBody = new Uint8Array(totalBytes);
+
+  let offset = 0;
+
+  for (const chunk of chunks) {
+    completeBody.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+
+  return new TextDecoder("utf-8", {
+    fatal: true,
+  }).decode(completeBody);
+}
+
+/*
+ * ---------------------------------------------------------
+ * PHONE HELPERS
+ * ---------------------------------------------------------
+ */
 
 function normalizeNigerianPhone(value: string): string {
   let phone = value.trim().replace(/[^\d+]/g, "");
 
-  if (!phone) return "";
-  if (phone.startsWith("00")) phone = phone.slice(2);
-  if (phone.startsWith("+")) phone = phone.slice(1);
-  if (phone.startsWith("234")) return `+${phone}`;
-  if (phone.startsWith("0")) return `+234${phone.slice(1)}`;
+  if (!phone) {
+    return "";
+  }
+
+  if (phone.startsWith("00")) {
+    phone = phone.slice(2);
+  }
+
+  if (phone.startsWith("+")) {
+    phone = phone.slice(1);
+  }
+
+  if (phone.startsWith("234")) {
+    return `+${phone}`;
+  }
+
+  if (phone.startsWith("0")) {
+    return `+234${phone.slice(1)}`;
+  }
 
   return `+234${phone}`;
 }
 
 function isValidNigerianPhone(value: string): boolean {
-  return /^\+234\d{10}$/.test(normalizeNigerianPhone(value));
+  return /^\+234\d{10}$/.test(
+    normalizeNigerianPhone(value)
+  );
 }
+
+/*
+ * ---------------------------------------------------------
+ * QUANTITY VALIDATION
+ * ---------------------------------------------------------
+ */
+
+function parseBookingQuantity(value: unknown): number {
+  if (value === undefined || value === null) {
+    return 1;
+  }
+
+  if (typeof value === "number") {
+    return value;
+  }
+
+  // Allow a numeric string from a form submission.
+  if (typeof value === "string" && value.trim()) {
+    return Number(value);
+  }
+
+  return Number.NaN;
+}
+
+/*
+ * ---------------------------------------------------------
+ * AUTHENTICATION
+ * ---------------------------------------------------------
+ */
 
 async function getAuthenticatedAccount() {
   const session = await getServerSession(authOptions);
+
   const sessionUser = session?.user as
-    | { id?: unknown }
+    | {
+        id?: unknown;
+      }
     | undefined;
 
   if (
@@ -145,7 +303,10 @@ async function getAuthenticatedAccount() {
   }
 
   const account = await prisma.user.findUnique({
-    where: { id: sessionUser.id },
+    where: {
+      id: sessionUser.id,
+    },
+
     select: {
       id: true,
       role: true,
@@ -160,7 +321,10 @@ async function getAuthenticatedAccount() {
     };
   }
 
-  if (account.role !== "BUYER" && account.role !== "SELLER") {
+  if (
+    account.role !== "BUYER" &&
+    account.role !== "SELLER"
+  ) {
     return {
       account: null,
       error: "This account cannot make service bookings.",
@@ -175,13 +339,25 @@ async function getAuthenticatedAccount() {
   };
 }
 
+/*
+ * ---------------------------------------------------------
+ * PAGINATION
+ * ---------------------------------------------------------
+ */
+
 function parsePagination(searchParams: URLSearchParams) {
   const rawPage = searchParams.get("page");
   const rawPageSize = searchParams.get("pageSize");
 
-  const page = rawPage === null ? DEFAULT_PAGE : Number(rawPage);
+  const page =
+    rawPage === null
+      ? DEFAULT_PAGE
+      : Number(rawPage);
+
   const requestedPageSize =
-    rawPageSize === null ? DEFAULT_PAGE_SIZE : Number(rawPageSize);
+    rawPageSize === null
+      ? DEFAULT_PAGE_SIZE
+      : Number(rawPageSize);
 
   if (
     !Number.isSafeInteger(page) ||
@@ -192,7 +368,11 @@ function parsePagination(searchParams: URLSearchParams) {
     return null;
   }
 
-  const pageSize = Math.min(requestedPageSize, MAX_PAGE_SIZE);
+  const pageSize = Math.min(
+    requestedPageSize,
+    MAX_PAGE_SIZE
+  );
+
   const skip = (page - 1) * pageSize;
 
   if (
@@ -202,44 +382,77 @@ function parsePagination(searchParams: URLSearchParams) {
     return null;
   }
 
-  return { page, pageSize, skip };
+  return {
+    page,
+    pageSize,
+    skip,
+  };
 }
+
+/*
+ * ---------------------------------------------------------
+ * BOOKING RESPONSE FORMAT
+ * ---------------------------------------------------------
+ */
 
 function formatBooking(booking: BookingRecord) {
   return {
     id: booking.id,
     status: booking.status,
-    requestedFor: booking.requestedFor?.toISOString() ?? null,
+
+    requestedFor:
+      booking.requestedFor?.toISOString() ?? null,
+
     quantity: booking.quantity,
     contactPhone: booking.contactPhone,
     buyerMessage: booking.buyerMessage,
-    acceptedAt: booking.acceptedAt?.toISOString() ?? null,
-    declinedAt: booking.declinedAt?.toISOString() ?? null,
-    cancelledAt: booking.cancelledAt?.toISOString() ?? null,
-    completedAt: booking.completedAt?.toISOString() ?? null,
+
+    acceptedAt:
+      booking.acceptedAt?.toISOString() ?? null,
+
+    declinedAt:
+      booking.declinedAt?.toISOString() ?? null,
+
+    cancelledAt:
+      booking.cancelledAt?.toISOString() ?? null,
+
+    completedAt:
+      booking.completedAt?.toISOString() ?? null,
+
     createdAt: booking.createdAt.toISOString(),
     updatedAt: booking.updatedAt.toISOString(),
+
     messageCount: booking._count.messages,
+
     service: {
       id: booking.service.id,
       name: booking.service.name,
       description: booking.service.description,
+
       price: booking.service.price,
       priceMin: booking.service.priceMin,
       priceMax: booking.service.priceMax,
+
       durationMinutes: booking.service.durationMinutes,
       fulfillmentType: booking.service.fulfillmentType,
       availability: booking.service.availability,
+
       imageUrl: booking.service.imageUrl,
+
       category: booking.service.category,
       images: booking.service.images,
+
       seller: {
         id: booking.service.business.id,
         name: booking.service.business.name,
         ownerName: booking.service.business.ownerName,
         imageUrl: booking.service.business.imageUrl,
+
         verification: booking.service.business.verification,
-        verified: booking.service.business.verification === "VERIFIED",
+
+        verified:
+          booking.service.business.verification === "VERIFIED",
+
         location: booking.service.business.location,
       },
     },
@@ -247,47 +460,61 @@ function formatBooking(booking: BookingRecord) {
 }
 
 /*
+ * =========================================================
  * GET /api/service-bookings
- * Returns the authenticated user's own bookings.
+ * =========================================================
+ *
+ * Returns the authenticated buyer's own bookings.
+ *
+ * Sellers use their separate seller booking endpoint.
+ * =========================================================
  */
+
 export async function GET(request: NextRequest) {
-  const rateLimit = checkPublicRateLimit(request, "request-read");
+  const rateLimit = checkPublicRateLimit(
+    request,
+    "request-read"
+  );
 
   if (!rateLimit.allowed) {
     return NextResponse.json(
       {
         bookings: [],
         total: 0,
-        error: "Too many booking requests. Please try again shortly.",
+        error:
+          "Too many booking requests. Please try again shortly.",
       },
       {
         status: 429,
         headers: responseHeaders(rateLimit.headers),
-      },
+      }
     );
   }
 
   try {
-    const { account, error, status } =
-      await getAuthenticatedAccount();
+    const {
+      account,
+      error,
+      status,
+    } = await getAuthenticatedAccount();
 
     if (!account) {
       return jsonError(
         error ?? "Authentication required.",
         status,
-        rateLimit.headers,
+        rateLimit.headers
       );
     }
 
     const pagination = parsePagination(
-      request.nextUrl.searchParams,
+      request.nextUrl.searchParams
     );
 
     if (!pagination) {
       return jsonError(
         "Invalid pagination parameters.",
         400,
-        rateLimit.headers,
+        rateLimit.headers
       );
     }
 
@@ -296,75 +523,122 @@ export async function GET(request: NextRequest) {
     };
 
     const [total, bookings] = await Promise.all([
-      prisma.serviceBooking.count({ where }),
+      prisma.serviceBooking.count({
+        where,
+      }),
+
       prisma.serviceBooking.findMany({
         where,
+
         include: bookingInclude,
+
         orderBy: [
-          { createdAt: "desc" },
-          { id: "desc" },
+          {
+            createdAt: "desc",
+          },
+          {
+            id: "desc",
+          },
         ],
+
         skip: pagination.skip,
         take: pagination.pageSize,
       }),
     ]);
 
-    const totalPages = Math.ceil(total / pagination.pageSize);
+    const totalPages = Math.ceil(
+      total / pagination.pageSize
+    );
 
     return NextResponse.json(
       {
         bookings: bookings.map(formatBooking),
+
         page: pagination.page,
         pageSize: pagination.pageSize,
+
         total,
         totalPages,
-        hasNextPage: pagination.page < totalPages,
-        hasPreviousPage: pagination.page > 1 && totalPages > 0,
+
+        hasNextPage:
+          pagination.page < totalPages,
+
+        hasPreviousPage:
+          pagination.page > 1 && totalPages > 0,
       },
       {
         headers: responseHeaders(rateLimit.headers),
-      },
+      }
     );
   } catch (error) {
-    console.error("Get service bookings API error:", error);
+    console.error(
+      "Get service bookings API error:",
+      error
+    );
 
     return jsonError(
       "Unable to load your bookings.",
       500,
-      rateLimit.headers,
+      rateLimit.headers
     );
   }
 }
 
 /*
+ * =========================================================
  * POST /api/service-bookings
- * Creates a booking and its initial conversation message.
+ * =========================================================
+ *
+ * Creates:
+ *
+ * 1. The service booking.
+ * 2. The initial booking conversation message, if supplied.
+ * 3. An in-app notification for the seller, if enabled.
+ *
+ * Notification delivery is deliberately outside the
+ * booking transaction.
+ * =========================================================
  */
+
 export async function POST(request: NextRequest) {
-  const rateLimit = checkPublicRateLimit(request, "request-create");
+  const rateLimit = checkPublicRateLimit(
+    request,
+    "request-create"
+  );
 
   if (!rateLimit.allowed) {
     return jsonError(
       "Too many booking requests. Please try again shortly.",
       429,
-      rateLimit.headers,
+      rateLimit.headers
     );
   }
 
   try {
-    const { account, error, status } =
-      await getAuthenticatedAccount();
+    /*
+     * AUTHENTICATION
+     */
+
+    const {
+      account,
+      error,
+      status,
+    } = await getAuthenticatedAccount();
 
     if (!account) {
       return jsonError(
         error ?? "Authentication required.",
         status,
-        rateLimit.headers,
+        rateLimit.headers
       );
     }
 
+    /*
+     * BODY SIZE VALIDATION
+     */
+
     const contentLength = Number(
-      request.headers.get("content-length") ?? 0,
+      request.headers.get("content-length") ?? 0
     );
 
     if (
@@ -374,22 +648,38 @@ export async function POST(request: NextRequest) {
       return jsonError(
         "Request body is too large.",
         413,
-        rateLimit.headers,
+        rateLimit.headers
       );
     }
 
-    const rawBody = await request.text();
+    let rawBody: string;
 
-    if (
-      new TextEncoder().encode(rawBody).length >
-      MAX_BODY_SIZE
-    ) {
+    try {
+      rawBody = await readLimitedRequestBody(
+        request,
+        MAX_BODY_SIZE
+      );
+    } catch (bodyError) {
+      if (
+        bodyError instanceof RequestBodyTooLargeError
+      ) {
+        return jsonError(
+          "Request body is too large.",
+          413,
+          rateLimit.headers
+        );
+      }
+
       return jsonError(
-        "Request body is too large.",
-        413,
-        rateLimit.headers,
+        "Unable to read the request body.",
+        400,
+        rateLimit.headers
       );
     }
+
+    /*
+     * JSON VALIDATION
+     */
 
     let body: unknown;
 
@@ -399,7 +689,7 @@ export async function POST(request: NextRequest) {
       return jsonError(
         "Invalid request body.",
         400,
-        rateLimit.headers,
+        rateLimit.headers
       );
     }
 
@@ -407,50 +697,75 @@ export async function POST(request: NextRequest) {
       return jsonError(
         "Invalid request body.",
         400,
-        rateLimit.headers,
+        rateLimit.headers
       );
     }
+
+    /*
+     * EXTRACT INPUTS
+     */
 
     const serviceId = clean(body.serviceId);
     const buyerMessage = clean(body.buyerMessage);
     const rawPhone = clean(body.contactPhone);
 
-    if (!serviceId || serviceId.length > 100) {
+    /*
+     * SERVICE ID
+     */
+
+    if (
+      !serviceId ||
+      serviceId.length > 100
+    ) {
       return jsonError(
         "A valid service ID is required.",
         400,
-        rateLimit.headers,
+        rateLimit.headers
       );
     }
+
+    /*
+     * BUYER MESSAGE
+     */
 
     if (buyerMessage.length > MAX_MESSAGE_LENGTH) {
       return jsonError(
         "Your booking message is too long.",
         400,
-        rateLimit.headers,
+        rateLimit.headers
       );
     }
+
+    /*
+     * CONTACT PHONE
+     */
 
     if (rawPhone.length > MAX_PHONE_LENGTH) {
       return jsonError(
         "Your contact number is too long.",
         400,
-        rateLimit.headers,
+        rateLimit.headers
       );
     }
 
-    if (rawPhone && !isValidNigerianPhone(rawPhone)) {
+    if (
+      rawPhone &&
+      !isValidNigerianPhone(rawPhone)
+    ) {
       return jsonError(
         "Enter a valid Nigerian phone number.",
         400,
-        rateLimit.headers,
+        rateLimit.headers
       );
     }
 
-    const quantity =
-      body.quantity === undefined || body.quantity === null
-        ? 1
-        : Number(body.quantity);
+    /*
+     * QUANTITY
+     */
+
+    const quantity = parseBookingQuantity(
+      body.quantity
+    );
 
     if (
       !Number.isSafeInteger(quantity) ||
@@ -460,9 +775,13 @@ export async function POST(request: NextRequest) {
       return jsonError(
         `Quantity must be between 1 and ${MAX_BOOKING_QUANTITY}.`,
         400,
-        rateLimit.headers,
+        rateLimit.headers
       );
     }
+
+    /*
+     * REQUESTED DATE
+     */
 
     let requestedFor: Date | null = null;
 
@@ -478,17 +797,19 @@ export async function POST(request: NextRequest) {
         return jsonError(
           "Invalid requested date.",
           400,
-          rateLimit.headers,
+          rateLimit.headers
         );
       }
 
-      requestedFor = new Date(body.requestedFor);
+      requestedFor = new Date(
+        body.requestedFor
+      );
 
       if (Number.isNaN(requestedFor.getTime())) {
         return jsonError(
           "Enter a valid requested date and time.",
           400,
-          rateLimit.headers,
+          rateLimit.headers
         );
       }
 
@@ -496,16 +817,24 @@ export async function POST(request: NextRequest) {
         return jsonError(
           "The requested date and time cannot be in the past.",
           400,
-          rateLimit.headers,
+          rateLimit.headers
         );
       }
     }
+
+    /*
+     * FIND SERVICE
+     *
+     * Only active services belonging to active businesses
+     * can receive new booking requests.
+     */
 
     const service = await prisma.service.findFirst({
       where: {
         id: serviceId,
         status: "ACTIVE",
         deletedAt: null,
+
         business: {
           is: {
             status: "ACTIVE",
@@ -513,10 +842,12 @@ export async function POST(request: NextRequest) {
           },
         },
       },
+
       select: {
         id: true,
         name: true,
         availability: true,
+
         business: {
           select: {
             id: true,
@@ -531,17 +862,25 @@ export async function POST(request: NextRequest) {
       return jsonError(
         "This service is no longer available.",
         404,
-        rateLimit.headers,
+        rateLimit.headers
       );
     }
+
+    /*
+     * CHECK SERVICE AVAILABILITY
+     */
 
     if (service.availability === "UNAVAILABLE") {
       return jsonError(
         "This service is currently unavailable for booking.",
         409,
-        rateLimit.headers,
+        rateLimit.headers
       );
     }
+
+    /*
+     * SELLER VALIDATION
+     */
 
     const sellerId = service.business.ownerId;
 
@@ -549,7 +888,7 @@ export async function POST(request: NextRequest) {
       return jsonError(
         "This seller has not enabled account-based bookings yet.",
         409,
-        rateLimit.headers,
+        rateLimit.headers
       );
     }
 
@@ -557,85 +896,150 @@ export async function POST(request: NextRequest) {
       return jsonError(
         "You cannot book your own service.",
         403,
-        rateLimit.headers,
+        rateLimit.headers
       );
     }
+
+    /*
+     * NORMALIZE CONTACT PHONE
+     */
 
     const contactPhone = rawPhone
       ? normalizeNigerianPhone(rawPhone)
       : null;
 
-    const booking = await prisma.$transaction(async (tx) => {
-      const created = await tx.serviceBooking.create({
-        data: {
-          service: {
-            connect: { id: service.id },
-          },
-          buyer: {
-            connect: { id: account.id },
-          },
-          status: ServiceBookingStatus.PENDING,
-          requestedFor,
-          quantity,
-          contactPhone,
-          buyerMessage: buyerMessage || null,
-        },
-        select: {
-          id: true,
-        },
-      });
+    /*
+     * CREATE BOOKING TRANSACTION
+     *
+     * Both the booking and its initial conversation
+     * message must succeed together.
+     *
+     * If either database operation fails, the transaction
+     * rolls back.
+     */
 
-      // Save the first message in the booking conversation.
-      if (buyerMessage) {
-        await tx.serviceBookingMessage.create({
+    const booking = await prisma.$transaction(
+      async (tx) => {
+        const created = await tx.serviceBooking.create({
           data: {
-            booking: {
-              connect: { id: created.id },
+            service: {
+              connect: {
+                id: service.id,
+              },
             },
-            sender: {
-              connect: { id: account.id },
+
+            buyer: {
+              connect: {
+                id: account.id,
+              },
             },
-            body: buyerMessage,
+
+            // Use the Prisma enum's string value directly.
+            status: "PENDING",
+
+            requestedFor,
+            quantity,
+            contactPhone,
+            buyerMessage: buyerMessage || null,
+          },
+
+          select: {
+            id: true,
           },
         });
-      }
 
-      return tx.serviceBooking.findUnique({
-        where: { id: created.id },
-        include: bookingInclude,
-      });
-    });
+        /*
+         * SAVE INITIAL CONVERSATION MESSAGE
+         */
+
+        if (buyerMessage) {
+          await tx.serviceBookingMessage.create({
+            data: {
+              booking: {
+                connect: {
+                  id: created.id,
+                },
+              },
+
+              sender: {
+                connect: {
+                  id: account.id,
+                },
+              },
+
+              body: buyerMessage,
+            },
+          });
+        }
+
+        /*
+         * RETURN COMPLETE BOOKING
+         */
+
+        return tx.serviceBooking.findUnique({
+          where: {
+            id: created.id,
+          },
+
+          include: bookingInclude,
+        });
+      }
+    );
 
     if (!booking) {
       return jsonError(
         "Your booking could not be completed.",
         500,
-        rateLimit.headers,
+        rateLimit.headers
       );
     }
 
-    // A notification failure must not undo a successfully created booking.
+    /*
+     * SELLER NOTIFICATION
+     *
+     * This happens AFTER the booking transaction.
+     *
+     * createNotification() checks the seller's
+     * SERVICE_BOOKING_CREATED preference.
+     *
+     * When inApp is false, the notification is skipped.
+     * The booking remains successfully created.
+     *
+     * Unexpected notification errors are logged but
+     * never undo the booking.
+     */
+
     try {
       await createNotification({
         userId: sellerId,
+
         type: NotificationType.SERVICE_BOOKING_CREATED,
+
         title: "New service booking",
+
         message: `A buyer has requested your service: ${service.name}.`,
+
         priority: NotificationPriority.HIGH,
+
         data: {
           bookingId: booking.id,
           serviceId: service.id,
           serviceName: service.name,
           href: "/seller",
         },
+
         dedupeKey: `service-booking:${booking.id}:created:seller:${sellerId}`,
       });
     } catch (notificationError) {
       console.error(
         "Service booking notification error:",
-        notificationError,
+        notificationError
       );
     }
+
+    /*
+     * SUCCESS RESPONSE
+     */
 
     return NextResponse.json(
       {
@@ -645,15 +1049,18 @@ export async function POST(request: NextRequest) {
       {
         status: 201,
         headers: responseHeaders(rateLimit.headers),
-      },
+      }
     );
   } catch (error) {
-    console.error("Create service booking API error:", error);
+    console.error(
+      "Create service booking API error:",
+      error
+    );
 
     return jsonError(
       "Unable to submit your booking. Please try again.",
       500,
-      rateLimit.headers,
+      rateLimit.headers
     );
   }
 }

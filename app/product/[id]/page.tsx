@@ -236,12 +236,21 @@ function parseProduct(
     !isRecord(value) ||
     typeof value.id !== "string" ||
     typeof value.name !== "string" ||
-    !isRecord(value.business)
+    !isRecord(value.seller)
   ) {
     return null;
   }
 
-  const rawBusiness = value.business;
+  /*
+   * IMPORTANT:
+   * The product details API returns the business
+   * information under "seller", not "business".
+   *
+   * We map it to our internal "business" property
+   * so the rest of this page can remain unchanged.
+   */
+
+  const rawBusiness = value.seller;
 
   if (
     typeof rawBusiness.id !== "string" ||
@@ -765,6 +774,7 @@ function ProductPageContent({
     useState("");
 
   /* Saved product state */
+
   const [saved, setSaved] =
     useState(false);
 
@@ -1026,6 +1036,7 @@ function ProductPageContent({
          * DELETE must use the SavedListing ID,
          * not the Product ID.
          */
+
         if (!recordId) {
           const savedResponse = await fetch(
             "/api/saved",
@@ -1094,6 +1105,7 @@ function ProductPageContent({
 
         setSaved(false);
         setSavedListingId(null);
+
         setSavedFeedback(
           "Product removed from your Saved listings.",
         );
@@ -1140,9 +1152,11 @@ function ProductPageContent({
           extractCreatedSavedId(payload);
 
         /*
-         * If the response did not expose the SavedListing ID,
-         * retrieve it from the Saved endpoint.
+         * If the response did not expose the
+         * SavedListing ID, retrieve it from
+         * the Saved endpoint.
          */
+
         if (!recordId) {
           try {
             const refreshResponse = await fetch(
@@ -1376,8 +1390,13 @@ function ProductPageContent({
     product.createdAt,
   );
 
+  /*
+   * Correct seller profile route.
+   * ReMarket uses /seller/[id] for public business profiles.
+   */
+
   const businessProfileUrl =
-    `/business/${encodeURIComponent(business.id)}`;
+    `/seller/${encodeURIComponent(business.id)}`;
 
   /* =====================================================
      MAIN PAGE
@@ -1447,7 +1466,6 @@ function ProductPageContent({
 
             <section className="min-w-0">
               <div className="relative overflow-hidden rounded-[22px] border border-[#EAE6DF] bg-[#FCFAF6]">
-
                 <div className="relative flex aspect-square max-h-[680px] items-center justify-center">
                   {mainImage ? (
                     <img
@@ -1738,7 +1756,6 @@ function ProductPageContent({
           ===================================== */}
 
           <section className="mt-7 rounded-[22px] border border-[#EAE6DF] bg-white p-5 sm:p-6">
-
             <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
               <div className="flex min-w-0 items-center gap-3">
                 <div className="flex h-14 w-14 shrink-0 items-center justify-center overflow-hidden rounded-2xl border border-[#EAE6DF] bg-[#FFF0E9] text-[#9F2D18]">
@@ -1888,6 +1905,7 @@ function ProductPageContent({
 
 export default function ProductPage() {
   const params = useParams();
+
   const id =
     typeof params.id === "string"
       ? params.id

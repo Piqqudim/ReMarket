@@ -1,4 +1,3 @@
-
 import {
   Availability,
   Prisma,
@@ -15,6 +14,8 @@ const MAX_PRICE_VALUE = 1_000_000_000;
 const MAX_SEARCH_RESULTS_PER_TYPE = 120;
 const PRODUCT_IMAGE_LIMIT = 1;
 const SERVICE_IMAGE_LIMIT = 1;
+
+type SearchType = "all" | "product" | "service";
 
 const ALLOWED_AVAILABILITY = new Set<Availability>([
   Availability.AVAILABLE,
@@ -43,6 +44,12 @@ type ParsedPrice = {
   error?: string;
 };
 
+/*
+ * =========================================
+ * PUBLIC BUSINESS DATA
+ * =========================================
+ */
+
 const publicSellerSelect = {
   id: true,
   name: true,
@@ -52,6 +59,7 @@ const publicSellerSelect = {
   availability: true,
   verification: true,
   showContactInfo: true,
+
   location: {
     select: {
       id: true,
@@ -61,9 +69,12 @@ const publicSellerSelect = {
       verification: true,
     },
   },
+
   categories: {
     where: {
-      category: { isActive: true },
+      category: {
+        isActive: true,
+      },
     },
     select: {
       category: {
@@ -74,6 +85,7 @@ const publicSellerSelect = {
       },
     },
   },
+
   socialLinks: {
     select: {
       id: true,
@@ -82,6 +94,12 @@ const publicSellerSelect = {
     },
   },
 } satisfies Prisma.BusinessSelect;
+
+/*
+ * =========================================
+ * PRODUCT SEARCH SELECTION
+ * =========================================
+ */
 
 const productSearchSelect = {
   id: true,
@@ -94,6 +112,7 @@ const productSearchSelect = {
   imageUrl: true,
   keywords: true,
   updatedAt: true,
+
   category: {
     select: {
       id: true,
@@ -103,6 +122,7 @@ const productSearchSelect = {
       sortOrder: true,
     },
   },
+
   images: {
     select: {
       id: true,
@@ -110,13 +130,22 @@ const productSearchSelect = {
       publicId: true,
       sortOrder: true,
     },
-    orderBy: { sortOrder: "asc" },
+    orderBy: {
+      sortOrder: "asc",
+    },
     take: PRODUCT_IMAGE_LIMIT,
   },
+
   business: {
     select: publicSellerSelect,
   },
 } satisfies Prisma.ProductSelect;
+
+/*
+ * =========================================
+ * SERVICE SEARCH SELECTION
+ * =========================================
+ */
 
 const serviceSearchSelect = {
   id: true,
@@ -131,6 +160,7 @@ const serviceSearchSelect = {
   durationMinutes: true,
   fulfillmentType: true,
   updatedAt: true,
+
   category: {
     select: {
       id: true,
@@ -140,6 +170,7 @@ const serviceSearchSelect = {
       sortOrder: true,
     },
   },
+
   images: {
     select: {
       id: true,
@@ -147,9 +178,12 @@ const serviceSearchSelect = {
       publicId: true,
       sortOrder: true,
     },
-    orderBy: { sortOrder: "asc" },
+    orderBy: {
+      sortOrder: "asc",
+    },
     take: SERVICE_IMAGE_LIMIT,
   },
+
   business: {
     select: publicSellerSelect,
   },
@@ -167,15 +201,29 @@ type SearchSeller = Prisma.BusinessGetPayload<{
   select: typeof publicSellerSelect;
 }>;
 
+/*
+ * =========================================
+ * GENERAL HELPERS
+ * =========================================
+ */
+
 function clean(value: string | null): string {
   return value?.trim() ?? "";
 }
 
-function noStoreHeaders(baseHeaders?: HeadersInit): Headers {
+function noStoreHeaders(
+  baseHeaders?: HeadersInit,
+): Headers {
   const headers = new Headers(baseHeaders);
-  headers.set("Cache-Control", "no-store, max-age=0, must-revalidate");
+
+  headers.set(
+    "Cache-Control",
+    "no-store, max-age=0, must-revalidate",
+  );
+
   headers.set("Pragma", "no-cache");
   headers.set("Expires", "0");
+
   return headers;
 }
 
@@ -198,12 +246,23 @@ function jsonError(
   );
 }
 
+/*
+ * =========================================
+ * PRICE PARSING
+ * =========================================
+ */
+
 function parsePriceParameter(
   value: string | null,
   label: string,
 ): ParsedPrice {
   const raw = value?.trim() ?? "";
-  if (!raw) return { value: null };
+
+  if (!raw) {
+    return {
+      value: null,
+    };
+  }
 
   const normalized = raw.replace(/,/g, "");
 
@@ -227,20 +286,30 @@ function parsePriceParameter(
     };
   }
 
-  return { value: parsed };
+  return {
+    value: parsed,
+  };
 }
 
-function parseMoneyAmount(input: string): number | null {
+function parseMoneyAmount(
+  input: string,
+): number | null {
   const normalized = input
     .trim()
     .replace(/[₦,\s]/g, "")
     .toLowerCase();
 
-  const match = normalized.match(/^(\d+(?:\.\d+)?)(k)?$/);
+  const match = normalized.match(
+    /^(\d+(?:\.\d+)?)(k)?$/,
+  );
+
   if (!match) return null;
 
   const multiplier = match[2] === "k" ? 1000 : 1;
-  const amount = Math.round(Number(match[1]) * multiplier);
+
+  const amount = Math.round(
+    Number(match[1]) * multiplier,
+  );
 
   if (
     !Number.isSafeInteger(amount) ||
@@ -253,13 +322,17 @@ function parseMoneyAmount(input: string): number | null {
   return amount;
 }
 
-function parseInlineBudget(rawQuery: string): InlineBudget {
+function parseInlineBudget(
+  rawQuery: string,
+): InlineBudget {
   let query = rawQuery.trim();
+
   let minPrice: number | null = null;
   let maxPrice: number | null = null;
 
   const betweenPattern =
     /\bbetween\s+([\d,]+(?:\.\d+)?\s*k?)\s+and\s+([\d,]+(?:\.\d+)?\s*k?)\b/i;
+
   const betweenMatch = query.match(betweenPattern);
 
   if (betweenMatch) {
@@ -269,13 +342,23 @@ function parseInlineBudget(rawQuery: string): InlineBudget {
     if (lower !== null && upper !== null) {
       minPrice = lower;
       maxPrice = upper;
-      query = query.replace(betweenMatch[0], " ").replace(/\s+/g, " ").trim();
-      return { query, minPrice, maxPrice };
+
+      query = query
+        .replace(betweenMatch[0], " ")
+        .replace(/\s+/g, " ")
+        .trim();
+
+      return {
+        query,
+        minPrice,
+        maxPrice,
+      };
     }
   }
 
   const maximumPattern =
     /\b(?:under|below|less\s+than|up\s+to|at\s+most|max(?:imum)?)\s+(?:₦\s*)?([\d,]+(?:\.\d+)?\s*k?)\b/i;
+
   const maximumMatch = query.match(maximumPattern);
 
   if (maximumMatch) {
@@ -283,11 +366,16 @@ function parseInlineBudget(rawQuery: string): InlineBudget {
 
     if (amount !== null) {
       maxPrice = amount;
-      query = query.replace(maximumMatch[0], " ").replace(/\s+/g, " ").trim();
+
+      query = query
+        .replace(maximumMatch[0], " ")
+        .replace(/\s+/g, " ")
+        .trim();
     }
   } else {
     const minimumPattern =
       /\b(?:over|above|more\s+than|at\s+least|min(?:imum)?)\s+(?:₦\s*)?([\d,]+(?:\.\d+)?\s*k?)\b/i;
+
     const minimumMatch = query.match(minimumPattern);
 
     if (minimumMatch) {
@@ -295,13 +383,27 @@ function parseInlineBudget(rawQuery: string): InlineBudget {
 
       if (amount !== null) {
         minPrice = amount;
-        query = query.replace(minimumMatch[0], " ").replace(/\s+/g, " ").trim();
+
+        query = query
+          .replace(minimumMatch[0], " ")
+          .replace(/\s+/g, " ")
+          .trim();
       }
     }
   }
 
-  return { query, minPrice, maxPrice };
+  return {
+    query,
+    minPrice,
+    maxPrice,
+  };
 }
+
+/*
+ * =========================================
+ * SEARCH TEXT NORMALIZATION
+ * =========================================
+ */
 
 function normalizeText(value: string): string {
   return value
@@ -315,10 +417,34 @@ function normalizeText(value: string): string {
 
 function stemToken(token: string): string {
   if (token.length < 4) return token;
-  if (token.endsWith("ies") && token.length > 4) return `${token.slice(0, -3)}y`;
-  if (token.endsWith("ing") && token.length > 5) return token.slice(0, -3);
-  if (token.endsWith("ed") && token.length > 4) return token.slice(0, -2);
-  if (token.endsWith("es") && token.length > 4) return token.slice(0, -2);
+
+  if (
+    token.endsWith("ies") &&
+    token.length > 4
+  ) {
+    return `${token.slice(0, -3)}y`;
+  }
+
+  if (
+    token.endsWith("ing") &&
+    token.length > 5
+  ) {
+    return token.slice(0, -3);
+  }
+
+  if (
+    token.endsWith("ed") &&
+    token.length > 4
+  ) {
+    return token.slice(0, -2);
+  }
+
+  if (
+    token.endsWith("es") &&
+    token.length > 4
+  ) {
+    return token.slice(0, -2);
+  }
 
   if (
     token.endsWith("s") &&
@@ -336,146 +462,314 @@ function getSearchTerms(query: string): string[] {
     .split(" ")
     .filter(Boolean);
 
-  return Array.from(new Set(
-    tokens.flatMap((token) => [token, stemToken(token)]),
-  ));
+  return Array.from(
+    new Set(
+      tokens.flatMap((token) => [
+        token,
+        stemToken(token),
+      ]),
+    ),
+  );
 }
+
+/*
+ * =========================================
+ * PRODUCT PRICE CONDITIONS
+ * =========================================
+ */
 
 function buildProductPriceConditions(
   filters: SearchFilters,
 ): Prisma.ProductWhereInput[] {
   const { minPrice, maxPrice } = filters;
 
-  if (minPrice === null && maxPrice === null) return [];
+  if (
+    minPrice === null &&
+    maxPrice === null
+  ) {
+    return [];
+  }
 
-  if (minPrice !== null && maxPrice !== null) {
-    return [{
-      OR: [
-        { price: { gte: minPrice, lte: maxPrice } },
-        {
-          AND: [
-            { priceMin: { lte: maxPrice } },
-            {
-              OR: [
-                { priceMax: { gte: minPrice } },
-                { priceMax: null },
-              ],
+  if (
+    minPrice !== null &&
+    maxPrice !== null
+  ) {
+    return [
+      {
+        OR: [
+          {
+            price: {
+              gte: minPrice,
+              lte: maxPrice,
             },
-          ],
-        },
-        {
-          AND: [
-            { priceMin: null },
-            { priceMax: { gte: minPrice, lte: maxPrice } },
-          ],
-        },
-      ],
-    }];
+          },
+          {
+            AND: [
+              {
+                priceMin: {
+                  lte: maxPrice,
+                },
+              },
+              {
+                OR: [
+                  {
+                    priceMax: {
+                      gte: minPrice,
+                    },
+                  },
+                  {
+                    priceMax: null,
+                  },
+                ],
+              },
+            ],
+          },
+          {
+            AND: [
+              {
+                priceMin: null,
+              },
+              {
+                priceMax: {
+                  gte: minPrice,
+                  lte: maxPrice,
+                },
+              },
+            ],
+          },
+        ],
+      },
+    ];
   }
 
   if (minPrice !== null) {
-    return [{
+    return [
+      {
+        OR: [
+          {
+            price: {
+              gte: minPrice,
+            },
+          },
+          {
+            priceMax: {
+              gte: minPrice,
+            },
+          },
+          {
+            AND: [
+              {
+                priceMax: null,
+              },
+              {
+                priceMin: {
+                  gte: minPrice,
+                },
+              },
+            ],
+          },
+        ],
+      },
+    ];
+  }
+
+  return [
+    {
       OR: [
-        { price: { gte: minPrice } },
-        { priceMax: { gte: minPrice } },
+        {
+          price: {
+            lte: maxPrice!,
+          },
+        },
+        {
+          priceMin: {
+            lte: maxPrice!,
+          },
+        },
         {
           AND: [
-            { priceMax: null },
-            { priceMin: { gte: minPrice } },
+            {
+              priceMin: null,
+            },
+            {
+              priceMax: {
+                lte: maxPrice!,
+              },
+            },
           ],
         },
       ],
-    }];
-  }
-
-  return [{
-    OR: [
-      { price: { lte: maxPrice! } },
-      { priceMin: { lte: maxPrice! } },
-      {
-        AND: [
-          { priceMin: null },
-          { priceMax: { lte: maxPrice! } },
-        ],
-      },
-    ],
-  }];
+    },
+  ];
 }
+
+/*
+ * =========================================
+ * SERVICE PRICE CONDITIONS
+ * =========================================
+ */
 
 function buildServicePriceConditions(
   filters: SearchFilters,
 ): Prisma.ServiceWhereInput[] {
   const { minPrice, maxPrice } = filters;
 
-  if (minPrice === null && maxPrice === null) return [];
+  if (
+    minPrice === null &&
+    maxPrice === null
+  ) {
+    return [];
+  }
 
-  if (minPrice !== null && maxPrice !== null) {
-    return [{
-      OR: [
-        { price: { gte: minPrice, lte: maxPrice } },
-        {
-          AND: [
-            { priceMin: { lte: maxPrice } },
-            {
-              OR: [
-                { priceMax: { gte: minPrice } },
-                { priceMax: null },
-              ],
+  if (
+    minPrice !== null &&
+    maxPrice !== null
+  ) {
+    return [
+      {
+        OR: [
+          {
+            price: {
+              gte: minPrice,
+              lte: maxPrice,
             },
-          ],
-        },
-        {
-          AND: [
-            { priceMin: null },
-            { priceMax: { gte: minPrice, lte: maxPrice } },
-          ],
-        },
-      ],
-    }];
+          },
+          {
+            AND: [
+              {
+                priceMin: {
+                  lte: maxPrice,
+                },
+              },
+              {
+                OR: [
+                  {
+                    priceMax: {
+                      gte: minPrice,
+                    },
+                  },
+                  {
+                    priceMax: null,
+                  },
+                ],
+              },
+            ],
+          },
+          {
+            AND: [
+              {
+                priceMin: null,
+              },
+              {
+                priceMax: {
+                  gte: minPrice,
+                  lte: maxPrice,
+                },
+              },
+            ],
+          },
+        ],
+      },
+    ];
   }
 
   if (minPrice !== null) {
-    return [{
+    return [
+      {
+        OR: [
+          {
+            price: {
+              gte: minPrice,
+            },
+          },
+          {
+            priceMax: {
+              gte: minPrice,
+            },
+          },
+          {
+            AND: [
+              {
+                priceMax: null,
+              },
+              {
+                priceMin: {
+                  gte: minPrice,
+                },
+              },
+            ],
+          },
+        ],
+      },
+    ];
+  }
+
+  return [
+    {
       OR: [
-        { price: { gte: minPrice } },
-        { priceMax: { gte: minPrice } },
+        {
+          price: {
+            lte: maxPrice!,
+          },
+        },
+        {
+          priceMin: {
+            lte: maxPrice!,
+          },
+        },
         {
           AND: [
-            { priceMax: null },
-            { priceMin: { gte: minPrice } },
+            {
+              priceMin: null,
+            },
+            {
+              priceMax: {
+                lte: maxPrice!,
+              },
+            },
           ],
         },
       ],
-    }];
-  }
-
-  return [{
-    OR: [
-      { price: { lte: maxPrice! } },
-      { priceMin: { lte: maxPrice! } },
-      {
-        AND: [
-          { priceMin: null },
-          { priceMax: { lte: maxPrice! } },
-        ],
-      },
-    ],
-  }];
+    },
+  ];
 }
+
+/*
+ * =========================================
+ * TEXT SEARCH CONDITIONS
+ * =========================================
+ */
 
 function productTextConditions(
   terms: string[],
 ): Prisma.ProductWhereInput[] {
   return terms.map((term) => ({
     OR: [
-      { name: { contains: term, mode: "insensitive" } },
-      { description: { contains: term, mode: "insensitive" } },
-      { keywords: { has: term } },
+      {
+        name: {
+          contains: term,
+          mode: "insensitive",
+        },
+      },
+      {
+        description: {
+          contains: term,
+          mode: "insensitive",
+        },
+      },
+      {
+        keywords: {
+          has: term,
+        },
+      },
       {
         category: {
           is: {
             isActive: true,
-            name: { contains: term, mode: "insensitive" },
+            name: {
+              contains: term,
+              mode: "insensitive",
+            },
           },
         },
       },
@@ -483,14 +777,27 @@ function productTextConditions(
         business: {
           is: {
             OR: [
-              { name: { contains: term, mode: "insensitive" } },
-              { description: { contains: term, mode: "insensitive" } },
+              {
+                name: {
+                  contains: term,
+                  mode: "insensitive",
+                },
+              },
+              {
+                description: {
+                  contains: term,
+                  mode: "insensitive",
+                },
+              },
               {
                 categories: {
                   some: {
                     category: {
                       isActive: true,
-                      name: { contains: term, mode: "insensitive" },
+                      name: {
+                        contains: term,
+                        mode: "insensitive",
+                      },
                     },
                   },
                 },
@@ -508,14 +815,31 @@ function serviceTextConditions(
 ): Prisma.ServiceWhereInput[] {
   return terms.map((term) => ({
     OR: [
-      { name: { contains: term, mode: "insensitive" } },
-      { description: { contains: term, mode: "insensitive" } },
-      { keywords: { has: term } },
+      {
+        name: {
+          contains: term,
+          mode: "insensitive",
+        },
+      },
+      {
+        description: {
+          contains: term,
+          mode: "insensitive",
+        },
+      },
+      {
+        keywords: {
+          has: term,
+        },
+      },
       {
         category: {
           is: {
             isActive: true,
-            name: { contains: term, mode: "insensitive" },
+            name: {
+              contains: term,
+              mode: "insensitive",
+            },
           },
         },
       },
@@ -523,14 +847,27 @@ function serviceTextConditions(
         business: {
           is: {
             OR: [
-              { name: { contains: term, mode: "insensitive" } },
-              { description: { contains: term, mode: "insensitive" } },
+              {
+                name: {
+                  contains: term,
+                  mode: "insensitive",
+                },
+              },
+              {
+                description: {
+                  contains: term,
+                  mode: "insensitive",
+                },
+              },
               {
                 categories: {
                   some: {
                     category: {
                       isActive: true,
-                      name: { contains: term, mode: "insensitive" },
+                      name: {
+                        contains: term,
+                        mode: "insensitive",
+                      },
                     },
                   },
                 },
@@ -543,34 +880,76 @@ function serviceTextConditions(
   }));
 }
 
-function buildLocationWhere(location: string): Prisma.LocationWhereInput {
+/*
+ * =========================================
+ * LOCATION CONDITIONS
+ * =========================================
+ */
+
+function buildLocationWhere(
+  location: string,
+): Prisma.LocationWhereInput {
   return {
     OR: [
-      { area: { contains: location, mode: "insensitive" } },
-      { street: { contains: location, mode: "insensitive" } },
-      { address: { contains: location, mode: "insensitive" } },
+      {
+        area: {
+          contains: location,
+          mode: "insensitive",
+        },
+      },
+      {
+        street: {
+          contains: location,
+          mode: "insensitive",
+        },
+      },
+      {
+        address: {
+          contains: location,
+          mode: "insensitive",
+        },
+      },
     ],
   };
 }
+
+/*
+ * =========================================
+ * CATEGORY CONDITIONS
+ * =========================================
+ */
 
 function buildProductCategoryConditions(
   category: string,
 ): Prisma.ProductWhereInput[] {
   const activeCategory = {
     isActive: true,
-    name: { equals: category, mode: "insensitive" as const },
+    name: {
+      equals: category,
+      mode: "insensitive" as const,
+    },
   };
 
   return [
-    { category: { is: activeCategory } },
+    {
+      category: {
+        is: activeCategory,
+      },
+    },
     {
       AND: [
-        { category: { is: null } },
+        {
+          category: {
+            is: null,
+          },
+        },
         {
           business: {
             is: {
               categories: {
-                some: { category: activeCategory },
+                some: {
+                  category: activeCategory,
+                },
               },
             },
           },
@@ -585,19 +964,32 @@ function buildServiceCategoryConditions(
 ): Prisma.ServiceWhereInput[] {
   const activeCategory = {
     isActive: true,
-    name: { equals: category, mode: "insensitive" as const },
+    name: {
+      equals: category,
+      mode: "insensitive" as const,
+    },
   };
 
   return [
-    { category: { is: activeCategory } },
+    {
+      category: {
+        is: activeCategory,
+      },
+    },
     {
       AND: [
-        { category: { is: null } },
+        {
+          category: {
+            is: null,
+          },
+        },
         {
           business: {
             is: {
               categories: {
-                some: { category: activeCategory },
+                some: {
+                  category: activeCategory,
+                },
               },
             },
           },
@@ -607,22 +999,42 @@ function buildServiceCategoryConditions(
   ];
 }
 
+/*
+ * =========================================
+ * PRODUCT WHERE CLAUSE
+ * =========================================
+ */
+
 function buildProductWhere(
   filters: SearchFilters,
   terms: string[],
 ): Prisma.ProductWhereInput {
   const conditions: Prisma.ProductWhereInput[] = [
-    { status: "ACTIVE", deletedAt: null },
+    {
+      status: "ACTIVE",
+      deletedAt: null,
+    },
     {
       business: {
         is: {
           status: "ACTIVE",
           deletedAt: null,
+
           ...(filters.verified
-            ? { verification: VerificationStatus.VERIFIED }
+            ? {
+                verification:
+                  VerificationStatus.VERIFIED,
+              }
             : {}),
+
           ...(filters.location
-            ? { location: { is: buildLocationWhere(filters.location) } }
+            ? {
+                location: {
+                  is: buildLocationWhere(
+                    filters.location,
+                  ),
+                },
+              }
             : {}),
         },
       },
@@ -630,40 +1042,70 @@ function buildProductWhere(
   ];
 
   if (terms.length > 0) {
-    conditions.push(...productTextConditions(terms));
+    conditions.push(
+      ...productTextConditions(terms),
+    );
   }
 
   if (filters.category) {
     conditions.push({
-      OR: buildProductCategoryConditions(filters.category),
+      OR: buildProductCategoryConditions(
+        filters.category,
+      ),
     });
   }
 
   if (filters.availability) {
-    conditions.push({ availability: filters.availability });
+    conditions.push({
+      availability: filters.availability,
+    });
   }
 
-  conditions.push(...buildProductPriceConditions(filters));
+  conditions.push(
+    ...buildProductPriceConditions(filters),
+  );
 
-  return { AND: conditions };
+  return {
+    AND: conditions,
+  };
 }
+
+/*
+ * =========================================
+ * SERVICE WHERE CLAUSE
+ * =========================================
+ */
 
 function buildServiceWhere(
   filters: SearchFilters,
   terms: string[],
 ): Prisma.ServiceWhereInput {
   const conditions: Prisma.ServiceWhereInput[] = [
-    { status: "ACTIVE", deletedAt: null },
+    {
+      status: "ACTIVE",
+      deletedAt: null,
+    },
     {
       business: {
         is: {
           status: "ACTIVE",
           deletedAt: null,
+
           ...(filters.verified
-            ? { verification: VerificationStatus.VERIFIED }
+            ? {
+                verification:
+                  VerificationStatus.VERIFIED,
+              }
             : {}),
+
           ...(filters.location
-            ? { location: { is: buildLocationWhere(filters.location) } }
+            ? {
+                location: {
+                  is: buildLocationWhere(
+                    filters.location,
+                  ),
+                },
+              }
             : {}),
         },
       },
@@ -671,29 +1113,46 @@ function buildServiceWhere(
   ];
 
   if (terms.length > 0) {
-    conditions.push(...serviceTextConditions(terms));
+    conditions.push(
+      ...serviceTextConditions(terms),
+    );
   }
 
   if (filters.category) {
     conditions.push({
-      OR: buildServiceCategoryConditions(filters.category),
+      OR: buildServiceCategoryConditions(
+        filters.category,
+      ),
     });
   }
 
   if (filters.availability) {
-    conditions.push({ availability: filters.availability });
+    conditions.push({
+      availability: filters.availability,
+    });
   }
 
-  conditions.push(...buildServicePriceConditions(filters));
+  conditions.push(
+    ...buildServicePriceConditions(filters),
+  );
 
-  return { AND: conditions };
+  return {
+    AND: conditions,
+  };
 }
+
+/*
+ * =========================================
+ * SEARCH SCORING
+ * =========================================
+ */
 
 function scoreText(
   query: string,
   values: Array<string | null | undefined>,
 ): number {
   const normalizedQuery = normalizeText(query);
+
   if (!normalizedQuery) return 0;
 
   let score = 0;
@@ -713,13 +1172,24 @@ function scoreText(
     }
 
     for (const term of getSearchTerms(query)) {
-      if (normalizedValue.split(" ").includes(term)) score += 10;
-      else if (normalizedValue.includes(term)) score += 5;
+      if (
+        normalizedValue.split(" ").includes(term)
+      ) {
+        score += 10;
+      } else if (normalizedValue.includes(term)) {
+        score += 5;
+      }
     }
   }
 
   return score;
 }
+
+/*
+ * =========================================
+ * PUBLIC SELLER RESPONSE
+ * =========================================
+ */
 
 function formatSeller(business: SearchSeller) {
   const categoryNames = business.categories.map(
@@ -734,28 +1204,49 @@ function formatSeller(business: SearchSeller) {
     imageUrl: business.imageUrl,
     availability: business.availability,
     verification: business.verification,
-    verified: business.verification === VerificationStatus.VERIFIED,
-    showContactInfo: business.showContactInfo === true,
+
+    verified:
+      business.verification ===
+      VerificationStatus.VERIFIED,
+
+    showContactInfo:
+      business.showContactInfo === true,
+
     location: business.location
       ? {
           id: business.location.id,
           area: business.location.area,
           street: business.location.street,
           address: business.location.address,
-          verification: business.location.verification,
+          verification:
+            business.location.verification,
         }
       : null,
-    categories: categoryNames,
-    category: categoryNames[0] ?? "Uncategorised",
 
-    // Private contact details are never sent to public search results.
-    socialLinks: business.showContactInfo === true
-      ? business.socialLinks
-      : [],
+    categories: categoryNames,
+
+    category:
+      categoryNames[0] ?? "Uncategorised",
+
+    // Private contact details are never sent
+    // when the business has hidden its contact information.
+    socialLinks:
+      business.showContactInfo === true
+        ? business.socialLinks
+        : [],
   };
 }
 
-function scoreProduct(query: string, product: SearchProduct): number {
+/*
+ * =========================================
+ * PRODUCT MATCH SCORE
+ * =========================================
+ */
+
+function scoreProduct(
+  query: string,
+  product: SearchProduct,
+): number {
   return (
     scoreText(query, [
       product.name,
@@ -767,7 +1258,9 @@ function scoreProduct(query: string, product: SearchProduct): number {
     ]) +
     scoreText(query, [
       ...product.keywords,
-      product.category?.isActive ? product.category.name : "",
+      product.category?.isActive
+        ? product.category.name
+        : "",
       ...product.business.categories.map(
         (item) => item.category.name,
       ),
@@ -775,7 +1268,16 @@ function scoreProduct(query: string, product: SearchProduct): number {
   );
 }
 
-function scoreService(query: string, service: SearchService): number {
+/*
+ * =========================================
+ * SERVICE MATCH SCORE
+ * =========================================
+ */
+
+function scoreService(
+  query: string,
+  service: SearchService,
+): number {
   return (
     scoreText(query, [
       service.name,
@@ -787,7 +1289,9 @@ function scoreService(query: string, service: SearchService): number {
     ]) +
     scoreText(query, [
       ...service.keywords,
-      service.category?.isActive ? service.category.name : "",
+      service.category?.isActive
+        ? service.category.name
+        : "",
       ...service.business.categories.map(
         (item) => item.category.name,
       ),
@@ -795,8 +1299,19 @@ function scoreService(query: string, service: SearchService): number {
   );
 }
 
-export async function GET(request: NextRequest) {
-  const rateLimit = checkPublicRateLimit(request, "search");
+/*
+ * =========================================
+ * SEARCH API
+ * =========================================
+ */
+
+export async function GET(
+  request: NextRequest,
+) {
+  const rateLimit = checkPublicRateLimit(
+    request,
+    "search",
+  );
 
   if (!rateLimit.allowed) {
     return jsonError(
@@ -807,12 +1322,68 @@ export async function GET(request: NextRequest) {
   }
 
   try {
-    const searchParams = request.nextUrl.searchParams;
-    const rawQuery = clean(searchParams.get("q"));
-    const category = clean(searchParams.get("category"));
-    const location = clean(searchParams.get("location"));
+    const searchParams =
+      request.nextUrl.searchParams;
 
-    if (rawQuery.length > MAX_SEARCH_LENGTH) {
+    const rawQuery = clean(
+      searchParams.get("q"),
+    );
+
+    const category = clean(
+      searchParams.get("category"),
+    );
+
+    const location = clean(
+      searchParams.get("location"),
+    );
+
+    /*
+     * =====================================
+     * SEARCH TYPE VALIDATION
+     * =====================================
+     *
+     * No type or type=all:
+     * Search products and services.
+     *
+     * type=product:
+     * Search products only.
+     *
+     * type=service:
+     * Search services only.
+     */
+
+    const rawType = clean(
+      searchParams.get("type"),
+    ).toLowerCase();
+
+    if (
+      rawType &&
+      rawType !== "all" &&
+      rawType !== "product" &&
+      rawType !== "service"
+    ) {
+      return jsonError(
+        "Search type must be all, product or service.",
+        400,
+        rateLimit.headers,
+      );
+    }
+
+    const searchType: SearchType =
+      rawType === "product" ||
+      rawType === "service"
+        ? rawType
+        : "all";
+
+    /*
+     * =====================================
+     * INPUT VALIDATION
+     * =====================================
+     */
+
+    if (
+      rawQuery.length > MAX_SEARCH_LENGTH
+    ) {
       return jsonError(
         `Search text must not exceed ${MAX_SEARCH_LENGTH} characters.`,
         400,
@@ -820,7 +1391,9 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    if (category.length > MAX_CATEGORY_LENGTH) {
+    if (
+      category.length > MAX_CATEGORY_LENGTH
+    ) {
       return jsonError(
         `Category must not exceed ${MAX_CATEGORY_LENGTH} characters.`,
         400,
@@ -828,7 +1401,9 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    if (location.length > MAX_LOCATION_LENGTH) {
+    if (
+      location.length > MAX_LOCATION_LENGTH
+    ) {
       return jsonError(
         `Location must not exceed ${MAX_LOCATION_LENGTH} characters.`,
         400,
@@ -836,10 +1411,17 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    const minimumPriceInput = parsePriceParameter(
-      searchParams.get("minPrice"),
-      "Minimum price",
-    );
+    /*
+     * =====================================
+     * PRICE VALIDATION
+     * =====================================
+     */
+
+    const minimumPriceInput =
+      parsePriceParameter(
+        searchParams.get("minPrice"),
+        "Minimum price",
+      );
 
     if (minimumPriceInput.error) {
       return jsonError(
@@ -849,10 +1431,11 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    const maximumPriceInput = parsePriceParameter(
-      searchParams.get("maxPrice"),
-      "Maximum price",
-    );
+    const maximumPriceInput =
+      parsePriceParameter(
+        searchParams.get("maxPrice"),
+        "Maximum price",
+      );
 
     if (maximumPriceInput.error) {
       return jsonError(
@@ -862,13 +1445,21 @@ export async function GET(request: NextRequest) {
       );
     }
 
+    /*
+     * =====================================
+     * AVAILABILITY VALIDATION
+     * =====================================
+     */
+
     const availabilityRaw = clean(
       searchParams.get("availability"),
     );
 
     if (
       availabilityRaw &&
-      !ALLOWED_AVAILABILITY.has(availabilityRaw as Availability)
+      !ALLOWED_AVAILABILITY.has(
+        availabilityRaw as Availability,
+      )
     ) {
       return jsonError(
         "Availability filter is invalid.",
@@ -877,7 +1468,15 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    const verifiedRaw = clean(searchParams.get("verified"));
+    /*
+     * =====================================
+     * VERIFICATION VALIDATION
+     * =====================================
+     */
+
+    const verifiedRaw = clean(
+      searchParams.get("verified"),
+    );
 
     if (
       verifiedRaw &&
@@ -891,17 +1490,33 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    const inlineBudget = parseInlineBudget(rawQuery);
+    /*
+     * =====================================
+     * BUILD SEARCH FILTERS
+     * =====================================
+     */
+
+    const inlineBudget = parseInlineBudget(
+      rawQuery,
+    );
 
     const filters: SearchFilters = {
       query: inlineBudget.query,
       category,
       location,
-      minPrice: minimumPriceInput.value ?? inlineBudget.minPrice,
-      maxPrice: maximumPriceInput.value ?? inlineBudget.maxPrice,
+
+      minPrice:
+        minimumPriceInput.value ??
+        inlineBudget.minPrice,
+
+      maxPrice:
+        maximumPriceInput.value ??
+        inlineBudget.maxPrice,
+
       availability: availabilityRaw
-        ? availabilityRaw as Availability
+        ? (availabilityRaw as Availability)
         : null,
+
       verified: verifiedRaw === "true",
     };
 
@@ -917,9 +1532,87 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    const terms = getSearchTerms(filters.query);
-    const productWhere = buildProductWhere(filters, terms);
-    const serviceWhere = buildServiceWhere(filters, terms);
+    /*
+     * =====================================
+     * BUILD DATABASE CONDITIONS
+     * =====================================
+     */
+
+    const terms = getSearchTerms(
+      filters.query,
+    );
+
+    const productWhere = buildProductWhere(
+      filters,
+      terms,
+    );
+
+    const serviceWhere = buildServiceWhere(
+      filters,
+      terms,
+    );
+
+    /*
+     * =====================================
+     * SEARCH ONLY REQUESTED LISTING TYPES
+     * =====================================
+     */
+
+    const shouldSearchProducts =
+      searchType !== "service";
+
+    const shouldSearchServices =
+      searchType !== "product";
+
+    /*
+     * Do not execute product queries for a
+     * service-only search.
+     *
+     * Do not execute service queries for a
+     * product-only search.
+     */
+
+    const productCountPromise =
+      shouldSearchProducts
+        ? prisma.product.count({
+            where: productWhere,
+          })
+        : Promise.resolve(0);
+
+    const productRowsPromise =
+      shouldSearchProducts
+        ? prisma.product.findMany({
+            where: productWhere,
+            select: productSearchSelect,
+            orderBy: {
+              updatedAt: "desc",
+            },
+            take: MAX_SEARCH_RESULTS_PER_TYPE,
+          })
+        : Promise.resolve(
+            [] as SearchProduct[],
+          );
+
+    const serviceCountPromise =
+      shouldSearchServices
+        ? prisma.service.count({
+            where: serviceWhere,
+          })
+        : Promise.resolve(0);
+
+    const serviceRowsPromise =
+      shouldSearchServices
+        ? prisma.service.findMany({
+            where: serviceWhere,
+            select: serviceSearchSelect,
+            orderBy: {
+              updatedAt: "desc",
+            },
+            take: MAX_SEARCH_RESULTS_PER_TYPE,
+          })
+        : Promise.resolve(
+            [] as SearchService[],
+          );
 
     const [
       totalProducts,
@@ -927,30 +1620,31 @@ export async function GET(request: NextRequest) {
       totalServices,
       matchedServices,
     ] = await Promise.all([
-      prisma.product.count({ where: productWhere }),
-      prisma.product.findMany({
-        where: productWhere,
-        select: productSearchSelect,
-        orderBy: { updatedAt: "desc" },
-        take: MAX_SEARCH_RESULTS_PER_TYPE,
-      }),
-      prisma.service.count({ where: serviceWhere }),
-      prisma.service.findMany({
-        where: serviceWhere,
-        select: serviceSearchSelect,
-        orderBy: { updatedAt: "desc" },
-        take: MAX_SEARCH_RESULTS_PER_TYPE,
-      }),
+      productCountPromise,
+      productRowsPromise,
+      serviceCountPromise,
+      serviceRowsPromise,
     ]);
+
+    /*
+     * =====================================
+     * FORMAT PRODUCT RESULTS
+     * =====================================
+     */
 
     const products = matchedProducts
       .map((product) => ({
         product,
-        matchScore: scoreProduct(filters.query, product),
+        matchScore: scoreProduct(
+          filters.query,
+          product,
+        ),
       }))
-      .sort((a, b) =>
-        b.matchScore - a.matchScore ||
-        b.product.updatedAt.getTime() - a.product.updatedAt.getTime(),
+      .sort(
+        (a, b) =>
+          b.matchScore - a.matchScore ||
+          b.product.updatedAt.getTime() -
+            a.product.updatedAt.getTime(),
       )
       .map(({ product, matchScore }) => ({
         id: product.id,
@@ -963,20 +1657,42 @@ export async function GET(request: NextRequest) {
         availability: product.availability,
         imageUrl: product.imageUrl,
         keywords: product.keywords,
-        category: product.category?.isActive ? product.category : null,
+
+        category:
+          product.category?.isActive
+            ? product.category
+            : null,
+
         images: product.images,
-        seller: formatSeller(product.business),
+
+        // Keep this field name consistent with
+        // the existing API response.
+        seller: formatSeller(
+          product.business,
+        ),
+
         matchScore,
       }));
+
+    /*
+     * =====================================
+     * FORMAT SERVICE RESULTS
+     * =====================================
+     */
 
     const services = matchedServices
       .map((service) => ({
         service,
-        matchScore: scoreService(filters.query, service),
+        matchScore: scoreService(
+          filters.query,
+          service,
+        ),
       }))
-      .sort((a, b) =>
-        b.matchScore - a.matchScore ||
-        b.service.updatedAt.getTime() - a.service.updatedAt.getTime(),
+      .sort(
+        (a, b) =>
+          b.matchScore - a.matchScore ||
+          b.service.updatedAt.getTime() -
+            a.service.updatedAt.getTime(),
       )
       .map(({ service, matchScore }) => ({
         id: service.id,
@@ -991,53 +1707,105 @@ export async function GET(request: NextRequest) {
         keywords: service.keywords,
         durationMinutes: service.durationMinutes,
         fulfillmentType: service.fulfillmentType,
-        category: service.category?.isActive ? service.category : null,
+
+        category:
+          service.category?.isActive
+            ? service.category
+            : null,
+
         images: service.images,
-        seller: formatSeller(service.business),
+
+        seller: formatSeller(
+          service.business,
+        ),
+
         matchScore,
       }));
 
-    const listings = [...products, ...services].sort((a, b) =>
-      b.matchScore - a.matchScore ||
-      a.name.localeCompare(b.name),
+    /*
+     * =====================================
+     * COMBINED LISTINGS
+     * =====================================
+     */
+
+    const listings = [
+      ...products,
+      ...services,
+    ].sort(
+      (a, b) =>
+        b.matchScore - a.matchScore ||
+        a.name.localeCompare(b.name),
     );
+
+    /*
+     * =====================================
+     * SEARCH EVENT TRACKING
+     * =====================================
+     *
+     * Tracking failures must not break search.
+     */
 
     try {
       await prisma.searchEvent.create({
         data: {
           query: rawQuery,
           category: category || null,
-          resultCount: totalProducts + totalServices,
+          resultCount:
+            totalProducts + totalServices,
           location: location || null,
           minPrice: filters.minPrice,
           maxPrice: filters.maxPrice,
         },
       });
     } catch (trackingError) {
-      console.error("Search event tracking error:", trackingError);
+      console.error(
+        "Search event tracking error:",
+        trackingError,
+      );
     }
+
+    /*
+     * =====================================
+     * SUCCESS RESPONSE
+     * =====================================
+     */
 
     return NextResponse.json(
       {
         products,
         services,
         listings,
+
         resultMeta: {
+          type: searchType,
+
           totalProducts,
           totalServices,
-          totalResults: totalProducts + totalServices,
-          maxResultsPerType: MAX_SEARCH_RESULTS_PER_TYPE,
+
+          totalResults:
+            totalProducts + totalServices,
+
+          maxResultsPerType:
+            MAX_SEARCH_RESULTS_PER_TYPE,
+
           truncated:
-            totalProducts > MAX_SEARCH_RESULTS_PER_TYPE ||
-            totalServices > MAX_SEARCH_RESULTS_PER_TYPE,
+            totalProducts >
+              MAX_SEARCH_RESULTS_PER_TYPE ||
+            totalServices >
+              MAX_SEARCH_RESULTS_PER_TYPE,
         },
       },
       {
-        headers: noStoreHeaders(rateLimit.headers),
+        headers: noStoreHeaders(
+          rateLimit.headers,
+        ),
       },
     );
   } catch (error) {
-    console.error("Search API error:", error);
+    console.error(
+      "Search API error:",
+      error,
+    );
 
     return jsonError(
       "Unable to complete search. Please try again.",

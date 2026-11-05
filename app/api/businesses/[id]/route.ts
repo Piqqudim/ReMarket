@@ -1,4 +1,3 @@
-
 import {
   NextRequest,
   NextResponse,
@@ -11,7 +10,9 @@ const MAX_BUSINESS_ID_LENGTH = 100;
 
 function getResponseHeaders(rateLimitHeaders: Headers): Headers {
   const headers = new Headers(rateLimitHeaders);
-  headers.set("Cache-Control", "no-store");
+  headers.set("Cache-Control", "no-store, max-age=0, must-revalidate");
+  headers.set("Pragma", "no-cache");
+  headers.set("Expires", "0");
   return headers;
 }
 
@@ -73,7 +74,7 @@ export async function GET(
   try {
     const { id } = await params;
 
-    if (!id) {
+    if (!id || !id.trim()) {
       return NextResponse.json(
         { error: "Business ID is required." },
         {
@@ -102,7 +103,6 @@ export async function GET(
       select: {
         id: true,
         name: true,
-        ownerId: true,
         ownerName: true,
         description: true,
         imageUrl: true,
@@ -110,7 +110,7 @@ export async function GET(
         verification: true,
         phone: true,
 
-        // Seller contact visibility preference.
+        // Contact details are only returned publicly when enabled by the seller.
         showContactInfo: true,
 
         location: {
@@ -175,9 +175,60 @@ export async function GET(
           },
         },
 
+        // Only active, non-deleted services are visible on public profiles.
+        services: {
+          where: {
+            status: "ACTIVE",
+            deletedAt: null,
+          },
+          select: {
+            id: true,
+            name: true,
+            description: true,
+            price: true,
+            priceMin: true,
+            priceMax: true,
+            durationMinutes: true,
+            fulfillmentType: true,
+            availability: true,
+            keywords: true,
+            imageUrl: true,
+            createdAt: true,
+            updatedAt: true,
+            category: {
+              select: {
+                id: true,
+                name: true,
+                iconKey: true,
+                isActive: true,
+                sortOrder: true,
+              },
+            },
+            images: {
+              select: {
+                id: true,
+                url: true,
+                sortOrder: true,
+              },
+              orderBy: {
+                sortOrder: "asc",
+              },
+            },
+          },
+          orderBy: {
+            updatedAt: "desc",
+          },
+        },
+
         _count: {
           select: {
             products: {
+              where: {
+                status: "ACTIVE",
+                deletedAt: null,
+              },
+            },
+            services: {
               where: {
                 status: "ACTIVE",
                 deletedAt: null,
@@ -221,8 +272,7 @@ export async function GET(
     const reviewCount = reviewSummary._count._all;
 
     const averageRating =
-      reviewCount > 0 &&
-      reviewSummary._avg.rating !== null
+      reviewCount > 0 && reviewSummary._avg.rating !== null
         ? Number(reviewSummary._avg.rating.toFixed(1))
         : 0;
 
@@ -230,27 +280,29 @@ export async function GET(
      * Contact information is only formatted and returned
      * when the seller has explicitly enabled public visibility.
      */
-    let formattedSocialLinks: {
+    const formattedSocialLinks: {
       id: string;
       platform: string;
       handle: string;
     }[] = [];
 
     if (business.showContactInfo === true) {
-      formattedSocialLinks = business.socialLinks.map((link) => ({
-        id: link.id,
-        platform: link.platform,
-        handle: normalizeSocialHandle(
-          link.platform,
-          link.handle,
-        ),
-      }));
+      for (const link of business.socialLinks) {
+        formattedSocialLinks.push({
+          id: link.id,
+          platform: link.platform,
+          handle: normalizeSocialHandle(
+            link.platform,
+            link.handle,
+          ),
+        });
+      }
 
       const hasPhoneSocialLink = formattedSocialLinks.some(
         (link) => link.platform === "PHONE",
       );
 
-      // Backward compatibility for older businesses.
+      // Backward compatibility for older businesses with a legacy phone field.
       if (!hasPhoneSocialLink && business.phone) {
         formattedSocialLinks.push({
           id: `legacy-phone-${business.id}`,
@@ -260,25 +312,25 @@ export async function GET(
       }
     }
 
-    const hasDirections = Boolean(
+    // Coordinates are used only to determine whether directions are available.
+    // They are deliberately not included in the public response.
+    const hasValidCoordinates = Boolean(
       business.location &&
-        (
-          (
-            typeof business.location.lat === "number" &&
-            Number.isFinite(business.location.lat) &&
-            business.location.lat >= -90 &&
-            business.location.lat <= 90 &&
-            typeof business.location.long === "number" &&
-            Number.isFinite(business.location.long) &&
-            business.location.long >= -180 &&
-            business.location.long <= 180
-          ) ||
-          (
-            typeof business.location.address === "string" &&
-            business.location.address.trim().length > 0
-          )
-        ),
+        typeof business.location.lat === "number" &&
+        Number.isFinite(business.location.lat) &&
+        business.location.lat >= -90 &&
+        business.location.lat <= 90 &&
+        typeof business.location.long === "number" &&
+        Number.isFinite(business.location.long) &&
+        business.location.long >= -180 &&
+        business.location.long <= 180,
     );
+
+    const hasAddress = Boolean(
+      business.location?.address?.trim(),
+    );
+
+    const hasDirections = hasValidCoordinates || hasAddress;
 
     const formattedBusiness = {
       id: business.id,
@@ -286,9 +338,8 @@ export async function GET(
       ownerName: business.ownerName,
       description: business.description,
       imageUrl: business.imageUrl,
-      claimable: business.ownerId === null,
 
-      // Safe visibility flag. Never expose ownerId.
+      // Do not expose ownerId or the removed claim-business state.
       showContactInfo: business.showContactInfo === true,
 
       location: {
@@ -313,6 +364,7 @@ export async function GET(
       ),
 
       productCount: business._count.products,
+      serviceCount: business._count.services,
       averageRating,
       reviewCount,
 
@@ -326,7 +378,6 @@ export async function GET(
         availability: product.availability,
         imageUrl: product.imageUrl,
         keywords: product.keywords,
-
         images: product.images.map((image) => ({
           id: image.id,
           url: image.url,
@@ -335,7 +386,36 @@ export async function GET(
         })),
       })),
 
-      // Empty array when contact visibility is private.
+      services: business.services.map((service) => ({
+        id: service.id,
+        name: service.name,
+        description: service.description,
+        price: service.price,
+        priceMin: service.priceMin,
+        priceMax: service.priceMax,
+        durationMinutes: service.durationMinutes,
+        fulfillmentType: service.fulfillmentType,
+        availability: service.availability,
+        keywords: service.keywords,
+        imageUrl: service.imageUrl,
+        createdAt: service.createdAt,
+        updatedAt: service.updatedAt,
+        category: service.category?.isActive
+          ? {
+              id: service.category.id,
+              name: service.category.name,
+              iconKey: service.category.iconKey,
+              sortOrder: service.category.sortOrder,
+            }
+          : null,
+        images: service.images.map((image) => ({
+          id: image.id,
+          url: image.url,
+          sortOrder: image.sortOrder,
+        })),
+      })),
+
+      // This remains an empty array when public contact visibility is disabled.
       socialLinks: formattedSocialLinks,
     };
 

@@ -1,3 +1,4 @@
+
 "use client";
 
 import {
@@ -13,6 +14,7 @@ import Link from "next/link";
 
 import {
   ArrowRight,
+  CalendarDays,
   Loader2,
   LogOut,
   MessageCircle,
@@ -48,17 +50,6 @@ function parseAccountRole(value: unknown): AccountRole | null {
   }
 
   return null;
-}
-
-function isActivePath(
-  pathname: string,
-  href: string,
-): boolean {
-  if (href === "/") {
-    return pathname === "/";
-  }
-
-  return pathname === href || pathname.startsWith(`${href}/`);
 }
 
 export default function SiteHeader({
@@ -196,9 +187,6 @@ export default function SiteHeader({
    * =========================================
    * ACCOUNT MENU BEHAVIOUR
    * =========================================
-   *
-   * There is one account menu and one account
-   * reference for desktop and mobile.
    */
 
   useEffect(() => {
@@ -250,6 +238,7 @@ export default function SiteHeader({
   /*
    * Close the menu when navigating to another page.
    */
+
   useEffect(() => {
     setAccountMenuOpen(false);
     setAccountMenuError("");
@@ -370,19 +359,6 @@ export default function SiteHeader({
 
   /*
    * =========================================
-   * ACCOUNT DESTINATION
-   * =========================================
-   */
-
-  const accountDestination =
-    account?.role === "ADMIN"
-      ? "/admin"
-      : account?.role === "SELLER"
-        ? "/seller"
-        : "/profile";
-
-  /*
-   * =========================================
    * NAVIGATION ACTIVE STATES
    * =========================================
    */
@@ -462,6 +438,8 @@ export default function SiteHeader({
             )}
           </div>
 
+          {/* ADMIN NAVIGATION */}
+
           {account.role === "ADMIN" ? (
             <Link
               href="/admin"
@@ -475,6 +453,7 @@ export default function SiteHeader({
               Admin dashboard
             </Link>
           ) : account.role === "SELLER" ? (
+            /* SELLER NAVIGATION */
             <>
               <Link
                 href="/seller"
@@ -501,6 +480,7 @@ export default function SiteHeader({
               </Link>
             </>
           ) : (
+            /* BUYER PROFILE */
             <Link
               href="/profile"
               onClick={closeAccountMenu}
@@ -513,6 +493,29 @@ export default function SiteHeader({
               My profile
             </Link>
           )}
+
+          {/* BUYER BOOKINGS */}
+
+          {account.role === "BUYER" && (
+            <Link
+              href="/bookings"
+              onClick={closeAccountMenu}
+              className={`flex items-center gap-3 px-4 py-3 text-sm font-semibold transition hover:bg-[#FCFAF6] hover:text-[#9F2D18] ${
+                pathname === "/bookings" ||
+                pathname.startsWith("/bookings/")
+                  ? "bg-[#FFF7F4] text-[#9F2D18]"
+                  : "text-[#17202A]"
+              }`}
+            >
+              <CalendarDays
+                className="h-4 w-4 text-[#FF5A36]"
+                aria-hidden="true"
+              />
+              My bookings
+            </Link>
+          )}
+
+          {/* SAVED LISTINGS */}
 
           {account.role !== "ADMIN" && (
             <Link
@@ -527,6 +530,8 @@ export default function SiteHeader({
               Saved listings
             </Link>
           )}
+
+          {/* SELLER ONBOARDING */}
 
           {account.role === "BUYER" && (
             <div className="border-t border-[#EAE6DF] p-3">
@@ -552,6 +557,8 @@ export default function SiteHeader({
               </Link>
             </div>
           )}
+
+          {/* LOGOUT */}
 
           <div className="border-t border-[#EAE6DF] p-2">
             <button
@@ -586,6 +593,7 @@ export default function SiteHeader({
           </div>
         </>
       ) : (
+        /* SIGNED-OUT NAVIGATION */
         <>
           <div className="border-b border-[#EAE6DF] bg-[#FCFAF6] p-4">
             <p className="text-sm font-bold text-[#17202A]">
@@ -645,12 +653,6 @@ export default function SiteHeader({
    * =========================================
    * HEADER
    * =========================================
-   *
-   * One responsive header structure:
-   * - One NotificationBell instance.
-   * - One account menu instance.
-   * - One search form.
-   * - Desktop navigation and mobile search layout.
    */
 
   return (
@@ -667,7 +669,8 @@ export default function SiteHeader({
           xl:gap-6 xl:px-10
         "
       >
-        {/* Logo */}
+        {/* LOGO */}
+
         <Link
           href="/"
           aria-label="ReMarket home"
@@ -685,7 +688,8 @@ export default function SiteHeader({
           </span>
         </Link>
 
-        {/* Desktop navigation */}
+        {/* DESKTOP NAVIGATION */}
+
         <nav
           aria-label="Main navigation"
           className="order-2 hidden shrink-0 items-center gap-1 lg:flex"
@@ -721,12 +725,14 @@ export default function SiteHeader({
           </Link>
         </nav>
 
-        {/* Search */}
+        {/* SEARCH */}
+
         <div className="order-3 col-span-2 min-w-0 lg:col-span-1 lg:min-w-[180px] lg:flex-1">
           {renderSearchForm()}
         </div>
 
-        {/* Messages, notifications and account */}
+        {/* MESSAGES, NOTIFICATIONS AND ACCOUNT */}
+
         <div className="order-2 flex shrink-0 items-center justify-end gap-1.5 sm:gap-2 lg:order-4">
           <Link
             href="/messages"
@@ -747,7 +753,8 @@ export default function SiteHeader({
 
           <NotificationBell />
 
-          {/* Single account menu for desktop and mobile */}
+          {/* SINGLE ACCOUNT MENU */}
+
           <div
             ref={accountMenuRef}
             className="relative shrink-0"

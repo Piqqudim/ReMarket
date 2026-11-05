@@ -14,12 +14,14 @@ import Link from "next/link";
 import { useParams } from "next/navigation";
 import { getSession } from "next-auth/react";
 
+import SiteHeader from "@/components/layout/SiteHeader";
+import MobileBottomNav from "@/components/layout/MobileBottomNav";
+
 import {
   Home,
   ShoppingBag,
   ClipboardList,
   Heart,
-  Search,
   MapPin,
   ArrowLeft,
   Store,
@@ -33,13 +35,11 @@ import {
   Pencil,
   Trash2,
   LoaderCircle,
-  ShieldCheck,
   Clock3,
-  X,
+  Wrench,
 } from "lucide-react";
 
 import { trackContactEvent } from "@/lib/contact-event";
-import { trackBusinessView } from "@/lib/business-view";
 
 import {
   isBusinessSaved,
@@ -113,6 +113,27 @@ type Product = {
   keywords: string[];
 };
 
+type Service = {
+  id: string;
+  name: string;
+  description: string | null;
+  price: number | null;
+  priceMin: number | null;
+  priceMax: number | null;
+  durationMinutes: number | null;
+  fulfillmentType: "AT_PROVIDER" | "AT_CUSTOMER" | "REMOTE" | "FLEXIBLE";
+  availability: Availability;
+  imageUrl: string | null;
+  images: ProductImage[];
+  category: {
+    id?: string;
+    name: string;
+    iconKey?: string | null;
+    sortOrder?: number;
+  } | null;
+  keywords: string[];
+};
+
 type SocialLink = {
   id: string;
   platform: string;
@@ -144,11 +165,13 @@ type Seller = {
 
   productCount: number;
   products: Product[];
+  serviceCount: number;
+  services: Service[];
 
+  showContactInfo: boolean;
   socialLinks: SocialLink[];
 
   imageUrl?: string | null;
-  claimable: boolean;
   averageRating: number;
   reviewCount: number;
 };
@@ -234,40 +257,38 @@ function getCategoryColor(
   );
 }
 
-function formatPrice(
-  product: Product
-) {
-  if (
-    product.priceMin != null &&
-    product.priceMax != null
-  ) {
-    if (
-      product.priceMin ===
-      product.priceMax
-    ) {
-      return `₦${product.priceMin.toLocaleString()}`;
+type PriceFields = {
+  price?: number | null;
+  priceMin?: number | null;
+  priceMax?: number | null;
+};
+
+function formatPrice(listing: PriceFields): string {
+  if (listing.price != null) {
+    return `₦${listing.price.toLocaleString("en-NG")}`;
+  }
+
+  if (listing.priceMin != null && listing.priceMax != null) {
+    if (listing.priceMin === listing.priceMax) {
+      return `₦${listing.priceMin.toLocaleString("en-NG")}`;
     }
 
-    return `₦${product.priceMin.toLocaleString()}-₦${product.priceMax.toLocaleString()}`;
+    return `₦${listing.priceMin.toLocaleString("en-NG")} – ₦${listing.priceMax.toLocaleString("en-NG")}`;
   }
 
-  if (product.price != null) {
-    return `₦${product.price.toLocaleString()}`;
+  if (listing.priceMin != null) {
+    return `From ₦${listing.priceMin.toLocaleString("en-NG")}`;
   }
 
-  if (product.priceMin != null) {
-    return `From ₦${product.priceMin.toLocaleString()}`;
-  }
-
-  if (product.priceMax != null) {
-    return `Up to ₦${product.priceMax.toLocaleString()}`;
+  if (listing.priceMax != null) {
+    return `Up to ₦${listing.priceMax.toLocaleString("en-NG")}`;
   }
 
   return "Ask seller";
 }
 
 function getProductImages(
-  product: Product
+  product: { images?: ProductImage[]; imageUrl?: string | null }
 ): ProductImage[] {
   const images = Array.isArray(product.images)
     ? product.images
@@ -323,6 +344,33 @@ function getAvailabilityStyle(
   }
 }
 
+function getFulfillmentLabel(fulfillmentType: Service["fulfillmentType"]): string {
+  switch (fulfillmentType) {
+    case "AT_PROVIDER":
+      return "At seller's location";
+    case "AT_CUSTOMER":
+      return "At customer's location";
+    case "REMOTE":
+      return "Remote service";
+    default:
+      return "Flexible location";
+  }
+}
+
+function formatDuration(durationMinutes: number | null): string | null {
+  if (durationMinutes === null || !Number.isFinite(durationMinutes) || durationMinutes <= 0) {
+    return null;
+  }
+
+  if (durationMinutes < 60) {
+    return `${durationMinutes} min`;
+  }
+
+  const hours = Math.floor(durationMinutes / 60);
+  const minutes = durationMinutes % 60;
+  return minutes > 0 ? `${hours} hr ${minutes} min` : `${hours} hr`;
+}
+
 function normalizeNigerianPhone(value: string): string {
   let clean = value.trim();
   if (!clean) return "";
@@ -344,6 +392,24 @@ function normalizeNigerianPhone(value: string): string {
   return "";
 }
 
+function getSafePlatformUrl(value: string, allowedDomains: string[]): string {
+  try {
+    const url = new URL(value);
+    const hostname = url.hostname.toLowerCase();
+    const allowed = allowedDomains.some(
+      (domain) => hostname === domain || hostname.endsWith(`.${domain}`)
+    );
+
+    if (url.protocol !== "https:" || !allowed) {
+      return "#";
+    }
+
+    return url.toString();
+  } catch {
+    return "#";
+  }
+}
+
 /*
  * Directions are resolved by the server only after the visitor
  * explicitly chooses the Directions action. This keeps exact
@@ -351,8 +417,7 @@ function normalizeNigerianPhone(value: string): string {
  */
 function buildContactUrl(
   platform: string,
-  handle: string,
-  address?: string | null
+  handle: string
 ): string {
   const clean = handle
     .trim()
@@ -364,11 +429,8 @@ function buildContactUrl(
         return "#";
       }
 
-      if (
-        clean.startsWith("http://") ||
-        clean.startsWith("https://")
-      ) {
-        return clean;
+      if (clean.startsWith("http://") || clean.startsWith("https://")) {
+        return getSafePlatformUrl(clean, ["wa.me", "api.whatsapp.com"]);
       }
 
       const normalizedPhone =
@@ -388,10 +450,9 @@ function buildContactUrl(
         return "#";
       }
 
-      return clean.startsWith("http://") ||
-        clean.startsWith("https://")
-        ? clean
-        : `https://instagram.com/${clean}`;
+      return clean.startsWith("http://") || clean.startsWith("https://")
+        ? getSafePlatformUrl(clean, ["instagram.com"])
+        : `https://www.instagram.com/${encodeURIComponent(clean)}`;
     }
 
     case "TIKTOK": {
@@ -399,10 +460,9 @@ function buildContactUrl(
         return "#";
       }
 
-      return clean.startsWith("http://") ||
-        clean.startsWith("https://")
-        ? clean
-        : `https://tiktok.com/@${clean}`;
+      return clean.startsWith("http://") || clean.startsWith("https://")
+        ? getSafePlatformUrl(clean, ["tiktok.com"])
+        : `https://www.tiktok.com/@${encodeURIComponent(clean)}`;
     }
 
     case "FACEBOOK": {
@@ -410,10 +470,9 @@ function buildContactUrl(
         return "#";
       }
 
-      return clean.startsWith("http://") ||
-        clean.startsWith("https://")
-        ? clean
-        : `https://facebook.com/${clean}`;
+      return clean.startsWith("http://") || clean.startsWith("https://")
+        ? getSafePlatformUrl(clean, ["facebook.com", "fb.com"])
+        : `https://www.facebook.com/${encodeURIComponent(clean)}`;
     }
 
     case "PHONE": {
@@ -432,9 +491,9 @@ function buildContactUrl(
     }
 
     case "DIRECTIONS": {
-      return address?.trim()
-        ? `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(address.trim())}`
-        : "#";
+      // Directions must go through the server route; never construct them
+      // from client-visible coordinates or arbitrary address text.
+      return "#";
     }
 
     default:
@@ -541,6 +600,7 @@ function SellerPageContent({
     error,
     setError,
   ] = useState("");
+  const [notFound, setNotFound] = useState(false);
 
   const [
     directionsLoading,
@@ -566,15 +626,6 @@ function SellerPageContent({
   const [reviewDeletingId, setReviewDeletingId] = useState<string | null>(null);
   const [ratingBreakdown, setRatingBreakdown] = useState<RatingBreakdown>({ 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 });
   const reviewRequestIdRef = useRef(0);
-  const trackedBusinessViewIdRef = useRef<string | null>(null);
-
-  const [claimModalOpen, setClaimModalOpen] = useState(false);
-  const [claimReason, setClaimReason] = useState("");
-  const [claimSubmitting, setClaimSubmitting] = useState(false);
-  const [claimPending, setClaimPending] = useState(false);
-  const [claimChecking, setClaimChecking] = useState(false);
-  const [claimError, setClaimError] = useState("");
-  const [claimSuccess, setClaimSuccess] = useState("");
 
   const getSavedSnapshot =
     useCallback(
@@ -627,6 +678,7 @@ function SellerPageContent({
       try {
         setLoading(true);
         setError("");
+        setNotFound(false);
 
         const response =
           await fetch(
@@ -657,6 +709,10 @@ function SellerPageContent({
         }
 
         if (!response.ok) {
+          if (response.status === 404) {
+            setNotFound(true);
+          }
+
           const responseError =
             typeof data ===
               "object" &&
@@ -707,6 +763,9 @@ function SellerPageContent({
 
         const rawProducts =
           rawBusiness.products;
+
+        const rawServices =
+          rawBusiness.services;
 
         const rawSocialLinks =
           rawBusiness.socialLinks;
@@ -907,6 +966,79 @@ function SellerPageContent({
                 )
             : [];
 
+        const services: Service[] =
+          Array.isArray(rawServices)
+            ? rawServices
+                .filter(
+                  (service): service is Record<string, unknown> =>
+                    typeof service === "object" &&
+                    service !== null &&
+                    typeof service.id === "string" &&
+                    typeof service.name === "string"
+                )
+                .map((service): Service => {
+                  const rawCategory = isRecord(service.category)
+                    ? service.category
+                    : null;
+
+                  const fulfillmentType =
+                    service.fulfillmentType === "AT_PROVIDER" ||
+                    service.fulfillmentType === "AT_CUSTOMER" ||
+                    service.fulfillmentType === "REMOTE"
+                      ? service.fulfillmentType
+                      : "FLEXIBLE";
+
+                  const images: ProductImage[] = Array.isArray(service.images)
+                    ? service.images
+                        .filter(
+                          (image): image is Record<string, unknown> =>
+                            isRecord(image) && typeof image.url === "string" && image.url.trim().length > 0
+                        )
+                        .map((image) => ({
+                          id: typeof image.id === "string" ? image.id : undefined,
+                          url: image.url as string,
+                          publicId: typeof image.publicId === "string" ? image.publicId : null,
+                          sortOrder: typeof image.sortOrder === "number" ? image.sortOrder : 0,
+                        }))
+                        .sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0))
+                    : [];
+
+                  return {
+                    id: service.id as string,
+                    name: service.name as string,
+                    description: typeof service.description === "string" ? service.description : null,
+                    price: typeof service.price === "number" ? service.price : null,
+                    priceMin: typeof service.priceMin === "number" ? service.priceMin : null,
+                    priceMax: typeof service.priceMax === "number" ? service.priceMax : null,
+                    durationMinutes: typeof service.durationMinutes === "number" ? service.durationMinutes : null,
+                    fulfillmentType,
+                    availability:
+                      service.availability === "AVAILABLE"
+                        ? "AVAILABLE"
+                        : service.availability === "UNAVAILABLE"
+                          ? "UNAVAILABLE"
+                          : "ASK_SELLER",
+                    imageUrl: typeof service.imageUrl === "string" ? service.imageUrl : null,
+                    images,
+                    category:
+                      rawCategory && typeof rawCategory.name === "string"
+                        ? {
+                            id: typeof rawCategory.id === "string" ? rawCategory.id : undefined,
+                            name: rawCategory.name,
+                            iconKey: typeof rawCategory.iconKey === "string" ? rawCategory.iconKey : null,
+                            sortOrder: typeof rawCategory.sortOrder === "number" ? rawCategory.sortOrder : undefined,
+                          }
+                        : null,
+                    keywords: Array.isArray(service.keywords)
+                      ? service.keywords.filter(
+                          (keyword): keyword is string =>
+                            typeof keyword === "string" && keyword.trim().length > 0
+                        )
+                      : [],
+                  };
+                })
+            : [];
+
         const location =
           typeof rawLocation ===
               "object" &&
@@ -978,9 +1110,17 @@ function SellerPageContent({
 
         const productCount =
           typeof rawProductCount ===
-          "number"
+          "number" && Number.isInteger(rawProductCount) && rawProductCount >= 0
             ? rawProductCount
             : products.length;
+
+        const rawServiceCount = rawBusiness.serviceCount;
+        const serviceCount =
+          typeof rawServiceCount === "number" &&
+          Number.isInteger(rawServiceCount) &&
+          rawServiceCount >= 0
+            ? rawServiceCount
+            : services.length;
 
         setSeller({
           id:
@@ -1019,6 +1159,12 @@ function SellerPageContent({
           productCount,
 
           products,
+
+          serviceCount,
+
+          services,
+
+          showContactInfo: rawBusiness.showContactInfo === true,
 
           socialLinks:
             Array.isArray(
@@ -1065,7 +1211,6 @@ function SellerPageContent({
               ? rawBusiness.imageUrl
               : null,
 
-          claimable: rawBusiness.claimable === true,
           averageRating:
             typeof rawBusiness.averageRating === "number" && Number.isFinite(rawBusiness.averageRating)
               ? Math.min(5, Math.max(0, rawBusiness.averageRating))
@@ -1075,34 +1220,6 @@ function SellerPageContent({
               ? rawBusiness.reviewCount
               : 0,
         });
-                /*
-         * -----------------------------------------
-         * TRACK SUCCESSFUL BUSINESS PROFILE VIEW
-         * -----------------------------------------
-         *
-         * Only track after the public business API
-         * response has been successfully fetched
-         * and the business data has been validated.
-         *
-         * The ref prevents duplicate calls during
-         * repeated effect execution for this page.
-         */
-
-        if (controller.signal.aborted) {
-          return;
-        }
-
-        const loadedBusinessId = rawBusiness.id as string;
-
-        if (
-          trackedBusinessViewIdRef.current !==
-          loadedBusinessId
-        ) {
-          trackedBusinessViewIdRef.current =
-            loadedBusinessId;
-
-          void trackBusinessView(loadedBusinessId);
-        }
       } catch (
         fetchError
       ) {
@@ -1141,45 +1258,6 @@ function SellerPageContent({
       controller.abort();
     };
   }, [id]);
-
-  useEffect(() => {
-    if (currentUserRole !== "SELLER" || !id) {
-      setClaimPending(false);
-      setClaimChecking(false);
-      return;
-    }
-
-    let cancelled = false;
-
-    async function checkClaimStatus() {
-      try {
-        setClaimChecking(true);
-        const response = await fetch("/api/seller/business-claim-requests", { cache: "no-store" });
-        if (response.status === 401 || response.status === 403) {
-          if (!cancelled) setClaimPending(false);
-          return;
-        }
-        if (!response.ok) return;
-
-        const payload: unknown = await response.json();
-        if (!isRecord(payload)) return;
-        const requests = payload.requests ?? payload.claims ?? payload.claimRequests ?? [];
-        if (!Array.isArray(requests)) return;
-
-        const pending = requests.some((item) =>
-          isRecord(item) && item.businessId === id && item.status === "PENDING"
-        );
-        if (!cancelled) setClaimPending(pending);
-      } catch (claimStatusError) {
-        console.error("Claim status lookup error:", claimStatusError);
-      } finally {
-        if (!cancelled) setClaimChecking(false);
-      }
-    }
-
-    void checkClaimStatus();
-    return () => { cancelled = true; };
-  }, [currentUserRole, id]);
 
   const loadReviews = useCallback(async (page = 1, append = false) => {
     if (!id) return;
@@ -1276,74 +1354,6 @@ function SellerPageContent({
     void loadReviews();
     return () => { reviewRequestIdRef.current += 1; };
   }, [loadReviews]);
-
-  function getClaimCallbackUrl(): string {
-    if (typeof window === "undefined") return `/seller/${id}`;
-    return `${window.location.pathname}${window.location.search}`;
-  }
-
-  function handleClaimAction() {
-    if (!seller || !seller.claimable || claimSubmitting) return;
-    setClaimError("");
-    setClaimSuccess("");
-    if (currentUserRole === "SELLER") {
-      setClaimReason("");
-      setClaimModalOpen(true);
-      return;
-    }
-    window.location.assign(`/seller/login?callbackUrl=${encodeURIComponent(getClaimCallbackUrl())}`);
-  }
-
-  async function submitBusinessClaim() {
-    if (!seller || claimSubmitting) return;
-    setClaimError("");
-    setClaimSuccess("");
-    if (currentUserRole !== "SELLER") {
-      setClaimError("You must be signed in as a seller to claim a business.");
-      return;
-    }
-    if (!seller.claimable) {
-      setClaimError("This business has already been claimed.");
-      return;
-    }
-    if (claimPending) {
-      setClaimError("You already have a pending claim request for this business.");
-      return;
-    }
-    const reason = claimReason.trim();
-    if (reason.length > 1000) {
-      setClaimError("Your claim reason is too long. Please keep it under 1000 characters.");
-      return;
-    }
-
-    setClaimSubmitting(true);
-    try {
-      const response = await fetch("/api/seller/business-claim-requests", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ businessId: seller.id, reason: reason || null }),
-      });
-      let payload: unknown = null;
-      try { payload = await response.json(); } catch { payload = null; }
-      if (response.status === 401 || response.status === 403) {
-        window.location.assign(`/seller/login?callbackUrl=${encodeURIComponent(getClaimCallbackUrl())}`);
-        return;
-      }
-      if (!response.ok) {
-        setClaimError(isRecord(payload) && typeof payload.error === "string" ? payload.error : "Unable to submit your claim request.");
-        return;
-      }
-      setClaimPending(true);
-      setClaimReason("");
-      setClaimModalOpen(false);
-      setClaimSuccess(`Your claim request for "${seller.name}" has been submitted for admin review.`);
-    } catch (claimSubmitError) {
-      console.error("Business claim submission error:", claimSubmitError);
-      setClaimError("Something went wrong while submitting your claim. Please try again.");
-    } finally {
-      setClaimSubmitting(false);
-    }
-  }
 
   async function submitReview(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -1595,28 +1605,34 @@ function SellerPageContent({
   if (!id) {
     return (
       <main className="min-h-screen bg-[#FFF7ED] p-0 md:p-3">
-        <div className="mx-auto flex min-h-screen max-w-[1500px] items-center justify-center overflow-hidden bg-[#FFFDFC] md:min-h-[calc(100vh-24px)] md:rounded-[22px] md:border md:border-[#FF5A36]">
-          <div className="max-w-[700px] rounded-[18px] border border-[#F0C9BF] bg-[#FFF1ED] p-8 text-center">
-            <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-full bg-[#FFE0D6] text-[#9F2D18]">
-              <Store size={22} />
+        <div className="mx-auto flex min-h-screen max-w-[1500px] flex-col overflow-hidden bg-[#FFFDFC] shadow-[0_8px_30px_rgba(159,45,24,0.06)] md:min-h-[calc(100vh-24px)] md:rounded-[22px] md:border md:border-[#FF5A36]">
+          <SiteHeader searchMode="ALL" />
+
+          <div className="flex flex-1 items-center justify-center p-5 sm:p-8">
+            <div className="max-w-[700px] rounded-[18px] border border-[#F0C9BF] bg-[#FFF1ED] p-8 text-center">
+              <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-full bg-[#FFE0D6] text-[#9F2D18]">
+                <Store size={22} />
+              </div>
+
+              <h1 className="text-xl font-black text-[#17202A]">
+                Seller not found
+              </h1>
+
+              <p className="mt-2 text-[13px] leading-6 text-[#77716C]">
+                We couldn&apos;t find the seller you&apos;re looking for.
+              </p>
+
+              <Link
+                href="/shop"
+                className="mt-5 inline-flex items-center gap-2 rounded-xl bg-[#FF5A36] px-4 py-2.5 text-[12px] font-bold text-white transition hover:bg-[#E94E2C]"
+              >
+                <ShoppingBag size={15} />
+                Browse sellers
+              </Link>
             </div>
-
-            <h1 className="text-xl font-black text-[#17202A]">
-              Seller not found
-            </h1>
-
-            <p className="mt-2 text-[13px] leading-6 text-[#77716C]">
-              We couldn&apos;t find the seller you&apos;re looking for.
-            </p>
-
-            <Link
-              href="/shop"
-              className="mt-5 inline-flex items-center gap-2 rounded-xl bg-[#FF5A36] px-4 py-2.5 text-[12px] font-bold text-white transition hover:bg-[#E94E2C]"
-            >
-              <ShoppingBag size={15} />
-              Browse sellers
-            </Link>
           </div>
+
+          <MobileBottomNav />
         </div>
       </main>
     );
@@ -1638,107 +1654,7 @@ function SellerPageContent({
           md:border
         "
       >
-        <header
-          className="
-            flex
-            h-[66px]
-            items-center
-            justify-between
-            border-b
-            border-[#EAE6DF]
-            bg-white
-            px-4
-            md:px-6
-          "
-        >
-          <Link
-            href="/"
-            className="flex items-center gap-2"
-          >
-            <div
-              className="
-                flex
-                h-9
-                w-9
-                items-center
-                justify-center
-                rounded-xl
-                bg-[#FF5A36]
-                text-white
-              "
-            >
-              <Search
-                size={19}
-                strokeWidth={2.5}
-              />
-            </div>
-
-            <div className="hidden sm:block">
-              <div className="text-[17px] font-black tracking-tight text-[#17202A]">
-                ReMarket
-              </div>
-
-              <div className="text-[10px] font-medium text-[#8C8580]">
-                Find it nearby
-              </div>
-            </div>
-          </Link>
-
-          <nav className="hidden items-center gap-7 md:flex">
-            {NAV_ITEMS.map(
-              (item) => {
-                const Icon =
-                  item.icon;
-
-                return (
-                  <Link
-                    key={
-                      item.href
-                    }
-                    href={
-                      item.href
-                    }
-                    className="
-                      flex
-                      items-center
-                      gap-2
-                      text-[13px]
-                      font-semibold
-                      text-[#68615C]
-                      transition
-                      hover:text-[#FF5A36]
-                    "
-                  >
-                    <Icon
-                      size={17}
-                    />
-
-                    {item.label}
-                  </Link>
-                );
-              }
-            )}
-          </nav>
-
-          <Link
-            href="/request"
-            className="
-              rounded-xl
-              bg-[#FF5A36]
-              px-3
-              py-2
-              text-[12px]
-              font-bold
-              text-white
-              shadow-sm
-              transition
-              hover:bg-[#E94E2C]
-              sm:px-4
-            "
-          >
-            Request something
-          </Link>
-        </header>
+        <SiteHeader searchMode="ALL" />
 
         <div className="flex">
           <aside
@@ -1903,12 +1819,24 @@ function SellerPageContent({
                   </div>
 
                   <h1 className="text-xl font-black text-[#17202A]">
-                    Seller not found
+                    {notFound ? "Seller not found" : "Unable to load seller"}
                   </h1>
 
                   <p className="mt-2 text-[13px] leading-6 text-[#77716C]">
-                    We couldn&apos;t find the seller you&apos;re looking for.
+                    {notFound
+                      ? "This seller profile may have been removed or is no longer available."
+                      : "We could not load this seller profile. Please check your connection and try again."}
                   </p>
+
+                  {!notFound && (
+                    <button
+                      type="button"
+                      onClick={() => window.location.reload()}
+                      className="mt-4 inline-flex items-center justify-center rounded-xl border border-[#E8E4DE] bg-white px-4 py-2.5 text-[12px] font-bold text-[#746D67] transition hover:bg-[#FCFAF6]"
+                    >
+                      Try again
+                    </button>
+                  )}
 
                   <Link
                     href="/shop"
@@ -1941,8 +1869,31 @@ function SellerPageContent({
               !error &&
               seller && (
                 <>
+                  <nav
+                    aria-label="Seller profile sections"
+                    className="-mx-4 mb-5 border-y border-[#EAE6DF] bg-[#FFFDFC] px-4 py-2.5 sm:-mx-6 sm:px-6 md:-mx-8 md:px-8"
+                  >
+                    <div className="flex items-center gap-2 overflow-x-auto">
+                      {[
+                        { label: "Overview", href: "#seller-overview" },
+                        { label: `Products (${seller.productCount})`, href: "#seller-products" },
+                        { label: `Services (${seller.serviceCount})`, href: "#seller-services" },
+                        { label: "Contact & location", href: "#seller-contact" },
+                        { label: `Reviews (${seller.reviewCount})`, href: "#seller-reviews" },
+                      ].map((item) => (
+                        <a
+                          key={item.href}
+                          href={item.href}
+                          className="inline-flex min-h-9 shrink-0 items-center justify-center rounded-full border border-[#EAE6DF] bg-white px-3.5 text-[10px] font-bold text-[#625B55] transition hover:border-[#FFB39F] hover:bg-[#FFF0E9] hover:text-[#9F2D18] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#FF5A36]"
+                        >
+                          {item.label}
+                        </a>
+                      ))}
+                    </div>
+                  </nav>
                   <div
-                    className="
+                    id="seller-overview"
+                    className="scroll-mt-24
                       overflow-hidden
                       rounded-[18px]
                       border
@@ -2177,34 +2128,14 @@ function SellerPageContent({
                         </p>
                       )}
 
-                      {seller.claimable && currentUserRole !== "ADMIN" && (
-                        <div className="mt-4">
-                          {currentUserLoading ? (
-                            <div className="inline-flex items-center gap-2 rounded-xl border border-[#E8E4DE] bg-[#FCFAF6] px-4 py-2.5 text-[11px] font-bold text-[#746D67]"><LoaderCircle className="h-4 w-4 animate-spin" />Checking account...</div>
-                          ) : currentUserRole === "SELLER" && claimChecking ? (
-                            <div className="inline-flex items-center gap-2 rounded-xl border border-[#F0D7B3] bg-[#FFF8EC] px-4 py-2.5 text-[11px] font-bold text-[#9F5A18]"><LoaderCircle className="h-4 w-4 animate-spin" />Checking claim status...</div>
-                          ) : currentUserRole === "SELLER" && claimPending ? (
-                            <div role="status" className="inline-flex items-center gap-2 rounded-xl border border-[#F0D7B3] bg-[#FFF8EC] px-4 py-2.5 text-[11px] font-bold text-[#9F5A18]"><Clock3 className="h-4 w-4" />Claim request pending</div>
-                          ) : (
-                            <button type="button" onClick={handleClaimAction} disabled={claimSubmitting} className="inline-flex items-center gap-2 rounded-xl border border-[#FFB39F] bg-white px-4 py-2.5 text-[11px] font-bold text-[#9F2D18] hover:bg-[#FFF0E9] disabled:opacity-60"><ShieldCheck className="h-4 w-4" />Claim this business</button>
-                          )}
-                        </div>
-                      )}
-                      {claimSuccess && <div role="status" aria-live="polite" className="mt-3 rounded-xl border border-[#BDE8D8] bg-[#EFFBF6] px-3 py-2.5 text-[11px] font-semibold leading-5 text-[#137A59]">{claimSuccess}</div>}
-                      {claimError && !claimModalOpen && <div role="alert" className="mt-3 rounded-xl border border-[#F0C9BF] bg-[#FFF1ED] px-3 py-2.5 text-[11px] font-semibold leading-5 text-[#9F2D18]">{claimError}</div>}
+
                     </div>
                   </div>
 
                   <div className="mt-5 grid gap-5 lg:grid-cols-[minmax(0,1fr)_300px]">
                     <div
-                      className="
-                        rounded-[18px]
-                        border
-                        border-[#E8E4DE]
-                        bg-white
-                        p-5
-                        shadow-[0_4px_18px_rgba(30,20,10,0.035)]
-                      "
+                      id="seller-products"
+                      className="scroll-mt-24 rounded-[18px] border border-[#E8E4DE] bg-white p-5 shadow-[0_4px_18px_rgba(30,20,10,0.035)]"
                     >
                       <div className="mb-5 flex items-center justify-between">
                         <div>
@@ -2399,7 +2330,7 @@ function SellerPageContent({
                       )}
                     </div>
 
-                    <aside className="space-y-4">
+                    <aside id="seller-contact" className="scroll-mt-24 space-y-4">
                       <div
                         className="
                           rounded-[18px]
@@ -2466,8 +2397,7 @@ function SellerPageContent({
                                 const url =
                                   buildContactUrl(
                                     link.platform,
-                                    link.handle,
-                                    seller.location?.address
+                                    link.handle
                                   );
 
                                 const isPhone =
@@ -2497,7 +2427,7 @@ function SellerPageContent({
                                     rel={
                                       isPhone
                                         ? undefined
-                                        : "noreferrer"
+                                        : "noopener noreferrer"
                                     }
                                     onClick={() =>
                                       handleContactClick(
@@ -2558,8 +2488,9 @@ function SellerPageContent({
                             )
                           ) : (
                             <div className="rounded-xl bg-white/70 px-3 py-3 text-[11px] leading-5 text-[#817970]">
-                              No contact details have
-                              been added yet.
+                              {seller.showContactInfo
+                                ? "No contact details have been added yet."
+                                : "This seller has chosen not to display contact details publicly."}
                             </div>
                           )}
 
@@ -2701,8 +2632,137 @@ function SellerPageContent({
                     </aside>
                   </div>
 
+                  {/* SELLER SERVICES */}
+                  <section
+                    id="seller-services"
+                    className="mt-5 scroll-mt-24 rounded-[18px] border border-[#E8E4DE] bg-white p-5 shadow-[0_4px_18px_rgba(30,20,10,0.035)] sm:p-6"
+                  >
+                    <div className="mb-5 flex items-center justify-between gap-3">
+                      <div>
+                        <h2 className="text-[17px] font-black text-[#17202A]">Services</h2>
+                        <p className="mt-1 text-[11px] text-[#8B847E]">
+                          {seller.serviceCount} {seller.serviceCount === 1 ? "service offered" : "services offered"}
+                        </p>
+                      </div>
+                      <Wrench size={20} className="shrink-0 text-[#FF5A36]" />
+                    </div>
+
+                    {seller.services.length > 0 ? (
+                      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+                        {seller.services.map((service) => {
+                          const serviceImages = getProductImages(service);
+                          const duration = formatDuration(service.durationMinutes);
+
+                          return (
+                            <article
+                              key={service.id}
+                              className="overflow-hidden rounded-[15px] border border-[#E8E4DE] bg-[#FFFDFC] transition hover:-translate-y-0.5 hover:shadow-sm"
+                            >
+                              {serviceImages.length > 0 ? (
+                                <img
+                                  src={serviceImages[0].url}
+                                  alt={service.name}
+                                  loading="lazy"
+                                  className="h-40 w-full object-cover"
+                                />
+                              ) : (
+                                <div
+                                  className="flex h-40 items-center justify-center"
+                                  style={{ backgroundColor: getCategoryColor(service.category?.name ?? "services") }}
+                                >
+                                  <Wrench size={30} className="text-[#9F2D18]" />
+                                </div>
+                              )}
+
+                              {serviceImages.length > 1 && (
+                                <div className="flex gap-2 overflow-x-auto border-t border-[#E8E4DE] bg-white p-2">
+                                  {serviceImages.slice(1).map((image, imageIndex) => (
+                                    <img
+                                      key={image.id ?? `${service.id}-image-${imageIndex}`}
+                                      src={image.url}
+                                      alt=""
+                                      loading="lazy"
+                                      className="h-12 w-12 shrink-0 rounded-lg object-cover"
+                                    />
+                                  ))}
+                                </div>
+                              )}
+
+                              <div className="p-4">
+                                <div className="flex items-start justify-between gap-3">
+                                  <div className="min-w-0">
+                                    <h3 className="break-words text-[13px] font-bold text-[#2E2925]">
+                                      {service.name}
+                                    </h3>
+                                    {service.category?.name && (
+                                      <p className="mt-1 text-[10px] font-semibold text-[#8B847E]">
+                                        {service.category.name}
+                                      </p>
+                                    )}
+                                  </div>
+                                  <span className={`shrink-0 rounded-full px-2 py-1 text-[9px] font-bold ${getAvailabilityStyle(service.availability)}`}>
+                                    {getAvailabilityLabel(service.availability)}
+                                  </span>
+                                </div>
+
+                                {service.description && (
+                                  <p className="mt-2 line-clamp-3 whitespace-pre-line text-[11px] leading-5 text-[#878079]">
+                                    {service.description}
+                                  </p>
+                                )}
+
+                                <div className="mt-4 text-[13px] font-black text-[#9F2D18]">
+                                  {formatPrice(service)}
+                                </div>
+
+                                <div className="mt-3 flex flex-wrap gap-2">
+                                  <span className="inline-flex items-center gap-1 rounded-full bg-[#FCFAF6] px-2.5 py-1 text-[9px] font-semibold text-[#746D67]">
+                                    <MapPin size={11} />
+                                    {getFulfillmentLabel(service.fulfillmentType)}
+                                  </span>
+                                  {duration && (
+                                    <span className="inline-flex items-center gap-1 rounded-full bg-[#FCFAF6] px-2.5 py-1 text-[9px] font-semibold text-[#746D67]">
+                                      <Clock3 size={11} />
+                                      {duration}
+                                    </span>
+                                  )}
+                                </div>
+
+                                {service.keywords.length > 0 && (
+                                  <div className="mt-3 flex flex-wrap gap-1.5">
+                                    {service.keywords.slice(0, 5).map((keyword) => (
+                                      <span
+                                        key={`${service.id}-${keyword}`}
+                                        className="rounded-full bg-[#F3F0EB] px-2 py-1 text-[9px] font-semibold text-[#6F675F]"
+                                      >
+                                        {keyword}
+                                      </span>
+                                    ))}
+                                  </div>
+                                )}
+
+                                <a
+                                  href="#seller-contact"
+                                  className="mt-4 inline-flex min-h-9 w-full items-center justify-center rounded-xl bg-[#FFF0E9] px-3 py-2 text-[10px] font-bold text-[#9F2D18] transition hover:bg-[#FFE4DA] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#FF5A36]"
+                                >
+                                  View seller contact options
+                                </a>
+                              </div>
+                            </article>
+                          );
+                        })}
+                      </div>
+                    ) : (
+                      <div className="rounded-xl border border-dashed border-[#DDD6CE] bg-[#FCFAF6] px-5 py-10 text-center">
+                        <Wrench size={25} className="mx-auto text-[#AAA29B]" />
+                        <p className="mt-3 text-[12px] font-bold text-[#625B55]">No services listed yet</p>
+                        <p className="mt-1 text-[11px] text-[#928A83]">This seller has not published any services.</p>
+                      </div>
+                    )}
+                  </section>
+
                   {/* RATINGS AND REVIEWS */}
-                  <section className="mt-5 rounded-[18px] border border-[#E8E4DE] bg-white p-5 shadow-[0_4px_18px_rgba(30,20,10,0.035)] sm:p-6">
+                  <section id="seller-reviews" className="mt-5 scroll-mt-24 rounded-[18px] border border-[#E8E4DE] bg-white p-5 shadow-[0_4px_18px_rgba(30,20,10,0.035)] sm:p-6">
                     <div>
                       <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-[#FF5A36]">Customer feedback</p>
                       <div className="mt-1 flex flex-wrap items-center gap-3">
@@ -2743,73 +2803,10 @@ function SellerPageContent({
           </section>
         </div>
 
-        <nav
-          className="
-            fixed
-            bottom-0
-            left-0
-            right-0
-            z-40
-            border-t
-            border-[#EAE6DF]
-            bg-white/95
-            px-3
-            py-2
-            backdrop-blur
-            md:hidden
-          "
-        >
-          <div className="mx-auto flex max-w-md items-center justify-around">
-            {NAV_ITEMS.map(
-              (item) => {
-                const Icon =
-                  item.icon;
-
-                return (
-                  <Link
-                    key={
-                      item.href
-                    }
-                    href={
-                      item.href
-                    }
-                    className="
-                      flex
-                      min-w-[64px]
-                      flex-col
-                      items-center
-                      gap-1
-                      rounded-xl
-                      px-2
-                      py-1.5
-                      text-[9px]
-                      font-bold
-                      text-[#8A837D]
-                      transition
-                      hover:text-[#FF5A36]
-                    "
-                  >
-                    <Icon
-                      size={18}
-                    />
-
-                    {item.label}
-                  </Link>
-                );
-              }
-            )}
-          </div>
-        </nav>
+        <MobileBottomNav />
       </div>
 
-      {claimModalOpen && seller && (
-        <div className="fixed inset-0 z-[100] flex items-end bg-black/30 p-0 sm:items-center sm:justify-center sm:p-5" onMouseDown={(event) => { if (event.target === event.currentTarget && !claimSubmitting) setClaimModalOpen(false); }}>
-          <div className="max-h-[90vh] w-full overflow-y-auto rounded-t-[24px] border border-[#E8E4DE] bg-[#FFFDFC] shadow-2xl sm:max-w-[520px] sm:rounded-[22px]" role="dialog" aria-modal="true" aria-labelledby="claim-business-title">
-            <div className="flex items-start justify-between gap-4 border-b border-[#EAE6DF] px-5 py-5 sm:px-6"><div className="flex min-w-0 items-start gap-3"><div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-[#FFF0EB] text-[#FF5A36]"><ShieldCheck className="h-5 w-5" /></div><div className="min-w-0"><h2 id="claim-business-title" className="text-[16px] font-black text-[#17202A]">Claim this business</h2><p className="mt-1 text-[11px] leading-5 text-[#8B847E]">Request ownership of <span className="font-bold text-[#5E554E]">{seller.name}</span>.</p></div></div><button type="button" onClick={() => setClaimModalOpen(false)} disabled={claimSubmitting} aria-label="Close claim form" className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-[#E8E4DE] bg-white text-[#746D67] disabled:opacity-50"><X className="h-4 w-4" /></button></div>
-            <div className="px-5 py-5 sm:px-6">{claimError && <div role="alert" className="mb-4 rounded-xl border border-[#F0C9BF] bg-[#FFF1ED] px-3 py-2.5 text-[11px] font-semibold leading-5 text-[#9F2D18]">{claimError}</div>}<div className="rounded-xl bg-[#FCFAF6] px-3 py-3"><p className="text-[10px] font-bold uppercase tracking-[0.1em] text-[#A29B94]">Business</p><p className="mt-1 text-[13px] font-bold text-[#17202A]">{seller.name}</p>{seller.location?.area && <p className="mt-1 text-[10px] text-[#8B847E]">{seller.location.area}</p>}</div><label htmlFor="business-claim-reason" className="mt-4 block text-[10px] font-bold uppercase tracking-[0.1em] text-[#8C8580]">Reason</label><textarea id="business-claim-reason" value={claimReason} onChange={(event) => { setClaimReason(event.target.value); setClaimError(""); }} rows={5} maxLength={1000} disabled={claimSubmitting} placeholder="Tell the admin why you are the owner of this business." className="mt-2 w-full resize-none rounded-xl border border-[#E8E4DE] bg-white px-3 py-3 text-[11px] leading-5 text-[#35302C] outline-none focus:border-[#FF9B86] disabled:bg-[#FAF6EF]" /><div className="mt-1 flex justify-end"><span className="text-[9px] text-[#A29B94]">{claimReason.length}/1000</span></div><div className="mt-5 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end"><button type="button" onClick={() => setClaimModalOpen(false)} disabled={claimSubmitting} className="h-11 rounded-xl border border-[#E8E4DE] bg-white px-5 text-[11px] font-bold text-[#746D67] disabled:opacity-50">Cancel</button><button type="button" onClick={() => void submitBusinessClaim()} disabled={claimSubmitting} className="inline-flex h-11 items-center justify-center gap-2 rounded-xl bg-[#FF5A36] px-5 text-[11px] font-bold text-white disabled:opacity-60">{claimSubmitting ? <><LoaderCircle className="h-4 w-4 animate-spin" />Submitting...</> : <><ShieldCheck className="h-4 w-4" />Submit claim</>}</button></div></div>
-          </div>
-        </div>
-      )}
+
     </main>
   );
 }
