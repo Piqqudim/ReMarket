@@ -1,8 +1,11 @@
+
 import {
   NotificationPriority,
   NotificationType,
   Prisma,
 } from "@prisma/client";
+
+import { randomBytes } from "node:crypto";
 import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 
@@ -11,9 +14,20 @@ import { authOptions } from "@/lib/auth";
 import { checkPublicRateLimit } from "@/lib/rate-limit";
 import { createNotification } from "@/lib/notifications";
 
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
+
+/*
+ * ---------------------------------------------------------
+ * CONFIGURATION
+ * ---------------------------------------------------------
+ */
+
 const MAX_BODY_SIZE = 12_000;
 const MAX_MESSAGE_LENGTH = 2_000;
 const MAX_PHONE_LENGTH = 32;
+const MAX_ADDRESS_LENGTH = 500;
 const MAX_BOOKING_QUANTITY = 1_000;
 
 const DEFAULT_PAGE = 1;
@@ -21,18 +35,39 @@ const DEFAULT_PAGE_SIZE = 12;
 const MAX_PAGE_SIZE = 50;
 const MAX_DATABASE_OFFSET = 2_147_483_647;
 
+const ALLOWED_FULFILLMENT_TYPES = [
+  "AT_PROVIDER",
+  "AT_CUSTOMER",
+  "REMOTE",
+  "FLEXIBLE",
+] as const;
+
+type FulfillmentType =
+  (typeof ALLOWED_FULFILLMENT_TYPES)[number];
+
+/*
+ * ---------------------------------------------------------
+ * BOOKING INCLUDE
+ * ---------------------------------------------------------
+ */
+
 const bookingInclude = {
   service: {
     select: {
       id: true,
       name: true,
       description: true,
+
       price: true,
       priceMin: true,
       priceMax: true,
+
       durationMinutes: true,
+
+      bookingType: true,
       fulfillmentType: true,
       availability: true,
+
       imageUrl: true,
 
       category: {
@@ -49,6 +84,7 @@ const bookingInclude = {
           url: true,
           sortOrder: true,
         },
+
         orderBy: [
           { sortOrder: "asc" },
           { createdAt: "asc" },
@@ -87,16 +123,79 @@ type BookingRecord = Prisma.ServiceBookingGetPayload<{
 
 /*
  * ---------------------------------------------------------
+ * SERVICE SELECT FOR BOOKING CREATION
+ * ---------------------------------------------------------
+ *
+ * The service and seller are revalidated inside the same
+ * transaction that creates the booking.
+ *
+ * This ensures the saved sellerId comes from the actual
+ * service owner rather than a value submitted by the client.
+ * ---------------------------------------------------------
+ */
+
+const serviceForBookingSelect = {
+  id: true,
+  name: true,
+
+  bookingType: true,
+  availability: true,
+  fulfillmentType: true,
+
+  business: {
+    select: {
+      id: true,
+      name: true,
+      ownerId: true,
+
+      owner: {
+        select: {
+          id: true,
+          role: true,
+        },
+      },
+    },
+  },
+} satisfies Prisma.ServiceSelect;
+
+type ServiceForBooking =
+  Prisma.ServiceGetPayload<{
+    select: typeof serviceForBookingSelect;
+  }>;
+
+/*
+ * ---------------------------------------------------------
+ * TRANSACTION RESULT
+ * ---------------------------------------------------------
+ */
+
+type BookingCreationOutcome =
+  | {
+      success: true;
+      booking: BookingRecord;
+      sellerId: string;
+      serviceName: string;
+    }
+  | {
+      success: false;
+      message: string;
+      status: number;
+    };
+
+/*
+ * ---------------------------------------------------------
  * RESPONSE HEADERS
  * ---------------------------------------------------------
  */
 
-function responseHeaders(baseHeaders?: HeadersInit): Headers {
+function responseHeaders(
+  baseHeaders?: HeadersInit
+): Headers {
   const headers = new Headers(baseHeaders);
 
   headers.set(
     "Cache-Control",
-    "no-store, max-age=0, must-revalidate"
+    "private, no-store, max-age=0, must-revalidate"
   );
 
   headers.set("Pragma", "no-cache");
@@ -127,7 +226,9 @@ function jsonError(
  * ---------------------------------------------------------
  */
 
-function isRecord(value: unknown): value is Record<string, unknown> {
+function isRecord(
+  value: unknown
+): value is Record<string, unknown> {
   return (
     typeof value === "object" &&
     value !== null &&
@@ -139,6 +240,45 @@ function clean(value: unknown): string {
   return typeof value === "string"
     ? value.trim()
     : "";
+}
+
+function isFulfillmentType(
+  value: unknown
+): value is FulfillmentType {
+  return (
+    typeof value === "string" &&
+    ALLOWED_FULFILLMENT_TYPES.includes(
+      value as FulfillmentType
+    )
+  );
+}
+
+function parseOptionalString(
+  value: unknown,
+  maximumLength: number
+): string | null | "INVALID" {
+  if (
+    value === undefined ||
+    value === null
+  ) {
+    return null;
+  }
+
+  if (typeof value !== "string") {
+    return "INVALID";
+  }
+
+  const result = value.trim();
+
+  if (!result) {
+    return null;
+  }
+
+  if (result.length > maximumLength) {
+    return "INVALID";
+  }
+
+  return result;
 }
 
 /*
@@ -154,12 +294,6 @@ class RequestBodyTooLargeError extends Error {
   }
 }
 
-/**
- * Reads a request body while enforcing a byte limit.
- *
- * This also protects requests that do not provide a
- * Content-Length header.
- */
 async function readLimitedRequestBody(
   request: NextRequest,
   maximumBytes: number
@@ -189,7 +323,7 @@ async function readLimitedRequestBody(
         try {
           await reader.cancel();
         } catch {
-          // The stream may already have been closed.
+          // The stream may already be closed.
         }
 
         throw new RequestBodyTooLargeError();
@@ -221,7 +355,9 @@ async function readLimitedRequestBody(
  * ---------------------------------------------------------
  */
 
-function normalizeNigerianPhone(value: string): string {
+function normalizeNigerianPhone(
+  value: string
+): string {
   let phone = value.trim().replace(/[^\d+]/g, "");
 
   if (!phone) {
@@ -247,7 +383,9 @@ function normalizeNigerianPhone(value: string): string {
   return `+234${phone}`;
 }
 
-function isValidNigerianPhone(value: string): boolean {
+function isValidNigerianPhone(
+  value: string
+): boolean {
   return /^\+234\d{10}$/.test(
     normalizeNigerianPhone(value)
   );
@@ -259,21 +397,190 @@ function isValidNigerianPhone(value: string): boolean {
  * ---------------------------------------------------------
  */
 
-function parseBookingQuantity(value: unknown): number {
-  if (value === undefined || value === null) {
+function parseBookingQuantity(
+  value: unknown
+): number | null {
+  if (
+    value === undefined ||
+    value === null
+  ) {
     return 1;
   }
 
+  let quantity: number;
+
   if (typeof value === "number") {
-    return value;
+    quantity = value;
+  } else if (
+    typeof value === "string" &&
+    value.trim()
+  ) {
+    quantity = Number(value.trim());
+  } else {
+    return null;
   }
 
-  // Allow a numeric string from a form submission.
-  if (typeof value === "string" && value.trim()) {
-    return Number(value);
+  if (
+    !Number.isSafeInteger(quantity) ||
+    quantity < 1 ||
+    quantity > MAX_BOOKING_QUANTITY
+  ) {
+    return null;
   }
 
-  return Number.NaN;
+  return quantity;
+}
+
+/*
+ * ---------------------------------------------------------
+ * DATE VALIDATION
+ * ---------------------------------------------------------
+ *
+ * Date-only or timezone-less datetime input is interpreted
+ * as Lagos local time (UTC+01:00).
+ *
+ * Datetimes that already include Z or an explicit timezone
+ * offset are preserved.
+ *
+ * This avoids treating a Lagos datetime-local value as UTC
+ * merely because the server runs in a UTC environment.
+ * ---------------------------------------------------------
+ */
+
+function parseRequestedDate(
+  value: unknown
+): Date | null | "INVALID" {
+  if (
+    value === undefined ||
+    value === null ||
+    value === ""
+  ) {
+    return null;
+  }
+
+  if (
+    typeof value !== "string" ||
+    value.length > 50
+  ) {
+    return "INVALID";
+  }
+
+  const input = value.trim();
+
+  const match = input.match(
+    /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2})(?:\.(\d{1,3}))?)?(Z|[+-]\d{2}:\d{2})?$/i
+  );
+
+  if (!match) {
+    return "INVALID";
+  }
+
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+
+  const hours = Number(match[4]);
+  const minutes = Number(match[5]);
+  const seconds = Number(match[6] ?? "0");
+
+  const timeZone = match[8] ?? null;
+
+  /*
+   * Validate the calendar date.
+   *
+   * JavaScript Date can normalize some invalid dates,
+   * so validate the day against the actual month length.
+   */
+
+  if (
+    month < 1 ||
+    month > 12 ||
+    day < 1 ||
+    hours < 0 ||
+    hours > 23 ||
+    minutes < 0 ||
+    minutes > 59 ||
+    seconds < 0 ||
+    seconds > 59
+  ) {
+    return "INVALID";
+  }
+
+  const daysInMonth = new Date(
+    Date.UTC(year, month, 0)
+  ).getUTCDate();
+
+  if (day > daysInMonth) {
+    return "INVALID";
+  }
+
+  /*
+   * Validate an explicitly supplied timezone offset.
+   */
+
+  if (
+    timeZone &&
+    timeZone.toUpperCase() !== "Z"
+  ) {
+    const offsetMatch = timeZone.match(
+      /^([+-])(\d{2}):(\d{2})$/
+    );
+
+    if (!offsetMatch) {
+      return "INVALID";
+    }
+
+    const offsetHours = Number(offsetMatch[2]);
+    const offsetMinutes = Number(offsetMatch[3]);
+
+    if (
+      offsetHours > 23 ||
+      offsetMinutes > 59
+    ) {
+      return "INVALID";
+    }
+  }
+
+  /*
+   * Append Nigeria's UTC+01:00 offset when the buyer
+   * supplies a datetime without an explicit timezone.
+   */
+
+  let normalizedInput = input;
+
+  if (!timeZone) {
+    if (!match[6]) {
+      normalizedInput += ":00";
+    }
+
+    normalizedInput += "+01:00";
+  }
+
+  const date = new Date(normalizedInput);
+
+  if (
+    Number.isNaN(date.getTime()) ||
+    date.getTime() <= Date.now()
+  ) {
+    return "INVALID";
+  }
+
+  return date;
+}
+
+/*
+ * ---------------------------------------------------------
+ * BOOKING REFERENCE
+ * ---------------------------------------------------------
+ */
+
+function generateBookingCode(): string {
+  // 80 bits of randomness.
+  return (
+    `RM-SVC-${randomBytes(10)
+      .toString("hex")
+      .toUpperCase()}`
+  );
 }
 
 /*
@@ -299,7 +606,7 @@ async function getAuthenticatedAccount() {
       account: null,
       error: "Please sign in to continue.",
       status: 401,
-    };
+    } as const;
   }
 
   const account = await prisma.user.findUnique({
@@ -318,25 +625,14 @@ async function getAuthenticatedAccount() {
       account: null,
       error: "Your account could not be found.",
       status: 401,
-    };
-  }
-
-  if (
-    account.role !== "BUYER" &&
-    account.role !== "SELLER"
-  ) {
-    return {
-      account: null,
-      error: "This account cannot make service bookings.",
-      status: 403,
-    };
+    } as const;
   }
 
   return {
     account,
     error: null,
     status: 200,
-  };
+  } as const;
 }
 
 /*
@@ -345,7 +641,9 @@ async function getAuthenticatedAccount() {
  * ---------------------------------------------------------
  */
 
-function parsePagination(searchParams: URLSearchParams) {
+function parsePagination(
+  searchParams: URLSearchParams
+) {
   const rawPage = searchParams.get("page");
   const rawPageSize = searchParams.get("pageSize");
 
@@ -395,17 +693,46 @@ function parsePagination(searchParams: URLSearchParams) {
  * ---------------------------------------------------------
  */
 
-function formatBooking(booking: BookingRecord) {
+function formatBooking(
+  booking: BookingRecord
+) {
   return {
     id: booking.id,
+    bookingCode: booking.bookingCode,
+
+    serviceId: booking.serviceId,
+
+    bookingType: booking.bookingType,
     status: booking.status,
 
     requestedFor:
       booking.requestedFor?.toISOString() ?? null,
 
+    scheduledFor:
+      booking.scheduledFor?.toISOString() ?? null,
+
     quantity: booking.quantity,
     contactPhone: booking.contactPhone,
     buyerMessage: booking.buyerMessage,
+
+    fulfillmentType: booking.fulfillmentType,
+    fulfillmentAddress: booking.fulfillmentAddress,
+
+    quotedPrice: booking.quotedPrice,
+    quoteMessage: booking.quoteMessage,
+
+    quoteSentAt:
+      booking.quoteSentAt?.toISOString() ?? null,
+
+    agreedPrice: booking.agreedPrice,
+
+    quoteAcceptedAt:
+      booking.quoteAcceptedAt?.toISOString() ?? null,
+
+    currency: booking.currency,
+
+    declineReason: booking.declineReason,
+    cancellationReason: booking.cancellationReason,
 
     acceptedAt:
       booking.acceptedAt?.toISOString() ?? null,
@@ -415,6 +742,9 @@ function formatBooking(booking: BookingRecord) {
 
     cancelledAt:
       booking.cancelledAt?.toISOString() ?? null,
+
+    startedAt:
+      booking.startedAt?.toISOString() ?? null,
 
     completedAt:
       booking.completedAt?.toISOString() ?? null,
@@ -433,11 +763,20 @@ function formatBooking(booking: BookingRecord) {
       priceMin: booking.service.priceMin,
       priceMax: booking.service.priceMax,
 
-      durationMinutes: booking.service.durationMinutes,
-      fulfillmentType: booking.service.fulfillmentType,
-      availability: booking.service.availability,
+      durationMinutes:
+        booking.service.durationMinutes,
 
-      imageUrl: booking.service.imageUrl,
+      bookingType:
+        booking.service.bookingType,
+
+      fulfillmentType:
+        booking.service.fulfillmentType,
+
+      availability:
+        booking.service.availability,
+
+      imageUrl:
+        booking.service.imageUrl,
 
       category: booking.service.category,
       images: booking.service.images,
@@ -448,12 +787,14 @@ function formatBooking(booking: BookingRecord) {
         ownerName: booking.service.business.ownerName,
         imageUrl: booking.service.business.imageUrl,
 
-        verification: booking.service.business.verification,
+        verification:
+          booking.service.business.verification,
 
         verified:
           booking.service.business.verification === "VERIFIED",
 
-        location: booking.service.business.location,
+        location:
+          booking.service.business.location,
       },
     },
   };
@@ -464,13 +805,18 @@ function formatBooking(booking: BookingRecord) {
  * GET /api/service-bookings
  * =========================================================
  *
- * Returns the authenticated buyer's own bookings.
+ * Returns the authenticated BUYER's own bookings.
  *
- * Sellers use their separate seller booking endpoint.
+ * The status summary covers all bookings, independently
+ * of pagination.
+ *
+ * Sellers use a separate seller booking endpoint.
  * =========================================================
  */
 
-export async function GET(request: NextRequest) {
+export async function GET(
+  request: NextRequest
+) {
   const rateLimit = checkPublicRateLimit(
     request,
     "request-read"
@@ -492,6 +838,10 @@ export async function GET(request: NextRequest) {
   }
 
   try {
+    /*
+     * AUTHENTICATION
+     */
+
     const {
       account,
       error,
@@ -506,6 +856,18 @@ export async function GET(request: NextRequest) {
       );
     }
 
+    if (account.role !== "BUYER") {
+      return jsonError(
+        "Only buyer accounts can access this booking history.",
+        403,
+        rateLimit.headers
+      );
+    }
+
+    /*
+     * PAGINATION
+     */
+
     const pagination = parsePagination(
       request.nextUrl.searchParams
     );
@@ -518,11 +880,23 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    const where = {
+    /*
+     * BUYER OWNERSHIP
+     */
+
+    const where: Prisma.ServiceBookingWhereInput = {
       buyerId: account.id,
     };
 
-    const [total, bookings] = await Promise.all([
+    /*
+     * FETCH BOOKINGS AND ALL-TIME STATUS COUNTS
+     */
+
+    const [
+      total,
+      bookings,
+      statusCounts,
+    ] = await Promise.all([
       prisma.serviceBooking.count({
         where,
       }),
@@ -544,15 +918,61 @@ export async function GET(request: NextRequest) {
         skip: pagination.skip,
         take: pagination.pageSize,
       }),
+
+      prisma.serviceBooking.groupBy({
+        by: ["status"],
+
+        where,
+
+        _count: {
+          _all: true,
+        },
+      }),
     ]);
+
+    /*
+     * BUILD STATUS SUMMARY
+     */
+
+    const counts: Record<string, number> = {
+      PENDING: 0,
+      AWAITING_BUYER: 0,
+      ACCEPTED: 0,
+      IN_PROGRESS: 0,
+      COMPLETED: 0,
+      DECLINED: 0,
+      CANCELLED: 0,
+    };
+
+    for (const item of statusCounts) {
+      counts[item.status] = item._count._all;
+    }
+
+    const summaryTotal = Object.values(counts).reduce(
+      (sum, count) => sum + count,
+      0
+    );
+
+    /*
+     * PAGINATION METADATA
+     */
 
     const totalPages = Math.ceil(
       total / pagination.pageSize
     );
 
+    /*
+     * SUCCESS RESPONSE
+     */
+
     return NextResponse.json(
       {
         bookings: bookings.map(formatBooking),
+
+        summary: {
+          total: summaryTotal,
+          ...counts,
+        },
 
         page: pagination.page,
         pageSize: pagination.pageSize,
@@ -591,16 +1011,20 @@ export async function GET(request: NextRequest) {
  *
  * Creates:
  *
- * 1. The service booking.
- * 2. The initial booking conversation message, if supplied.
- * 3. An in-app notification for the seller, if enabled.
+ * 1. A service booking.
+ * 2. An initial conversation message, if supplied.
+ * 3. An in-app notification for the seller.
  *
- * Notification delivery is deliberately outside the
- * booking transaction.
+ * The booking and initial message are created in one
+ * serializable database transaction.
+ *
+ * Notification delivery happens after that transaction.
  * =========================================================
  */
 
-export async function POST(request: NextRequest) {
+export async function POST(
+  request: NextRequest
+) {
   const rateLimit = checkPublicRateLimit(
     request,
     "request-create"
@@ -633,24 +1057,42 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    if (account.role !== "BUYER") {
+      return jsonError(
+        "Only buyer accounts can create service bookings.",
+        403,
+        rateLimit.headers
+      );
+    }
+
     /*
      * BODY SIZE VALIDATION
      */
 
-    const contentLength = Number(
-      request.headers.get("content-length") ?? 0
-    );
+    const contentLengthHeader =
+      request.headers.get("content-length");
 
-    if (
-      Number.isFinite(contentLength) &&
-      contentLength > MAX_BODY_SIZE
-    ) {
-      return jsonError(
-        "Request body is too large.",
-        413,
-        rateLimit.headers
+    if (contentLengthHeader !== null) {
+      const contentLength = Number(
+        contentLengthHeader
       );
+
+      if (
+        !Number.isSafeInteger(contentLength) ||
+        contentLength < 0 ||
+        contentLength > MAX_BODY_SIZE
+      ) {
+        return jsonError(
+          "Request body is too large or invalid.",
+          413,
+          rateLimit.headers
+        );
+      }
     }
+
+    /*
+     * READ BODY
+     */
 
     let rawBody: string;
 
@@ -671,14 +1113,14 @@ export async function POST(request: NextRequest) {
       }
 
       return jsonError(
-        "Unable to read the request body.",
+        "Unable to read the request body. Ensure it is valid UTF-8.",
         400,
         rateLimit.headers
       );
     }
 
     /*
-     * JSON VALIDATION
+     * PARSE JSON
      */
 
     let body: unknown;
@@ -702,16 +1144,10 @@ export async function POST(request: NextRequest) {
     }
 
     /*
-     * EXTRACT INPUTS
+     * SERVICE ID
      */
 
     const serviceId = clean(body.serviceId);
-    const buyerMessage = clean(body.buyerMessage);
-    const rawPhone = clean(body.contactPhone);
-
-    /*
-     * SERVICE ID
-     */
 
     if (
       !serviceId ||
@@ -728,25 +1164,39 @@ export async function POST(request: NextRequest) {
      * BUYER MESSAGE
      */
 
-    if (buyerMessage.length > MAX_MESSAGE_LENGTH) {
+    const buyerMessageResult = parseOptionalString(
+      body.buyerMessage,
+      MAX_MESSAGE_LENGTH
+    );
+
+    if (buyerMessageResult === "INVALID") {
       return jsonError(
-        "Your booking message is too long.",
+        `Your booking message cannot exceed ${MAX_MESSAGE_LENGTH} characters.`,
         400,
         rateLimit.headers
       );
     }
+
+    const buyerMessage = buyerMessageResult;
 
     /*
      * CONTACT PHONE
      */
 
-    if (rawPhone.length > MAX_PHONE_LENGTH) {
+    const rawPhoneResult = parseOptionalString(
+      body.contactPhone,
+      MAX_PHONE_LENGTH
+    );
+
+    if (rawPhoneResult === "INVALID") {
       return jsonError(
-        "Your contact number is too long.",
+        "Your contact number is invalid or too long.",
         400,
         rateLimit.headers
       );
     }
+
+    const rawPhone = rawPhoneResult;
 
     if (
       rawPhone &&
@@ -759,6 +1209,10 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    const contactPhone = rawPhone
+      ? normalizeNigerianPhone(rawPhone)
+      : null;
+
     /*
      * QUANTITY
      */
@@ -767,13 +1221,9 @@ export async function POST(request: NextRequest) {
       body.quantity
     );
 
-    if (
-      !Number.isSafeInteger(quantity) ||
-      quantity < 1 ||
-      quantity > MAX_BOOKING_QUANTITY
-    ) {
+    if (quantity === null) {
       return jsonError(
-        `Quantity must be between 1 and ${MAX_BOOKING_QUANTITY}.`,
+        `Quantity must be a whole number between 1 and ${MAX_BOOKING_QUANTITY}.`,
         400,
         rateLimit.headers
       );
@@ -783,231 +1233,382 @@ export async function POST(request: NextRequest) {
      * REQUESTED DATE
      */
 
-    let requestedFor: Date | null = null;
-
-    if (
-      body.requestedFor !== undefined &&
-      body.requestedFor !== null &&
-      body.requestedFor !== ""
-    ) {
-      if (
-        typeof body.requestedFor !== "string" ||
-        body.requestedFor.length > 50
-      ) {
-        return jsonError(
-          "Invalid requested date.",
-          400,
-          rateLimit.headers
-        );
-      }
-
-      requestedFor = new Date(
-        body.requestedFor
-      );
-
-      if (Number.isNaN(requestedFor.getTime())) {
-        return jsonError(
-          "Enter a valid requested date and time.",
-          400,
-          rateLimit.headers
-        );
-      }
-
-      if (requestedFor.getTime() < Date.now()) {
-        return jsonError(
-          "The requested date and time cannot be in the past.",
-          400,
-          rateLimit.headers
-        );
-      }
-    }
-
-    /*
-     * FIND SERVICE
-     *
-     * Only active services belonging to active businesses
-     * can receive new booking requests.
-     */
-
-    const service = await prisma.service.findFirst({
-      where: {
-        id: serviceId,
-        status: "ACTIVE",
-        deletedAt: null,
-
-        business: {
-          is: {
-            status: "ACTIVE",
-            deletedAt: null,
-          },
-        },
-      },
-
-      select: {
-        id: true,
-        name: true,
-        availability: true,
-
-        business: {
-          select: {
-            id: true,
-            name: true,
-            ownerId: true,
-          },
-        },
-      },
-    });
-
-    if (!service) {
-      return jsonError(
-        "This service is no longer available.",
-        404,
-        rateLimit.headers
-      );
-    }
-
-    /*
-     * CHECK SERVICE AVAILABILITY
-     */
-
-    if (service.availability === "UNAVAILABLE") {
-      return jsonError(
-        "This service is currently unavailable for booking.",
-        409,
-        rateLimit.headers
-      );
-    }
-
-    /*
-     * SELLER VALIDATION
-     */
-
-    const sellerId = service.business.ownerId;
-
-    if (!sellerId) {
-      return jsonError(
-        "This seller has not enabled account-based bookings yet.",
-        409,
-        rateLimit.headers
-      );
-    }
-
-    if (sellerId === account.id) {
-      return jsonError(
-        "You cannot book your own service.",
-        403,
-        rateLimit.headers
-      );
-    }
-
-    /*
-     * NORMALIZE CONTACT PHONE
-     */
-
-    const contactPhone = rawPhone
-      ? normalizeNigerianPhone(rawPhone)
-      : null;
-
-    /*
-     * CREATE BOOKING TRANSACTION
-     *
-     * Both the booking and its initial conversation
-     * message must succeed together.
-     *
-     * If either database operation fails, the transaction
-     * rolls back.
-     */
-
-    const booking = await prisma.$transaction(
-      async (tx) => {
-        const created = await tx.serviceBooking.create({
-          data: {
-            service: {
-              connect: {
-                id: service.id,
-              },
-            },
-
-            buyer: {
-              connect: {
-                id: account.id,
-              },
-            },
-
-            // Use the Prisma enum's string value directly.
-            status: "PENDING",
-
-            requestedFor,
-            quantity,
-            contactPhone,
-            buyerMessage: buyerMessage || null,
-          },
-
-          select: {
-            id: true,
-          },
-        });
-
-        /*
-         * SAVE INITIAL CONVERSATION MESSAGE
-         */
-
-        if (buyerMessage) {
-          await tx.serviceBookingMessage.create({
-            data: {
-              booking: {
-                connect: {
-                  id: created.id,
-                },
-              },
-
-              sender: {
-                connect: {
-                  id: account.id,
-                },
-              },
-
-              body: buyerMessage,
-            },
-          });
-        }
-
-        /*
-         * RETURN COMPLETE BOOKING
-         */
-
-        return tx.serviceBooking.findUnique({
-          where: {
-            id: created.id,
-          },
-
-          include: bookingInclude,
-        });
-      }
+    const requestedFor = parseRequestedDate(
+      body.requestedFor
     );
 
-    if (!booking) {
+    if (requestedFor === "INVALID") {
       return jsonError(
-        "Your booking could not be completed.",
-        500,
+        "Enter a valid future requested date and time.",
+        400,
         rateLimit.headers
       );
     }
 
     /*
-     * SELLER NOTIFICATION
-     *
-     * This happens AFTER the booking transaction.
-     *
-     * createNotification() checks the seller's
-     * SERVICE_BOOKING_CREATED preference.
-     *
-     * When inApp is false, the notification is skipped.
-     * The booking remains successfully created.
-     *
-     * Unexpected notification errors are logged but
-     * never undo the booking.
+     * FULFILLMENT ADDRESS
      */
+
+    const fulfillmentAddressResult =
+      parseOptionalString(
+        body.fulfillmentAddress,
+        MAX_ADDRESS_LENGTH
+      );
+
+    if (
+      fulfillmentAddressResult === "INVALID"
+    ) {
+      return jsonError(
+        "The fulfillment address is invalid or too long.",
+        400,
+        rateLimit.headers
+      );
+    }
+
+    const fulfillmentAddress =
+      fulfillmentAddressResult;
+
+    /*
+     * REQUESTED FULFILLMENT METHOD
+     */
+
+    let requestedFulfillment: FulfillmentType | null = null;
+
+    if (
+      body.fulfillmentType !== undefined &&
+      body.fulfillmentType !== null &&
+      body.fulfillmentType !== ""
+    ) {
+      if (!isFulfillmentType(body.fulfillmentType)) {
+        return jsonError(
+          "Invalid fulfillment method.",
+          400,
+          rateLimit.headers
+        );
+      }
+
+      requestedFulfillment = body.fulfillmentType;
+    }
+
+    /*
+     * BOOKING REFERENCE
+     */
+
+    const bookingCode = generateBookingCode();
+
+    /*
+     * CREATE BOOKING AND INITIAL MESSAGE
+     *
+     * The service, business and seller are revalidated
+     * inside the transaction.
+     *
+     * sellerId is always derived from the database.
+     * The browser cannot assign a booking to another seller.
+     */
+
+    const creationResult =
+      await prisma.$transaction(
+        async (
+          tx
+        ): Promise<BookingCreationOutcome> => {
+          /*
+           * LOAD THE CURRENT ACTIVE SERVICE
+           */
+
+          const service =
+            await tx.service.findFirst({
+              where: {
+                id: serviceId,
+                status: "ACTIVE",
+                deletedAt: null,
+
+                business: {
+                  is: {
+                    status: "ACTIVE",
+                    deletedAt: null,
+                  },
+                },
+              },
+
+              select: serviceForBookingSelect,
+            });
+
+          if (!service) {
+            return {
+              success: false,
+              message:
+                "This service is no longer available.",
+              status: 404,
+            };
+          }
+
+          /*
+           * CHECK SERVICE AVAILABILITY
+           *
+           * ASK_SELLER is allowed because the buyer is
+           * submitting a request for the seller to review.
+           */
+
+          if (service.availability === "UNAVAILABLE") {
+            return {
+              success: false,
+              message:
+                "This service is currently unavailable for booking.",
+              status: 409,
+            };
+          }
+
+          /*
+           * RESOLVE SELLER
+           */
+
+          const seller = service.business.owner;
+          const sellerId = service.business.ownerId;
+
+          if (
+            !seller ||
+            !sellerId ||
+            seller.id !== sellerId ||
+            seller.role !== "SELLER"
+          ) {
+            return {
+              success: false,
+              message:
+                "This service provider has not enabled account-based bookings yet.",
+              status: 409,
+            };
+          }
+
+          /*
+           * PREVENT SELF-BOOKING
+           */
+
+          if (sellerId === account.id) {
+            return {
+              success: false,
+              message:
+                "You cannot book your own service.",
+              status: 403,
+            };
+          }
+
+          /*
+           * VALIDATE BOOKING TYPE
+           *
+           * The merchant's configured booking type is
+           * authoritative. Buyers cannot override it.
+           */
+
+          const bookingType = service.bookingType;
+
+          if (
+            bookingType === "APPOINTMENT" &&
+            !requestedFor
+          ) {
+            return {
+              success: false,
+              message:
+                "Please select your preferred appointment date and time.",
+              status: 400,
+            };
+          }
+
+          /*
+           * RECHECK DATE
+           *
+           * A selected date could have passed between
+           * request validation and transaction execution.
+           */
+
+          if (
+            requestedFor &&
+            requestedFor.getTime() <= Date.now()
+          ) {
+            return {
+              success: false,
+              message:
+                "The requested date must be in the future.",
+              status: 400,
+            };
+          }
+
+          /*
+           * RESOLVE FULFILLMENT METHOD
+           */
+
+          let fulfillmentType: FulfillmentType;
+
+          if (
+            service.fulfillmentType === "FLEXIBLE"
+          ) {
+            fulfillmentType =
+              requestedFulfillment ?? "FLEXIBLE";
+          } else {
+            if (
+              requestedFulfillment &&
+              requestedFulfillment !==
+                service.fulfillmentType
+            ) {
+              return {
+                success: false,
+                message:
+                  "The selected fulfillment method is not supported by this service.",
+                status: 400,
+              };
+            }
+
+            fulfillmentType =
+              service.fulfillmentType;
+          }
+
+          /*
+           * VALIDATE FULFILLMENT ADDRESS
+           *
+           * An address is required for AT_CUSTOMER.
+           * An address is not stored for other methods.
+           */
+
+          if (
+            fulfillmentType === "AT_CUSTOMER" &&
+            !fulfillmentAddress
+          ) {
+            return {
+              success: false,
+              message:
+                "Please provide the address where the service should be delivered.",
+              status: 400,
+            };
+          }
+
+          if (
+            fulfillmentType !== "AT_CUSTOMER" &&
+            fulfillmentAddress
+          ) {
+            return {
+              success: false,
+              message:
+                "A delivery address can only be supplied when the service is delivered at your location.",
+              status: 400,
+            };
+          }
+
+          /*
+           * CREATE BOOKING
+           */
+
+          const created =
+            await tx.serviceBooking.create({
+              data: {
+                bookingCode,
+
+                serviceId: service.id,
+
+                buyerId: account.id,
+                sellerId,
+
+                bookingType,
+                status: "PENDING",
+
+                requestedFor,
+                quantity,
+
+                contactPhone,
+                buyerMessage,
+
+                fulfillmentType,
+
+                fulfillmentAddress:
+                  fulfillmentType === "AT_CUSTOMER"
+                    ? fulfillmentAddress
+                    : null,
+
+                currency: "NGN",
+              },
+
+              select: {
+                id: true,
+              },
+            });
+
+          /*
+           * CREATE INITIAL CONVERSATION MESSAGE
+           *
+           * The original enquiry is also saved in
+           * buyerMessage on the booking record.
+           *
+           * Saving it here creates the initial entry
+           * in the booking's message history.
+           */
+
+          if (buyerMessage) {
+            await tx.serviceBookingMessage.create({
+              data: {
+                bookingId: created.id,
+                senderId: account.id,
+                body: buyerMessage,
+              },
+            });
+          }
+
+          /*
+           * LOAD COMPLETE CREATED BOOKING
+           */
+
+          const createdBooking =
+            await tx.serviceBooking.findUnique({
+              where: {
+                id: created.id,
+              },
+
+              include: bookingInclude,
+            });
+
+          if (!createdBooking) {
+            return {
+              success: false,
+              message:
+                "Your booking could not be retrieved after creation.",
+              status: 500,
+            };
+          }
+
+          return {
+            success: true,
+            booking: createdBooking,
+            sellerId,
+            serviceName: service.name,
+          };
+        },
+
+        {
+          isolationLevel:
+            Prisma.TransactionIsolationLevel.Serializable,
+        }
+      );
+
+    /*
+     * HANDLE VALIDATION FAILURE
+     */
+
+    if (!creationResult.success) {
+      return jsonError(
+        creationResult.message,
+        creationResult.status,
+        rateLimit.headers
+      );
+    }
+
+    /*
+     * NOTIFY SELLER
+     *
+     * The booking has already been committed.
+     *
+     * A notification failure must not undo a successfully
+     * created booking or its initial conversation message.
+     */
+
+    const booking = creationResult.booking;
+    const sellerId = creationResult.sellerId;
 
     try {
       await createNotification({
@@ -1017,18 +1618,22 @@ export async function POST(request: NextRequest) {
 
         title: "New service booking",
 
-        message: `A buyer has requested your service: ${service.name}.`,
+        message:
+          `A buyer has requested your service: ${creationResult.serviceName}.`,
 
         priority: NotificationPriority.HIGH,
 
         data: {
           bookingId: booking.id,
-          serviceId: service.id,
-          serviceName: service.name,
-          href: "/seller",
+          bookingCode: booking.bookingCode,
+          serviceId: booking.serviceId,
+          serviceName: creationResult.serviceName,
+          href: "/seller#service-bookings",
         },
 
-        dedupeKey: `service-booking:${booking.id}:created:seller:${sellerId}`,
+        dedupeKey:
+          `service-booking:${booking.id}:` +
+          `created:seller:${sellerId}`,
       });
     } catch (notificationError) {
       console.error(
@@ -1043,9 +1648,12 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json(
       {
-        message: "Your booking request has been submitted.",
+        message:
+          "Your booking request has been submitted.",
+
         booking: formatBooking(booking),
       },
+
       {
         status: 201,
         headers: responseHeaders(rateLimit.headers),
@@ -1056,6 +1664,26 @@ export async function POST(request: NextRequest) {
       "Create service booking API error:",
       error
     );
+
+    if (
+      error instanceof Prisma.PrismaClientKnownRequestError
+    ) {
+      if (error.code === "P2002") {
+        return jsonError(
+          "A booking reference conflict occurred. Please try again.",
+          409,
+          rateLimit.headers
+        );
+      }
+
+      if (error.code === "P2034") {
+        return jsonError(
+          "The service or booking changed while your request was being processed. Please try again.",
+          409,
+          rateLimit.headers
+        );
+      }
+    }
 
     return jsonError(
       "Unable to submit your booking. Please try again.",

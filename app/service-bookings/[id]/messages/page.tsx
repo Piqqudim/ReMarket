@@ -4,6 +4,7 @@
 import {
   useCallback,
   useEffect,
+  useLayoutEffect,
   useRef,
   useState,
   type FormEvent,
@@ -22,17 +23,19 @@ import {
 } from "lucide-react";
 
 /*
- * ---------------------------------------------------------
+ * =========================================================
  * TYPES
- * ---------------------------------------------------------
+ * =========================================================
  */
 
 type BookingStatus =
   | "PENDING"
+  | "AWAITING_BUYER"
   | "ACCEPTED"
+  | "IN_PROGRESS"
+  | "COMPLETED"
   | "DECLINED"
-  | "CANCELLED"
-  | "COMPLETED";
+  | "CANCELLED";
 
 type ChatMessage = {
   id: string;
@@ -61,8 +64,14 @@ type Conversation = {
   };
 
   messages: ChatMessage[];
+
   total: number;
+
   hasMore: boolean;
+
+  nextCursor: string | null;
+
+  canSendMessage: boolean;
 };
 
 type LoadConversationOptions = {
@@ -70,14 +79,50 @@ type LoadConversationOptions = {
   showLoading?: boolean;
 };
 
+type ScrollRestorePosition = {
+  scrollHeight: number;
+  scrollTop: number;
+};
+
 /*
- * ---------------------------------------------------------
- * HELPERS
- * ---------------------------------------------------------
+ * =========================================================
+ * CONSTANTS
+ * =========================================================
+ */
+
+const MESSAGE_ENABLED_STATUSES: BookingStatus[] = [
+  "PENDING",
+  "AWAITING_BUYER",
+  "ACCEPTED",
+  "IN_PROGRESS",
+  "COMPLETED",
+];
+
+const BOOKING_STATUS_LABELS: Record<
+  BookingStatus,
+  string
+> = {
+  PENDING: "Pending",
+  AWAITING_BUYER: "Awaiting buyer",
+  ACCEPTED: "Accepted",
+  IN_PROGRESS: "In progress",
+  COMPLETED: "Completed",
+  DECLINED: "Declined",
+  CANCELLED: "Cancelled",
+};
+
+const MAX_MESSAGE_LENGTH = 2_000;
+const REFRESH_INTERVAL = 15_000;
+const BOTTOM_SCROLL_THRESHOLD = 100;
+
+/*
+ * =========================================================
+ * GENERAL HELPERS
+ * =========================================================
  */
 
 function isRecord(
-  value: unknown
+  value: unknown,
 ): value is Record<string, unknown> {
   return (
     typeof value === "object" &&
@@ -88,7 +133,7 @@ function isRecord(
 
 function getError(
   data: unknown,
-  fallback: string
+  fallback: string,
 ): string {
   return (
     isRecord(data) &&
@@ -96,6 +141,20 @@ function getError(
   )
     ? data.error
     : fallback;
+}
+
+function isBookingStatus(
+  value: unknown,
+): value is BookingStatus {
+  return (
+    value === "PENDING" ||
+    value === "AWAITING_BUYER" ||
+    value === "ACCEPTED" ||
+    value === "IN_PROGRESS" ||
+    value === "COMPLETED" ||
+    value === "DECLINED" ||
+    value === "CANCELLED"
+  );
 }
 
 function formatTime(value: string): string {
@@ -110,31 +169,77 @@ function formatTime(value: string): string {
 }
 
 function formatStatus(
-  status: BookingStatus
+  status: BookingStatus,
 ): string {
-  return (
-    status.charAt(0) +
-    status.slice(1).toLowerCase()
-  );
+  return BOOKING_STATUS_LABELS[status];
 }
 
-function isBookingStatus(
-  value: unknown
-): value is BookingStatus {
-  return (
-    value === "PENDING" ||
-    value === "ACCEPTED" ||
-    value === "DECLINED" ||
-    value === "CANCELLED" ||
-    value === "COMPLETED"
-  );
+/*
+ * =========================================================
+ * MESSAGE HELPERS
+ * =========================================================
+ */
+
+/**
+ * Keep messages in chronological order.
+ *
+ * The secondary ID comparison gives deterministic ordering
+ * when messages have the same timestamp.
+ */
+
+function compareMessages(
+  first: ChatMessage,
+  second: ChatMessage,
+): number {
+  const firstTime = new Date(
+    first.createdAt,
+  ).getTime();
+
+  const secondTime = new Date(
+    second.createdAt,
+  ).getTime();
+
+  if (firstTime !== secondTime) {
+    return firstTime - secondTime;
+  }
+
+  return first.id.localeCompare(second.id);
 }
 
 /**
- * Validates and normalizes the conversation response.
+ * Merge messages from different pages without duplicates.
+ *
+ * Later copies replace earlier copies, which is useful
+ * when readAt changes during automatic refresh.
  */
+
+function mergeMessages(
+  ...groups: ChatMessage[][]
+): ChatMessage[] {
+  const messageMap = new Map<
+    string,
+    ChatMessage
+  >();
+
+  for (const group of groups) {
+    for (const message of group) {
+      messageMap.set(message.id, message);
+    }
+  }
+
+  return Array.from(
+    messageMap.values(),
+  ).sort(compareMessages);
+}
+
+/*
+ * =========================================================
+ * RESPONSE PARSING
+ * =========================================================
+ */
+
 function parseConversation(
-  data: unknown
+  data: unknown,
 ): Conversation {
   if (
     !isRecord(data) ||
@@ -143,13 +248,15 @@ function parseConversation(
     !Array.isArray(data.messages)
   ) {
     throw new Error(
-      "The conversation response is incomplete."
+      "The conversation response is incomplete.",
     );
   }
 
   const rawBooking = data.booking;
 
-  const rawService = isRecord(rawBooking.service)
+  const rawService = isRecord(
+    rawBooking.service,
+  )
     ? rawBooking.service
     : null;
 
@@ -168,7 +275,7 @@ function parseConversation(
     !isBookingStatus(rawBooking.status)
   ) {
     throw new Error(
-      "The conversation information is invalid."
+      "The conversation information is invalid.",
     );
   }
 
@@ -196,7 +303,9 @@ function parseConversation(
           : "ReMarket user",
 
       isOwnMessage:
-        item.isOwnMessage === true,
+        typeof item.isOwnMessage === "boolean"
+          ? item.isOwnMessage
+          : item.senderId === rawUser.id,
 
       readAt:
         typeof item.readAt === "string"
@@ -207,10 +316,42 @@ function parseConversation(
     });
   }
 
+  const status = rawBooking.status;
+
+  /*
+   * IMPORTANT:
+   *
+   * The conversation API returns canSendMessage
+   * inside booking, not at the top level.
+   *
+   * The top-level fallback is retained for compatibility
+   * with an older API response.
+   */
+
+  const canSendMessage =
+    typeof rawBooking.canSendMessage === "boolean"
+      ? rawBooking.canSendMessage
+      : typeof data.canSendMessage === "boolean"
+        ? data.canSendMessage
+        : MESSAGE_ENABLED_STATUSES.includes(status);
+
+  const total =
+    typeof data.total === "number" &&
+    Number.isSafeInteger(data.total) &&
+    data.total >= 0
+      ? data.total
+      : messages.length;
+
+  const nextCursor =
+    typeof data.nextCursor === "string" &&
+    data.nextCursor.trim()
+      ? data.nextCursor
+      : null;
+
   return {
     booking: {
       id: rawBooking.id,
-      status: rawBooking.status,
+      status,
 
       service: {
         id: rawService.id,
@@ -229,23 +370,26 @@ function parseConversation(
       role: rawUser.role,
     },
 
-    messages,
+    messages: messages.sort(compareMessages),
 
-    total:
-      typeof data.total === "number" &&
-      Number.isFinite(data.total)
-        ? data.total
-        : messages.length,
+    total,
 
     hasMore: data.hasMore === true,
+
+    nextCursor,
+
+    canSendMessage,
   };
 }
 
-/**
- * Validates a newly sent message returned by POST.
+/*
+ * =========================================================
+ * SENT MESSAGE PARSING
+ * =========================================================
  */
+
 function parseSentMessage(
-  value: unknown
+  value: unknown,
 ): ChatMessage {
   if (
     !isRecord(value) ||
@@ -255,7 +399,7 @@ function parseSentMessage(
     typeof value.createdAt !== "string"
   ) {
     throw new Error(
-      "Your message was sent, but its response was incomplete. Refresh the conversation."
+      "Your message was sent, but its response was incomplete.",
     );
   }
 
@@ -281,13 +425,15 @@ function parseSentMessage(
 }
 
 /*
- * ---------------------------------------------------------
+ * =========================================================
  * COMPONENT
- * ---------------------------------------------------------
+ * =========================================================
  */
 
 export default function ServiceBookingMessagesPage() {
-  const params = useParams<{ id: string }>();
+  const params = useParams<{
+    id: string;
+  }>();
 
   const bookingId =
     typeof params.id === "string"
@@ -309,6 +455,9 @@ export default function ServiceBookingMessagesPage() {
   const [refreshing, setRefreshing] =
     useState(false);
 
+  const [loadingOlder, setLoadingOlder] =
+    useState(false);
+
   const [sending, setSending] =
     useState(false);
 
@@ -324,10 +473,13 @@ export default function ServiceBookingMessagesPage() {
    * -------------------------------------------------------
    */
 
-  const bottomRef =
+  const messagesContainerRef =
     useRef<HTMLDivElement | null>(null);
 
   const activeLoadRef =
+    useRef<AbortController | null>(null);
+
+  const olderLoadRef =
     useRef<AbortController | null>(null);
 
   const loadSequenceRef =
@@ -336,24 +488,35 @@ export default function ServiceBookingMessagesPage() {
   const loadInProgressRef =
     useRef(false);
 
+  const loadingOlderRef =
+    useRef(false);
+
   const sendingRef =
     useRef(false);
 
+  const hasLoadedOlderRef =
+    useRef(false);
+
+  const bottomPinnedRef =
+    useRef(true);
+
+  const scrollRestoreRef =
+    useRef<ScrollRestorePosition | null>(null);
+
   /*
-   * -------------------------------------------------------
-   * LOAD CONVERSATION
-   * -------------------------------------------------------
+   * =======================================================
+   * LOAD LATEST CONVERSATION
+   * =======================================================
    *
-   * Older requests cannot overwrite newer responses.
+   * This loads the latest message page.
    *
-   * Silent polling does not replace the loading screen
-   * or clear the current conversation.
-   * -------------------------------------------------------
+   * Previously loaded older messages are preserved.
+   * =======================================================
    */
 
   const loadConversation = useCallback(
     async (
-      options: LoadConversationOptions = {}
+      options: LoadConversationOptions = {},
     ): Promise<boolean> => {
       const silent = options.silent === true;
 
@@ -370,8 +533,17 @@ export default function ServiceBookingMessagesPage() {
       }
 
       /*
-       * Avoid overlapping automatic requests.
-       * A manual refresh may replace an older request.
+       * Do not refresh while an older page is being loaded.
+       */
+
+      if (loadingOlderRef.current) {
+        return false;
+      }
+
+      /*
+       * Automatic refreshes do not overlap.
+       *
+       * Manual refreshes replace an existing request.
        */
 
       if (loadInProgressRef.current) {
@@ -404,13 +576,13 @@ export default function ServiceBookingMessagesPage() {
       try {
         const response = await fetch(
           `/api/service-bookings/${encodeURIComponent(
-            bookingId
+            bookingId,
           )}/messages`,
           {
             method: "GET",
             cache: "no-store",
             signal: controller.signal,
-          }
+          },
         );
 
         if (
@@ -434,8 +606,8 @@ export default function ServiceBookingMessagesPage() {
           throw new Error(
             getError(
               data,
-              "Unable to load this conversation."
-            )
+              "Unable to load this conversation.",
+            ),
           );
         }
 
@@ -449,7 +621,45 @@ export default function ServiceBookingMessagesPage() {
           return false;
         }
 
-        setConversation(parsedConversation);
+        /*
+         * Merge fresh messages with previously loaded
+         * messages instead of replacing the conversation.
+         */
+
+        setConversation((current) => {
+          if (!current) {
+            return parsedConversation;
+          }
+
+          const merged = mergeMessages(
+            current.messages,
+            parsedConversation.messages,
+          );
+
+          /*
+           * If older pages have already been loaded,
+           * retain their current pagination cursor.
+           *
+           * Otherwise use the latest server cursor.
+           */
+
+          const preserveOlderPagination =
+            hasLoadedOlderRef.current;
+
+          return {
+            ...parsedConversation,
+
+            messages: merged,
+
+            hasMore: preserveOlderPagination
+              ? current.hasMore
+              : parsedConversation.hasMore,
+
+            nextCursor: preserveOlderPagination
+              ? current.nextCursor
+              : parsedConversation.nextCursor,
+          };
+        });
 
         return true;
       } catch (loadError) {
@@ -462,14 +672,14 @@ export default function ServiceBookingMessagesPage() {
 
         console.error(
           "Booking conversation load error:",
-          loadError
+          loadError,
         );
 
         if (!silent) {
           setError(
             loadError instanceof Error
               ? loadError.message
-              : "Unable to load this conversation."
+              : "Unable to load this conversation.",
           );
         }
 
@@ -487,38 +697,43 @@ export default function ServiceBookingMessagesPage() {
         }
       }
     },
-    [bookingId]
+    [bookingId],
   );
 
   /*
-   * -------------------------------------------------------
-   * INITIAL CONVERSATION LOAD
-   * -------------------------------------------------------
+   * =======================================================
+   * INITIAL LOAD
+   * =======================================================
    */
 
   useEffect(() => {
+    hasLoadedOlderRef.current = false;
+    bottomPinnedRef.current = true;
+
     void loadConversation({
       showLoading: true,
     });
 
     return () => {
       activeLoadRef.current?.abort();
+      olderLoadRef.current?.abort();
 
       loadSequenceRef.current += 1;
 
       loadInProgressRef.current = false;
+      loadingOlderRef.current = false;
     };
   }, [loadConversation]);
 
   /*
-   * -------------------------------------------------------
-   * AUTOMATIC MESSAGE REFRESH
-   * -------------------------------------------------------
+   * =======================================================
+   * AUTOMATIC REFRESH
+   * =======================================================
    *
-   * Refresh every 15 seconds while the page is visible.
+   * Refreshes every 15 seconds while the page is visible.
    *
-   * Do not refresh while sending a message.
-   * -------------------------------------------------------
+   * This also updates read receipts for recent messages.
+   * =======================================================
    */
 
   useEffect(() => {
@@ -526,7 +741,8 @@ export default function ServiceBookingMessagesPage() {
       if (
         document.visibilityState !== "visible" ||
         sendingRef.current ||
-        loadInProgressRef.current
+        loadInProgressRef.current ||
+        loadingOlderRef.current
       ) {
         return;
       }
@@ -538,7 +754,7 @@ export default function ServiceBookingMessagesPage() {
 
     const interval = window.setInterval(
       refreshAutomatically,
-      15_000
+      REFRESH_INTERVAL,
     );
 
     const handleFocus = () => {
@@ -555,12 +771,12 @@ export default function ServiceBookingMessagesPage() {
 
     window.addEventListener(
       "focus",
-      handleFocus
+      handleFocus,
     );
 
     document.addEventListener(
       "visibilitychange",
-      handleVisibilityChange
+      handleVisibilityChange,
     );
 
     return () => {
@@ -568,55 +784,250 @@ export default function ServiceBookingMessagesPage() {
 
       window.removeEventListener(
         "focus",
-        handleFocus
+        handleFocus,
       );
 
       document.removeEventListener(
         "visibilitychange",
-        handleVisibilityChange
+        handleVisibilityChange,
       );
     };
   }, [loadConversation]);
 
   /*
-   * -------------------------------------------------------
-   * SCROLL TO THE LATEST MESSAGE
-   * -------------------------------------------------------
+   * =======================================================
+   * LOAD OLDER MESSAGES
+   * =======================================================
+   *
+   * Calls:
+   *
+   * GET /api/service-bookings/[id]/messages?before=CURSOR
+   *
+   * Older messages are added before the existing messages.
+   * =======================================================
    */
 
-  useEffect(() => {
-    bottomRef.current?.scrollIntoView({
-      behavior: "smooth",
-      block: "end",
-    });
-  }, [conversation?.messages.length]);
+  async function loadOlderMessages() {
+    if (
+      !conversation ||
+      !conversation.hasMore ||
+      !conversation.nextCursor ||
+      loadingOlderRef.current ||
+      loadInProgressRef.current
+    ) {
+      return;
+    }
+
+    const cursor = conversation.nextCursor;
+
+    const container =
+      messagesContainerRef.current;
+
+    /*
+     * Save the scroll position before inserting older
+     * messages so the current visible message remains
+     * in the same position.
+     */
+
+    if (container) {
+      scrollRestoreRef.current = {
+        scrollHeight: container.scrollHeight,
+        scrollTop: container.scrollTop,
+      };
+    }
+
+    loadingOlderRef.current = true;
+
+    setLoadingOlder(true);
+    setError("");
+
+    const controller = new AbortController();
+
+    olderLoadRef.current = controller;
+
+    try {
+      const query = new URLSearchParams({
+        before: cursor,
+      });
+
+      const response = await fetch(
+        `/api/service-bookings/${encodeURIComponent(
+          bookingId,
+        )}/messages?${query.toString()}`,
+        {
+          method: "GET",
+          cache: "no-store",
+          signal: controller.signal,
+        },
+      );
+
+      const data: unknown =
+        await response.json().catch(() => null);
+
+      if (controller.signal.aborted) {
+        scrollRestoreRef.current = null;
+        return;
+      }
+
+      if (!response.ok) {
+        throw new Error(
+          getError(
+            data,
+            "Unable to load older messages.",
+          ),
+        );
+      }
+
+      const olderConversation =
+        parseConversation(data);
+
+      hasLoadedOlderRef.current = true;
+
+      setConversation((current) => {
+        if (!current) {
+          return olderConversation;
+        }
+
+        const merged = mergeMessages(
+          olderConversation.messages,
+          current.messages,
+        );
+
+        return {
+          ...olderConversation,
+
+          messages: merged,
+
+          total: olderConversation.total,
+
+          hasMore: olderConversation.hasMore,
+
+          nextCursor: olderConversation.nextCursor,
+        };
+      });
+    } catch (loadError) {
+      scrollRestoreRef.current = null;
+
+      if (controller.signal.aborted) {
+        return;
+      }
+
+      console.error(
+        "Load older booking messages error:",
+        loadError,
+      );
+
+      setError(
+        loadError instanceof Error
+          ? loadError.message
+          : "Unable to load older messages.",
+      );
+    } finally {
+      if (olderLoadRef.current === controller) {
+        olderLoadRef.current = null;
+      }
+
+      loadingOlderRef.current = false;
+      setLoadingOlder(false);
+    }
+  }
 
   /*
-   * -------------------------------------------------------
-   * BOOKING PERMISSIONS
-   * -------------------------------------------------------
+   * =======================================================
+   * SCROLL RESTORATION
+   * =======================================================
+   *
+   * 1. Preserve the visible position when loading older
+   *    messages.
+   *
+   * 2. Scroll to the bottom when a new message arrives
+   *    only if the user was already near the bottom.
+   * =======================================================
    */
 
-  const status =
-    conversation?.booking.status;
+  const firstMessageId =
+    conversation?.messages[0]?.id ?? null;
 
-  const canSend =
-    status === "ACCEPTED" ||
-    status === "COMPLETED";
+  const lastMessageId =
+    conversation?.messages[
+      conversation.messages.length - 1
+    ]?.id ?? null;
 
-  const backHref =
-    conversation?.currentUser.role === "SELLER"
-      ? "/seller#service-bookings"
-      : "/bookings";
+  useLayoutEffect(() => {
+    const container =
+      messagesContainerRef.current;
+
+    if (!container) {
+      return;
+    }
+
+    /*
+     * Restore position after loading older messages.
+     */
+
+    const restore = scrollRestoreRef.current;
+
+    if (restore) {
+      const heightDifference =
+        container.scrollHeight -
+        restore.scrollHeight;
+
+      container.scrollTop =
+        restore.scrollTop + heightDifference;
+
+      scrollRestoreRef.current = null;
+
+      bottomPinnedRef.current = false;
+
+      return;
+    }
+
+    /*
+     * Only auto-scroll when the user was already
+     * following the latest messages.
+     */
+
+    if (bottomPinnedRef.current) {
+      container.scrollTop =
+        container.scrollHeight;
+    }
+  }, [
+    firstMessageId,
+    lastMessageId,
+  ]);
 
   /*
-   * -------------------------------------------------------
+   * =======================================================
+   * SCROLL POSITION TRACKING
+   * =======================================================
+   */
+
+  function handleMessagesScroll() {
+    const container =
+      messagesContainerRef.current;
+
+    if (!container) {
+      return;
+    }
+
+    const distanceFromBottom =
+      container.scrollHeight -
+      container.scrollTop -
+      container.clientHeight;
+
+    bottomPinnedRef.current =
+      distanceFromBottom <=
+      BOTTOM_SCROLL_THRESHOLD;
+  }
+
+  /*
+   * =======================================================
    * SEND MESSAGE
-   * -------------------------------------------------------
+   * =======================================================
    */
 
   async function sendMessage(
-    event: FormEvent<HTMLFormElement>
+    event: FormEvent<HTMLFormElement>,
   ) {
     event.preventDefault();
 
@@ -624,8 +1035,8 @@ export default function ServiceBookingMessagesPage() {
 
     if (
       !message ||
-      message.length > 2000 ||
-      !canSend ||
+      message.length > MAX_MESSAGE_LENGTH ||
+      !conversation?.canSendMessage ||
       sendingRef.current
     ) {
       return;
@@ -637,12 +1048,13 @@ export default function ServiceBookingMessagesPage() {
     setError("");
 
     /*
-     * Cancel an outstanding refresh before sending.
-     * This prevents an older GET response from replacing
-     * the new message.
+     * Stop an outstanding latest-page request.
+     * It must not overwrite the state after sending.
      */
 
     activeLoadRef.current?.abort();
+
+    activeLoadRef.current = null;
 
     loadSequenceRef.current += 1;
 
@@ -651,7 +1063,7 @@ export default function ServiceBookingMessagesPage() {
     try {
       const response = await fetch(
         `/api/service-bookings/${encodeURIComponent(
-          bookingId
+          bookingId,
         )}/messages`,
         {
           method: "POST",
@@ -663,7 +1075,7 @@ export default function ServiceBookingMessagesPage() {
           body: JSON.stringify({
             message,
           }),
-        }
+        },
       );
 
       const data: unknown =
@@ -673,27 +1085,24 @@ export default function ServiceBookingMessagesPage() {
         throw new Error(
           getError(
             data,
-            "Unable to send your message."
-          )
+            "Unable to send your message.",
+          ),
         );
       }
 
       /*
-       * The server has confirmed a successful send.
+       * The server has confirmed that the message
+       * was successfully saved.
        */
 
       if (
         !isRecord(data) ||
         !isRecord(data.messageRecord)
       ) {
-        /*
-         * Do not invite the user to resend a message
-         * that may already have been saved.
-         */
         setDraft("");
 
         setError(
-          "Your message was sent, but its response was incomplete. Refresh the conversation to see it."
+          "Your message was sent, but its response was incomplete. Refresh the conversation to see it.",
         );
 
         await loadConversation({
@@ -704,11 +1113,19 @@ export default function ServiceBookingMessagesPage() {
       }
 
       const newMessage = parseSentMessage(
-        data.messageRecord
+        data.messageRecord,
       );
 
       /*
-       * Update the conversation immediately.
+       * Force the conversation to the latest message
+       * after the user sends a message.
+       */
+
+      bottomPinnedRef.current = true;
+
+      /*
+       * Add the message immediately without duplicating
+       * an existing message.
        */
 
       setConversation((current) => {
@@ -718,27 +1135,21 @@ export default function ServiceBookingMessagesPage() {
 
         const alreadyExists =
           current.messages.some(
-            (item) => item.id === newMessage.id
+            (item) => item.id === newMessage.id,
           );
 
         if (alreadyExists) {
           return current;
         }
 
-        const updatedMessages = [
-          ...current.messages,
-          newMessage,
-        ];
-
-        /*
-         * Keep the latest 100 messages in local state.
-         */
-        const trimmedMessages =
-          updatedMessages.slice(-100);
-
         return {
           ...current,
-          messages: trimmedMessages,
+
+          messages: mergeMessages(
+            current.messages,
+            [newMessage],
+          ),
+
           total: current.total + 1,
         };
       });
@@ -746,9 +1157,9 @@ export default function ServiceBookingMessagesPage() {
       setDraft("");
 
       /*
-       * Refresh the server copy after the optimistic update.
-       * This retrieves the authoritative read receipts
-       * and any messages that arrived during sending.
+       * Retrieve the authoritative server copy.
+       *
+       * This also updates message read receipts.
        */
 
       await loadConversation({
@@ -757,13 +1168,13 @@ export default function ServiceBookingMessagesPage() {
     } catch (sendError) {
       console.error(
         "Send booking message error:",
-        sendError
+        sendError,
       );
 
       setError(
         sendError instanceof Error
           ? sendError.message
-          : "Unable to send your message."
+          : "Unable to send your message.",
       );
     } finally {
       sendingRef.current = false;
@@ -773,16 +1184,38 @@ export default function ServiceBookingMessagesPage() {
   }
 
   /*
-   * -------------------------------------------------------
+   * =======================================================
+   * BOOKING PERMISSIONS
+   * =======================================================
+   */
+
+  const status = conversation?.booking.status;
+
+  const canSend =
+    conversation?.canSendMessage === true;
+
+  const isClosed =
+    status === "DECLINED" ||
+    status === "CANCELLED";
+
+  const backHref =
+    conversation?.currentUser.role === "SELLER"
+      ? "/seller#service-bookings"
+      : "/bookings";
+
+  /*
+   * =======================================================
    * RENDER
-   * -------------------------------------------------------
+   * =======================================================
    */
 
   return (
     <main className="min-h-dvh bg-[#FFF7ED] px-3 py-5 text-[#292421] sm:px-6 sm:py-8">
       <div className="mx-auto flex min-h-[85dvh] max-w-3xl flex-col overflow-hidden rounded-3xl border border-[#EAE6DF] bg-white shadow-sm">
 
-        {/* HEADER */}
+        {/* ------------------------------------------------- */}
+        {/* HEADER                                            */}
+        {/* ------------------------------------------------- */}
 
         <header className="border-b border-[#EAE6DF] p-4 sm:p-5">
           <div className="flex items-center gap-3">
@@ -790,12 +1223,13 @@ export default function ServiceBookingMessagesPage() {
             <Link
               href={backHref}
               aria-label="Back to bookings"
-              className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-[#EAE6DF] text-[#6F675F] hover:bg-[#FFF7ED]"
+              className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-[#EAE6DF] text-[#6F675F] transition hover:bg-[#FFF7ED]"
             >
               <ArrowLeft className="h-4 w-4" />
             </Link>
 
             <div className="min-w-0 flex-1">
+
               <p className="text-[10px] font-bold uppercase tracking-wider text-[#FF5A36]">
                 ReMarket · Service booking
               </p>
@@ -814,29 +1248,30 @@ export default function ServiceBookingMessagesPage() {
 
             <button
               type="button"
-              onClick={() =>
-                void loadConversation()
-              }
+              onClick={() => {
+                void loadConversation();
+              }}
               disabled={
                 loading ||
                 refreshing ||
+                loadingOlder ||
                 sending
               }
               aria-label="Refresh conversation"
-              className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-[#EAE6DF] text-[#6F675F] hover:bg-[#FFF7ED] disabled:opacity-50"
+              className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-[#EAE6DF] text-[#6F675F] transition hover:bg-[#FFF7ED] disabled:opacity-50"
             >
               <RefreshCw
                 className={`h-4 w-4 ${
-                  refreshing
-                    ? "animate-spin"
-                    : ""
+                  refreshing ? "animate-spin" : ""
                 }`}
               />
             </button>
           </div>
         </header>
 
-        {/* ERROR MESSAGE */}
+        {/* ------------------------------------------------- */}
+        {/* ERROR MESSAGE                                     */}
+        {/* ------------------------------------------------- */}
 
         {error && (
           <div
@@ -847,7 +1282,9 @@ export default function ServiceBookingMessagesPage() {
           </div>
         )}
 
-        {/* INITIAL LOADING */}
+        {/* ------------------------------------------------- */}
+        {/* INITIAL LOADING                                    */}
+        {/* ------------------------------------------------- */}
 
         {loading && !conversation ? (
           <div className="flex flex-1 items-center justify-center gap-2 p-10 text-sm text-[#81766D]">
@@ -856,9 +1293,12 @@ export default function ServiceBookingMessagesPage() {
           </div>
         ) : !conversation ? (
 
-          /* CONVERSATION UNAVAILABLE */
+          /* ----------------------------------------------- */
+          /* CONVERSATION UNAVAILABLE                         */
+          /* ----------------------------------------------- */
 
           <div className="flex flex-1 flex-col items-center justify-center p-8 text-center">
+
             <MessageSquare className="h-10 w-10 text-[#C4A99F]" />
 
             <h2 className="mt-4 text-base font-bold">
@@ -871,6 +1311,7 @@ export default function ServiceBookingMessagesPage() {
             </p>
 
             <div className="mt-5 flex flex-wrap justify-center gap-2">
+
               <Link
                 href="/buyer/login"
                 className="rounded-xl border border-[#EAE6DF] px-4 py-2.5 text-xs font-bold"
@@ -888,16 +1329,26 @@ export default function ServiceBookingMessagesPage() {
           </div>
         ) : (
 
-          /* CONVERSATION */
+          /* ----------------------------------------------- */
+          /* CONVERSATION                                     */
+          /* ----------------------------------------------- */
 
           <>
-            {/* MESSAGE HISTORY */}
 
-            <div className="flex-1 space-y-4 overflow-y-auto bg-[#FCFAF6] p-4 sm:p-6">
+            {/* ============================================= */}
+            {/* MESSAGE HISTORY                               */}
+            {/* ============================================= */}
+
+            <div
+              ref={messagesContainerRef}
+              onScroll={handleMessagesScroll}
+              className="flex-1 space-y-4 overflow-y-auto bg-[#FCFAF6] p-4 sm:p-6"
+            >
 
               {/* INFORMATION CARD */}
 
               <div className="mx-auto max-w-md rounded-2xl border border-[#EAE6DF] bg-white p-4 text-center">
+
                 <ShieldCheck className="mx-auto h-5 w-5 text-[#9F2D18]" />
 
                 <p className="mt-2 text-xs font-bold">
@@ -908,20 +1359,49 @@ export default function ServiceBookingMessagesPage() {
                   Messages here relate only to this service booking.
                   Keep booking arrangements within this conversation.
                 </p>
+
+                <p className="mt-2 text-[10px] text-[#A49A91]">
+                  {conversation.total.toLocaleString("en-NG")} messages
+                </p>
               </div>
 
-              {/* MESSAGE HISTORY LIMIT */}
+              {/* LOAD OLDER MESSAGES */}
 
               {conversation.hasMore && (
-                <p className="text-center text-[10px] text-[#A49A91]">
-                  Showing the latest 100 messages.
-                </p>
+                <div className="flex justify-center py-1">
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      void loadOlderMessages();
+                    }}
+                    disabled={
+                      loadingOlder ||
+                      loading ||
+                      refreshing
+                    }
+                    className="inline-flex min-h-10 items-center justify-center gap-2 rounded-xl border border-[#EAE6DF] bg-white px-4 py-2 text-xs font-bold text-[#6F675F] transition hover:border-[#FF5A36] hover:text-[#9F2D18] disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    {loadingOlder ? (
+                      <>
+                        <LoaderCircle className="h-4 w-4 animate-spin" />
+                        Loading older messages...
+                      </>
+                    ) : (
+                      <>
+                        <ArrowLeft className="h-3.5 w-3.5" />
+                        Load older messages
+                      </>
+                    )}
+                  </button>
+                </div>
               )}
 
               {/* EMPTY CONVERSATION */}
 
               {conversation.messages.length === 0 ? (
                 <div className="py-12 text-center">
+
                   <MessageSquare className="mx-auto h-8 w-8 text-[#C4A99F]" />
 
                   <p className="mt-3 text-sm font-bold text-[#514940]">
@@ -934,7 +1414,9 @@ export default function ServiceBookingMessagesPage() {
                 </div>
               ) : (
 
-                /* MESSAGE LIST */
+                /* ----------------------------------------- */
+                /* MESSAGE LIST                              */
+                /* ----------------------------------------- */
 
                 conversation.messages.map((message) => (
                   <div
@@ -945,6 +1427,7 @@ export default function ServiceBookingMessagesPage() {
                         : "justify-start"
                     }`}
                   >
+
                     <div
                       className={`max-w-[88%] px-4 py-3 shadow-sm sm:max-w-[75%] ${
                         message.isOwnMessage
@@ -952,6 +1435,7 @@ export default function ServiceBookingMessagesPage() {
                           : "rounded-2xl rounded-bl-sm border border-[#EAE6DF] bg-white text-[#292421]"
                       }`}
                     >
+
                       {/* SENDER */}
 
                       <p
@@ -966,7 +1450,7 @@ export default function ServiceBookingMessagesPage() {
                           : message.senderName}
                       </p>
 
-                      {/* MESSAGE */}
+                      {/* MESSAGE BODY */}
 
                       <p className="whitespace-pre-wrap break-words text-sm leading-6">
                         {message.body}
@@ -997,20 +1481,26 @@ export default function ServiceBookingMessagesPage() {
                 ))
               )}
 
-              <div ref={bottomRef} />
             </div>
 
-            {/* MESSAGE COMPOSER */}
+            {/* ============================================= */}
+            {/* MESSAGE COMPOSER                             */}
+            {/* ============================================= */}
 
             <div className="border-t border-[#EAE6DF] bg-white p-4 sm:p-5">
+
               {!canSend ? (
+
                 <div className="rounded-xl bg-[#FFF5D9] p-3 text-center text-xs leading-5 text-[#8A6200]">
-                  {status === "PENDING"
-                    ? "Messaging becomes available when the provider accepts this booking."
-                    : "This booking is no longer accepting messages."}
+                  {isClosed
+                    ? "This booking is closed. You can still read your previous messages."
+                    : "Messaging is currently unavailable for this booking."}
                 </div>
+
               ) : (
+
                 <form onSubmit={sendMessage}>
+
                   <label
                     htmlFor="booking-message"
                     className="mb-2 block text-xs font-bold text-[#514940]"
@@ -1021,19 +1511,20 @@ export default function ServiceBookingMessagesPage() {
                   <textarea
                     id="booking-message"
                     value={draft}
-                    onChange={(event) =>
-                      setDraft(event.target.value)
-                    }
+                    onChange={(event) => {
+                      setDraft(event.target.value);
+                    }}
                     rows={3}
-                    maxLength={2000}
+                    maxLength={MAX_MESSAGE_LENGTH}
                     placeholder="Write a message about this booking..."
                     disabled={sending}
-                    className="w-full resize-y rounded-xl border border-[#EAE6DF] bg-[#FCFAF6] p-3 text-sm outline-none focus:border-[#FF5A36] disabled:opacity-60"
+                    className="w-full resize-y rounded-xl border border-[#EAE6DF] bg-[#FCFAF6] p-3 text-sm outline-none transition focus:border-[#FF5A36] disabled:opacity-60"
                   />
 
                   <div className="mt-2 flex items-center justify-between gap-3">
+
                     <span className="text-[10px] text-[#A49A91]">
-                      {draft.length}/2000
+                      {draft.length}/{MAX_MESSAGE_LENGTH}
                     </span>
 
                     <button
@@ -1041,7 +1532,7 @@ export default function ServiceBookingMessagesPage() {
                       disabled={
                         sending ||
                         !draft.trim() ||
-                        draft.trim().length > 2000
+                        draft.trim().length > MAX_MESSAGE_LENGTH
                       }
                       className="inline-flex min-h-11 items-center justify-center gap-2 rounded-xl bg-[#FF5A36] px-5 text-xs font-bold text-white transition hover:bg-[#E94C2A] disabled:cursor-not-allowed disabled:opacity-50"
                     >

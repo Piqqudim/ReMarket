@@ -1,3 +1,4 @@
+
 "use client";
 
 import Link from "next/link";
@@ -23,6 +24,7 @@ import {
   ChevronLeft,
   ChevronRight,
   RefreshCw,
+  CalendarDays,
 } from "lucide-react";
 
 import {
@@ -126,6 +128,7 @@ function normalizeRegisteredBusiness(value: unknown): RegisteredBusiness | null 
   const name = value.name;
   const status = value.status;
   const verification = value.verification;
+
   const onboardedAt =
     typeof value.onboardedAt === "string"
       ? value.onboardedAt
@@ -148,15 +151,22 @@ function normalizeRegisteredBusiness(value: unknown): RegisteredBusiness | null 
     name,
     status,
     verification,
-    availability: typeof value.availability === "string" ? value.availability : null,
+    availability:
+      typeof value.availability === "string"
+        ? value.availability
+        : null,
     area:
       typeof value.area === "string"
         ? value.area
-        : isRecord(value.location) && typeof value.location.area === "string"
+        : isRecord(value.location) &&
+            typeof value.location.area === "string"
           ? value.location.area
           : null,
     onboardedAt,
-    deletedAt: typeof value.deletedAt === "string" ? value.deletedAt : null,
+    deletedAt:
+      typeof value.deletedAt === "string"
+        ? value.deletedAt
+        : null,
   };
 }
 
@@ -164,10 +174,13 @@ function businessStatusClass(status: string): string {
   switch (status) {
     case "ACTIVE":
       return "bg-[#E7F7EF] text-[#287A4B]";
+
     case "PENDING":
       return "bg-[#FFF0D9] text-[#9F5A18]";
+
     case "INACTIVE":
       return "bg-[#F0ECE7] text-[#6F675F]";
+
     default:
       return "bg-[#F0ECE7] text-[#6F675F]";
   }
@@ -188,6 +201,11 @@ const ADMIN_NAV = [
     label: "Products",
     href: "/admin/products",
     icon: Package,
+  },
+  {
+    label: "Service bookings",
+    href: "/admin/bookings",
+    icon: CalendarDays,
   },
   {
     label: "Requests",
@@ -225,9 +243,7 @@ function formatDate(value: string) {
   });
 }
 
-function statusClass(
-  status: string
-) {
+function statusClass(status: string) {
   switch (status) {
     case "MATCHED":
       return "bg-[#E7F7EF] text-[#287A4B]";
@@ -246,9 +262,7 @@ function statusClass(
   }
 }
 
-function verificationClass(
-  verification: string
-) {
+function verificationClass(verification: string) {
   switch (verification) {
     case "VERIFIED":
       return "bg-[#E7F7EF] text-[#287A4B]";
@@ -415,57 +429,42 @@ function OperationCard({
 }
 
 export default function AdminPage() {
-  const pathname =
-    usePathname();
+  const pathname = usePathname();
 
-  const [
-    data,
-    setData,
-  ] =
-    useState<Overview | null>(
-      null
-    );
+  const [data, setData] = useState<Overview | null>(null);
 
-  const [
-    contactActivity,
-    setContactActivity,
-  ] =
-    useState<ContactActivity>(
-      DEFAULT_CONTACT_ACTIVITY
-    );
+  const [contactActivity, setContactActivity] =
+    useState<ContactActivity>(DEFAULT_CONTACT_ACTIVITY);
 
-  const [
-    loading,
-    setLoading,
-  ] =
-    useState(true);
+  const [loading, setLoading] = useState(true);
 
-  const [
-    error,
-    setError,
-  ] =
-    useState("");
+  const [error, setError] = useState("");
 
   const [registeredBusinesses, setRegisteredBusinesses] =
     useState<RegisteredBusiness[]>([]);
+
   const [businessDirectoryLoading, setBusinessDirectoryLoading] =
     useState(true);
+
   const [businessDirectoryError, setBusinessDirectoryError] =
     useState("");
+
   const [businessPage, setBusinessPage] = useState(1);
-  const [businessDirectoryTotal, setBusinessDirectoryTotal] = useState(0);
-  const [businessDirectoryTotalPages, setBusinessDirectoryTotalPages] = useState(0);
+
+  const [businessDirectoryTotal, setBusinessDirectoryTotal] =
+    useState(0);
+
+  const [businessDirectoryTotalPages, setBusinessDirectoryTotalPages] =
+    useState(0);
+
   const [businessReloadKey, setBusinessReloadKey] = useState(0);
 
   async function handleLogout() {
     try {
       await signOut({
-        callbackUrl:
-          "/admin/login",
+        callbackUrl: "/admin/login",
       });
-    } catch (
-      logoutError
-    ) {
+    } catch (logoutError) {
       console.error(
         "Admin logout error:",
         logoutError
@@ -473,26 +472,29 @@ export default function AdminPage() {
     }
   }
 
+  /*
+   * -------------------------------------------------------
+   * LOAD ADMIN OVERVIEW
+   * -------------------------------------------------------
+   */
+
   useEffect(() => {
-    let cancelled =
-      false;
+    let cancelled = false;
 
     async function loadOverview() {
       try {
         setLoading(true);
         setError("");
 
-        const response =
-          await fetch(
-            "/api/admin/overview",
-            {
-              cache: "no-store",
-            }
-          );
+        const response = await fetch(
+          "/api/admin/overview",
+          {
+            cache: "no-store",
+          }
+        );
 
         if (!response.ok) {
-          const body =
-            await response.text();
+          const body = await response.text();
 
           console.error(
             "Admin overview request failed:",
@@ -505,8 +507,7 @@ export default function AdminPage() {
           );
         }
 
-        const result: Overview =
-          await response.json();
+        const result: Overview = await response.json();
 
         if (cancelled) {
           return;
@@ -518,9 +519,7 @@ export default function AdminPage() {
           result.contactActivity ??
             DEFAULT_CONTACT_ACTIVITY
         );
-      } catch (
-        error
-      ) {
+      } catch (error) {
         console.error(error);
 
         if (!cancelled) {
@@ -543,12 +542,14 @@ export default function AdminPage() {
   }, []);
 
   /*
-   * Load one page of the registered-business directory from the server.
-   * Pagination, record counts and newest-first ordering are provided by the
-   * protected admin API; the browser never downloads the full directory.
+   * -------------------------------------------------------
+   * LOAD REGISTERED BUSINESSES
+   * -------------------------------------------------------
    */
+
   useEffect(() => {
     let cancelled = false;
+
     const controller = new AbortController();
 
     async function loadRegisteredBusinesses() {
@@ -565,7 +566,11 @@ export default function AdminPage() {
 
         const response = await fetch(
           `/api/admin/businesses?${params.toString()}`,
-          { method: "GET", cache: "no-store", signal: controller.signal }
+          {
+            method: "GET",
+            cache: "no-store",
+            signal: controller.signal,
+          }
         );
 
         const result: unknown = await response.json().catch(() => null);
@@ -575,6 +580,7 @@ export default function AdminPage() {
             isRecord(result) && typeof result.error === "string"
               ? result.error
               : "Unable to load registered businesses.";
+
           throw new Error(message);
         }
 
@@ -583,10 +589,13 @@ export default function AdminPage() {
           !Array.isArray(result.businesses) ||
           !isRecord(result.pagination)
         ) {
-          throw new Error("The registered-business response did not include valid pagination information.");
+          throw new Error(
+            "The registered-business response did not include valid pagination information."
+          );
         }
 
         const pagination = result.pagination;
+
         if (
           typeof pagination.page !== "number" ||
           typeof pagination.total !== "number" ||
@@ -597,12 +606,17 @@ export default function AdminPage() {
           pagination.total < 0 ||
           pagination.totalPages < 0
         ) {
-          throw new Error("The registered-business pagination response was invalid.");
+          throw new Error(
+            "The registered-business pagination response was invalid."
+          );
         }
 
         const businesses = result.businesses
           .map(normalizeRegisteredBusiness)
-          .filter((business): business is RegisteredBusiness => business !== null);
+          .filter(
+            (business): business is RegisteredBusiness =>
+              business !== null
+          );
 
         if (cancelled) return;
 
@@ -611,19 +625,30 @@ export default function AdminPage() {
         setBusinessDirectoryTotalPages(pagination.totalPages);
 
         // If the directory shrank while on a later page, return to a valid page.
-        if (pagination.totalPages > 0 && businessPage > pagination.totalPages) {
+        if (
+          pagination.totalPages > 0 &&
+          businessPage > pagination.totalPages
+        ) {
           setBusinessPage(pagination.totalPages);
-        } else if (pagination.totalPages === 0 && businessPage !== 1) {
+        } else if (
+          pagination.totalPages === 0 &&
+          businessPage !== 1
+        ) {
           setBusinessPage(1);
         }
       } catch (loadError) {
         if (controller.signal.aborted) return;
-        console.error("Load registered businesses error:", loadError);
+
+        console.error(
+          "Load registered businesses error:",
+          loadError
+        );
 
         if (!cancelled) {
           setRegisteredBusinesses([]);
           setBusinessDirectoryTotal(0);
           setBusinessDirectoryTotalPages(0);
+
           setBusinessDirectoryError(
             loadError instanceof Error
               ? loadError.message
@@ -631,7 +656,9 @@ export default function AdminPage() {
           );
         }
       } finally {
-        if (!cancelled) setBusinessDirectoryLoading(false);
+        if (!cancelled) {
+          setBusinessDirectoryLoading(false);
+        }
       }
     }
 
@@ -643,22 +670,49 @@ export default function AdminPage() {
     };
   }, [businessReloadKey, businessPage]);
 
-  const businessTotalPages = Math.max(1, businessDirectoryTotalPages);
-  const safeBusinessPage = Math.min(businessPage, businessTotalPages);
-  const businessStartIndex = businessDirectoryTotal === 0
-    ? 0
-    : (safeBusinessPage - 1) * REGISTERED_BUSINESSES_PAGE_SIZE;
+  /*
+   * -------------------------------------------------------
+   * REGISTERED BUSINESS PAGINATION
+   * -------------------------------------------------------
+   */
+
+  const businessTotalPages = Math.max(
+    1,
+    businessDirectoryTotalPages
+  );
+
+  const safeBusinessPage = Math.min(
+    businessPage,
+    businessTotalPages
+  );
+
+  const businessStartIndex =
+    businessDirectoryTotal === 0
+      ? 0
+      : (safeBusinessPage - 1) *
+        REGISTERED_BUSINESSES_PAGE_SIZE;
+
   const businessEndIndex = Math.min(
-    safeBusinessPage * REGISTERED_BUSINESSES_PAGE_SIZE,
+    safeBusinessPage *
+      REGISTERED_BUSINESSES_PAGE_SIZE,
     businessDirectoryTotal
   );
+
   const pagedRegisteredBusinesses = registeredBusinesses;
+
+  /*
+   * -------------------------------------------------------
+   * RENDER
+   * -------------------------------------------------------
+   */
 
   return (
     <div className="min-h-dvh w-full overflow-x-hidden bg-[#FAF6EF] text-[#2E241F]">
       <div className="flex min-h-dvh w-full">
 
-        {/* Sidebar */}
+        {/* =================================================
+            DESKTOP SIDEBAR
+        ================================================= */}
 
         <aside className="hidden w-64 shrink-0 border-r border-[#E8DED3] bg-[#FFFDFC] lg:block">
           <div className="sticky top-0 flex h-dvh flex-col">
@@ -690,47 +744,33 @@ export default function AdminPage() {
               </p>
 
               <div className="space-y-1">
-                {ADMIN_NAV.map(
-                  (item) => {
-                    const Icon =
-                      item.icon;
+                {ADMIN_NAV.map((item) => {
+                  const Icon = item.icon;
 
-                    const active =
-                      item.href ===
-                      "/admin"
-                        ? pathname ===
-                          "/admin"
-                        : pathname ===
-                            item.href ||
-                          pathname.startsWith(
-                            `${item.href}/`
-                          );
+                  const active =
+                    item.href === "/admin"
+                      ? pathname === "/admin"
+                      : pathname === item.href ||
+                        pathname.startsWith(
+                          `${item.href}/`
+                        );
 
-                    return (
-                      <Link
-                        key={
-                          item.href
-                        }
-                        href={
-                          item.href
-                        }
-                        className={`flex items-center gap-3 rounded-xl px-3 py-3 text-sm font-medium transition ${
-                          active
-                            ? "bg-[#FFF0E8] text-[#9F2D18]"
-                            : "text-[#6F675F] hover:bg-[#F7F1EB] hover:text-[#2E241F]"
-                        }`}
-                      >
-                        <Icon className="h-4 w-4" />
+                  return (
+                    <Link
+                      key={item.href}
+                      href={item.href}
+                      className={`flex items-center gap-3 rounded-xl px-3 py-3 text-sm font-medium transition ${
+                        active
+                          ? "bg-[#FFF0E8] text-[#9F2D18]"
+                          : "text-[#6F675F] hover:bg-[#F7F1EB] hover:text-[#2E241F]"
+                      }`}
+                    >
+                      <Icon className="h-4 w-4" />
 
-                        <span>
-                          {
-                            item.label
-                          }
-                        </span>
-                      </Link>
-                    );
-                  }
-                )}
+                      <span>{item.label}</span>
+                    </Link>
+                  );
+                })}
               </div>
             </nav>
 
@@ -749,9 +789,7 @@ export default function AdminPage() {
 
               <button
                 type="button"
-                onClick={() =>
-                  void handleLogout()
-                }
+                onClick={() => void handleLogout()}
                 className="
                   flex
                   w-full
@@ -770,20 +808,20 @@ export default function AdminPage() {
               >
                 <LogOut className="h-4 w-4" />
 
-                <span>
-                  Log out
-                </span>
+                <span>Log out</span>
               </button>
             </div>
           </div>
         </aside>
 
-        {/* Main */}
+        {/* =================================================
+            MAIN CONTENT
+        ================================================= */}
 
         <main className="min-w-0 flex-1">
           <div className="mx-auto w-full max-w-7xl px-3 pt-5 pb-36 sm:px-6 sm:pt-6 lg:px-8 lg:py-8 lg:pb-8">
 
-            {/* Header */}
+            {/* HEADER */}
 
             <div className="mb-8">
               <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
@@ -814,9 +852,7 @@ export default function AdminPage() {
 
                   <button
                     type="button"
-                    onClick={() =>
-                      void handleLogout()
-                    }
+                    onClick={() => void handleLogout()}
                     className="
                       inline-flex
                       items-center
@@ -848,7 +884,7 @@ export default function AdminPage() {
               </div>
             </div>
 
-            {/* Error */}
+            {/* ERROR */}
 
             {error && (
               <div className="mb-6 rounded-2xl border border-[#F1C5BF] bg-[#FFF4F2] px-5 py-4">
@@ -858,48 +894,30 @@ export default function AdminPage() {
               </div>
             )}
 
-            {/* Loading */}
+            {/* LOADING */}
 
             {loading ? (
               <div className="space-y-6">
 
                 <div className="grid grid-cols-2 gap-4 xl:grid-cols-6">
-                  {Array.from({
-                    length: 6,
-                  }).map(
-                    (
-                      _,
-                      index
-                    ) => (
-                      <div
-                        key={
-                          index
-                        }
-                        className="h-32 animate-pulse rounded-2xl border border-[#E8DED3] bg-white"
-                      />
-                    )
-                  )}
+                  {Array.from({ length: 6 }).map((_, index) => (
+                    <div
+                      key={index}
+                      className="h-32 animate-pulse rounded-2xl border border-[#E8DED3] bg-white"
+                    />
+                  ))}
                 </div>
 
                 <div>
                   <div className="h-7 w-40 animate-pulse rounded bg-[#EAE3DC]" />
 
                   <div className="mt-4 grid grid-cols-2 gap-4 md:grid-cols-3 xl:grid-cols-5">
-                    {Array.from({
-                      length: 5,
-                    }).map(
-                      (
-                        _,
-                        index
-                      ) => (
-                        <div
-                          key={
-                            index
-                          }
-                          className="h-36 animate-pulse rounded-2xl border border-[#E8DED3] bg-white"
-                        />
-                      )
-                    )}
+                    {Array.from({ length: 5 }).map((_, index) => (
+                      <div
+                        key={index}
+                        className="h-36 animate-pulse rounded-2xl border border-[#E8DED3] bg-white"
+                      />
+                    ))}
                   </div>
                 </div>
 
@@ -914,90 +932,58 @@ export default function AdminPage() {
             ) : data ? (
               <>
 
-                {/* Stats */}
+                {/* =================================================
+                    STATISTICS
+                ================================================= */}
 
                 <section>
                   <div className="grid grid-cols-2 gap-4 xl:grid-cols-6">
 
                     <StatCard
                       label="Businesses"
-                      value={
-                        data
-                          .stats
-                          .businesses
-                      }
-                      icon={
-                        Store
-                      }
+                      value={data.stats.businesses}
+                      icon={Store}
                       href="/admin/businesses"
                     />
 
                     <StatCard
                       label="Products"
-                      value={
-                        data
-                          .stats
-                          .products
-                      }
-                      icon={
-                        Package
-                      }
+                      value={data.stats.products}
+                      icon={Package}
                       href="/admin/products"
                     />
 
                     <StatCard
                       label="Requests"
-                      value={
-                        data
-                          .stats
-                          .requests
-                      }
-                      icon={
-                        ClipboardList
-                      }
+                      value={data.stats.requests}
+                      icon={ClipboardList}
                       href="/admin/requests"
                     />
 
                     <StatCard
                       label="Matches"
-                      value={
-                        data
-                          .stats
-                          .matches
-                      }
-                      icon={
-                        Users
-                      }
+                      value={data.stats.matches}
+                      icon={Users}
                     />
 
                     <StatCard
                       label="Seller contacts"
-                      value={
-                        data
-                          .stats
-                          .contacts
-                      }
-                      icon={
-                        Contact
-                      }
+                      value={data.stats.contacts}
+                      icon={Contact}
                     />
 
                     <StatCard
                       label="Business views"
-                      value={
-                        data
-                          .stats
-                          .businessViews
-                      }
-                      icon={
-                        Eye
-                      }
+                      value={data.stats.businessViews}
+                      icon={Eye}
                     />
 
                   </div>
                 </section>
 
-                {/* Operations */}
+                {/* =================================================
+                    PLATFORM OPERATIONS
+                ================================================= */}
 
                 <section className="mt-6">
                   <div className="mb-4">
@@ -1018,89 +1004,55 @@ export default function AdminPage() {
 
                     <OperationCard
                       label="Seller accounts"
-                      value={
-                        data
-                          .operations
-                          .sellerAccounts
-                      }
+                      value={data.operations.sellerAccounts}
                       description="Registered seller accounts"
-                      icon={
-                        UserRound
-                      }
+                      icon={UserRound}
                     />
 
                     <OperationCard
                       label="Pending deletions"
-                      value={
-                        data
-                          .operations
-                          .pendingDeletionRequests
-                      }
+                      value={data.operations.pendingDeletionRequests}
                       description="Business deletion requests awaiting review"
-                      icon={
-                        Trash2
-                      }
+                      icon={Trash2}
                       href="/admin/business-deletion-requests"
                       attention={
-                        data
-                          .operations
-                          .pendingDeletionRequests >
-                        0
+                        data.operations.pendingDeletionRequests > 0
                       }
                     />
 
                     <OperationCard
                       label="Pending claims"
-                      value={
-                        data
-                          .operations
-                          .pendingClaimRequests
-                      }
+                      value={data.operations.pendingClaimRequests}
                       description="Business ownership claims awaiting review"
-                      icon={
-                        AlertCircle
-                      }
+                      icon={AlertCircle}
                       href="/admin/claims"
                       attention={
-                        data
-                          .operations
-                          .pendingClaimRequests >
-                        0
+                        data.operations.pendingClaimRequests > 0
                       }
                     />
 
                     <OperationCard
                       label="Categories"
-                      value={
-                        data
-                          .operations
-                          .categories
-                      }
+                      value={data.operations.categories}
                       description={`${data.operations.activeCategories} active categories`}
-                      icon={
-                        Tags
-                      }
+                      icon={Tags}
                       href="/admin/categories"
                     />
 
                     <OperationCard
                       label="Active categories"
-                      value={
-                        data
-                          .operations
-                          .activeCategories
-                      }
+                      value={data.operations.activeCategories}
                       description="Categories currently available to the platform"
-                      icon={
-                        Tags
-                      }
+                      icon={Tags}
                       href="/admin/categories"
                     />
 
                   </div>
                 </section>
 
-                {/* Contact Activity */}
+                {/* =================================================
+                    CONTACT ACTIVITY
+                ================================================= */}
 
                 <section className="mt-6">
                   <div className="mb-4 flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between">
@@ -1120,78 +1072,50 @@ export default function AdminPage() {
 
                     <ContactActivityCard
                       label="WhatsApp"
-                      value={
-                        contactActivity
-                          .WHATSAPP
-                      }
-                      icon={
-                        Contact
-                      }
+                      value={contactActivity.WHATSAPP}
+                      icon={Contact}
                     />
 
                     <ContactActivityCard
                       label="Phone"
-                      value={
-                        contactActivity
-                          .PHONE
-                      }
-                      icon={
-                        Phone
-                      }
+                      value={contactActivity.PHONE}
+                      icon={Phone}
                     />
 
                     <ContactActivityCard
                       label="Instagram"
-                      value={
-                        contactActivity
-                          .INSTAGRAM
-                      }
-                      icon={
-                        ExternalLink
-                      }
+                      value={contactActivity.INSTAGRAM}
+                      icon={ExternalLink}
                     />
 
                     <ContactActivityCard
                       label="TikTok"
-                      value={
-                        contactActivity
-                          .TIKTOK
-                      }
-                      icon={
-                        Contact
-                      }
+                      value={contactActivity.TIKTOK}
+                      icon={Contact}
                     />
 
                     <ContactActivityCard
                       label="Facebook"
-                      value={
-                        contactActivity
-                          .FACEBOOK
-                      }
-                      icon={
-                        ExternalLink
-                      }
+                      value={contactActivity.FACEBOOK}
+                      icon={ExternalLink}
                     />
 
                     <ContactActivityCard
                       label="Directions"
-                      value={
-                        contactActivity
-                          .DIRECTIONS
-                      }
-                      icon={
-                        MapPin
-                      }
+                      value={contactActivity.DIRECTIONS}
+                      icon={MapPin}
                     />
 
                   </div>
                 </section>
 
-                {/* Recent data */}
+                {/* =================================================
+                    RECENT DATA
+                ================================================= */}
 
                 <section className="mt-6 grid gap-6 xl:grid-cols-2">
 
-                  {/* Recent Requests */}
+                  {/* RECENT REQUESTS */}
 
                   <div className="rounded-2xl border border-[#E8DED3] bg-white">
                     <div className="flex items-center justify-between border-b border-[#E8DED3] px-5 py-4">
@@ -1201,8 +1125,7 @@ export default function AdminPage() {
                         </h2>
 
                         <p className="mt-1 text-xs text-[#8B8178]">
-                          Latest buyer
-                          requests
+                          Latest buyer requests
                         </p>
                       </div>
 
@@ -1216,10 +1139,7 @@ export default function AdminPage() {
                     </div>
 
                     <div className="divide-y divide-[#E8DED3]">
-                      {data
-                        .recentRequests
-                        .length ===
-                      0 ? (
+                      {data.recentRequests.length === 0 ? (
                         <div className="px-5 py-10 text-center">
                           <ClipboardList className="mx-auto h-8 w-8 text-[#B8AEA5]" />
 
@@ -1228,108 +1148,95 @@ export default function AdminPage() {
                           </p>
                         </div>
                       ) : (
-                        data.recentRequests.map(
-                          (
-                            request
-                          ) => (
-                            <div
-                              key={
-                                request.id
-                              }
-                              className="px-5 py-4"
-                            >
-                              <div className="flex items-start justify-between gap-4">
-                                <div className="min-w-0">
-                                  <p className="truncate text-sm font-semibold text-[#2E241F]">
-                                    {
-                                      request.query
-                                    }
-                                  </p>
+                        data.recentRequests.map((request) => (
+                          <div
+                            key={request.id}
+                            className="px-5 py-4"
+                          >
+                            <div className="flex items-start justify-between gap-4">
+                              <div className="min-w-0">
+                                <p className="truncate text-sm font-semibold text-[#2E241F]">
+                                  {request.query}
+                                </p>
 
-                                  <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-[#8B8178]">
-                                    <span>
-                                      {
-                                        request.requestCode
-                                      }
-                                    </span>
+                                <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-[#8B8178]">
+                                  <span>
+                                    {request.requestCode}
+                                  </span>
 
-                                    {request
-                                      .category
-                                      ?.name && (
-                                      <>
-                                        <span>
-                                          •
-                                        </span>
+                                  {request.category?.name && (
+                                    <>
+                                      <span>•</span>
 
-                                        <span>
-                                          {
-                                            request
-                                              .category
-                                              .name
-                                          }
-                                        </span>
-                                      </>
-                                    )}
+                                      <span>
+                                        {request.category.name}
+                                      </span>
+                                    </>
+                                  )}
 
-                                    <span>
-                                      •
-                                    </span>
+                                  <span>•</span>
 
-                                    <span>
-                                      {
-                                        request.matchCount
-                                      }{" "}
-                                      {request.matchCount ===
-                                      1
-                                        ? "match"
-                                        : "matches"}
-                                    </span>
-                                  </div>
+                                  <span>
+                                    {request.matchCount}{" "}
+                                    {request.matchCount === 1
+                                      ? "match"
+                                      : "matches"}
+                                  </span>
                                 </div>
-
-                                <span
-                                  className={`shrink-0 rounded-full px-2.5 py-1 text-[11px] font-semibold ${statusClass(
-                                    request.status
-                                  )}`}
-                                >
-                                  {
-                                    request.status
-                                  }
-                                </span>
                               </div>
 
-                              <p className="mt-2 text-xs text-[#9A9087]">
-                                {formatDate(
-                                  request.createdAt
-                                )}
-                              </p>
+                              <span
+                                className={`shrink-0 rounded-full px-2.5 py-1 text-[11px] font-semibold ${statusClass(
+                                  request.status
+                                )}`}
+                              >
+                                {request.status}
+                              </span>
                             </div>
-                          )
-                        )
+
+                            <p className="mt-2 text-xs text-[#9A9087]">
+                              {formatDate(request.createdAt)}
+                            </p>
+                          </div>
+                        ))
                       )}
                     </div>
                   </div>
 
-                  {/* Registered businesses: paged directory */}
+                  {/* REGISTERED BUSINESSES */}
 
                   <div className="min-w-0 rounded-2xl border border-[#E8DED3] bg-white xl:col-span-1">
                     <div className="flex flex-col gap-3 border-b border-[#E8DED3] px-4 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-5">
                       <div className="min-w-0">
-                        <h2 className="font-semibold text-[#2E241F]">Registered businesses</h2>
+                        <h2 className="font-semibold text-[#2E241F]">
+                          Registered businesses
+                        </h2>
+
                         <p className="mt-1 text-xs leading-5 text-[#8B8178]">
                           Browse all businesses registered on ReMarket, newest first.
                         </p>
                       </div>
+
                       <div className="flex shrink-0 items-center gap-2">
                         <button
                           type="button"
-                          onClick={() => setBusinessReloadKey((key) => key + 1)}
+                          onClick={() =>
+                            setBusinessReloadKey((key) => key + 1)
+                          }
                           disabled={businessDirectoryLoading}
                           className="inline-flex h-9 items-center justify-center gap-2 rounded-xl border border-[#E8DED3] bg-white px-3 text-xs font-semibold text-[#6F675F] transition hover:bg-[#FFF0E8] hover:text-[#9F2D18] disabled:cursor-not-allowed disabled:opacity-60"
                         >
-                          <RefreshCw className={`h-3.5 w-3.5 ${businessDirectoryLoading ? "animate-spin" : ""}`} />
+                          <RefreshCw
+                            className={`h-3.5 w-3.5 ${
+                              businessDirectoryLoading
+                                ? "animate-spin"
+                                : ""
+                            }`}
+                          />
+
                           Refresh
                         </button>
+
                         <Link
                           href="/admin/businesses"
                           className="inline-flex h-9 items-center gap-1 rounded-xl bg-[#FFF0E8] px-3 text-xs font-semibold text-[#9F2D18] hover:bg-[#FFE3D7]"
@@ -1341,19 +1248,33 @@ export default function AdminPage() {
                     </div>
 
                     {businessDirectoryLoading ? (
-                      <div className="space-y-3 p-4 sm:p-5" aria-label="Loading registered businesses">
+                      <div
+                        className="space-y-3 p-4 sm:p-5"
+                        aria-label="Loading registered businesses"
+                      >
                         {Array.from({ length: 4 }).map((_, index) => (
-                          <div key={index} className="h-[68px] animate-pulse rounded-xl bg-[#F7F1EB]" />
+                          <div
+                            key={index}
+                            className="h-[68px] animate-pulse rounded-xl bg-[#F7F1EB]"
+                          />
                         ))}
                       </div>
                     ) : businessDirectoryError ? (
                       <div className="p-5">
                         <div className="rounded-xl border border-[#F1C5BF] bg-[#FFF4F2] p-4">
-                          <p className="text-sm font-semibold text-[#B42318]">Unable to load the business directory</p>
-                          <p className="mt-1 text-xs leading-5 text-[#8B8178]">{businessDirectoryError}</p>
+                          <p className="text-sm font-semibold text-[#B42318]">
+                            Unable to load the business directory
+                          </p>
+
+                          <p className="mt-1 text-xs leading-5 text-[#8B8178]">
+                            {businessDirectoryError}
+                          </p>
+
                           <button
                             type="button"
-                            onClick={() => setBusinessReloadKey((key) => key + 1)}
+                            onClick={() =>
+                              setBusinessReloadKey((key) => key + 1)
+                            }
                             className="mt-3 inline-flex items-center gap-2 rounded-lg bg-white px-3 py-2 text-xs font-semibold text-[#9F2D18] ring-1 ring-[#F1C5BF] hover:bg-[#FFF0E8]"
                           >
                             <RefreshCw className="h-3.5 w-3.5" />
@@ -1364,31 +1285,50 @@ export default function AdminPage() {
                     ) : registeredBusinesses.length === 0 ? (
                       <div className="px-5 py-10 text-center">
                         <Store className="mx-auto h-8 w-8 text-[#B8AEA5]" />
-                        <p className="mt-3 text-sm font-medium text-[#6F675F]">No registered businesses yet</p>
-                        <p className="mt-1 text-xs leading-5 text-[#8B8178]">Businesses will appear here after they are registered.</p>
+
+                        <p className="mt-3 text-sm font-medium text-[#6F675F]">
+                          No registered businesses yet
+                        </p>
+
+                        <p className="mt-1 text-xs leading-5 text-[#8B8178]">
+                          Businesses will appear here after they are registered.
+                        </p>
                       </div>
                     ) : (
                       <>
                         <div className="divide-y divide-[#E8DED3]">
                           {pagedRegisteredBusinesses.map((business) => (
-                            <div key={business.id} className="min-w-0 px-4 py-4 sm:px-5">
+                            <div
+                              key={business.id}
+                              className="min-w-0 px-4 py-4 sm:px-5"
+                            >
                               <div className="flex min-w-0 items-start justify-between gap-3">
                                 <div className="min-w-0 flex-1">
                                   <Link
-                                    href={`/admin/businesses/${encodeURIComponent(business.id)}`}
+                                    href={`/admin/businesses/${encodeURIComponent(
+                                      business.id
+                                    )}`}
                                     className="block truncate text-sm font-semibold text-[#2E241F] hover:text-[#9F2D18] hover:underline"
                                     title={business.name}
                                   >
                                     {business.name}
                                   </Link>
+
                                   <p className="mt-1 truncate text-xs text-[#8B8178]">
                                     {business.area || "Area not provided"}
-                                    <span className="px-1.5">·</span>
+
+                                    <span className="px-1.5">
+                                      ·
+                                    </span>
+
                                     {formatDate(business.onboardedAt)}
                                   </p>
                                 </div>
+
                                 <Link
-                                  href={`/admin/businesses/${encodeURIComponent(business.id)}`}
+                                  href={`/admin/businesses/${encodeURIComponent(
+                                    business.id
+                                  )}`}
                                   aria-label={`View ${business.name}`}
                                   title="View business"
                                   className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-[#E8DED3] text-[#6F675F] hover:border-[#D8C9BC] hover:bg-[#FFF0E8] hover:text-[#9F2D18]"
@@ -1396,13 +1336,24 @@ export default function AdminPage() {
                                   <ExternalLink className="h-3.5 w-3.5" />
                                 </Link>
                               </div>
+
                               <div className="mt-2 flex flex-wrap items-center gap-1.5">
-                                <span className={`rounded-full px-2 py-1 text-[10px] font-semibold ${verificationClass(business.verification)}`}>
+                                <span
+                                  className={`rounded-full px-2 py-1 text-[10px] font-semibold ${verificationClass(
+                                    business.verification
+                                  )}`}
+                                >
                                   {business.verification}
                                 </span>
-                                <span className={`rounded-full px-2 py-1 text-[10px] font-semibold ${businessStatusClass(business.status)}`}>
+
+                                <span
+                                  className={`rounded-full px-2 py-1 text-[10px] font-semibold ${businessStatusClass(
+                                    business.status
+                                  )}`}
+                                >
                                   {business.status}
                                 </span>
+
                                 {business.deletedAt && (
                                   <span className="rounded-full bg-[#FCE8E6] px-2 py-1 text-[10px] font-semibold text-[#B42318]">
                                     Deleted
@@ -1413,27 +1364,55 @@ export default function AdminPage() {
                           ))}
                         </div>
 
+                        {/* BUSINESS DIRECTORY PAGINATION */}
+
                         <div className="flex flex-col gap-3 border-t border-[#E8DED3] px-4 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-5">
-                          <p className="text-xs text-[#8B8178]" aria-live="polite">
-                            Showing {businessStartIndex === 0 && businessDirectoryTotal === 0 ? 0 : businessStartIndex + 1}–{businessEndIndex} of {businessDirectoryTotal} businesses
+                          <p
+                            className="text-xs text-[#8B8178]"
+                            aria-live="polite"
+                          >
+                            Showing{" "}
+                            {businessStartIndex === 0 &&
+                            businessDirectoryTotal === 0
+                              ? 0
+                              : businessStartIndex + 1}
+                            –{businessEndIndex} of{" "}
+                            {businessDirectoryTotal} businesses
                           </p>
+
                           <div className="flex items-center justify-between gap-2 sm:justify-end">
                             <button
                               type="button"
-                              onClick={() => setBusinessPage((page) => Math.max(1, page - 1))}
+                              onClick={() =>
+                                setBusinessPage((page) =>
+                                  Math.max(1, page - 1)
+                                )
+                              }
                               disabled={safeBusinessPage <= 1}
                               className="inline-flex h-9 items-center gap-1 rounded-xl border border-[#E8DED3] bg-white px-3 text-xs font-semibold text-[#6F675F] transition hover:bg-[#FFF0E8] hover:text-[#9F2D18] disabled:cursor-not-allowed disabled:opacity-40"
                             >
                               <ChevronLeft className="h-4 w-4" />
                               Previous
                             </button>
+
                             <span className="whitespace-nowrap text-xs font-semibold tabular-nums text-[#6F675F]">
-                              Page {safeBusinessPage} of {businessTotalPages}
+                              Page {safeBusinessPage} of{" "}
+                              {businessTotalPages}
                             </span>
+
                             <button
                               type="button"
-                              onClick={() => setBusinessPage((page) => Math.min(businessTotalPages, page + 1))}
-                              disabled={safeBusinessPage >= businessTotalPages}
+                              onClick={() =>
+                                setBusinessPage((page) =>
+                                  Math.min(
+                                    businessTotalPages,
+                                    page + 1
+                                  )
+                                )
+                              }
+                              disabled={
+                                safeBusinessPage >= businessTotalPages
+                              }
                               className="inline-flex h-9 items-center gap-1 rounded-xl border border-[#E8DED3] bg-white px-3 text-xs font-semibold text-[#6F675F] transition hover:bg-[#FFF0E8] hover:text-[#9F2D18] disabled:cursor-not-allowed disabled:opacity-40"
                             >
                               Next
@@ -1452,7 +1431,10 @@ export default function AdminPage() {
         </main>
       </div>
 
-      {/* Mobile admin navigation */}
+      {/* =====================================================
+          MOBILE ADMIN NAVIGATION
+      ===================================================== */}
+
       <nav
         className="fixed inset-x-0 bottom-0 z-50 border-t border-[#E8DED3] bg-[#FFFDFC]/95 px-2 pt-2 pb-[max(8px,env(safe-area-inset-bottom))] shadow-[0_-4px_18px_rgba(46,36,31,0.08)] backdrop-blur lg:hidden"
         aria-label="Mobile admin navigation"
@@ -1460,6 +1442,7 @@ export default function AdminPage() {
         <div className="mx-auto grid w-full max-w-3xl grid-cols-4 gap-1">
           {ADMIN_NAV.map((item) => {
             const Icon = item.icon;
+
             const active =
               item.href === "/admin"
                 ? pathname === "/admin"
@@ -1478,7 +1461,10 @@ export default function AdminPage() {
                 }`}
               >
                 <Icon className="h-4 w-4 shrink-0" />
-                <span className="leading-tight">{item.label}</span>
+
+                <span className="leading-tight">
+                  {item.label}
+                </span>
               </Link>
             );
           })}

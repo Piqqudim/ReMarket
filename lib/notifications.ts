@@ -1,3 +1,4 @@
+
 import {
   NotificationChannel,
   NotificationDeliveryStatus,
@@ -22,11 +23,6 @@ export type CreateNotificationInput = {
 export type CreateNotificationsInput =
   CreateNotificationInput[];
 
-/**
- * A notification can either be created, already exist,
- * or be skipped because the recipient disabled in-app
- * notifications for that category.
- */
 export type NotificationResult =
   | {
       notificationId: string;
@@ -50,10 +46,42 @@ type NotificationTransactionResult =
     };
 
 /**
- * Finds an existing notification by its unique event key.
+ * Creates a recipient-specific deduplication key.
  *
- * A dedupe key must never silently return another user's
- * notification.
+ * The Prisma schema currently declares dedupeKey as
+ * globally unique:
+ *
+ *   dedupeKey String? @unique
+ *
+ * Therefore, the same event must have a different
+ * database key for each recipient.
+ *
+ * Example:
+ *
+ *   Event key: service-booking:123:accepted
+ *
+ *   Buyer key:   ["remarket-notification","buyer-id","service-booking:123:accepted"]
+ *   Seller key:  ["remarket-notification","seller-id","service-booking:123:accepted"]
+ *
+ * This allows both parties to receive a notification
+ * for the same booking event.
+ */
+function buildRecipientDedupeKey(
+  userId: string,
+  eventKey: string
+): string {
+  return JSON.stringify([
+    "remarket-notification",
+    userId,
+    eventKey,
+  ]);
+}
+
+/**
+ * Finds an existing notification by its exact database key.
+ *
+ * A matching key belonging to another user is treated
+ * as a data-integrity error.
  */
 async function findExistingNotification(
   dedupeKey: string,
@@ -86,30 +114,52 @@ async function findExistingNotification(
 }
 
 /**
- * Checks whether the recipient allows in-app notifications
- * for the specified notification category.
+ * Checks for an existing notification for this recipient.
  *
- * Missing preference records use the default:
- * inApp = true.
+ * First checks the new recipient-specific key.
+ *
+ * Then checks the original unscoped key for backward
+ * compatibility with notifications created before this
+ * implementation.
+ *
+ * An old unscoped key belonging to another recipient
+ * is ignored. It must never prevent another recipient
+ * from receiving their own notification.
  */
-async function isInAppNotificationEnabled(
-  userId: string,
-  notificationType: NotificationType
-): Promise<boolean> {
-  const preference =
-    await prisma.notificationPreference.findUnique({
-      where: {
-        userId_notificationType: {
-          userId,
-          notificationType,
-        },
-      },
-      select: {
-        inApp: true,
-      },
-    });
+async function findExistingRecipientNotification(
+  eventKey: string,
+  recipientDedupeKey: string,
+  userId: string
+): Promise<NotificationResult | null> {
+  // Check the new recipient-specific key.
+  const recipientExisting = await findExistingNotification(
+    recipientDedupeKey,
+    userId
+  );
 
-  return preference?.inApp ?? true;
+  if (recipientExisting) {
+    return recipientExisting;
+  }
+
+  // Check the previous unscoped key for legacy records.
+  const legacyExisting = await prisma.notification.findUnique({
+    where: {
+      dedupeKey: eventKey,
+    },
+    select: {
+      id: true,
+      userId: true,
+    },
+  });
+
+  if (!legacyExisting || legacyExisting.userId !== userId) {
+    return null;
+  }
+
+  return {
+    notificationId: legacyExisting.id,
+    created: false,
+  };
 }
 
 /**
@@ -117,11 +167,15 @@ async function isInAppNotificationEnabled(
  *
  * V1 supports IN_APP delivery only.
  *
- * Before creating a notification, the recipient's
- * in-app preference is checked.
+ * Behaviour:
+ * - Validates the recipient.
+ * - Checks the recipient's notification preferences.
+ * - Prevents duplicate notifications.
+ * - Creates the notification and delivery record
+ *   inside the same database transaction.
+ * - Handles concurrent duplicate creation.
  *
- * The notification and its delivery record are created
- * inside the same database transaction.
+ * Missing preference records default to in-app enabled.
  */
 export async function createNotification(
   input: CreateNotificationInput
@@ -135,7 +189,7 @@ export async function createNotification(
   const normalizedMessage =
     input.message?.trim() ?? "";
 
-  const normalizedDedupeKey =
+  const normalizedEventKey =
     input.dedupeKey?.trim() || null;
 
   const normalizedAnnouncementId =
@@ -147,15 +201,21 @@ export async function createNotification(
   const data = input.data ?? null;
 
   if (!normalizedUserId) {
-    throw new Error("Notification userId is required.");
+    throw new Error(
+      "Notification userId is required."
+    );
   }
 
   if (!normalizedTitle) {
-    throw new Error("Notification title is required.");
+    throw new Error(
+      "Notification title is required."
+    );
   }
 
   if (!normalizedMessage) {
-    throw new Error("Notification message is required.");
+    throw new Error(
+      "Notification message is required."
+    );
   }
 
   /*
@@ -178,20 +238,30 @@ export async function createNotification(
   }
 
   /*
-   * DEDUPLICATION
-   *
-   * Return an existing notification when this event
-   * has already been processed for this recipient.
-   *
-   * Existing notifications are not removed when a user
-   * subsequently changes their preferences.
+   * BUILD RECIPIENT-SPECIFIC DEDUPLICATION KEY
    */
 
-  if (normalizedDedupeKey) {
-    const existing = await findExistingNotification(
-      normalizedDedupeKey,
-      normalizedUserId
-    );
+  const recipientDedupeKey = normalizedEventKey
+    ? buildRecipientDedupeKey(
+        normalizedUserId,
+        normalizedEventKey
+      )
+    : null;
+
+  /*
+   * CHECK FOR EXISTING NOTIFICATION
+   *
+   * Existing notifications are returned without creating
+   * another notification or delivery record.
+   */
+
+  if (normalizedEventKey && recipientDedupeKey) {
+    const existing =
+      await findExistingRecipientNotification(
+        normalizedEventKey,
+        recipientDedupeKey,
+        normalizedUserId
+      );
 
     if (existing) {
       return existing;
@@ -202,13 +272,15 @@ export async function createNotification(
     /*
      * CREATE NOTIFICATION
      *
-     * Check the preference inside the transaction
-     * immediately before creating the notification.
+     * The preference check, notification creation and
+     * delivery creation are handled in one transaction.
      */
 
     const transactionResult =
       await prisma.$transaction(
-        async (tx): Promise<NotificationTransactionResult> => {
+        async (
+          tx
+        ): Promise<NotificationTransactionResult> => {
           /*
            * CHECK IN-APP PREFERENCE
            *
@@ -250,7 +322,9 @@ export async function createNotification(
                 // Omit JSON data when no payload was supplied.
                 data: data === null ? undefined : data,
 
-                dedupeKey: normalizedDedupeKey,
+                // New notifications use recipient-specific keys.
+                dedupeKey: recipientDedupeKey,
+
                 announcementId: normalizedAnnouncementId,
               },
               select: {
@@ -260,6 +334,10 @@ export async function createNotification(
 
           /*
            * CREATE IN-APP DELIVERY RECORD
+           *
+           * Both records are committed together.
+           * If delivery creation fails, notification creation
+           * is rolled back by the transaction.
            */
 
           const deliveredAt = new Date();
@@ -283,8 +361,6 @@ export async function createNotification(
 
     /*
      * NOTIFICATION DISABLED
-     *
-     * No notification or delivery record was created.
      */
 
     if (transactionResult.status === "SKIPPED") {
@@ -308,18 +384,20 @@ export async function createNotification(
     /*
      * CONCURRENT DUPLICATE PROTECTION
      *
-     * If another request creates the same notification
-     * concurrently, the database unique constraint
-     * rejects this creation with P2002.
+     * If another request creates the same recipient-specific
+     * notification first, PostgreSQL rejects the duplicate
+     * through the unique constraint.
+     *
+     * We then retrieve the notification that already exists.
      */
 
     if (
-      normalizedDedupeKey &&
+      recipientDedupeKey &&
       error instanceof Prisma.PrismaClientKnownRequestError &&
       error.code === "P2002"
     ) {
       const existing = await findExistingNotification(
-        normalizedDedupeKey,
+        recipientDedupeKey,
         normalizedUserId
       );
 
@@ -333,13 +411,15 @@ export async function createNotification(
 }
 
 /**
- * Creates multiple in-app notifications.
+ * Creates multiple in-app ReMarket notifications.
  *
- * Sequential processing avoids creating a large burst
- * of database connections.
+ * Processing is sequential to avoid creating a large
+ * burst of simultaneous database operations.
  *
- * Each recipient's notification preferences are checked
- * independently by createNotification().
+ * Each recipient's preferences are checked independently.
+ *
+ * Each event's deduplication key is also scoped to
+ * the individual recipient by createNotification().
  */
 export async function createNotifications(
   inputs: CreateNotificationsInput
@@ -352,6 +432,7 @@ export async function createNotifications(
 
   for (const input of inputs) {
     const result = await createNotification(input);
+
     results.push(result);
   }
 
@@ -361,12 +442,12 @@ export async function createNotifications(
 /**
  * Creates a standard system announcement notification.
  *
- * SYSTEM_ANNOUNCEMENT preferences are also respected
- * when this utility is used.
+ * The recipient's SYSTEM_ANNOUNCEMENT in-app preference
+ * is respected.
  *
- * The bulk admin announcement endpoint has its own
- * recipient filtering and should continue using that
- * filtering when creating announcements in batches.
+ * For bulk announcements, the caller should continue
+ * selecting the correct recipients before invoking
+ * this utility.
  */
 export async function createSystemAnnouncement(
   input: {

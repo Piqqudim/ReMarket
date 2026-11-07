@@ -1,4 +1,3 @@
-
 "use client";
 
 import {
@@ -33,14 +32,44 @@ const BOOKING_PAGE_SIZE = 12;
 type Availability = "AVAILABLE" | "ASK_SELLER" | "UNAVAILABLE";
 type RecordStatus = "ACTIVE" | "INACTIVE" | "PENDING";
 type VerificationStatus = "VERIFIED" | "UNVERIFIED";
-type SocialPlatform = "WHATSAPP" | "INSTAGRAM" | "TIKTOK" | "FACEBOOK" | "PHONE" | "DIRECTIONS";
+type SocialPlatform =
+  | "WHATSAPP"
+  | "INSTAGRAM"
+  | "TIKTOK"
+  | "FACEBOOK"
+  | "PHONE"
+  | "DIRECTIONS";
+
 type BusinessSharePlatform = "WHATSAPP" | "FACEBOOK" | "LINKEDIN" | "X";
-type BookingStatus = "PENDING" | "ACCEPTED" | "DECLINED" | "CANCELLED" | "COMPLETED";
+
+type BookingStatus =
+  | "PENDING"
+  | "AWAITING_BUYER"
+  | "ACCEPTED"
+  | "IN_PROGRESS"
+  | "DECLINED"
+  | "CANCELLED"
+  | "COMPLETED";
+
 type BookingFilter = "ALL" | BookingStatus;
 
-type SellerCategory = { id: string; name: string };
-type SellerSocialLink = { id: string; platform: SocialPlatform; handle: string };
-type SellerProductImage = { id: string; url: string; publicId: string | null; sortOrder: number };
+type SellerCategory = {
+  id: string;
+  name: string;
+};
+
+type SellerSocialLink = {
+  id: string;
+  platform: SocialPlatform;
+  handle: string;
+};
+
+type SellerProductImage = {
+  id: string;
+  url: string;
+  publicId: string | null;
+  sortOrder: number;
+};
 
 type SellerProduct = {
   id: string;
@@ -133,23 +162,46 @@ type SellerBooking = {
   buyerMessage: string | null;
   createdAt: string;
   messageCount: number;
-  buyer: { id: string; name: string; email: string | null };
-  service: { id: string; name: string };
+  buyer: {
+    id: string;
+    name: string;
+    email: string | null;
+  };
+  service: {
+    id: string;
+    name: string;
+  };
 };
 
 type BookingSummary = {
   total: number;
   PENDING: number;
+  AWAITING_BUYER: number;
   ACCEPTED: number;
+  IN_PROGRESS: number;
   DECLINED: number;
   CANCELLED: number;
   COMPLETED: number;
 };
 
-type ApiBusinessResponse = { business?: SellerBusiness | null; error?: unknown };
-type ApiCategoriesResponse = { categories?: SellerCategory[] };
-type ApiDeletionResponse = { request?: DeletionRequest | null; error?: unknown };
-type ApiErrorResponse = { error?: unknown };
+type ApiBusinessResponse = {
+  business?: SellerBusiness | null;
+  error?: unknown;
+};
+
+type ApiCategoriesResponse = {
+  categories?: SellerCategory[];
+};
+
+type ApiDeletionResponse = {
+  request?: DeletionRequest | null;
+  error?: unknown;
+};
+
+type ApiErrorResponse = {
+  error?: unknown;
+};
+
 type ApiSellerProductsResponse = {
   maxActiveProducts?: unknown;
   baseMaxActiveProducts?: unknown;
@@ -160,13 +212,18 @@ type ApiSellerProductsResponse = {
 const EMPTY_BOOKING_SUMMARY: BookingSummary = {
   total: 0,
   PENDING: 0,
+  AWAITING_BUYER: 0,
   ACCEPTED: 0,
+  IN_PROGRESS: 0,
   DECLINED: 0,
   CANCELLED: 0,
   COMPLETED: 0,
 };
 
-const SOCIAL_PLATFORMS: { value: SocialPlatform; label: string }[] = [
+const SOCIAL_PLATFORMS: {
+  value: SocialPlatform;
+  label: string;
+}[] = [
   { value: "WHATSAPP", label: "WhatsApp" },
   { value: "INSTAGRAM", label: "Instagram" },
   { value: "TIKTOK", label: "TikTok" },
@@ -274,7 +331,11 @@ function getResponseError(data: unknown, fallback: string): string {
 function parseProductCapacity(data: unknown): ProductCapacity | null {
   if (!isRecord(data)) return null;
 
-  const { maxActiveProducts, baseMaxActiveProducts, referralBonusSlots } = data;
+  const {
+    maxActiveProducts,
+    baseMaxActiveProducts,
+    referralBonusSlots,
+  } = data;
 
   if (
     typeof maxActiveProducts !== "number" ||
@@ -298,7 +359,10 @@ function parseProductCapacity(data: unknown): ProductCapacity | null {
   };
 }
 
-function getSocialValue(links: SellerSocialLink[] | undefined, platform: SocialPlatform): string {
+function getSocialValue(
+  links: SellerSocialLink[] | undefined,
+  platform: SocialPlatform,
+): string {
   return links?.find((link) => link.platform === platform)?.handle ?? "";
 }
 
@@ -334,40 +398,66 @@ function looksLikeHouseNumber(value: string): boolean {
   );
 }
 
-function parseLocationAddress(address: string | null | undefined, area: string) {
+function parseLocationAddress(
+  address: string | null | undefined,
+  area: string,
+) {
   const trimmed = typeof address === "string" ? address.trim() : "";
 
   if (!trimmed) {
-    return { houseNumber: "", street: "", city: "" };
+    return {
+      houseNumber: "",
+      street: "",
+      city: "",
+    };
   }
 
-  const parts = trimmed.split(",").map((part) => part.trim()).filter(Boolean);
+  const parts = trimmed
+    .split(",")
+    .map((part) => part.trim())
+    .filter(Boolean);
 
-  const withoutCountry = parts.at(-1)?.toLowerCase() === DEFAULT_COUNTRY.toLowerCase()
-    ? parts.slice(0, -1)
-    : parts;
+  const withoutCountry =
+    parts.at(-1)?.toLowerCase() === DEFAULT_COUNTRY.toLowerCase()
+      ? parts.slice(0, -1)
+      : parts;
 
   let areaIndex = -1;
 
   withoutCountry.forEach((part, index) => {
-    if (area.trim() && part.toLowerCase() === area.trim().toLowerCase()) {
+    if (
+      area.trim() &&
+      part.toLowerCase() === area.trim().toLowerCase()
+    ) {
       areaIndex = index;
     }
   });
 
   if (areaIndex < 0) {
-    return { houseNumber: "", street: withoutCountry.join(", "), city: "" };
+    return {
+      houseNumber: "",
+      street: withoutCountry.join(", "),
+      city: "",
+    };
   }
 
   const beforeArea = withoutCountry.slice(0, areaIndex);
   const city = withoutCountry.slice(areaIndex + 1).join(", ");
 
   if (!beforeArea.length) {
-    return { houseNumber: "", street: "", city };
+    return {
+      houseNumber: "",
+      street: "",
+      city,
+    };
   }
 
   if (beforeArea.length === 1) {
-    return { houseNumber: "", street: beforeArea[0], city };
+    return {
+      houseNumber: "",
+      street: beforeArea[0],
+      city,
+    };
   }
 
   if (looksLikeHouseNumber(beforeArea[0])) {
@@ -397,10 +487,14 @@ function buildLocationAddressPreview(
     area.trim(),
     city.trim(),
     DEFAULT_COUNTRY,
-  ].filter(Boolean).join(", ");
+  ]
+    .filter(Boolean)
+    .join(", ");
 }
 
-function getInitialBusinessForm(business: SellerBusiness): BusinessForm {
+function getInitialBusinessForm(
+  business: SellerBusiness,
+): BusinessForm {
   const parsed = parseLocationAddress(
     business.location?.address,
     business.location?.area ?? "",
@@ -416,8 +510,12 @@ function getInitialBusinessForm(business: SellerBusiness): BusinessForm {
     city: parsed.city,
     categoryId: business.categories?.[0]?.category?.id ?? "",
     availability: business.availability ?? "ASK_SELLER",
-    priceMin: business.priceMin != null ? String(business.priceMin) : "",
-    priceMax: business.priceMax != null ? String(business.priceMax) : "",
+    priceMin: business.priceMin != null
+      ? String(business.priceMin)
+      : "",
+    priceMax: business.priceMax != null
+      ? String(business.priceMax)
+      : "",
     showContactInfo: business.showContactInfo === true,
   };
 }
@@ -426,12 +524,16 @@ function getStatusClasses(status: string): string {
   if (
     status === "ACTIVE" ||
     status === "ACCEPTED" ||
-    status === "COMPLETED"
+    status === "COMPLETED" ||
+    status === "IN_PROGRESS"
   ) {
     return "bg-[#DDF5EA] text-[#137A59]";
   }
 
-  if (status === "PENDING") {
+  if (
+    status === "PENDING" ||
+    status === "AWAITING_BUYER"
+  ) {
     return "bg-[#FFF5D9] text-[#9A6700]";
   }
 
@@ -451,7 +553,17 @@ function formatAvailability(value: Availability): string {
 }
 
 function getBookingStatusLabel(status: BookingStatus): string {
-  return status.charAt(0) + status.slice(1).toLowerCase();
+  const labels: Record<BookingStatus, string> = {
+    PENDING: "Pending",
+    AWAITING_BUYER: "Awaiting buyer",
+    ACCEPTED: "Accepted",
+    IN_PROGRESS: "In progress",
+    DECLINED: "Declined",
+    CANCELLED: "Cancelled",
+    COMPLETED: "Completed",
+  };
+
+  return labels[status];
 }
 
 function formatBookingDate(value: string | null): string {
@@ -467,18 +579,27 @@ function formatBookingDate(value: string | null): string {
       });
 }
 
-function normalizeSellerBooking(value: unknown): SellerBooking | null {
-  if (!isRecord(value) || typeof value.id !== "string") return null;
+function normalizeSellerBooking(
+  value: unknown,
+): SellerBooking | null {
+  if (!isRecord(value) || typeof value.id !== "string") {
+    return null;
+  }
 
   const service = isRecord(value.service) ? value.service : {};
   const buyer = isRecord(value.buyer) ? value.buyer : {};
   const count = isRecord(value._count) ? value._count : {};
 
-  const rawStatus = typeof value.status === "string" ? value.status : "PENDING";
+  const rawStatus =
+    typeof value.status === "string"
+      ? value.status
+      : "PENDING";
 
   const allowed: BookingStatus[] = [
     "PENDING",
+    "AWAITING_BUYER",
     "ACCEPTED",
+    "IN_PROGRESS",
     "DECLINED",
     "CANCELLED",
     "COMPLETED",
@@ -491,24 +612,49 @@ function normalizeSellerBooking(value: unknown): SellerBooking | null {
   return {
     id: value.id,
     status,
-    requestedFor: typeof value.requestedFor === "string" ? value.requestedFor : null,
-    quantity: typeof value.quantity === "number" ? value.quantity : 1,
-    contactPhone: typeof value.contactPhone === "string" ? value.contactPhone : null,
-    buyerMessage: typeof value.buyerMessage === "string" ? value.buyerMessage : null,
-    createdAt: typeof value.createdAt === "string" ? value.createdAt : "",
-    messageCount: typeof count.messages === "number"
-      ? count.messages
-      : typeof value.messageCount === "number"
-        ? value.messageCount
-        : 0,
+    requestedFor:
+      typeof value.requestedFor === "string"
+        ? value.requestedFor
+        : null,
+    quantity:
+      typeof value.quantity === "number"
+        ? value.quantity
+        : 1,
+    contactPhone:
+      typeof value.contactPhone === "string"
+        ? value.contactPhone
+        : null,
+    buyerMessage:
+      typeof value.buyerMessage === "string"
+        ? value.buyerMessage
+        : null,
+    createdAt:
+      typeof value.createdAt === "string"
+        ? value.createdAt
+        : "",
+    messageCount:
+      typeof count.messages === "number"
+        ? count.messages
+        : typeof value.messageCount === "number"
+          ? value.messageCount
+          : 0,
     buyer: {
       id: typeof buyer.id === "string" ? buyer.id : "",
-      name: typeof buyer.name === "string" ? buyer.name : "Customer",
-      email: typeof buyer.email === "string" ? buyer.email : null,
+      name:
+        typeof buyer.name === "string"
+          ? buyer.name
+          : "Customer",
+      email:
+        typeof buyer.email === "string"
+          ? buyer.email
+          : null,
     },
     service: {
       id: typeof service.id === "string" ? service.id : "",
-      name: typeof service.name === "string" ? service.name : "Service",
+      name:
+        typeof service.name === "string"
+          ? service.name
+          : "Service",
     },
   };
 }
@@ -517,14 +663,17 @@ function normalizeBookingSummary(value: unknown): BookingSummary {
   if (!isRecord(value)) return EMPTY_BOOKING_SUMMARY;
 
   const count = (key: keyof BookingSummary) =>
-    typeof value[key] === "number" && Number.isSafeInteger(value[key])
+    typeof value[key] === "number" &&
+    Number.isSafeInteger(value[key])
       ? Math.max(0, value[key] as number)
       : 0;
 
   return {
     total: count("total"),
     PENDING: count("PENDING"),
+    AWAITING_BUYER: count("AWAITING_BUYER"),
     ACCEPTED: count("ACCEPTED"),
+    IN_PROGRESS: count("IN_PROGRESS"),
     DECLINED: count("DECLINED"),
     CANCELLED: count("CANCELLED"),
     COMPLETED: count("COMPLETED"),
@@ -537,7 +686,9 @@ function normalizeBookingSummary(value: unknown): BookingSummary {
 
 function SellerBookingInbox() {
   const [bookings, setBookings] = useState<SellerBooking[]>([]);
-  const [summary, setSummary] = useState<BookingSummary>(EMPTY_BOOKING_SUMMARY);
+  const [summary, setSummary] = useState<BookingSummary>(
+    EMPTY_BOOKING_SUMMARY,
+  );
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [loadError, setLoadError] = useState("");
@@ -550,8 +701,11 @@ function SellerBookingInbox() {
   const [updatingId, setUpdatingId] = useState("");
 
   const loadBookings = useCallback(async (showSpinner = true) => {
-    if (showSpinner) setLoading(true);
-    else setRefreshing(true);
+    if (showSpinner) {
+      setLoading(true);
+    } else {
+      setRefreshing(true);
+    }
 
     setLoadError("");
 
@@ -569,16 +723,25 @@ function SellerBookingInbox() {
 
       const data: unknown = await response.json().catch(() => null);
 
-      if (response.status === 401 || response.status === 403) {
-        throw new Error("Your seller session has expired. Please sign in again.");
+      if (
+        response.status === 401 ||
+        response.status === 403
+      ) {
+        throw new Error(
+          "Your seller session has expired. Please sign in again.",
+        );
       }
 
       if (response.status === 404) {
-        throw new Error("The seller booking inbox API has not been added yet.");
+        throw new Error(
+          "The seller booking inbox API has not been added yet.",
+        );
       }
 
       if (!response.ok) {
-        throw new Error(getResponseError(data, "Unable to load booking requests."));
+        throw new Error(
+          getResponseError(data, "Unable to load booking requests."),
+        );
       }
 
       if (!isRecord(data) || !Array.isArray(data.bookings)) {
@@ -587,14 +750,23 @@ function SellerBookingInbox() {
 
       const normalized = data.bookings
         .map(normalizeSellerBooking)
-        .filter((booking): booking is SellerBooking => booking !== null);
+        .filter(
+          (booking): booking is SellerBooking =>
+            booking !== null,
+        );
 
       setBookings(normalized);
       setSummary(normalizeBookingSummary(data.summary));
-      setTotalBookings(typeof data.total === "number" ? data.total : normalized.length);
+
+      setTotalBookings(
+        typeof data.total === "number"
+          ? data.total
+          : normalized.length,
+      );
 
       setTotalPages(
-        typeof data.totalPages === "number" && Number.isFinite(data.totalPages)
+        typeof data.totalPages === "number" &&
+        Number.isFinite(data.totalPages)
           ? Math.max(1, data.totalPages)
           : 1,
       );
@@ -616,7 +788,7 @@ function SellerBookingInbox() {
 
   async function changeBookingStatus(
     id: string,
-    status: "ACCEPTED" | "DECLINED",
+    action: "ACCEPT" | "DECLINE",
   ) {
     if (updatingId) return;
 
@@ -626,26 +798,35 @@ function SellerBookingInbox() {
 
     try {
       const response = await fetch(
-        `/api/seller/service-bookings/${encodeURIComponent(id)}`,
+        `/api/service-bookings/${encodeURIComponent(id)}`,
         {
           method: "PATCH",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ status }),
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ action }),
         },
       );
 
       const data: unknown = await response.json().catch(() => null);
 
-      if (response.status === 401 || response.status === 403) {
-        throw new Error("Your seller session has expired. Please sign in again.");
+      if (
+        response.status === 401 ||
+        response.status === 403
+      ) {
+        throw new Error(
+          "Your seller session has expired. Please sign in again.",
+        );
       }
 
       if (!response.ok) {
-        throw new Error(getResponseError(data, "Unable to update this booking."));
+        throw new Error(
+          getResponseError(data, "Unable to update this booking."),
+        );
       }
 
       setActionMessage(
-        status === "ACCEPTED"
+        action === "ACCEPT"
           ? "Booking accepted."
           : "Booking declined.",
       );
@@ -662,9 +843,14 @@ function SellerBookingInbox() {
     }
   }
 
-  const filters: { value: BookingFilter; label: string }[] = [
+  const filters: {
+    value: BookingFilter;
+    label: string;
+  }[] = [
     { value: "PENDING", label: "Pending" },
+    { value: "AWAITING_BUYER", label: "Awaiting buyer" },
     { value: "ACCEPTED", label: "Accepted" },
+    { value: "IN_PROGRESS", label: "In progress" },
     { value: "DECLINED", label: "Declined" },
     { value: "CANCELLED", label: "Cancelled" },
     { value: "COMPLETED", label: "Completed" },
@@ -672,7 +858,9 @@ function SellerBookingInbox() {
   ];
 
   function getFilterCount(value: BookingFilter) {
-    return value === "ALL" ? summary.total : summary[value];
+    return value === "ALL"
+      ? summary.total
+      : summary[value];
   }
 
   return (
@@ -688,7 +876,9 @@ function SellerBookingInbox() {
             </p>
 
             <div className="mt-1 flex flex-wrap items-center gap-2">
-              <h2 className="text-lg font-bold">Booking requests</h2>
+              <h2 className="text-lg font-bold">
+                Booking requests
+              </h2>
 
               {summary.PENDING > 0 && (
                 <span className="rounded-full bg-[#FFF5D9] px-2.5 py-1 text-[10px] font-bold text-[#9A6700]">
@@ -708,7 +898,9 @@ function SellerBookingInbox() {
             disabled={loading || refreshing}
             className={secondaryButtonClass}
           >
-            <RefreshCw className={`h-4 w-4 ${refreshing ? "animate-spin" : ""}`} />
+            <RefreshCw
+              className={`h-4 w-4 ${refreshing ? "animate-spin" : ""}`}
+            />
             Refresh
           </button>
         </div>
@@ -759,12 +951,15 @@ function SellerBookingInbox() {
         ) : loadError ? (
           <div className="rounded-2xl border border-dashed border-[#D9DEE5] bg-[#FCFAF6] px-5 py-8 text-center">
             <AlertCircle className="mx-auto h-7 w-7 text-[#C5402D]" />
+
             <p className="mt-3 text-sm font-bold text-gray-800">
               Booking inbox unavailable
             </p>
+
             <p className="mx-auto mt-1 max-w-lg text-xs leading-5 text-gray-500">
               {loadError}
             </p>
+
             <button
               type="button"
               onClick={() => void loadBookings()}
@@ -776,11 +971,13 @@ function SellerBookingInbox() {
         ) : bookings.length === 0 ? (
           <div className="rounded-2xl border border-dashed border-[#D9DEE5] bg-[#FCFAF6] px-5 py-10 text-center">
             <CalendarDays className="mx-auto h-8 w-8 text-gray-300" />
+
             <h3 className="mt-3 text-sm font-bold text-gray-800">
               {filter === "PENDING"
                 ? "No pending booking requests"
                 : "No bookings in this category"}
             </h3>
+
             <p className="mt-1 text-xs leading-5 text-gray-500">
               New requests from customers will appear here.
             </p>
@@ -800,7 +997,9 @@ function SellerBookingInbox() {
                           {booking.service.name}
                         </h3>
 
-                        <span className={`rounded-full px-2.5 py-1 text-[10px] font-bold ${getStatusClasses(booking.status)}`}>
+                        <span
+                          className={`rounded-full px-2.5 py-1 text-[10px] font-bold ${getStatusClasses(booking.status)}`}
+                        >
                           {getBookingStatusLabel(booking.status)}
                         </span>
                       </div>
@@ -822,13 +1021,16 @@ function SellerBookingInbox() {
                   <div className="mt-4 grid gap-3 rounded-xl bg-[#FCFAF6] p-3 sm:grid-cols-2">
                     <div className="flex items-start gap-2">
                       <UserRound className="mt-0.5 h-4 w-4 shrink-0 text-[#FF5A36]" />
+
                       <div className="min-w-0">
                         <p className="text-[10px] font-semibold uppercase text-gray-400">
                           Customer
                         </p>
+
                         <p className="mt-1 break-words text-xs font-bold text-gray-800">
                           {booking.buyer.name}
                         </p>
+
                         {booking.buyer.email && (
                           <p className="mt-0.5 break-all text-[11px] text-gray-500">
                             {booking.buyer.email}
@@ -839,10 +1041,12 @@ function SellerBookingInbox() {
 
                     <div className="flex items-start gap-2">
                       <CalendarDays className="mt-0.5 h-4 w-4 shrink-0 text-[#FF5A36]" />
+
                       <div>
                         <p className="text-[10px] font-semibold uppercase text-gray-400">
                           Preferred date
                         </p>
+
                         <p className="mt-1 text-xs font-bold text-gray-800">
                           {formatBookingDate(booking.requestedFor)}
                         </p>
@@ -851,10 +1055,12 @@ function SellerBookingInbox() {
 
                     <div className="flex items-start gap-2">
                       <Package className="mt-0.5 h-4 w-4 shrink-0 text-[#FF5A36]" />
+
                       <div>
                         <p className="text-[10px] font-semibold uppercase text-gray-400">
                           Quantity
                         </p>
+
                         <p className="mt-1 text-xs font-bold text-gray-800">
                           {booking.quantity}
                         </p>
@@ -864,10 +1070,12 @@ function SellerBookingInbox() {
                     {booking.contactPhone && (
                       <div className="flex items-start gap-2">
                         <Phone className="mt-0.5 h-4 w-4 shrink-0 text-[#FF5A36]" />
+
                         <div>
                           <p className="text-[10px] font-semibold uppercase text-gray-400">
                             Contact phone
                           </p>
+
                           <p className="mt-1 text-xs font-bold text-gray-800">
                             {booking.contactPhone}
                           </p>
@@ -882,6 +1090,7 @@ function SellerBookingInbox() {
                         <MessageSquare className="h-3.5 w-3.5" />
                         Customer message
                       </p>
+
                       <p className="mt-2 whitespace-pre-wrap break-words text-xs leading-5 text-gray-700">
                         {booking.buyerMessage}
                       </p>
@@ -895,41 +1104,52 @@ function SellerBookingInbox() {
                     </span>
 
                     <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-                      {(booking.status === "ACCEPTED" ||
-                        booking.status === "COMPLETED" ||
-                        booking.messageCount > 0) && (
-                        <Link
-                          href={`/service-bookings/${encodeURIComponent(booking.id)}/messages`}
-                          className={`${secondaryButtonClass} min-h-10`}
-                        >
-                          <MessageSquare className="h-4 w-4" />
-                          Open conversation
-                        </Link>
-                      )}
+                      {/* Every booking can open its conversation history. */}
+                      <Link
+                        href={`/service-bookings/${encodeURIComponent(booking.id)}/messages`}
+                        className={`${secondaryButtonClass} min-h-10`}
+                      >
+                        <MessageSquare className="h-4 w-4" />
+                        View conversation
+                      </Link>
 
                       {booking.status === "PENDING" ? (
                         <div className="flex gap-2">
                           <button
                             type="button"
                             disabled={updatingId === booking.id}
-                            onClick={() => void changeBookingStatus(booking.id, "DECLINED")}
+                            onClick={() =>
+                              void changeBookingStatus(
+                                booking.id,
+                                "DECLINE",
+                              )
+                            }
                             className="inline-flex min-h-10 flex-1 items-center justify-center gap-2 rounded-xl border border-[#F1D5D0] px-4 text-xs font-bold text-[#C5402D] hover:bg-[#FFF0EE] disabled:opacity-50 sm:flex-none"
                           >
-                            {updatingId === booking.id
-                              ? <LoaderCircle className="h-4 w-4 animate-spin" />
-                              : <Ban className="h-4 w-4" />}
+                            {updatingId === booking.id ? (
+                              <LoaderCircle className="h-4 w-4 animate-spin" />
+                            ) : (
+                              <Ban className="h-4 w-4" />
+                            )}
                             Decline
                           </button>
 
                           <button
                             type="button"
                             disabled={updatingId === booking.id}
-                            onClick={() => void changeBookingStatus(booking.id, "ACCEPTED")}
+                            onClick={() =>
+                              void changeBookingStatus(
+                                booking.id,
+                                "ACCEPT",
+                              )
+                            }
                             className={`${primaryButtonClass} min-h-10 flex-1 sm:flex-none`}
                           >
-                            {updatingId === booking.id
-                              ? <LoaderCircle className="h-4 w-4 animate-spin" />
-                              : <Check className="h-4 w-4" />}
+                            {updatingId === booking.id ? (
+                              <LoaderCircle className="h-4 w-4 animate-spin" />
+                            ) : (
+                              <Check className="h-4 w-4" />
+                            )}
                             Accept booking
                           </button>
                         </div>
@@ -937,11 +1157,15 @@ function SellerBookingInbox() {
                         <span className="text-[11px] font-semibold text-gray-500">
                           {booking.status === "ACCEPTED"
                             ? "This booking has been accepted."
-                            : booking.status === "DECLINED"
-                              ? "This booking was declined."
-                              : booking.status === "CANCELLED"
-                                ? "This booking was cancelled."
-                                : "This booking is completed."}
+                            : booking.status === "AWAITING_BUYER"
+                              ? "This booking is waiting for the customer's response."
+                              : booking.status === "IN_PROGRESS"
+                                ? "This booking is currently in progress."
+                                : booking.status === "DECLINED"
+                                  ? "This booking was declined."
+                                  : booking.status === "CANCELLED"
+                                    ? "This booking was cancelled."
+                                    : "This booking is completed."}
                         </span>
                       )}
                     </div>
@@ -952,14 +1176,17 @@ function SellerBookingInbox() {
 
             <div className="mt-5 flex flex-col gap-3 border-t border-[#F0ECE6] pt-4 sm:flex-row sm:items-center sm:justify-between">
               <p className="text-[11px] text-gray-500">
-                Showing {bookings.length} of {totalBookings} booking requests · Page {page} of {totalPages}
+                Showing {bookings.length} of {totalBookings} booking requests ·
+                Page {page} of {totalPages}
               </p>
 
               <div className="flex items-center gap-2">
                 <button
                   type="button"
                   disabled={page <= 1 || loading || refreshing}
-                  onClick={() => setPage((current) => Math.max(1, current - 1))}
+                  onClick={() =>
+                    setPage((current) => Math.max(1, current - 1))
+                  }
                   className={secondaryButtonClass}
                 >
                   <ChevronLeft className="h-4 w-4" />
@@ -968,8 +1195,16 @@ function SellerBookingInbox() {
 
                 <button
                   type="button"
-                  disabled={page >= totalPages || loading || refreshing}
-                  onClick={() => setPage((current) => Math.min(totalPages, current + 1))}
+                  disabled={
+                    page >= totalPages ||
+                    loading ||
+                    refreshing
+                  }
+                  onClick={() =>
+                    setPage((current) =>
+                      Math.min(totalPages, current + 1),
+                    )
+                  }
                   className={secondaryButtonClass}
                 >
                   Next
@@ -1000,7 +1235,9 @@ export default function SellerDashboard() {
   });
 
   const [categories, setCategories] = useState<SellerCategory[]>([]);
-  const [deletionRequest, setDeletionRequest] = useState<DeletionRequest | null>(null);
+  const [deletionRequest, setDeletionRequest] =
+    useState<DeletionRequest | null>(null);
+
   const [loading, setLoading] = useState(true);
   const [dashboardLoadFailed, setDashboardLoadFailed] = useState(false);
   const [loadAttempt, setLoadAttempt] = useState(0);
@@ -1008,26 +1245,37 @@ export default function SellerDashboard() {
   const [savingBusiness, setSavingBusiness] = useState(false);
   const [creatingProduct, setCreatingProduct] = useState(false);
   const [updatingProduct, setUpdatingProduct] = useState(false);
-  const [deletingProductId, setDeletingProductId] = useState<string | null>(null);
-  const [submittingDeletionRequest, setSubmittingDeletionRequest] = useState(false);
+  const [deletingProductId, setDeletingProductId] =
+    useState<string | null>(null);
+  const [submittingDeletionRequest, setSubmittingDeletionRequest] =
+    useState(false);
+
   const [editingBusiness, setEditingBusiness] = useState(false);
   const [showProductForm, setShowProductForm] = useState(false);
-  const [editingProductId, setEditingProductId] = useState<string | null>(null);
+  const [editingProductId, setEditingProductId] =
+    useState<string | null>(null);
   const [showDeletionForm, setShowDeletionForm] = useState(false);
   const [deletionReason, setDeletionReason] = useState("");
   const [categoryChanged, setCategoryChanged] = useState(false);
-  const [socialValues, setSocialValues] = useState(INITIAL_SOCIAL_VALUES);
+  const [socialValues, setSocialValues] =
+    useState(INITIAL_SOCIAL_VALUES);
+
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
-  const [businessForm, setBusinessForm] = useState(INITIAL_BUSINESS_FORM);
-  const [productForm, setProductForm] = useState(INITIAL_PRODUCT_FORM);
+  const [businessForm, setBusinessForm] =
+    useState(INITIAL_BUSINESS_FORM);
+  const [productForm, setProductForm] =
+    useState(INITIAL_PRODUCT_FORM);
+
   const [showShareOptions, setShowShareOptions] = useState(false);
   const [shareNotice, setShareNotice] = useState("");
   const [shareNoticeIsError, setShareNoticeIsError] = useState(false);
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
 
   const dashboardProducts = useMemo(
-    () => business?.products?.filter((product) => !product.deletedAt) ?? [],
+    () => business?.products?.filter(
+      (product) => !product.deletedAt,
+    ) ?? [],
     [business?.products],
   );
 
@@ -1056,47 +1304,68 @@ export default function SellerDashboard() {
     (
       business.phone?.trim() ||
       business.socialLinks?.some(
-        (link) => link.platform === "PHONE" || link.platform === "WHATSAPP",
+        (link) =>
+          link.platform === "PHONE" ||
+          link.platform === "WHATSAPP",
       )
     ),
   );
 
   const onboardingSteps = [
-    { label: "Create your business profile", done: Boolean(business) },
-    { label: "Add your location and contact details", done: profileIsComplete },
-    { label: "Add your first product", done: dashboardProducts.length > 0 },
-    { label: "Make your profile public", done: canShareBusiness },
+    {
+      label: "Create your business profile",
+      done: Boolean(business),
+    },
+    {
+      label: "Add your location and contact details",
+      done: profileIsComplete,
+    },
+    {
+      label: "Add your first product",
+      done: dashboardProducts.length > 0,
+    },
+    {
+      label: "Make your profile public",
+      done: canShareBusiness,
+    },
   ];
 
-  const completedSteps = onboardingSteps.filter((step) => step.done).length;
+  const completedSteps = onboardingSteps.filter(
+    (step) => step.done,
+  ).length;
 
   const nextAction = !business
     ? {
         title: "Set up your business",
-        description: "Start with the basics. You can complete the optional details later.",
+        description:
+          "Start with the basics. You can complete the optional details later.",
         label: "Create business",
       }
     : dashboardProducts.length === 0
       ? {
           title: "Add your first product",
-          description: "Give nearby customers something specific to discover.",
+          description:
+            "Give nearby customers something specific to discover.",
           label: "Add first product",
         }
       : !profileIsComplete
         ? {
             title: "Complete your business profile",
-            description: "Add a street address and a contact method so customers know how to reach you.",
+            description:
+              "Add a street address and a contact method so customers know how to reach you.",
             label: "Complete profile",
           }
         : !canShareBusiness
           ? {
               title: "Check your business status",
-              description: "Your profile can be shared once it is active and publicly visible.",
+              description:
+                "Your profile can be shared once it is active and publicly visible.",
               label: "View status",
             }
           : {
               title: "Help more people find you",
-              description: "Share your public business profile with customers and local communities.",
+              description:
+                "Share your public business profile with customers and local communities.",
               label: "Share business",
             };
 
@@ -1116,12 +1385,18 @@ export default function SellerDashboard() {
     setError("");
 
     try {
-      const businessResponse = await fetch("/api/seller/business", {
-        cache: "no-store",
-        signal,
-      });
+      const businessResponse = await fetch(
+        "/api/seller/business",
+        {
+          cache: "no-store",
+          signal,
+        },
+      );
 
-      if (businessResponse.status === 401 || businessResponse.status === 403) {
+      if (
+        businessResponse.status === 401 ||
+        businessResponse.status === 403
+      ) {
         setRedirecting(true);
         router.replace("/seller/login");
         return;
@@ -1131,13 +1406,19 @@ export default function SellerDashboard() {
         throw new Error("Unable to load seller business.");
       }
 
-      const businessData = await readJsonSafely<ApiBusinessResponse>(businessResponse);
+      const businessData =
+        await readJsonSafely<ApiBusinessResponse>(businessResponse);
 
       if (
         !businessData ||
-        !Object.prototype.hasOwnProperty.call(businessData, "business")
+        !Object.prototype.hasOwnProperty.call(
+          businessData,
+          "business",
+        )
       ) {
-        throw new Error("The seller business response was invalid.");
+        throw new Error(
+          "The seller business response was invalid.",
+        );
       }
 
       const loadedBusiness = businessData.business ?? null;
@@ -1147,34 +1428,55 @@ export default function SellerDashboard() {
         deletionResponse,
         productsResponse,
       ] = await Promise.all([
-        fetch("/api/categories", { cache: "no-store", signal }).catch(() => null),
-        fetch("/api/seller/business/deletion-request", { cache: "no-store", signal }).catch(() => null),
+        fetch(
+          "/api/categories",
+          { cache: "no-store", signal },
+        ).catch(() => null),
+
+        fetch(
+          "/api/seller/business/deletion-request",
+          { cache: "no-store", signal },
+        ).catch(() => null),
+
         loadedBusiness
-          ? fetch("/api/seller/products", { cache: "no-store", signal }).catch(() => null)
+          ? fetch(
+              "/api/seller/products",
+              { cache: "no-store", signal },
+            ).catch(() => null)
           : Promise.resolve(null),
       ]);
 
       const categoryData = categoriesResponse?.ok
-        ? await readJsonSafely<ApiCategoriesResponse>(categoriesResponse)
+        ? await readJsonSafely<ApiCategoriesResponse>(
+            categoriesResponse,
+          )
         : null;
 
       const deletionData = deletionResponse?.ok
-        ? await readJsonSafely<ApiDeletionResponse>(deletionResponse)
+        ? await readJsonSafely<ApiDeletionResponse>(
+            deletionResponse,
+          )
         : null;
 
       let loadedCapacity: ProductCapacity | null = null;
 
       if (loadedBusiness) {
         if (!productsResponse?.ok) {
-          throw new Error("Unable to load product capacity. Please try again.");
+          throw new Error(
+            "Unable to load product capacity. Please try again.",
+          );
         }
 
         loadedCapacity = parseProductCapacity(
-          await readJsonSafely<ApiSellerProductsResponse>(productsResponse),
+          await readJsonSafely<ApiSellerProductsResponse>(
+            productsResponse,
+          ),
         );
 
         if (!loadedCapacity) {
-          throw new Error("The seller product-capacity response was invalid.");
+          throw new Error(
+            "The seller product-capacity response was invalid.",
+          );
         }
       }
 
@@ -1199,9 +1501,15 @@ export default function SellerDashboard() {
       setDeletionRequest(deletionData?.request ?? null);
 
       if (loadedBusiness) {
-        setBusinessForm(getInitialBusinessForm(loadedBusiness));
+        setBusinessForm(
+          getInitialBusinessForm(loadedBusiness),
+        );
+
         setSocialValues(
-          getSocialValues(loadedBusiness.socialLinks, loadedBusiness.phone),
+          getSocialValues(
+            loadedBusiness.socialLinks,
+            loadedBusiness.phone,
+          ),
         );
       } else {
         setBusinessForm(INITIAL_BUSINESS_FORM);
@@ -1210,11 +1518,20 @@ export default function SellerDashboard() {
     } catch (loadError) {
       if (signal.aborted) return;
 
-      console.error("Seller dashboard load error:", loadError);
-      setError("Unable to load your seller dashboard. Please try again.");
+      console.error(
+        "Seller dashboard load error:",
+        loadError,
+      );
+
+      setError(
+        "Unable to load your seller dashboard. Please try again.",
+      );
+
       setDashboardLoadFailed(true);
     } finally {
-      if (!signal.aborted) setLoading(false);
+      if (!signal.aborted) {
+        setLoading(false);
+      }
     }
   }, [router]);
 
@@ -1254,7 +1571,10 @@ export default function SellerDashboard() {
     clearFeedback();
   }
 
-  function updateSocial(platform: SocialPlatform, value: string) {
+  function updateSocial(
+    platform: SocialPlatform,
+    value: string,
+  ) {
     setSocialValues((current) => ({
       ...current,
       [platform]: value,
@@ -1268,6 +1588,7 @@ export default function SellerDashboard() {
       priceMin: businessForm.priceMin.trim() === ""
         ? null
         : Number(businessForm.priceMin),
+
       priceMax: businessForm.priceMax.trim() === ""
         ? null
         : Number(businessForm.priceMax),
@@ -1281,7 +1602,9 @@ export default function SellerDashboard() {
       priceMin !== null &&
       (!Number.isSafeInteger(priceMin) || priceMin < 0)
     ) {
-      setError("Minimum price must be a valid whole number.");
+      setError(
+        "Minimum price must be a valid whole number.",
+      );
       return false;
     }
 
@@ -1289,7 +1612,9 @@ export default function SellerDashboard() {
       priceMax !== null &&
       (!Number.isSafeInteger(priceMax) || priceMax < 0)
     ) {
-      setError("Maximum price must be a valid whole number.");
+      setError(
+        "Maximum price must be a valid whole number.",
+      );
       return false;
     }
 
@@ -1298,7 +1623,9 @@ export default function SellerDashboard() {
       priceMax !== null &&
       priceMin > priceMax
     ) {
-      setError("Minimum price cannot be greater than maximum price.");
+      setError(
+        "Minimum price cannot be greater than maximum price.",
+      );
       return false;
     }
 
@@ -1332,8 +1659,18 @@ export default function SellerDashboard() {
     if (!business) return;
 
     clearFeedback();
-    setBusinessForm(getInitialBusinessForm(business));
-    setSocialValues(getSocialValues(business.socialLinks, business.phone));
+
+    setBusinessForm(
+      getInitialBusinessForm(business),
+    );
+
+    setSocialValues(
+      getSocialValues(
+        business.socialLinks,
+        business.phone,
+      ),
+    );
+
     setCategoryChanged(false);
     setEditingBusiness(true);
   }
@@ -1341,8 +1678,17 @@ export default function SellerDashboard() {
   function cancelEditingBusiness() {
     if (!business || savingBusiness) return;
 
-    setBusinessForm(getInitialBusinessForm(business));
-    setSocialValues(getSocialValues(business.socialLinks, business.phone));
+    setBusinessForm(
+      getInitialBusinessForm(business),
+    );
+
+    setSocialValues(
+      getSocialValues(
+        business.socialLinks,
+        business.phone,
+      ),
+    );
+
     setCategoryChanged(false);
     setEditingBusiness(false);
     clearFeedback();
@@ -1350,15 +1696,26 @@ export default function SellerDashboard() {
 
   function applyBusinessToForm(updated: SellerBusiness) {
     setBusiness(updated);
-    setBusinessForm(getInitialBusinessForm(updated));
-    setSocialValues(getSocialValues(updated.socialLinks, updated.phone));
+
+    setBusinessForm(
+      getInitialBusinessForm(updated),
+    );
+
+    setSocialValues(
+      getSocialValues(
+        updated.socialLinks,
+        updated.phone,
+      ),
+    );
   }
 
   /* ------------------------------------------------------------------------ */
   /* CREATE BUSINESS                                                          */
   /* ------------------------------------------------------------------------ */
 
-  async function createBusiness(event: FormEvent<HTMLFormElement>) {
+  async function createBusiness(
+    event: FormEvent<HTMLFormElement>,
+  ) {
     event.preventDefault();
 
     if (savingBusiness) return;
@@ -1370,38 +1727,58 @@ export default function SellerDashboard() {
       return;
     }
 
-    if (!validateBusinessLocation() || !validateBusinessPrices()) return;
+    if (
+      !validateBusinessLocation() ||
+      !validateBusinessPrices()
+    ) {
+      return;
+    }
 
     setSavingBusiness(true);
 
     try {
-      const response = await fetch("/api/seller/business", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          name: businessForm.name.trim(),
-          ownerName: businessForm.ownerName.trim(),
-          description: businessForm.description.trim(),
-          ...buildBusinessLocationPayload(),
-          socialLinks: buildSocialLinks(socialValues),
-          categoryIds: businessForm.categoryId
-            ? [businessForm.categoryId]
-            : [],
-          availability: businessForm.availability,
-          ...getBusinessFormPrices(),
-          showContactInfo: businessForm.showContactInfo === true,
-        }),
-      });
+      const response = await fetch(
+        "/api/seller/business",
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            name: businessForm.name.trim(),
+            ownerName: businessForm.ownerName.trim(),
+            description: businessForm.description.trim(),
+            ...buildBusinessLocationPayload(),
+            socialLinks: buildSocialLinks(socialValues),
+            categoryIds: businessForm.categoryId
+              ? [businessForm.categoryId]
+              : [],
+            availability: businessForm.availability,
+            ...getBusinessFormPrices(),
+            showContactInfo:
+              businessForm.showContactInfo === true,
+          }),
+        },
+      );
 
-      const data = await readJsonSafely<ApiBusinessResponse>(response);
+      const data =
+        await readJsonSafely<ApiBusinessResponse>(response);
 
-      if (response.status === 401 || response.status === 403) {
+      if (
+        response.status === 401 ||
+        response.status === 403
+      ) {
         router.replace("/seller/login");
         return;
       }
 
       if (!response.ok) {
-        setError(getResponseError(data, "Unable to create your business."));
+        setError(
+          getResponseError(
+            data,
+            "Unable to create your business.",
+          ),
+        );
         return;
       }
 
@@ -1409,15 +1786,24 @@ export default function SellerDashboard() {
         setError(
           "The server accepted the request but did not return your business. Refresh the dashboard before trying again.",
         );
+
         setDashboardLoadFailed(true);
         return;
       }
 
       applyBusinessToForm(data.business);
-      setSuccess("Your business has been created. Next, add your first product.");
+
+      setSuccess(
+        "Your business has been created. Next, add your first product.",
+      );
+
       setShowShareOptions(false);
     } catch (createError) {
-      console.error("Seller business creation error:", createError);
+      console.error(
+        "Seller business creation error:",
+        createError,
+      );
+
       setError(
         "We could not confirm the save. Refresh your dashboard before submitting the business again.",
       );
@@ -1430,7 +1816,9 @@ export default function SellerDashboard() {
   /* UPDATE BUSINESS                                                          */
   /* ------------------------------------------------------------------------ */
 
-  async function updateBusiness(event: FormEvent<HTMLFormElement>) {
+  async function updateBusiness(
+    event: FormEvent<HTMLFormElement>,
+  ) {
     event.preventDefault();
 
     if (savingBusiness || !business) return;
@@ -1442,7 +1830,12 @@ export default function SellerDashboard() {
       return;
     }
 
-    if (!validateBusinessLocation() || !validateBusinessPrices()) return;
+    if (
+      !validateBusinessLocation() ||
+      !validateBusinessPrices()
+    ) {
+      return;
+    }
 
     setSavingBusiness(true);
 
@@ -1455,7 +1848,8 @@ export default function SellerDashboard() {
         socialLinks: buildSocialLinks(socialValues),
         availability: businessForm.availability,
         ...getBusinessFormPrices(),
-        showContactInfo: businessForm.showContactInfo === true,
+        showContactInfo:
+          businessForm.showContactInfo === true,
       };
 
       if (categoryChanged) {
@@ -1464,21 +1858,35 @@ export default function SellerDashboard() {
           : [];
       }
 
-      const response = await fetch("/api/seller/business", {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
-      });
+      const response = await fetch(
+        "/api/seller/business",
+        {
+          method: "PATCH",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify(body),
+        },
+      );
 
-      const data = await readJsonSafely<ApiBusinessResponse>(response);
+      const data =
+        await readJsonSafely<ApiBusinessResponse>(response);
 
-      if (response.status === 401 || response.status === 403) {
+      if (
+        response.status === 401 ||
+        response.status === 403
+      ) {
         router.replace("/seller/login");
         return;
       }
 
       if (!response.ok) {
-        setError(getResponseError(data, "Unable to update your business."));
+        setError(
+          getResponseError(
+            data,
+            "Unable to update your business.",
+          ),
+        );
         return;
       }
 
@@ -1492,9 +1900,16 @@ export default function SellerDashboard() {
       applyBusinessToForm(data.business);
       setCategoryChanged(false);
       setEditingBusiness(false);
-      setSuccess("Your business has been updated successfully.");
+
+      setSuccess(
+        "Your business has been updated successfully.",
+      );
     } catch (updateError) {
-      console.error("Seller business update error:", updateError);
+      console.error(
+        "Seller business update error:",
+        updateError,
+      );
+
       setError(
         "We could not confirm the update. Refresh your dashboard to verify your changes.",
       );
@@ -1508,7 +1923,9 @@ export default function SellerDashboard() {
   /* ------------------------------------------------------------------------ */
 
   function getBusinessShareUrl() {
-    if (!business || typeof window === "undefined") return "";
+    if (!business || typeof window === "undefined") {
+      return "";
+    }
 
     return new URL(
       `/seller/${encodeURIComponent(business.id)}`,
@@ -1516,7 +1933,10 @@ export default function SellerDashboard() {
     ).toString();
   }
 
-  function setShareMessage(message: string, isError = false) {
+  function setShareMessage(
+    message: string,
+    isError = false,
+  ) {
     setShareNotice(message);
     setShareNoticeIsError(isError);
   }
@@ -1533,7 +1953,10 @@ export default function SellerDashboard() {
     const url = getBusinessShareUrl();
 
     if (!url) {
-      setShareMessage("Unable to create the business link.", true);
+      setShareMessage(
+        "Unable to create the business link.",
+        true,
+      );
       return;
     }
 
@@ -1543,7 +1966,11 @@ export default function SellerDashboard() {
       }
 
       await navigator.clipboard.writeText(url);
-      setShareMessage("Business profile link copied successfully.");
+
+      setShareMessage(
+        "Business profile link copied successfully.",
+      );
+
       return;
     } catch {
       // Use the fallback below.
@@ -1561,6 +1988,7 @@ export default function SellerDashboard() {
 
       document.body.appendChild(textarea);
       textarea.select();
+
       copied = document.execCommand("copy");
     } catch {
       copied = false;
@@ -1588,7 +2016,10 @@ export default function SellerDashboard() {
     const url = getBusinessShareUrl();
 
     if (!url) {
-      setShareMessage("Unable to create the business link.", true);
+      setShareMessage(
+        "Unable to create the business link.",
+        true,
+      );
       return;
     }
 
@@ -1618,7 +2049,9 @@ export default function SellerDashboard() {
     }
   }
 
-  function getBusinessShareTarget(platform: BusinessSharePlatform) {
+  function getBusinessShareTarget(
+    platform: BusinessSharePlatform,
+  ) {
     if (!business || !canShareBusiness) return "";
 
     const url = getBusinessShareUrl();
@@ -1626,7 +2059,8 @@ export default function SellerDashboard() {
     if (!url) return "";
 
     const encodedUrl = encodeURIComponent(url);
-    const message = `Discover ${business.name} on ReMarket. Find it nearby.`;
+    const message =
+      `Discover ${business.name} on ReMarket. Find it nearby.`;
 
     switch (platform) {
       case "WHATSAPP":
@@ -1643,15 +2077,24 @@ export default function SellerDashboard() {
     }
   }
 
-  function openBusinessShareTarget(platform: BusinessSharePlatform) {
+  function openBusinessShareTarget(
+    platform: BusinessSharePlatform,
+  ) {
     const target = getBusinessShareTarget(platform);
 
     if (!target) {
-      setShareMessage("Unable to create the sharing link.", true);
+      setShareMessage(
+        "Unable to create the sharing link.",
+        true,
+      );
       return;
     }
 
-    window.open(target, "_blank", "noopener,noreferrer");
+    window.open(
+      target,
+      "_blank",
+      "noopener,noreferrer",
+    );
 
     setShareMessage(
       `Continue sharing your business on ${platform}. If the new tab did not open, use Copy profile link instead.`,
@@ -1667,7 +2110,13 @@ export default function SellerDashboard() {
   }
 
   function openProductForm() {
-    if (reachedProductLimit || creatingProduct || updatingProduct) return;
+    if (
+      reachedProductLimit ||
+      creatingProduct ||
+      updatingProduct
+    ) {
+      return;
+    }
 
     clearFeedback();
     setEditingProductId(null);
@@ -1691,9 +2140,15 @@ export default function SellerDashboard() {
       name: product.name ?? "",
       description: product.description ?? "",
       categoryId: product.category?.id ?? "",
-      price: product.price != null ? String(product.price) : "",
-      priceMin: product.priceMin != null ? String(product.priceMin) : "",
-      priceMax: product.priceMax != null ? String(product.priceMax) : "",
+      price: product.price != null
+        ? String(product.price)
+        : "",
+      priceMin: product.priceMin != null
+        ? String(product.priceMin)
+        : "",
+      priceMax: product.priceMax != null
+        ? String(product.priceMax)
+        : "",
       availability: product.availability ?? "ASK_SELLER",
       images: product.images?.length
         ? [...product.images]
@@ -1713,9 +2168,11 @@ export default function SellerDashboard() {
       price: productForm.price.trim() === ""
         ? null
         : Number(productForm.price),
+
       priceMin: productForm.priceMin.trim() === ""
         ? null
         : Number(productForm.priceMin),
+
       priceMax: productForm.priceMax.trim() === ""
         ? null
         : Number(productForm.priceMax),
@@ -1728,8 +2185,17 @@ export default function SellerDashboard() {
       return false;
     }
 
-    const { price, priceMin, priceMax } = getProductFormPrices();
-    const pricingError = validateProductPricing(price, priceMin, priceMax);
+    const {
+      price,
+      priceMin,
+      priceMax,
+    } = getProductFormPrices();
+
+    const pricingError = validateProductPricing(
+      price,
+      priceMin,
+      priceMax,
+    );
 
     if (pricingError) {
       setError(pricingError);
@@ -1744,26 +2210,43 @@ export default function SellerDashboard() {
   /* ------------------------------------------------------------------------ */
 
   const reloadBusiness = useCallback(async () => {
-    const response = await fetch("/api/seller/business", {
-      cache: "no-store",
-    });
+    const response = await fetch(
+      "/api/seller/business",
+      {
+        cache: "no-store",
+      },
+    );
 
-    if (response.status === 401 || response.status === 403) {
+    if (
+      response.status === 401 ||
+      response.status === 403
+    ) {
       router.replace("/seller/login");
-      throw new Error("Your session has expired. Please sign in again.");
+
+      throw new Error(
+        "Your session has expired. Please sign in again.",
+      );
     }
 
     if (!response.ok) {
-      throw new Error("Unable to refresh the dashboard.");
+      throw new Error(
+        "Unable to refresh the dashboard.",
+      );
     }
 
-    const data = await readJsonSafely<ApiBusinessResponse>(response);
+    const data =
+      await readJsonSafely<ApiBusinessResponse>(response);
 
     if (
       !data ||
-      !Object.prototype.hasOwnProperty.call(data, "business")
+      !Object.prototype.hasOwnProperty.call(
+        data,
+        "business",
+      )
     ) {
-      throw new Error("The seller business response was invalid.");
+      throw new Error(
+        "The seller business response was invalid.",
+      );
     }
 
     const refreshedBusiness = data.business ?? null;
@@ -1779,32 +2262,55 @@ export default function SellerDashboard() {
       return null;
     }
 
-    const productsResponse = await fetch("/api/seller/products", {
-      cache: "no-store",
-    });
+    const productsResponse = await fetch(
+      "/api/seller/products",
+      {
+        cache: "no-store",
+      },
+    );
 
-    if (productsResponse.status === 401 || productsResponse.status === 403) {
+    if (
+      productsResponse.status === 401 ||
+      productsResponse.status === 403
+    ) {
       router.replace("/seller/login");
-      throw new Error("Your session has expired. Please sign in again.");
+
+      throw new Error(
+        "Your session has expired. Please sign in again.",
+      );
     }
 
     if (!productsResponse.ok) {
-      throw new Error("Unable to refresh product capacity.");
+      throw new Error(
+        "Unable to refresh product capacity.",
+      );
     }
 
     const refreshedCapacity = parseProductCapacity(
-      await readJsonSafely<ApiSellerProductsResponse>(productsResponse),
+      await readJsonSafely<ApiSellerProductsResponse>(
+        productsResponse,
+      ),
     );
 
     if (!refreshedCapacity) {
-      throw new Error("The seller product-capacity response was invalid.");
+      throw new Error(
+        "The seller product-capacity response was invalid.",
+      );
     }
 
     setBusiness(refreshedBusiness);
-    setBusinessForm(getInitialBusinessForm(refreshedBusiness));
-    setSocialValues(
-      getSocialValues(refreshedBusiness.socialLinks, refreshedBusiness.phone),
+
+    setBusinessForm(
+      getInitialBusinessForm(refreshedBusiness),
     );
+
+    setSocialValues(
+      getSocialValues(
+        refreshedBusiness.socialLinks,
+        refreshedBusiness.phone,
+      ),
+    );
+
     setProductCapacity(refreshedCapacity);
 
     return refreshedBusiness;
@@ -1814,10 +2320,18 @@ export default function SellerDashboard() {
   /* CREATE PRODUCT                                                           */
   /* ------------------------------------------------------------------------ */
 
-  async function createProduct(event: FormEvent<HTMLFormElement>) {
+  async function createProduct(
+    event: FormEvent<HTMLFormElement>,
+  ) {
     event.preventDefault();
 
-    if (creatingProduct || !business || reachedProductLimit) return;
+    if (
+      creatingProduct ||
+      !business ||
+      reachedProductLimit
+    ) {
+      return;
+    }
 
     clearFeedback();
 
@@ -1826,28 +2340,42 @@ export default function SellerDashboard() {
     setCreatingProduct(true);
 
     try {
-      const response = await fetch("/api/seller/products", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          name: productForm.name.trim(),
-          description: productForm.description.trim(),
-          categoryId: productForm.categoryId || null,
-          ...getProductFormPrices(),
-          availability: productForm.availability,
-          images: productForm.images,
-        }),
-      });
+      const response = await fetch(
+        "/api/seller/products",
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            name: productForm.name.trim(),
+            description: productForm.description.trim(),
+            categoryId: productForm.categoryId || null,
+            ...getProductFormPrices(),
+            availability: productForm.availability,
+            images: productForm.images,
+          }),
+        },
+      );
 
-      const data = await readJsonSafely<ApiErrorResponse>(response);
+      const data =
+        await readJsonSafely<ApiErrorResponse>(response);
 
-      if (response.status === 401 || response.status === 403) {
+      if (
+        response.status === 401 ||
+        response.status === 403
+      ) {
         router.replace("/seller/login");
         return;
       }
 
       if (!response.ok) {
-        setError(getResponseError(data, "Unable to create product."));
+        setError(
+          getResponseError(
+            data,
+            "Unable to create product.",
+          ),
+        );
         return;
       }
 
@@ -1857,15 +2385,26 @@ export default function SellerDashboard() {
 
       try {
         await reloadBusiness();
-        setSuccess("Product added successfully. Add another product or share your business.");
+
+        setSuccess(
+          "Product added successfully. Add another product or share your business.",
+        );
       } catch (refreshError) {
-        console.error("Product was created but dashboard refresh failed:", refreshError);
+        console.error(
+          "Product was created but dashboard refresh failed:",
+          refreshError,
+        );
+
         setSuccess(
           "Product saved successfully, but the dashboard could not refresh. Reload the page to see the latest product.",
         );
       }
     } catch (productError) {
-      console.error("Seller product creation error:", productError);
+      console.error(
+        "Seller product creation error:",
+        productError,
+      );
+
       setError(
         "We could not confirm the product save. Refresh your dashboard before submitting it again.",
       );
@@ -1878,7 +2417,9 @@ export default function SellerDashboard() {
   /* UPDATE PRODUCT                                                           */
   /* ------------------------------------------------------------------------ */
 
-  async function updateProduct(event: FormEvent<HTMLFormElement>) {
+  async function updateProduct(
+    event: FormEvent<HTMLFormElement>,
+  ) {
     event.preventDefault();
 
     if (updatingProduct || !editingProductId) return;
@@ -1894,7 +2435,9 @@ export default function SellerDashboard() {
         `/api/seller/products/${encodeURIComponent(editingProductId)}`,
         {
           method: "PATCH",
-          headers: { "Content-Type": "application/json" },
+          headers: {
+            "Content-Type": "application/json",
+          },
           body: JSON.stringify({
             name: productForm.name.trim(),
             description: productForm.description.trim(),
@@ -1906,15 +2449,24 @@ export default function SellerDashboard() {
         },
       );
 
-      const data = await readJsonSafely<ApiErrorResponse>(response);
+      const data =
+        await readJsonSafely<ApiErrorResponse>(response);
 
-      if (response.status === 401 || response.status === 403) {
+      if (
+        response.status === 401 ||
+        response.status === 403
+      ) {
         router.replace("/seller/login");
         return;
       }
 
       if (!response.ok) {
-        setError(getResponseError(data, "Unable to update product."));
+        setError(
+          getResponseError(
+            data,
+            "Unable to update product.",
+          ),
+        );
         return;
       }
 
@@ -1924,15 +2476,26 @@ export default function SellerDashboard() {
 
       try {
         await reloadBusiness();
-        setSuccess("Product updated successfully.");
+
+        setSuccess(
+          "Product updated successfully.",
+        );
       } catch (refreshError) {
-        console.error("Product updated but dashboard refresh failed:", refreshError);
+        console.error(
+          "Product updated but dashboard refresh failed:",
+          refreshError,
+        );
+
         setSuccess(
           "Product updated, but the dashboard could not refresh. Reload the page to verify the change.",
         );
       }
     } catch (productError) {
-      console.error("Seller product update error:", productError);
+      console.error(
+        "Seller product update error:",
+        productError,
+      );
+
       setError(
         "We could not confirm the product update. Refresh your dashboard to verify the change.",
       );
@@ -1948,7 +2511,9 @@ export default function SellerDashboard() {
   async function deleteProduct(product: SellerProduct) {
     if (
       deletingProductId ||
-      !window.confirm(`Delete “${product.name}” from your active products?`)
+      !window.confirm(
+        `Delete “${product.name}” from your active products?`,
+      )
     ) {
       return;
     }
@@ -1959,18 +2524,29 @@ export default function SellerDashboard() {
     try {
       const response = await fetch(
         `/api/seller/products/${encodeURIComponent(product.id)}`,
-        { method: "DELETE" },
+        {
+          method: "DELETE",
+        },
       );
 
-      const data = await readJsonSafely<ApiErrorResponse>(response);
+      const data =
+        await readJsonSafely<ApiErrorResponse>(response);
 
-      if (response.status === 401 || response.status === 403) {
+      if (
+        response.status === 401 ||
+        response.status === 403
+      ) {
         router.replace("/seller/login");
         return;
       }
 
       if (!response.ok) {
-        setError(getResponseError(data, "Unable to delete product."));
+        setError(
+          getResponseError(
+            data,
+            "Unable to delete product.",
+          ),
+        );
         return;
       }
 
@@ -1982,15 +2558,26 @@ export default function SellerDashboard() {
 
       try {
         await reloadBusiness();
-        setSuccess("Product deleted successfully.");
+
+        setSuccess(
+          "Product deleted successfully.",
+        );
       } catch (refreshError) {
-        console.error("Product deleted but dashboard refresh failed:", refreshError);
+        console.error(
+          "Product deleted but dashboard refresh failed:",
+          refreshError,
+        );
+
         setSuccess(
           "Product deleted successfully, but the dashboard could not refresh. Reload the page to confirm the latest list.",
         );
       }
     } catch (deleteError) {
-      console.error("Seller product deletion error:", deleteError);
+      console.error(
+        "Seller product deletion error:",
+        deleteError,
+      );
+
       setError(
         "We could not confirm the deletion. Refresh your dashboard before trying again.",
       );
@@ -2017,43 +2604,69 @@ export default function SellerDashboard() {
     setError("");
   }
 
-  async function submitDeletionRequest(event: FormEvent<HTMLFormElement>) {
+  async function submitDeletionRequest(
+    event: FormEvent<HTMLFormElement>,
+  ) {
     event.preventDefault();
 
-    if (submittingDeletionRequest || !business) return;
+    if (
+      submittingDeletionRequest ||
+      !business
+    ) {
+      return;
+    }
 
     clearFeedback();
     setSubmittingDeletionRequest(true);
 
     try {
-      const response = await fetch("/api/seller/business/deletion-request", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          reason: deletionReason.trim(),
-        }),
-      });
+      const response = await fetch(
+        "/api/seller/business/deletion-request",
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            reason: deletionReason.trim(),
+          }),
+        },
+      );
 
-      const data = await readJsonSafely<ApiDeletionResponse>(response);
+      const data =
+        await readJsonSafely<ApiDeletionResponse>(response);
 
-      if (response.status === 401 || response.status === 403) {
+      if (
+        response.status === 401 ||
+        response.status === 403
+      ) {
         router.replace("/seller/login");
         return;
       }
 
       if (!response.ok) {
-        setError(getResponseError(data, "Unable to submit deletion request."));
+        setError(
+          getResponseError(
+            data,
+            "Unable to submit deletion request.",
+          ),
+        );
         return;
       }
 
       setDeletionRequest(data?.request ?? null);
       setDeletionReason("");
       setShowDeletionForm(false);
+
       setSuccess(
         "Your business deletion request has been submitted for admin review. Your business is not deleted immediately.",
       );
     } catch (requestError) {
-      console.error("Seller deletion request error:", requestError);
+      console.error(
+        "Seller deletion request error:",
+        requestError,
+      );
+
       setError(
         "We could not confirm your deletion request. Refresh the dashboard before submitting it again.",
       );
@@ -2076,14 +2689,18 @@ export default function SellerDashboard() {
     clearFeedback();
 
     if (!business) {
-      document.getElementById("business-create-form")?.scrollIntoView({
-        behavior: "smooth",
-        block: "start",
-      });
+      document
+        .getElementById("business-create-form")
+        ?.scrollIntoView({
+          behavior: "smooth",
+          block: "start",
+        });
 
-      document.getElementById("create-business-name")?.focus({
-        preventScroll: true,
-      });
+      document
+        .getElementById("create-business-name")
+        ?.focus({
+          preventScroll: true,
+        });
 
       return;
     }
@@ -2091,17 +2708,24 @@ export default function SellerDashboard() {
     if (dashboardProducts.length === 0) {
       openProductForm();
 
-      document.getElementById("products-section")?.scrollIntoView({
-        behavior: "smooth",
-        block: "start",
-      });
+      document
+        .getElementById("products-section")
+        ?.scrollIntoView({
+          behavior: "smooth",
+          block: "start",
+        });
 
       return;
     }
 
     if (!profileIsComplete) {
       startEditingBusiness();
-      window.scrollTo({ top: 0, behavior: "smooth" });
+
+      window.scrollTo({
+        top: 0,
+        behavior: "smooth",
+      });
+
       return;
     }
 
@@ -2111,10 +2735,12 @@ export default function SellerDashboard() {
       setShareNoticeIsError(false);
     }
 
-    document.getElementById("business-overview")?.scrollIntoView({
-      behavior: "smooth",
-      block: "start",
-    });
+    document
+      .getElementById("business-overview")
+      ?.scrollIntoView({
+        behavior: "smooth",
+        block: "start",
+      });
   }
 
   /* ------------------------------------------------------------------------ */
@@ -2126,6 +2752,7 @@ export default function SellerDashboard() {
       <main className="flex min-h-dvh w-full items-center justify-center bg-[#FFFDFC] px-4">
         <div className="flex items-center gap-3 text-sm font-medium text-gray-600">
           <LoaderCircle className="h-5 w-5 animate-spin text-[#FF5A36]" />
+
           {redirecting
             ? "Redirecting to login..."
             : "Loading seller dashboard..."}
@@ -2146,13 +2773,18 @@ export default function SellerDashboard() {
             Unable to load your dashboard
           </h1>
 
-          <p role="alert" className="mt-2 text-sm leading-6 text-gray-500">
+          <p
+            role="alert"
+            className="mt-2 text-sm leading-6 text-gray-500"
+          >
             {error || "Your business information could not be loaded."}
           </p>
 
           <button
             type="button"
-            onClick={() => setLoadAttempt((attempt) => attempt + 1)}
+            onClick={() =>
+              setLoadAttempt((attempt) => attempt + 1)
+            }
             className={`${primaryButtonClass} mt-5`}
           >
             Try again
@@ -2183,6 +2815,7 @@ export default function SellerDashboard() {
             <span className="block text-sm font-bold tracking-tight">
               ReMarket
             </span>
+
             <span className="block text-[10px] leading-none text-gray-400">
               Seller Portal
             </span>
@@ -2250,6 +2883,7 @@ export default function SellerDashboard() {
                 <p className="text-xs font-bold text-[#17202A]">
                   Your ReMarket account
                 </p>
+
                 <p className="mt-1 text-[10px] leading-4 text-gray-400">
                   Manage your buyer and seller activities.
                 </p>
@@ -2342,9 +2976,15 @@ export default function SellerDashboard() {
           {/* MOBILE MENU BUTTON */}
           <button
             type="button"
-            onClick={() => setMobileNavOpen((open) => !open)}
+            onClick={() =>
+              setMobileNavOpen((open) => !open)
+            }
             aria-expanded={mobileNavOpen}
-            aria-label={mobileNavOpen ? "Close navigation" : "Open navigation"}
+            aria-label={
+              mobileNavOpen
+                ? "Close navigation"
+                : "Open navigation"
+            }
             className="flex h-10 w-10 items-center justify-center rounded-xl border border-[#E8E4DE] text-gray-600 sm:hidden"
           >
             <span className="text-lg leading-none">
@@ -2470,7 +3110,9 @@ export default function SellerDashboard() {
 
           {business && (
             <div className="flex flex-wrap items-center gap-2">
-              <span className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-[11px] font-bold ${getStatusClasses(business.status)}`}>
+              <span
+                className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-[11px] font-bold ${getStatusClasses(business.status)}`}
+              >
                 <span className="h-1.5 w-1.5 rounded-full bg-current" />
                 {business.status}
               </span>
@@ -2482,11 +3124,23 @@ export default function SellerDashboard() {
                 </span>
               )}
 
-              <span className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-[11px] font-bold ${business.showContactInfo === true ? "bg-[#DDF5EA] text-[#137A59]" : "bg-[#FFF0EE] text-[#9F2D18]"}`}>
+              <span
+                className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-[11px] font-bold ${
+                  business.showContactInfo === true
+                    ? "bg-[#DDF5EA] text-[#137A59]"
+                    : "bg-[#FFF0EE] text-[#9F2D18]"
+                }`}
+              >
+                {business.showContactInfo === true ? (
+                  <Globe className="h-3.5 w-3.5" />
+                ) : (
+                  <LockKeyhole className="h-3.5 w-3.5" />
+                )}
+
+                Contact:{" "}
                 {business.showContactInfo === true
-                  ? <Globe className="h-3.5 w-3.5" />
-                  : <LockKeyhole className="h-3.5 w-3.5" />}
-                Contact: {business.showContactInfo === true ? "Public" : "Private"}
+                  ? "Public"
+                  : "Private"}
               </span>
             </div>
           )}
@@ -2499,7 +3153,10 @@ export default function SellerDashboard() {
             className="mb-5 flex items-start gap-3 rounded-2xl border border-[#FFB8B0] bg-[#FFF0EE] px-4 py-4"
           >
             <AlertCircle className="mt-0.5 h-5 w-5 shrink-0 text-[#E33B22]" />
-            <p className="text-sm text-[#C5402D]">{error}</p>
+
+            <p className="text-sm text-[#C5402D]">
+              {error}
+            </p>
           </div>
         )}
 
@@ -2510,7 +3167,10 @@ export default function SellerDashboard() {
             className="mb-5 flex items-start gap-3 rounded-2xl border border-[#BDE8D8] bg-[#EFFBF6] px-4 py-4"
           >
             <CheckCircle2 className="mt-0.5 h-5 w-5 shrink-0 text-[#137A59]" />
-            <p className="text-sm text-[#137A59]">{success}</p>
+
+            <p className="text-sm text-[#137A59]">
+              {success}
+            </p>
           </div>
         )}
 
@@ -2549,7 +3209,10 @@ export default function SellerDashboard() {
             <div className="rounded-2xl border border-white/90 bg-white/85 p-4 sm:p-5">
               <div className="flex items-center justify-between gap-3">
                 <div>
-                  <p className="text-xs font-bold">Getting started</p>
+                  <p className="text-xs font-bold">
+                    Getting started
+                  </p>
+
                   <p className="mt-1 text-[11px] text-gray-500">
                     A quick guide to a useful seller profile
                   </p>
@@ -2571,16 +3234,31 @@ export default function SellerDashboard() {
 
               <div className="mt-4 grid gap-2 sm:grid-cols-2 lg:grid-cols-1 xl:grid-cols-2">
                 {onboardingSteps.map((step) => (
-                  <div key={step.label} className="flex min-w-0 items-start gap-2 text-xs">
-                    <span className={`mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded-full ${step.done ? "bg-[#DDF5EA] text-[#137A59]" : "border border-[#D9DEE5] text-gray-300"}`}>
-                      {step.done
-                        ? <CheckCircle2 className="h-3.5 w-3.5" />
-                        : <Circle className="h-2.5 w-2.5" />}
+                  <div
+                    key={step.label}
+                    className="flex min-w-0 items-start gap-2 text-xs"
+                  >
+                    <span
+                      className={`mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded-full ${
+                        step.done
+                          ? "bg-[#DDF5EA] text-[#137A59]"
+                          : "border border-[#D9DEE5] text-gray-300"
+                      }`}
+                    >
+                      {step.done ? (
+                        <CheckCircle2 className="h-3.5 w-3.5" />
+                      ) : (
+                        <Circle className="h-2.5 w-2.5" />
+                      )}
                     </span>
 
-                    <span className={step.done
-                      ? "text-gray-500 line-through decoration-gray-300"
-                      : "font-medium text-gray-700"}>
+                    <span
+                      className={
+                        step.done
+                          ? "text-gray-500 line-through decoration-gray-300"
+                          : "font-medium text-gray-700"
+                      }
+                    >
                       {step.label}
                     </span>
                   </div>
@@ -2603,7 +3281,10 @@ export default function SellerDashboard() {
                 </div>
 
                 <div>
-                  <h2 className="text-lg font-bold">Add your business</h2>
+                  <h2 className="text-lg font-bold">
+                    Add your business
+                  </h2>
+
                   <p className="mt-1 text-xs text-gray-500">
                     Start with the essential details. You can update the rest later.
                   </p>
@@ -2611,18 +3292,30 @@ export default function SellerDashboard() {
               </div>
             </div>
 
-            <form onSubmit={createBusiness} className="space-y-6 px-5 py-6 sm:px-6">
+            <form
+              onSubmit={createBusiness}
+              className="space-y-6 px-5 py-6 sm:px-6"
+            >
               <div className="grid gap-5 sm:grid-cols-2">
                 <div>
-                  <label htmlFor="create-business-name" className={labelClass}>
-                    Business name <span className="text-[#FF5A36]">*</span>
+                  <label
+                    htmlFor="create-business-name"
+                    className={labelClass}
+                  >
+                    Business name{" "}
+                    <span className="text-[#FF5A36]">*</span>
                   </label>
 
                   <input
                     id="create-business-name"
                     className={inputClass}
                     value={businessForm.name}
-                    onChange={(event) => updateBusinessField("name", event.target.value)}
+                    onChange={(event) =>
+                      updateBusinessField(
+                        "name",
+                        event.target.value,
+                      )
+                    }
                     maxLength={150}
                     placeholder="Your business name"
                     required
@@ -2631,7 +3324,10 @@ export default function SellerDashboard() {
                 </div>
 
                 <div>
-                  <label htmlFor="create-category" className={labelClass}>
+                  <label
+                    htmlFor="create-category"
+                    className={labelClass}
+                  >
                     Category
                   </label>
 
@@ -2639,12 +3335,21 @@ export default function SellerDashboard() {
                     id="create-category"
                     className={inputClass}
                     value={businessForm.categoryId}
-                    onChange={(event) => updateBusinessField("categoryId", event.target.value)}
+                    onChange={(event) =>
+                      updateBusinessField(
+                        "categoryId",
+                        event.target.value,
+                      )
+                    }
                     disabled={savingBusiness}
                   >
                     <option value="">Select category</option>
+
                     {categories.map((category) => (
-                      <option key={category.id} value={category.id}>
+                      <option
+                        key={category.id}
+                        value={category.id}
+                      >
                         {category.name}
                       </option>
                     ))}
@@ -2652,10 +3357,14 @@ export default function SellerDashboard() {
                 </div>
               </div>
 
-              <details className="group rounded-2xl border border-[#E8E4DE] bg-[#FCFAF6] p-4" open>
+              <details
+                className="group rounded-2xl border border-[#E8E4DE] bg-[#FCFAF6] p-4"
+                open
+              >
                 <summary className="cursor-pointer list-none text-sm font-bold">
                   <span className="flex items-center justify-between gap-3">
                     Location details
+
                     <span className="text-[11px] font-medium text-gray-400">
                       Area and street are required
                       <ArrowRight className="inline h-4 w-4 rotate-90" />
@@ -2665,14 +3374,19 @@ export default function SellerDashboard() {
 
                 <div className="mt-4 grid gap-4 sm:grid-cols-2">
                   <div>
-                    <label htmlFor="create-area" className={labelClass}>
+                    <label
+                      htmlFor="create-area"
+                      className={labelClass}
+                    >
                       Area <span className="text-[#FF5A36]">*</span>
                     </label>
 
                     <AreaCombobox
                       id="create-area"
                       value={businessForm.area}
-                      onChange={(value) => updateBusinessField("area", value)}
+                      onChange={(value) =>
+                        updateBusinessField("area", value)
+                      }
                       placeholder="Type or choose a Lagos area"
                       required
                       disabled={savingBusiness}
@@ -2684,12 +3398,23 @@ export default function SellerDashboard() {
                   </div>
 
                   <div>
-                    <label htmlFor="create-city" className={labelClass}>City</label>
+                    <label
+                      htmlFor="create-city"
+                      className={labelClass}
+                    >
+                      City
+                    </label>
+
                     <input
                       id="create-city"
                       className={inputClass}
                       value={businessForm.city}
-                      onChange={(event) => updateBusinessField("city", event.target.value)}
+                      onChange={(event) =>
+                        updateBusinessField(
+                          "city",
+                          event.target.value,
+                        )
+                      }
                       placeholder="e.g. Lagos or Epe"
                       maxLength={100}
                       disabled={savingBusiness}
@@ -2697,14 +3422,23 @@ export default function SellerDashboard() {
                   </div>
 
                   <div>
-                    <label htmlFor="create-house-number" className={labelClass}>
+                    <label
+                      htmlFor="create-house-number"
+                      className={labelClass}
+                    >
                       House / shop number
                     </label>
+
                     <input
                       id="create-house-number"
                       className={inputClass}
                       value={businessForm.houseNumber}
-                      onChange={(event) => updateBusinessField("houseNumber", event.target.value)}
+                      onChange={(event) =>
+                        updateBusinessField(
+                          "houseNumber",
+                          event.target.value,
+                        )
+                      }
                       placeholder="e.g. 12 or Shop 4"
                       maxLength={100}
                       disabled={savingBusiness}
@@ -2712,14 +3446,24 @@ export default function SellerDashboard() {
                   </div>
 
                   <div>
-                    <label htmlFor="create-street" className={labelClass}>
-                      Street / road / close <span className="text-[#FF5A36]">*</span>
+                    <label
+                      htmlFor="create-street"
+                      className={labelClass}
+                    >
+                      Street / road / close{" "}
+                      <span className="text-[#FF5A36]">*</span>
                     </label>
+
                     <input
                       id="create-street"
                       className={inputClass}
                       value={businessForm.street}
-                      onChange={(event) => updateBusinessField("street", event.target.value)}
+                      onChange={(event) =>
+                        updateBusinessField(
+                          "street",
+                          event.target.value,
+                        )
+                      }
                       placeholder="e.g. Agidingbi Road"
                       maxLength={200}
                       required
@@ -2732,6 +3476,7 @@ export default function SellerDashboard() {
                   <p className="text-[10px] font-bold uppercase tracking-wide text-gray-400">
                     Address preview
                   </p>
+
                   <p className="mt-1 break-words text-xs leading-5 text-gray-600">
                     {buildLocationAddressPreview(
                       businessForm.area,
@@ -2743,9 +3488,13 @@ export default function SellerDashboard() {
                 </div>
               </details>
 
-              <details className="rounded-2xl border border-[#E8E4DE] p-4" open>
+              <details
+                className="rounded-2xl border border-[#E8E4DE] p-4"
+                open
+              >
                 <summary className="cursor-pointer list-none text-sm font-bold">
                   Optional profile details
+
                   <span className="ml-1 text-xs font-normal text-gray-400">
                     Description, owner and contact links
                   </span>
@@ -2753,14 +3502,23 @@ export default function SellerDashboard() {
 
                 <div className="mt-4 grid gap-4 sm:grid-cols-2">
                   <div>
-                    <label htmlFor="create-owner-name" className={labelClass}>
+                    <label
+                      htmlFor="create-owner-name"
+                      className={labelClass}
+                    >
                       Owner name
                     </label>
+
                     <input
                       id="create-owner-name"
                       className={inputClass}
                       value={businessForm.ownerName}
-                      onChange={(event) => updateBusinessField("ownerName", event.target.value)}
+                      onChange={(event) =>
+                        updateBusinessField(
+                          "ownerName",
+                          event.target.value,
+                        )
+                      }
                       maxLength={100}
                       placeholder="Your name"
                       disabled={savingBusiness}
@@ -2768,14 +3526,23 @@ export default function SellerDashboard() {
                   </div>
 
                   <div>
-                    <label htmlFor="create-availability" className={labelClass}>
+                    <label
+                      htmlFor="create-availability"
+                      className={labelClass}
+                    >
                       Availability
                     </label>
+
                     <select
                       id="create-availability"
                       className={inputClass}
                       value={businessForm.availability}
-                      onChange={(event) => updateBusinessField("availability", event.target.value as Availability)}
+                      onChange={(event) =>
+                        updateBusinessField(
+                          "availability",
+                          event.target.value as Availability,
+                        )
+                      }
                       disabled={savingBusiness}
                     >
                       <option value="ASK_SELLER">Ask seller</option>
@@ -2785,14 +3552,23 @@ export default function SellerDashboard() {
                   </div>
 
                   <div className="sm:col-span-2">
-                    <label htmlFor="create-description" className={labelClass}>
+                    <label
+                      htmlFor="create-description"
+                      className={labelClass}
+                    >
                       Business description
                     </label>
+
                     <textarea
                       id="create-description"
                       className="w-full resize-y rounded-xl border border-[#D9DEE5] bg-white px-4 py-3 text-sm outline-none focus:border-[#FF694F] focus:ring-4 focus:ring-[#FF694F]/10 disabled:bg-gray-50"
                       value={businessForm.description}
-                      onChange={(event) => updateBusinessField("description", event.target.value)}
+                      onChange={(event) =>
+                        updateBusinessField(
+                          "description",
+                          event.target.value,
+                        )
+                      }
                       placeholder="Tell customers what your business offers"
                       rows={3}
                       maxLength={2000}
@@ -2803,23 +3579,38 @@ export default function SellerDashboard() {
                   <ContactVisibility
                     id="create-show-contact"
                     value={businessForm.showContactInfo}
-                    onChange={(value) => updateBusinessField("showContactInfo", value)}
+                    onChange={(value) =>
+                      updateBusinessField(
+                        "showContactInfo",
+                        value,
+                      )
+                    }
                     disabled={savingBusiness}
                   />
 
                   {SOCIAL_PLATFORMS.map(({ value, label }) => (
                     <div key={value}>
-                      <label htmlFor={`create-social-${value.toLowerCase()}`} className={labelClass}>
+                      <label
+                        htmlFor={`create-social-${value.toLowerCase()}`}
+                        className={labelClass}
+                      >
                         {label}
                       </label>
+
                       <input
                         id={`create-social-${value.toLowerCase()}`}
                         className={inputClass}
                         type={value === "PHONE" ? "tel" : "text"}
                         value={socialValues[value]}
-                        onChange={(event) => updateSocial(value, event.target.value)}
+                        onChange={(event) =>
+                          updateSocial(
+                            value,
+                            event.target.value,
+                          )
+                        }
                         placeholder={
-                          value === "PHONE" || value === "WHATSAPP"
+                          value === "PHONE" ||
+                          value === "WHATSAPP"
                             ? "080..."
                             : value === "DIRECTIONS"
                               ? "https://maps.google.com/..."
@@ -2835,30 +3626,45 @@ export default function SellerDashboard() {
               <details className="rounded-2xl border border-[#E8E4DE] p-4">
                 <summary className="cursor-pointer list-none text-sm font-bold">
                   Optional price range
+
                   <span className="ml-1 text-xs font-normal text-gray-400">
                     For businesses that quote prices
                   </span>
                 </summary>
 
                 <div className="mt-4 grid gap-4 sm:grid-cols-2">
-                  {(["priceMin", "priceMax"] as const).map((field) => (
-                    <div key={field}>
-                      <label htmlFor={`create-${field}`} className={labelClass}>
-                        {field === "priceMin" ? "Minimum" : "Maximum"} price (₦)
-                      </label>
-                      <input
-                        id={`create-${field}`}
-                        className={inputClass}
-                        type="number"
-                        min="0"
-                        step="1"
-                        value={businessForm[field]}
-                        onChange={(event) => updateBusinessField(field, event.target.value)}
-                        placeholder="Leave empty if not applicable"
-                        disabled={savingBusiness}
-                      />
-                    </div>
-                  ))}
+                  {(["priceMin", "priceMax"] as const).map(
+                    (field) => (
+                      <div key={field}>
+                        <label
+                          htmlFor={`create-${field}`}
+                          className={labelClass}
+                        >
+                          {field === "priceMin"
+                            ? "Minimum"
+                            : "Maximum"}{" "}
+                          price (₦)
+                        </label>
+
+                        <input
+                          id={`create-${field}`}
+                          className={inputClass}
+                          type="number"
+                          min="0"
+                          step="1"
+                          value={businessForm[field]}
+                          onChange={(event) =>
+                            updateBusinessField(
+                              field,
+                              event.target.value,
+                            )
+                          }
+                          placeholder="Leave empty if not applicable"
+                          disabled={savingBusiness}
+                        />
+                      </div>
+                    ),
+                  )}
                 </div>
               </details>
 
@@ -2872,9 +3678,17 @@ export default function SellerDashboard() {
                   disabled={savingBusiness}
                   className={`${primaryButtonClass} min-h-12 w-full px-6 text-sm sm:w-auto`}
                 >
-                  {savingBusiness
-                    ? <><LoaderCircle className="h-4 w-4 animate-spin" /> Creating business...</>
-                    : <><Plus className="h-4 w-4" /> Create business</>}
+                  {savingBusiness ? (
+                    <>
+                      <LoaderCircle className="h-4 w-4 animate-spin" />
+                      Creating business...
+                    </>
+                  ) : (
+                    <>
+                      <Plus className="h-4 w-4" />
+                      Create business
+                    </>
+                  )}
                 </button>
               </div>
             </form>
@@ -2901,7 +3715,9 @@ export default function SellerDashboard() {
                         {business.name}
                       </h2>
 
-                      <span className={`rounded-full px-2.5 py-1 text-[10px] font-bold ${getStatusClasses(business.status)}`}>
+                      <span
+                        className={`rounded-full px-2.5 py-1 text-[10px] font-bold ${getStatusClasses(business.status)}`}
+                      >
                         {business.status}
                       </span>
 
@@ -2967,7 +3783,10 @@ export default function SellerDashboard() {
                     </div>
 
                     <div className="min-w-0">
-                      <h3 className="text-sm font-bold">Share your business</h3>
+                      <h3 className="text-sm font-bold">
+                        Share your business
+                      </h3>
+
                       <p className="mt-1 text-xs leading-5 text-gray-500">
                         Help more customers discover {business.name} on ReMarket.
                       </p>
@@ -3021,7 +3840,9 @@ export default function SellerDashboard() {
                         <button
                           key={platform}
                           type="button"
-                          onClick={() => openBusinessShareTarget(platform)}
+                          onClick={() =>
+                            openBusinessShareTarget(platform)
+                          }
                           className={secondaryButtonClass}
                         >
                           <ExternalLink className="h-3.5 w-3.5" />
@@ -3077,7 +3898,10 @@ export default function SellerDashboard() {
                   title="Phone"
                   value={
                     business.phone ||
-                    getSocialValue(business.socialLinks, "PHONE") ||
+                    getSocialValue(
+                      business.socialLinks,
+                      "PHONE",
+                    ) ||
                     "Not set"
                   }
                 />
@@ -3120,14 +3944,17 @@ export default function SellerDashboard() {
               <div className="mt-5 rounded-2xl border border-[#E8E4DE] bg-[#FCFAF6] p-4">
                 <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                   <div className="flex items-start gap-3">
-                    {business.showContactInfo === true
-                      ? <Globe className="mt-0.5 h-5 w-5 shrink-0 text-[#137A59]" />
-                      : <LockKeyhole className="mt-0.5 h-5 w-5 shrink-0 text-[#9F2D18]" />}
+                    {business.showContactInfo === true ? (
+                      <Globe className="mt-0.5 h-5 w-5 shrink-0 text-[#137A59]" />
+                    ) : (
+                      <LockKeyhole className="mt-0.5 h-5 w-5 shrink-0 text-[#9F2D18]" />
+                    )}
 
                     <div>
                       <h3 className="text-sm font-bold">
                         Contact information visibility
                       </h3>
+
                       <p className="mt-1 text-xs leading-5 text-gray-500">
                         {business.showContactInfo === true
                           ? "Your contact links are set to public visibility."
@@ -3136,12 +3963,16 @@ export default function SellerDashboard() {
                     </div>
                   </div>
 
-                  <span className={`inline-flex w-fit items-center gap-1.5 rounded-full px-3 py-1.5 text-[10px] font-bold ${
-                    business.showContactInfo === true
-                      ? "bg-[#DDF5EA] text-[#137A59]"
-                      : "bg-[#FFF0EE] text-[#9F2D18]"
-                  }`}>
-                    {business.showContactInfo === true ? "PUBLIC" : "PRIVATE"}
+                  <span
+                    className={`inline-flex w-fit items-center gap-1.5 rounded-full px-3 py-1.5 text-[10px] font-bold ${
+                      business.showContactInfo === true
+                        ? "bg-[#DDF5EA] text-[#137A59]"
+                        : "bg-[#FFF0EE] text-[#9F2D18]"
+                    }`}
+                  >
+                    {business.showContactInfo === true
+                      ? "PUBLIC"
+                      : "PRIVATE"}
                   </span>
                 </div>
               </div>
@@ -3166,7 +3997,8 @@ export default function SellerDashboard() {
                         >
                           <p className="text-[10px] font-semibold uppercase tracking-wide text-gray-400">
                             {SOCIAL_PLATFORMS.find(
-                              (platform) => platform.value === link.platform,
+                              (platform) =>
+                                platform.value === link.platform,
                             )?.label ?? link.platform}
                           </p>
 
@@ -3194,7 +4026,10 @@ export default function SellerDashboard() {
                       </div>
 
                       <div>
-                        <h3 className="text-sm font-bold">Business deletion</h3>
+                        <h3 className="text-sm font-bold">
+                          Business deletion
+                        </h3>
+
                         <p className="mt-1 max-w-[650px] text-xs leading-5 text-gray-500">
                           Deletion requires admin approval. Submitting a request does not remove your business immediately.
                         </p>
@@ -3202,7 +4037,9 @@ export default function SellerDashboard() {
                     </div>
 
                     {deletionRequest && (
-                      <span className={`shrink-0 rounded-full px-3 py-1.5 text-[10px] font-bold ${getStatusClasses(deletionRequest.status)}`}>
+                      <span
+                        className={`shrink-0 rounded-full px-3 py-1.5 text-[10px] font-bold ${getStatusClasses(deletionRequest.status)}`}
+                      >
                         {deletionRequest.status}
                       </span>
                     )}
@@ -3226,7 +4063,10 @@ export default function SellerDashboard() {
                     </p>
                   )}
 
-                  {(!deletionRequest || deletionRequest.status === "REJECTED") && (
+                  {(
+                    !deletionRequest ||
+                    deletionRequest.status === "REJECTED"
+                  ) && (
                     <button
                       type="button"
                       onClick={openDeletionForm}
@@ -3250,7 +4090,10 @@ export default function SellerDashboard() {
                         Tell the admin why you want this business removed.
                       </p>
 
-                      <label htmlFor="deletion-reason" className={`${labelClass} mt-4`}>
+                      <label
+                        htmlFor="deletion-reason"
+                        className={`${labelClass} mt-4`}
+                      >
                         Reason (optional)
                       </label>
 
@@ -3258,7 +4101,9 @@ export default function SellerDashboard() {
                         id="deletion-reason"
                         className="w-full resize-none rounded-xl border border-[#D9DEE5] px-4 py-3 text-sm outline-none focus:border-[#FF694F] focus:ring-4 focus:ring-[#FF694F]/10 disabled:bg-gray-50"
                         value={deletionReason}
-                        onChange={(event) => setDeletionReason(event.target.value)}
+                        onChange={(event) =>
+                          setDeletionReason(event.target.value)
+                        }
                         rows={4}
                         maxLength={1000}
                         placeholder="Optional reason for your request"
@@ -3281,9 +4126,17 @@ export default function SellerDashboard() {
                           disabled={submittingDeletionRequest}
                           className="inline-flex items-center justify-center gap-2 rounded-xl bg-[#C5402D] px-4 py-2.5 text-xs font-bold text-white disabled:opacity-60"
                         >
-                          {submittingDeletionRequest
-                            ? <><LoaderCircle className="h-4 w-4 animate-spin" /> Submitting...</>
-                            : <><Trash2 className="h-4 w-4" /> Submit request</>}
+                          {submittingDeletionRequest ? (
+                            <>
+                              <LoaderCircle className="h-4 w-4 animate-spin" />
+                              Submitting...
+                            </>
+                          ) : (
+                            <>
+                              <Trash2 className="h-4 w-4" />
+                              Submit request
+                            </>
+                          )}
                         </button>
                       </div>
                     </form>
@@ -3306,7 +4159,11 @@ export default function SellerDashboard() {
                     <p className="text-xs font-semibold uppercase tracking-[0.12em] text-[#FF5A36]">
                       Business settings
                     </p>
-                    <h2 className="mt-1 text-lg font-bold">Edit your business</h2>
+
+                    <h2 className="mt-1 text-lg font-bold">
+                      Edit your business
+                    </h2>
+
                     <p className="mt-1 text-xs text-gray-500">
                       Update the information customers see on ReMarket.
                     </p>
@@ -3323,17 +4180,29 @@ export default function SellerDashboard() {
                   </button>
                 </div>
 
-                <form onSubmit={updateBusiness} className="space-y-5 px-5 py-6 sm:px-6">
+                <form
+                  onSubmit={updateBusiness}
+                  className="space-y-5 px-5 py-6 sm:px-6"
+                >
                   <div className="grid gap-5 sm:grid-cols-2">
                     <div>
-                      <label htmlFor="edit-business-name" className={labelClass}>
+                      <label
+                        htmlFor="edit-business-name"
+                        className={labelClass}
+                      >
                         Business name
                       </label>
+
                       <input
                         id="edit-business-name"
                         className={inputClass}
                         value={businessForm.name}
-                        onChange={(event) => updateBusinessField("name", event.target.value)}
+                        onChange={(event) =>
+                          updateBusinessField(
+                            "name",
+                            event.target.value,
+                          )
+                        }
                         maxLength={150}
                         required
                         disabled={savingBusiness}
@@ -3341,14 +4210,23 @@ export default function SellerDashboard() {
                     </div>
 
                     <div>
-                      <label htmlFor="edit-owner-name" className={labelClass}>
+                      <label
+                        htmlFor="edit-owner-name"
+                        className={labelClass}
+                      >
                         Owner name
                       </label>
+
                       <input
                         id="edit-owner-name"
                         className={inputClass}
                         value={businessForm.ownerName}
-                        onChange={(event) => updateBusinessField("ownerName", event.target.value)}
+                        onChange={(event) =>
+                          updateBusinessField(
+                            "ownerName",
+                            event.target.value,
+                          )
+                        }
                         maxLength={100}
                         disabled={savingBusiness}
                       />
@@ -3356,14 +4234,23 @@ export default function SellerDashboard() {
                   </div>
 
                   <div>
-                    <label htmlFor="edit-description" className={labelClass}>
+                    <label
+                      htmlFor="edit-description"
+                      className={labelClass}
+                    >
                       Description
                     </label>
+
                     <textarea
                       id="edit-description"
                       className="w-full resize-y rounded-xl border border-[#D9DEE5] px-4 py-3 text-sm outline-none focus:border-[#FF694F] focus:ring-4 focus:ring-[#FF694F]/10 disabled:bg-gray-50"
                       value={businessForm.description}
-                      onChange={(event) => updateBusinessField("description", event.target.value)}
+                      onChange={(event) =>
+                        updateBusinessField(
+                          "description",
+                          event.target.value,
+                        )
+                      }
                       rows={3}
                       maxLength={2000}
                       disabled={savingBusiness}
@@ -3372,14 +4259,19 @@ export default function SellerDashboard() {
 
                   <div className="grid gap-5 sm:grid-cols-2">
                     <div>
-                      <label htmlFor="edit-area" className={labelClass}>
+                      <label
+                        htmlFor="edit-area"
+                        className={labelClass}
+                      >
                         Business area
                       </label>
 
                       <AreaCombobox
                         id="edit-area"
                         value={businessForm.area}
-                        onChange={(value) => updateBusinessField("area", value)}
+                        onChange={(value) =>
+                          updateBusinessField("area", value)
+                        }
                         placeholder="Type or choose a Lagos area"
                         required
                         disabled={savingBusiness}
@@ -3391,12 +4283,23 @@ export default function SellerDashboard() {
                     </div>
 
                     <div>
-                      <label htmlFor="edit-city" className={labelClass}>City</label>
+                      <label
+                        htmlFor="edit-city"
+                        className={labelClass}
+                      >
+                        City
+                      </label>
+
                       <input
                         id="edit-city"
                         className={inputClass}
                         value={businessForm.city}
-                        onChange={(event) => updateBusinessField("city", event.target.value)}
+                        onChange={(event) =>
+                          updateBusinessField(
+                            "city",
+                            event.target.value,
+                          )
+                        }
                         placeholder="Lagos or Epe"
                         maxLength={100}
                         disabled={savingBusiness}
@@ -3404,14 +4307,23 @@ export default function SellerDashboard() {
                     </div>
 
                     <div>
-                      <label htmlFor="edit-house-number" className={labelClass}>
+                      <label
+                        htmlFor="edit-house-number"
+                        className={labelClass}
+                      >
                         House / shop number
                       </label>
+
                       <input
                         id="edit-house-number"
                         className={inputClass}
                         value={businessForm.houseNumber}
-                        onChange={(event) => updateBusinessField("houseNumber", event.target.value)}
+                        onChange={(event) =>
+                          updateBusinessField(
+                            "houseNumber",
+                            event.target.value,
+                          )
+                        }
                         placeholder="e.g. 12 or Shop 4"
                         maxLength={100}
                         disabled={savingBusiness}
@@ -3419,14 +4331,23 @@ export default function SellerDashboard() {
                     </div>
 
                     <div>
-                      <label htmlFor="edit-street" className={labelClass}>
+                      <label
+                        htmlFor="edit-street"
+                        className={labelClass}
+                      >
                         Street / road / close
                       </label>
+
                       <input
                         id="edit-street"
                         className={inputClass}
                         value={businessForm.street}
-                        onChange={(event) => updateBusinessField("street", event.target.value)}
+                        onChange={(event) =>
+                          updateBusinessField(
+                            "street",
+                            event.target.value,
+                          )
+                        }
                         placeholder="e.g. Agidingbi Road"
                         maxLength={200}
                         required
@@ -3440,7 +4361,10 @@ export default function SellerDashboard() {
                       <MapPin className="mt-0.5 h-5 w-5 shrink-0 text-[#FF5A36]" />
 
                       <div>
-                        <p className="text-xs font-bold">Address preview</p>
+                        <p className="text-xs font-bold">
+                          Address preview
+                        </p>
+
                         <p className="mt-2 break-words text-xs leading-5 text-gray-600">
                           {buildLocationAddressPreview(
                             businessForm.area,
@@ -3449,6 +4373,7 @@ export default function SellerDashboard() {
                             businessForm.city,
                           )}
                         </p>
+
                         <p className="mt-1 text-[10px] text-gray-400">
                           Country: Nigeria
                         </p>
@@ -3457,7 +4382,10 @@ export default function SellerDashboard() {
                   </div>
 
                   <div className="rounded-2xl border border-[#E8E4DE] bg-[#FCFAF6] p-4">
-                    <p className="text-xs font-bold">Contact & social links</p>
+                    <p className="text-xs font-bold">
+                      Contact & social links
+                    </p>
+
                     <p className="mt-1 text-[10px] leading-5 text-gray-500">
                       Add useful ways for customers to reach your business.
                     </p>
@@ -3465,14 +4393,22 @@ export default function SellerDashboard() {
                     <ContactVisibility
                       id="edit-show-contact"
                       value={businessForm.showContactInfo}
-                      onChange={(value) => updateBusinessField("showContactInfo", value)}
+                      onChange={(value) =>
+                        updateBusinessField(
+                          "showContactInfo",
+                          value,
+                        )
+                      }
                       disabled={savingBusiness}
                     />
 
                     <div className="mt-4 grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
                       {SOCIAL_PLATFORMS.map(({ value, label }) => (
                         <div key={value}>
-                          <label htmlFor={`edit-social-${value.toLowerCase()}`} className={labelClass}>
+                          <label
+                            htmlFor={`edit-social-${value.toLowerCase()}`}
+                            className={labelClass}
+                          >
                             {label}
                           </label>
 
@@ -3481,9 +4417,15 @@ export default function SellerDashboard() {
                             className={inputClass}
                             type={value === "PHONE" ? "tel" : "text"}
                             value={socialValues[value]}
-                            onChange={(event) => updateSocial(value, event.target.value)}
+                            onChange={(event) =>
+                              updateSocial(
+                                value,
+                                event.target.value,
+                              )
+                            }
                             placeholder={
-                              value === "PHONE" || value === "WHATSAPP"
+                              value === "PHONE" ||
+                              value === "WHATSAPP"
                                 ? "080..."
                                 : value === "DIRECTIONS"
                                   ? "https://maps.google.com/..."
@@ -3498,7 +4440,10 @@ export default function SellerDashboard() {
 
                   <div className="grid gap-5 sm:grid-cols-2 xl:grid-cols-4">
                     <div>
-                      <label htmlFor="edit-category" className={labelClass}>
+                      <label
+                        htmlFor="edit-category"
+                        className={labelClass}
+                      >
                         Category
                       </label>
 
@@ -3507,14 +4452,22 @@ export default function SellerDashboard() {
                         className={inputClass}
                         value={businessForm.categoryId}
                         onChange={(event) => {
-                          updateBusinessField("categoryId", event.target.value);
+                          updateBusinessField(
+                            "categoryId",
+                            event.target.value,
+                          );
+
                           setCategoryChanged(true);
                         }}
                         disabled={savingBusiness}
                       >
                         <option value="">Select category</option>
+
                         {categories.map((category) => (
-                          <option key={category.id} value={category.id}>
+                          <option
+                            key={category.id}
+                            value={category.id}
+                          >
                             {category.name}
                           </option>
                         ))}
@@ -3522,7 +4475,10 @@ export default function SellerDashboard() {
                     </div>
 
                     <div>
-                      <label htmlFor="edit-availability" className={labelClass}>
+                      <label
+                        htmlFor="edit-availability"
+                        className={labelClass}
+                      >
                         Availability
                       </label>
 
@@ -3530,7 +4486,12 @@ export default function SellerDashboard() {
                         id="edit-availability"
                         className={inputClass}
                         value={businessForm.availability}
-                        onChange={(event) => updateBusinessField("availability", event.target.value as Availability)}
+                        onChange={(event) =>
+                          updateBusinessField(
+                            "availability",
+                            event.target.value as Availability,
+                          )
+                        }
                         disabled={savingBusiness}
                       >
                         <option value="ASK_SELLER">Ask seller</option>
@@ -3539,24 +4500,37 @@ export default function SellerDashboard() {
                       </select>
                     </div>
 
-                    {(["priceMin", "priceMax"] as const).map((field) => (
-                      <div key={field}>
-                        <label htmlFor={`edit-${field}`} className={labelClass}>
-                          {field === "priceMin" ? "Minimum" : "Maximum"} price (₦)
-                        </label>
+                    {(["priceMin", "priceMax"] as const).map(
+                      (field) => (
+                        <div key={field}>
+                          <label
+                            htmlFor={`edit-${field}`}
+                            className={labelClass}
+                          >
+                            {field === "priceMin"
+                              ? "Minimum"
+                              : "Maximum"}{" "}
+                            price (₦)
+                          </label>
 
-                        <input
-                          id={`edit-${field}`}
-                          type="number"
-                          min="0"
-                          step="1"
-                          className={inputClass}
-                          value={businessForm[field]}
-                          onChange={(event) => updateBusinessField(field, event.target.value)}
-                          disabled={savingBusiness}
-                        />
-                      </div>
-                    ))}
+                          <input
+                            id={`edit-${field}`}
+                            type="number"
+                            min="0"
+                            step="1"
+                            className={inputClass}
+                            value={businessForm[field]}
+                            onChange={(event) =>
+                              updateBusinessField(
+                                field,
+                                event.target.value,
+                              )
+                            }
+                            disabled={savingBusiness}
+                          />
+                        </div>
+                      ),
+                    )}
                   </div>
 
                   <div className="flex justify-end border-t border-[#EAE6DF] pt-5">
@@ -3565,9 +4539,17 @@ export default function SellerDashboard() {
                       disabled={savingBusiness}
                       className={`${primaryButtonClass} min-h-12 w-full px-6 text-sm sm:w-auto`}
                     >
-                      {savingBusiness
-                        ? <><LoaderCircle className="h-4 w-4 animate-spin" /> Saving...</>
-                        : <><CheckCircle2 className="h-4 w-4" /> Save changes</>}
+                      {savingBusiness ? (
+                        <>
+                          <LoaderCircle className="h-4 w-4 animate-spin" />
+                          Saving...
+                        </>
+                      ) : (
+                        <>
+                          <CheckCircle2 className="h-4 w-4" />
+                          Save changes
+                        </>
+                      )}
                     </button>
                   </div>
                 </form>
@@ -3585,7 +4567,11 @@ export default function SellerDashboard() {
                     <p className="text-xs font-semibold uppercase tracking-[0.12em] text-[#FF5A36]">
                       Product management
                     </p>
-                    <h2 className="mt-1 text-lg font-bold">Your products</h2>
+
+                    <h2 className="mt-1 text-lg font-bold">
+                      Your products
+                    </h2>
+
                     <p className="mt-1 text-xs leading-5 text-gray-500">
                       Add the items customers can discover through your business page.
                     </p>
@@ -3593,13 +4579,28 @@ export default function SellerDashboard() {
 
                   <button
                     type="button"
-                    onClick={showProductForm ? closeProductForm : openProductForm}
-                    disabled={(reachedProductLimit && !showProductForm) || editingBusiness}
+                    onClick={
+                      showProductForm
+                        ? closeProductForm
+                        : openProductForm
+                    }
+                    disabled={
+                      (reachedProductLimit && !showProductForm) ||
+                      editingBusiness
+                    }
                     className={`${primaryButtonClass} min-h-11 shrink-0 disabled:bg-gray-200 disabled:text-gray-500`}
                   >
-                    {showProductForm
-                      ? <><X className="h-4 w-4" /> Close form</>
-                      : <><Plus className="h-4 w-4" /> Add product</>}
+                    {showProductForm ? (
+                      <>
+                        <X className="h-4 w-4" />
+                        Close form
+                      </>
+                    ) : (
+                      <>
+                        <Plus className="h-4 w-4" />
+                        Add product
+                      </>
+                    )}
                   </button>
                 </div>
 
@@ -3609,7 +4610,10 @@ export default function SellerDashboard() {
                     <div>
                       <div className="flex items-center gap-2">
                         <Package className="h-4 w-4 text-[#FF5A36]" />
-                        <p className="text-xs font-bold">Active product slots</p>
+
+                        <p className="text-xs font-bold">
+                          Active product slots
+                        </p>
                       </div>
 
                       <p className="mt-1 text-[11px] text-gray-500">
@@ -3626,18 +4630,33 @@ export default function SellerDashboard() {
                       </p>
                     </div>
 
-                    <p className={`text-sm font-bold ${reachedProductLimit ? "text-[#C5402D]" : "text-[#9F2D18]"}`}>
+                    <p
+                      className={`text-sm font-bold ${
+                        reachedProductLimit
+                          ? "text-[#C5402D]"
+                          : "text-[#9F2D18]"
+                      }`}
+                    >
                       {activeProductCount}/{productCapacity.maxActiveProducts}
                     </p>
                   </div>
 
                   <div className="mt-3 h-2 overflow-hidden rounded-full bg-[#EAE6DF]">
                     <div
-                      className={`h-full rounded-full transition-all ${reachedProductLimit ? "bg-[#C5402D]" : "bg-[#FF5A36]"}`}
+                      className={`h-full rounded-full transition-all ${
+                        reachedProductLimit
+                          ? "bg-[#C5402D]"
+                          : "bg-[#FF5A36]"
+                      }`}
                       style={{
                         width: `${Math.min(
                           100,
-                          (activeProductCount / Math.max(1, productCapacity.maxActiveProducts)) * 100,
+                          (activeProductCount /
+                            Math.max(
+                              1,
+                              productCapacity.maxActiveProducts,
+                            )) *
+                            100,
                         )}%`,
                       }}
                     />
@@ -3648,21 +4667,30 @@ export default function SellerDashboard() {
               {/* PRODUCT FORM */}
               {showProductForm && (
                 <form
-                  onSubmit={editingProductId ? updateProduct : createProduct}
+                  onSubmit={
+                    editingProductId
+                      ? updateProduct
+                      : createProduct
+                  }
                   className="space-y-5 border-b border-[#EAE6DF] bg-[#FCFAF6] px-5 py-6 sm:px-6"
                 >
                   <div className="flex items-start justify-between gap-4">
                     <div className="flex items-start gap-3">
                       <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-[#FFF0EB] text-[#FF5A36]">
-                        {editingProductId
-                          ? <Pencil className="h-5 w-5" />
-                          : <Plus className="h-5 w-5" />}
+                        {editingProductId ? (
+                          <Pencil className="h-5 w-5" />
+                        ) : (
+                          <Plus className="h-5 w-5" />
+                        )}
                       </div>
 
                       <div>
                         <h3 className="text-sm font-bold">
-                          {editingProductId ? "Edit product" : "Add a product"}
+                          {editingProductId
+                            ? "Edit product"
+                            : "Add a product"}
                         </h3>
+
                         <p className="mt-1 text-xs leading-5 text-gray-500">
                           {editingProductId
                             ? "Update the information customers see."
@@ -3684,14 +4712,24 @@ export default function SellerDashboard() {
 
                   <div className="grid gap-5 sm:grid-cols-2">
                     <div>
-                      <label htmlFor="product-name" className={labelClass}>
-                        Product name <span className="text-[#FF5A36]">*</span>
+                      <label
+                        htmlFor="product-name"
+                        className={labelClass}
+                      >
+                        Product name{" "}
+                        <span className="text-[#FF5A36]">*</span>
                       </label>
+
                       <input
                         id="product-name"
                         className={inputClass}
                         value={productForm.name}
-                        onChange={(event) => updateProductField("name", event.target.value)}
+                        onChange={(event) =>
+                          updateProductField(
+                            "name",
+                            event.target.value,
+                          )
+                        }
                         placeholder="e.g. Native fabric"
                         maxLength={150}
                         required
@@ -3700,19 +4738,32 @@ export default function SellerDashboard() {
                     </div>
 
                     <div>
-                      <label htmlFor="product-category" className={labelClass}>
+                      <label
+                        htmlFor="product-category"
+                        className={labelClass}
+                      >
                         Category
                       </label>
+
                       <select
                         id="product-category"
                         className={inputClass}
                         value={productForm.categoryId}
-                        onChange={(event) => updateProductField("categoryId", event.target.value)}
+                        onChange={(event) =>
+                          updateProductField(
+                            "categoryId",
+                            event.target.value,
+                          )
+                        }
                         disabled={creatingProduct || updatingProduct}
                       >
                         <option value="">Select category</option>
+
                         {categories.map((category) => (
-                          <option key={category.id} value={category.id}>
+                          <option
+                            key={category.id}
+                            value={category.id}
+                          >
                             {category.name}
                           </option>
                         ))}
@@ -3721,14 +4772,26 @@ export default function SellerDashboard() {
                   </div>
 
                   <div>
-                    <label htmlFor="product-description" className={labelClass}>
-                      Description <span className="font-normal text-gray-400">(optional)</span>
+                    <label
+                      htmlFor="product-description"
+                      className={labelClass}
+                    >
+                      Description{" "}
+                      <span className="font-normal text-gray-400">
+                        (optional)
+                      </span>
                     </label>
+
                     <textarea
                       id="product-description"
                       className="w-full resize-y rounded-xl border border-[#D9DEE5] bg-white px-4 py-3 text-sm outline-none transition focus:border-[#FF694F] focus:ring-4 focus:ring-[#FF694F]/10 disabled:bg-gray-50"
                       value={productForm.description}
-                      onChange={(event) => updateProductField("description", event.target.value)}
+                      onChange={(event) =>
+                        updateProductField(
+                          "description",
+                          event.target.value,
+                        )
+                      }
                       rows={3}
                       maxLength={2000}
                       placeholder="Describe the product"
@@ -3739,9 +4802,13 @@ export default function SellerDashboard() {
                   <div className="grid gap-5 xl:grid-cols-2">
                     <div className="grid gap-4 sm:grid-cols-2">
                       <div>
-                        <label htmlFor="product-price" className={labelClass}>
+                        <label
+                          htmlFor="product-price"
+                          className={labelClass}
+                        >
                           Exact price (₦)
                         </label>
+
                         <input
                           id="product-price"
                           className={inputClass}
@@ -3749,24 +4816,39 @@ export default function SellerDashboard() {
                           min="1"
                           step="1"
                           value={productForm.price}
-                          onChange={(event) => updateProductField("price", event.target.value)}
+                          onChange={(event) =>
+                            updateProductField(
+                              "price",
+                              event.target.value,
+                            )
+                          }
                           placeholder="Enter fixed price"
                           disabled={creatingProduct || updatingProduct}
                         />
+
                         <p className="mt-1 text-[10px] text-gray-400">
                           Enter a fixed price or a minimum price below. A product cannot be saved without pricing.
                         </p>
                       </div>
 
                       <div>
-                        <label htmlFor="product-availability" className={labelClass}>
+                        <label
+                          htmlFor="product-availability"
+                          className={labelClass}
+                        >
                           Availability
                         </label>
+
                         <select
                           id="product-availability"
                           className={inputClass}
                           value={productForm.availability}
-                          onChange={(event) => updateProductField("availability", event.target.value as Availability)}
+                          onChange={(event) =>
+                            updateProductField(
+                              "availability",
+                              event.target.value as Availability,
+                            )
+                          }
                           disabled={creatingProduct || updatingProduct}
                         >
                           <option value="ASK_SELLER">Ask seller</option>
@@ -3776,9 +4858,13 @@ export default function SellerDashboard() {
                       </div>
 
                       <div>
-                        <label htmlFor="product-price-min" className={labelClass}>
+                        <label
+                          htmlFor="product-price-min"
+                          className={labelClass}
+                        >
                           Minimum price (₦) — use if no exact price
                         </label>
+
                         <input
                           id="product-price-min"
                           className={inputClass}
@@ -3786,16 +4872,25 @@ export default function SellerDashboard() {
                           min="1"
                           step="1"
                           value={productForm.priceMin}
-                          onChange={(event) => updateProductField("priceMin", event.target.value)}
+                          onChange={(event) =>
+                            updateProductField(
+                              "priceMin",
+                              event.target.value,
+                            )
+                          }
                           placeholder="Starting price"
                           disabled={creatingProduct || updatingProduct}
                         />
                       </div>
 
                       <div>
-                        <label htmlFor="product-price-max" className={labelClass}>
+                        <label
+                          htmlFor="product-price-max"
+                          className={labelClass}
+                        >
                           Maximum price (₦)
                         </label>
+
                         <input
                           id="product-price-max"
                           className={inputClass}
@@ -3803,7 +4898,12 @@ export default function SellerDashboard() {
                           min="1"
                           step="1"
                           value={productForm.priceMax}
-                          onChange={(event) => updateProductField("priceMax", event.target.value)}
+                          onChange={(event) =>
+                            updateProductField(
+                              "priceMax",
+                              event.target.value,
+                            )
+                          }
                           placeholder="Optional upper limit"
                           disabled={creatingProduct || updatingProduct}
                         />
@@ -3811,7 +4911,10 @@ export default function SellerDashboard() {
                     </div>
 
                     <div className="min-w-0 rounded-2xl border border-[#E8E4DE] bg-white p-4">
-                      <p className="text-xs font-bold">Product images</p>
+                      <p className="text-xs font-bold">
+                        Product images
+                      </p>
+
                       <p className="mt-1 text-[10px] leading-4 text-gray-500">
                         The first image becomes the cover image.
                       </p>
@@ -3819,7 +4922,9 @@ export default function SellerDashboard() {
                       <div className="mt-3 min-w-0">
                         <ProductImageUpload
                           value={productForm.images}
-                          onChange={(images) => updateProductField("images", images)}
+                          onChange={(images) =>
+                            updateProductField("images", images)
+                          }
                           disabled={creatingProduct || updatingProduct}
                         />
                       </div>
@@ -3838,13 +4943,24 @@ export default function SellerDashboard() {
                       disabled={creatingProduct || updatingProduct}
                       className={`${primaryButtonClass} min-h-12 w-full px-6 text-sm sm:w-auto`}
                     >
-                      {creatingProduct || updatingProduct
-                        ? <><LoaderCircle className="h-4 w-4 animate-spin" /> {editingProductId ? "Saving..." : "Adding..."}</>
-                        : <>{editingProductId
-                            ? <CheckCircle2 className="h-4 w-4" />
-                            : <Plus className="h-4 w-4" />}
-                          {editingProductId ? "Save changes" : "Add product"}
-                        </>}
+                      {creatingProduct || updatingProduct ? (
+                        <>
+                          <LoaderCircle className="h-4 w-4 animate-spin" />
+                          {editingProductId ? "Saving..." : "Adding..."}
+                        </>
+                      ) : (
+                        <>
+                          {editingProductId ? (
+                            <CheckCircle2 className="h-4 w-4" />
+                          ) : (
+                            <Plus className="h-4 w-4" />
+                          )}
+
+                          {editingProductId
+                            ? "Save changes"
+                            : "Add product"}
+                        </>
+                      )}
                     </button>
                   </div>
                 </form>
@@ -3858,7 +4974,10 @@ export default function SellerDashboard() {
                       <Package className="h-6 w-6" />
                     </div>
 
-                    <h3 className="mt-4 text-sm font-bold">No products yet</h3>
+                    <h3 className="mt-4 text-sm font-bold">
+                      No products yet
+                    </h3>
+
                     <p className="mx-auto mt-1 max-w-[430px] text-xs leading-5 text-gray-500">
                       Add your first product so customers can see what your business sells.
                     </p>
@@ -3866,7 +4985,10 @@ export default function SellerDashboard() {
                     <button
                       type="button"
                       onClick={openProductForm}
-                      disabled={reachedProductLimit || editingBusiness}
+                      disabled={
+                        reachedProductLimit ||
+                        editingBusiness
+                      }
                       className={`${primaryButtonClass} mt-4 min-h-10`}
                     >
                       <Plus className="h-4 w-4" />
@@ -3879,18 +5001,22 @@ export default function SellerDashboard() {
                       const cover =
                         product.images
                           ?.slice()
-                          .sort((a, b) => a.sortOrder - b.sortOrder)[0]?.url ||
+                          .sort(
+                            (a, b) => a.sortOrder - b.sortOrder,
+                          )[0]?.url ||
                         product.imageUrl;
 
-                      const priceLabel = product.price != null
-                        ? `₦${product.price.toLocaleString("en-NG")}`
-                        : product.priceMin != null && product.priceMax != null
-                          ? `₦${product.priceMin.toLocaleString("en-NG")} – ₦${product.priceMax.toLocaleString("en-NG")}`
-                          : product.priceMin != null
-                            ? `From ₦${product.priceMin.toLocaleString("en-NG")}`
-                            : product.priceMax != null
-                              ? `Up to ₦${product.priceMax.toLocaleString("en-NG")}`
-                              : "Price missing — edit listing";
+                      const priceLabel =
+                        product.price != null
+                          ? `₦${product.price.toLocaleString("en-NG")}`
+                          : product.priceMin != null &&
+                              product.priceMax != null
+                            ? `₦${product.priceMin.toLocaleString("en-NG")} – ₦${product.priceMax.toLocaleString("en-NG")}`
+                            : product.priceMin != null
+                              ? `From ₦${product.priceMin.toLocaleString("en-NG")}`
+                              : product.priceMax != null
+                                ? `Up to ₦${product.priceMax.toLocaleString("en-NG")}`
+                                : "Price missing — edit listing";
 
                       return (
                         <article
@@ -3918,12 +5044,15 @@ export default function SellerDashboard() {
                                 <h3 className="break-words text-sm font-bold">
                                   {product.name}
                                 </h3>
+
                                 <p className="mt-1 text-[11px] text-gray-500">
                                   {product.category?.name ?? "No category"}
                                 </p>
                               </div>
 
-                              <span className={`shrink-0 rounded-full px-2 py-1 text-[9px] font-bold ${getStatusClasses(product.status)}`}>
+                              <span
+                                className={`shrink-0 rounded-full px-2 py-1 text-[9px] font-bold ${getStatusClasses(product.status)}`}
+                              >
                                 {product.status}
                               </span>
                             </div>
@@ -3936,6 +5065,7 @@ export default function SellerDashboard() {
                               <p className="break-words text-sm font-bold text-[#9F2D18]">
                                 {priceLabel}
                               </p>
+
                               <span className="max-w-[46%] shrink-0 text-right text-[10px] font-medium text-gray-400">
                                 {formatAvailability(product.availability)}
                               </span>
@@ -3944,8 +5074,13 @@ export default function SellerDashboard() {
                             <div className="mt-auto flex gap-2 pt-4">
                               <button
                                 type="button"
-                                onClick={() => startEditingProduct(product)}
-                                disabled={Boolean(deletingProductId) || editingBusiness}
+                                onClick={() =>
+                                  startEditingProduct(product)
+                                }
+                                disabled={
+                                  Boolean(deletingProductId) ||
+                                  editingBusiness
+                                }
                                 className={`${secondaryButtonClass} min-w-0 flex-1`}
                               >
                                 <Pencil className="h-3.5 w-3.5" />
@@ -3954,14 +5089,21 @@ export default function SellerDashboard() {
 
                               <button
                                 type="button"
-                                onClick={() => void deleteProduct(product)}
-                                disabled={Boolean(deletingProductId) || editingBusiness}
+                                onClick={() =>
+                                  void deleteProduct(product)
+                                }
+                                disabled={
+                                  Boolean(deletingProductId) ||
+                                  editingBusiness
+                                }
                                 aria-label={`Delete ${product.name}`}
                                 className="inline-flex shrink-0 items-center justify-center rounded-xl border border-[#F1D5D0] px-3 py-2.5 text-xs font-semibold text-[#C5402D] transition hover:bg-[#FFF0EE] disabled:cursor-not-allowed disabled:opacity-50"
                               >
-                                {deletingProductId === product.id
-                                  ? <LoaderCircle className="h-4 w-4 animate-spin" />
-                                  : <Trash2 className="h-4 w-4" />}
+                                {deletingProductId === product.id ? (
+                                  <LoaderCircle className="h-4 w-4 animate-spin" />
+                                ) : (
+                                  <Trash2 className="h-4 w-4" />
+                                )}
                               </button>
                             </div>
                           </div>
@@ -3978,21 +5120,39 @@ export default function SellerDashboard() {
         {/* FOOTER */}
         <footer className="mt-8 border-t border-[#EAE6DF] py-5">
           <div className="flex flex-col gap-2 text-[11px] text-gray-400 sm:flex-row sm:items-center sm:justify-between">
-            <p>ReMarket Seller Portal · Find it nearby.</p>
+            <p>
+              ReMarket Seller Portal · Find it nearby.
+            </p>
 
             <div className="flex flex-wrap gap-4">
-              <Link href="/account" className="hover:text-[#9F2D18]">
+              <Link
+                href="/account"
+                className="hover:text-[#9F2D18]"
+              >
                 Account
               </Link>
-              <Link href="/saved" className="hover:text-[#9F2D18]">
+
+              <Link
+                href="/saved"
+                className="hover:text-[#9F2D18]"
+              >
                 Saved items
               </Link>
-              <Link href="/seller/profile" className="hover:text-[#9F2D18]">
+
+              <Link
+                href="/seller/profile"
+                className="hover:text-[#9F2D18]"
+              >
                 Profile settings
               </Link>
-              <Link href="/seller/claims" className="hover:text-[#9F2D18]">
+
+              <Link
+                href="/seller/claims"
+                className="hover:text-[#9F2D18]"
+              >
                 Business claims
               </Link>
+
               <button
                 type="button"
                 onClick={() => void logout()}
@@ -4027,6 +5187,7 @@ function OverviewCard({
     <div className="min-w-0 rounded-2xl bg-[#FCFAF6] p-4">
       <div className="flex items-center gap-2 text-gray-400">
         {icon}
+
         <span className="text-[10px] font-semibold uppercase tracking-wide">
           {title}
         </span>
@@ -4059,14 +5220,18 @@ function ContactVisibility({
   return (
     <div className="sm:col-span-2 mt-2 rounded-xl border border-[#E8E4DE] bg-[#FCFAF6] p-4">
       <div className="flex items-start gap-3">
-        <div className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-xl ${
-          value
-            ? "bg-[#DDF5EA] text-[#137A59]"
-            : "bg-[#FFF0EE] text-[#9F2D18]"
-        }`}>
-          {value
-            ? <Globe className="h-5 w-5" />
-            : <LockKeyhole className="h-5 w-5" />}
+        <div
+          className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-xl ${
+            value
+              ? "bg-[#DDF5EA] text-[#137A59]"
+              : "bg-[#FFF0EE] text-[#9F2D18]"
+          }`}
+        >
+          {value ? (
+            <Globe className="h-5 w-5" />
+          ) : (
+            <LockKeyhole className="h-5 w-5" />
+          )}
         </div>
 
         <div className="min-w-0 flex-1">
@@ -4090,7 +5255,9 @@ function ContactVisibility({
           id={id}
           type="checkbox"
           checked={value}
-          onChange={(event) => onChange(event.target.checked)}
+          onChange={(event) =>
+            onChange(event.target.checked)
+          }
           disabled={disabled}
           className="mt-1 h-5 w-5 shrink-0 cursor-pointer accent-[#FF5A36]"
         />
@@ -4123,6 +5290,7 @@ function AreaCombobox({
   const [open, setOpen] = useState(false);
   const [searchTerm, setSearchTerm] = useState("");
   const [activeIndex, setActiveIndex] = useState(0);
+
   const wrapperRef = useRef<HTMLDivElement | null>(null);
   const inputRef = useRef<HTMLInputElement | null>(null);
 
@@ -4140,12 +5308,13 @@ function AreaCombobox({
   }, [searchTerm]);
 
   const suggestions = useMemo(
-    () => filteredGroups.flatMap((group) =>
-      group.areas.map((area) => ({
-        lga: group.lga,
-        area,
-      })),
-    ),
+    () =>
+      filteredGroups.flatMap((group) =>
+        group.areas.map((area) => ({
+          lga: group.lga,
+          area,
+        })),
+      ),
     [filteredGroups],
   );
 
@@ -4162,10 +5331,16 @@ function AreaCombobox({
       }
     }
 
-    document.addEventListener("pointerdown", handleOutsidePointerDown);
+    document.addEventListener(
+      "pointerdown",
+      handleOutsidePointerDown,
+    );
 
     return () => {
-      document.removeEventListener("pointerdown", handleOutsidePointerDown);
+      document.removeEventListener(
+        "pointerdown",
+        handleOutsidePointerDown,
+      );
     };
   }, [open]);
 
@@ -4182,7 +5357,9 @@ function AreaCombobox({
     setOpen(false);
   }
 
-  function handleKeyDown(event: ReactKeyboardEvent<HTMLInputElement>) {
+  function handleKeyDown(
+    event: ReactKeyboardEvent<HTMLInputElement>,
+  ) {
     if (event.key === "Escape") {
       setOpen(false);
       return;
@@ -4197,7 +5374,10 @@ function AreaCombobox({
       }
 
       setActiveIndex((current) =>
-        Math.min(current + 1, Math.max(0, suggestions.length - 1)),
+        Math.min(
+          current + 1,
+          Math.max(0, suggestions.length - 1),
+        ),
       );
 
       return;
@@ -4205,11 +5385,19 @@ function AreaCombobox({
 
     if (event.key === "ArrowUp") {
       event.preventDefault();
-      setActiveIndex((current) => Math.max(0, current - 1));
+
+      setActiveIndex((current) =>
+        Math.max(0, current - 1),
+      );
+
       return;
     }
 
-    if (event.key === "Enter" && open && suggestions.length > 0) {
+    if (
+      event.key === "Enter" &&
+      open &&
+      suggestions.length > 0
+    ) {
       event.preventDefault();
 
       selectArea(
@@ -4222,7 +5410,10 @@ function AreaCombobox({
   let optionIndex = 0;
 
   return (
-    <div ref={wrapperRef} className="relative z-40 min-w-0">
+    <div
+      ref={wrapperRef}
+      className="relative z-40 min-w-0"
+    >
       <div className="relative min-w-0">
         <input
           ref={inputRef}
@@ -4233,7 +5424,10 @@ function AreaCombobox({
           aria-controls={`${id}-options`}
           aria-required={required}
           autoComplete="off"
-          className={inputClass.replace("px-4", "pl-4 pr-12")}
+          className={inputClass.replace(
+            "px-4",
+            "pl-4 pr-12",
+          )}
           value={value}
           onFocus={() => showOptions()}
           onClick={() => {
@@ -4256,10 +5450,16 @@ function AreaCombobox({
           type="button"
           tabIndex={-1}
           disabled={disabled}
-          aria-label={open ? "Close area suggestions" : "Open area suggestions"}
+          aria-label={
+            open
+              ? "Close area suggestions"
+              : "Open area suggestions"
+          }
           aria-controls={`${id}-options`}
           aria-expanded={open}
-          onMouseDown={(event) => event.preventDefault()}
+          onMouseDown={(event) =>
+            event.preventDefault()
+          }
           onClick={() => {
             if (open) {
               setOpen(false);
@@ -4270,7 +5470,11 @@ function AreaCombobox({
           }}
           className="absolute right-2 top-1/2 flex h-8 w-8 -translate-y-1/2 items-center justify-center rounded-lg text-gray-500 transition hover:bg-[#FFF0E9] hover:text-[#9F2D18] disabled:cursor-not-allowed disabled:opacity-40"
         >
-          <ChevronDown className={`h-4 w-4 transition-transform ${open ? "rotate-180" : ""}`} />
+          <ChevronDown
+            className={`h-4 w-4 transition-transform ${
+              open ? "rotate-180" : ""
+            }`}
+          />
         </button>
       </div>
 
@@ -4295,7 +5499,10 @@ function AreaCombobox({
 
           {filteredGroups.length ? (
             filteredGroups.map((group) => (
-              <div key={group.lga} className="mb-2 last:mb-0">
+              <div
+                key={group.lga}
+                className="mb-2 last:mb-0"
+              >
                 <p className="sticky top-9 z-[5] rounded-md bg-[#FCFAF6] px-2.5 py-1.5 text-[10px] font-bold uppercase tracking-[0.08em] text-gray-500">
                   {group.lga}
                 </p>
@@ -4303,9 +5510,13 @@ function AreaCombobox({
                 <div className="mt-1 grid grid-cols-1 gap-0.5 sm:grid-cols-2">
                   {group.areas.map((area) => {
                     const currentIndex = optionIndex++;
+
                     const selected =
-                      value.trim().toLocaleLowerCase() === area.toLocaleLowerCase();
-                    const highlighted = currentIndex === activeIndex;
+                      value.trim().toLocaleLowerCase() ===
+                      area.toLocaleLowerCase();
+
+                    const highlighted =
+                      currentIndex === activeIndex;
 
                     return (
                       <button
@@ -4313,8 +5524,12 @@ function AreaCombobox({
                         type="button"
                         role="option"
                         aria-selected={selected}
-                        onMouseEnter={() => setActiveIndex(currentIndex)}
-                        onMouseDown={(event) => event.preventDefault()}
+                        onMouseEnter={() =>
+                          setActiveIndex(currentIndex)
+                        }
+                        onMouseDown={(event) =>
+                          event.preventDefault()
+                        }
                         onClick={() => selectArea(area)}
                         className={`flex min-w-0 items-center justify-between gap-2 rounded-lg px-3 py-2.5 text-left text-xs transition ${
                           highlighted
@@ -4324,7 +5539,9 @@ function AreaCombobox({
                               : "text-gray-700 hover:bg-[#FCFAF6]"
                         }`}
                       >
-                        <span className="min-w-0 break-words">{area}</span>
+                        <span className="min-w-0 break-words">
+                          {area}
+                        </span>
 
                         {selected && (
                           <CheckCircle2 className="h-3.5 w-3.5 shrink-0" />
@@ -4338,9 +5555,11 @@ function AreaCombobox({
           ) : (
             <div className="px-3 py-5 text-center">
               <MapPin className="mx-auto h-5 w-5 text-gray-300" />
+
               <p className="mt-2 text-xs font-semibold text-gray-700">
                 No suggested areas match
               </p>
+
               <p className="mt-1 text-[11px] leading-5 text-gray-500">
                 You can keep “{value.trim() || searchTerm.trim()}” as a custom area.
               </p>
