@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { NextResponse } from "next/server";
 import {
   NotificationPriority,
@@ -49,10 +50,6 @@ type ParseResult<T> = {
   valid: boolean;
   value: T;
 };
-
-/* -------------------------------------------------------------------------- */
-/* HELPERS                                                                    */
-/* -------------------------------------------------------------------------- */
 
 function jsonHeaders() {
   return {
@@ -165,10 +162,6 @@ function parseOptionalInteger(
   };
 }
 
-/* -------------------------------------------------------------------------- */
-/* KEYWORDS                                                                    */
-/* -------------------------------------------------------------------------- */
-
 function parseKeywords(
   value: unknown
 ): ParseResult<string[]> {
@@ -194,7 +187,6 @@ function parseKeywords(
 
   const normalized: string[] = [];
   const seen = new Set<string>();
-
   let totalLength = 0;
 
   for (const item of values) {
@@ -218,8 +210,7 @@ function parseKeywords(
       };
     }
 
-    const normalizedKey =
-      cleaned.toLocaleLowerCase();
+    const normalizedKey = cleaned.toLocaleLowerCase();
 
     if (seen.has(normalizedKey)) {
       continue;
@@ -227,7 +218,6 @@ function parseKeywords(
 
     seen.add(normalizedKey);
     normalized.push(cleaned);
-
     totalLength += cleaned.length;
 
     if (
@@ -247,17 +237,8 @@ function parseKeywords(
   };
 }
 
-/* -------------------------------------------------------------------------- */
-/* IMAGE URL VALIDATION                                                       */
-/* -------------------------------------------------------------------------- */
-
-function parseHttpUrl(
-  value: string
-): string | null {
-  if (
-    !value ||
-    value.length > MAX_IMAGE_URL_LENGTH
-  ) {
+function parseHttpUrl(value: string): string | null {
+  if (!value || value.length > MAX_IMAGE_URL_LENGTH) {
     return null;
   }
 
@@ -280,19 +261,19 @@ function parseHttpUrl(
   }
 }
 
-/* -------------------------------------------------------------------------- */
-/* SERVICE IMAGES                                                             */
-/* -------------------------------------------------------------------------- */
-
-/**
+/*
+ * --------------------------------------------------
+ * SERVICE IMAGES
+ * --------------------------------------------------
+ *
  * ServiceImage is the primary image record.
- * Service.imageUrl is a compatibility mirror of
- * the first image.
+ * Service.imageUrl is a compatibility mirror of the
+ * first image.
  *
  * This endpoint accepts image URLs and Cloudinary
- * public IDs from the existing image-upload flow.
- *
+ * public IDs from your existing image-upload flow.
  * It does not upload files to Cloudinary itself.
+ * --------------------------------------------------
  */
 
 function parseServiceImages(
@@ -443,8 +424,73 @@ function getCompatibilityImageUrl(
 }
 
 /* -------------------------------------------------------------------------- */
-/* REQUEST BODY                                                               */
+/* DATABASE ERROR MAPPING                                                     */
 /* -------------------------------------------------------------------------- */
+
+function getServiceCreateFailure(error: unknown): {
+  message: string;
+  code: string | null;
+} {
+  const prismaCode =
+    error instanceof Prisma.PrismaClientKnownRequestError
+      ? error.code
+      : isRecord(error) && typeof error.code === "string"
+        ? error.code
+        : null;
+
+  if (prismaCode === "P2021" || prismaCode === "P2022") {
+    return {
+      code: prismaCode,
+      message:
+        "The service database is not fully up to date. Apply the pending Prisma migration and regenerate the Prisma Client.",
+    };
+  }
+
+  if (prismaCode === "P2003") {
+    return {
+      code: prismaCode,
+      message:
+        "A selected category or business reference is no longer valid. Refresh the form and try again.",
+    };
+  }
+
+  if (prismaCode === "P2000") {
+    return {
+      code: prismaCode,
+      message:
+        "One of the service fields is longer than the database allows. Check the service details and image metadata.",
+    };
+  }
+
+  if (prismaCode === "P2011" || prismaCode === "P2012") {
+    return {
+      code: prismaCode,
+      message:
+        "A required service field is missing from the database operation. Check the Prisma schema and generated client are in sync.",
+    };
+  }
+
+  if (prismaCode === "P2009") {
+    return {
+      code: prismaCode,
+      message:
+        "The service data does not match the generated Prisma model. Regenerate Prisma Client and restart the application.",
+    };
+  }
+
+  if (error instanceof Prisma.PrismaClientValidationError) {
+    return {
+      code: "PRISMA_VALIDATION_ERROR",
+      message:
+        "The service data does not match the generated Prisma model. Check the server log for the invalid field.",
+    };
+  }
+
+  return {
+    code: prismaCode,
+    message: "Unable to create service. Please try again.",
+  };
+}
 
 function isRequestBodyTooLarge(
   request: Request
@@ -471,10 +517,7 @@ function isRequestBodyTooLarge(
 async function readJsonBody(
   request: Request
 ): Promise<
-  | {
-      valid: true;
-      body: Record<string, unknown>;
-    }
+  | { valid: true; body: Record<string, unknown> }
   | {
       valid: false;
       response: NextResponse;
@@ -484,9 +527,7 @@ async function readJsonBody(
     return {
       valid: false,
       response: NextResponse.json(
-        {
-          error: "Request body is too large.",
-        },
+        { error: "Request body is too large." },
         {
           status: 413,
           headers: jsonHeaders(),
@@ -503,9 +544,7 @@ async function readJsonBody(
     return {
       valid: false,
       response: NextResponse.json(
-        {
-          error: "Unable to read request body.",
-        },
+        { error: "Unable to read request body." },
         {
           status: 400,
           headers: jsonHeaders(),
@@ -521,9 +560,7 @@ async function readJsonBody(
     return {
       valid: false,
       response: NextResponse.json(
-        {
-          error: "Request body is too large.",
-        },
+        { error: "Request body is too large." },
         {
           status: 413,
           headers: jsonHeaders(),
@@ -540,9 +577,7 @@ async function readJsonBody(
     return {
       valid: false,
       response: NextResponse.json(
-        {
-          error: "Invalid JSON body.",
-        },
+        { error: "Invalid JSON body." },
         {
           status: 400,
           headers: jsonHeaders(),
@@ -555,9 +590,7 @@ async function readJsonBody(
     return {
       valid: false,
       response: NextResponse.json(
-        {
-          error: "Invalid request body.",
-        },
+        { error: "Invalid request body." },
         {
           status: 400,
           headers: jsonHeaders(),
@@ -572,16 +605,17 @@ async function readJsonBody(
   };
 }
 
-/* -------------------------------------------------------------------------- */
-/* GET                                                                        */
-/* -------------------------------------------------------------------------- */
-
-/**
- * Returns all non-deleted services belonging
- * to the authenticated seller's business.
+/*
+ * --------------------------------------------------
+ * GET
+ * --------------------------------------------------
  *
- * Services have their own records and do not
- * consume the seller's product listing allowance.
+ * Returns all non-deleted services belonging to the
+ * authenticated seller's business.
+ *
+ * Services have their own records and do not consume
+ * the seller's product listing allowance.
+ * --------------------------------------------------
  */
 
 export async function GET() {
@@ -596,7 +630,6 @@ export async function GET() {
       where: {
         ownerId: auth.user.id,
       },
-
       select: {
         id: true,
         name: true,
@@ -634,14 +667,11 @@ export async function GET() {
         businessId: business.id,
         deletedAt: null,
       },
-
       orderBy: {
         updatedAt: "desc",
       },
-
       include: {
         category: true,
-
         images: {
           orderBy: [
             { sortOrder: "asc" },
@@ -657,7 +687,6 @@ export async function GET() {
           id: business.id,
           name: business.name,
         },
-
         services,
         total: services.length,
       },
@@ -683,17 +712,19 @@ export async function GET() {
   }
 }
 
-/* -------------------------------------------------------------------------- */
-/* POST                                                                       */
-/* -------------------------------------------------------------------------- */
-
-/**
+/*
+ * --------------------------------------------------
+ * POST
+ * --------------------------------------------------
+ *
  * Creates a service for the authenticated seller.
  *
  * Sellers cannot choose their own service status.
- * New services are created as ACTIVE.
+ * New services are created as ACTIVE, matching the
+ * existing product creation behaviour.
  *
- * Services do not use product-slot or referral-slot calculations.
+ * No product-slot or referral-slot calculation is used.
+ * --------------------------------------------------
  */
 
 export async function POST(request: Request) {
@@ -726,9 +757,11 @@ export async function POST(request: Request) {
         ? "FLEXIBLE"
         : cleanString(body.fulfillmentType);
 
-    /* ---------------------------------------------------------------------- */
-    /* BASIC FIELD VALIDATION                                                 */
-    /* ---------------------------------------------------------------------- */
+    /*
+     * -----------------------------------------
+     * BASIC FIELD VALIDATION
+     * -----------------------------------------
+     */
 
     if (
       hasOwn(body, "description") &&
@@ -811,9 +844,11 @@ export async function POST(request: Request) {
       );
     }
 
-    /* ---------------------------------------------------------------------- */
-    /* KEYWORDS                                                               */
-    /* ---------------------------------------------------------------------- */
+    /*
+     * -----------------------------------------
+     * KEYWORDS
+     * -----------------------------------------
+     */
 
     const keywordsResult =
       parseKeywords(body.keywords);
@@ -831,9 +866,11 @@ export async function POST(request: Request) {
       );
     }
 
-    /* ---------------------------------------------------------------------- */
-    /* PRICING                                                                */
-    /* ---------------------------------------------------------------------- */
+    /*
+     * -----------------------------------------
+     * PRICING
+     * -----------------------------------------
+     */
 
     const priceResult =
       parseOptionalInteger(body.price);
@@ -865,18 +902,10 @@ export async function POST(request: Request) {
     const priceMin = priceMinResult.value;
     const priceMax = priceMaxResult.value;
 
-    /*
-     * Services may be created without a price.
-     * Any price supplied must still follow the
-     * shared fixed-price/range validation rules.
-     */
     const pricingError = validateProductPricing(
       price,
       priceMin,
-      priceMax,
-      {
-        requirePrice: false,
-      }
+      priceMax
     );
 
     if (pricingError) {
@@ -891,9 +920,11 @@ export async function POST(request: Request) {
       );
     }
 
-    /* ---------------------------------------------------------------------- */
-    /* DURATION                                                               */
-    /* ---------------------------------------------------------------------- */
+    /*
+     * -----------------------------------------
+     * DURATION
+     * -----------------------------------------
+     */
 
     const durationResult =
       parseOptionalInteger(body.durationMinutes);
@@ -929,9 +960,11 @@ export async function POST(request: Request) {
       );
     }
 
-    /* ---------------------------------------------------------------------- */
-    /* AVAILABILITY                                                            */
-    /* ---------------------------------------------------------------------- */
+    /*
+     * -----------------------------------------
+     * AVAILABILITY
+     * -----------------------------------------
+     */
 
     if (
       body.availability !== undefined &&
@@ -950,9 +983,11 @@ export async function POST(request: Request) {
       );
     }
 
-    /* ---------------------------------------------------------------------- */
-    /* FULFILLMENT TYPE                                                       */
-    /* ---------------------------------------------------------------------- */
+    /*
+     * -----------------------------------------
+     * FULFILLMENT TYPE
+     * -----------------------------------------
+     */
 
     if (!isFulfillmentType(fulfillmentTypeValue)) {
       return NextResponse.json(
@@ -967,9 +1002,11 @@ export async function POST(request: Request) {
       );
     }
 
-    /* ---------------------------------------------------------------------- */
-    /* IMAGES                                                                 */
-    /* ---------------------------------------------------------------------- */
+    /*
+     * -----------------------------------------
+     * IMAGES
+     * -----------------------------------------
+     */
 
     const imagesResult =
       parseServiceImages(body.images);
@@ -1035,6 +1072,7 @@ export async function POST(request: Request) {
      * An explicitly supplied images array takes
      * precedence, including an empty array.
      */
+
     if (
       body.images === undefined &&
       images.length === 0 &&
@@ -1049,15 +1087,16 @@ export async function POST(request: Request) {
       ];
     }
 
-    /* ---------------------------------------------------------------------- */
-    /* SELLER BUSINESS                                                        */
-    /* ---------------------------------------------------------------------- */
+    /*
+     * -----------------------------------------
+     * SELLER BUSINESS
+     * -----------------------------------------
+     */
 
     const business = await prisma.business.findUnique({
       where: {
         ownerId: auth.user.id,
       },
-
       select: {
         id: true,
         name: true,
@@ -1091,9 +1130,11 @@ export async function POST(request: Request) {
       );
     }
 
-    /* ---------------------------------------------------------------------- */
-    /* CATEGORY                                                               */
-    /* ---------------------------------------------------------------------- */
+    /*
+     * -----------------------------------------
+     * CATEGORY
+     * -----------------------------------------
+     */
 
     let validatedCategoryId: string | null = null;
 
@@ -1103,7 +1144,6 @@ export async function POST(request: Request) {
           id: categoryId,
           isActive: true,
         },
-
         select: {
           id: true,
         },
@@ -1125,9 +1165,11 @@ export async function POST(request: Request) {
       validatedCategoryId = category.id;
     }
 
-    /* ---------------------------------------------------------------------- */
-    /* CREATE SERVICE                                                         */
-    /* ---------------------------------------------------------------------- */
+    /*
+     * -----------------------------------------
+     * CREATE SERVICE
+     * -----------------------------------------
+     */
 
     const compatibilityImageUrl =
       getCompatibilityImageUrl(images);
@@ -1183,10 +1225,8 @@ export async function POST(request: Request) {
 
     const service = await prisma.service.create({
       data: serviceData,
-
       include: {
         category: true,
-
         images: {
           orderBy: [
             { sortOrder: "asc" },
@@ -1196,20 +1236,21 @@ export async function POST(request: Request) {
       },
     });
 
-    /* ---------------------------------------------------------------------- */
-    /* NOTIFY ADMINS                                                          */
-    /* ---------------------------------------------------------------------- */
-
     /*
+     * -----------------------------------------
+     * NOTIFY ADMINS
+     * -----------------------------------------
+     *
      * Notification failures must not undo a
      * successfully created service.
+     * -----------------------------------------
      */
+
     try {
       const admins = await prisma.user.findMany({
         where: {
           role: "ADMIN",
         },
-
         select: {
           id: true,
         },
@@ -1219,22 +1260,16 @@ export async function POST(request: Request) {
         try {
           await createNotification({
             userId: admin.id,
-
             type: NotificationType.SERVICE_ADDED,
-
             title: "New service added",
-
             message:
               `A new service, "${service.name}", was added to ${business.name}.`,
-
             priority: NotificationPriority.NORMAL,
-
             data: {
               serviceId: service.id,
               businessId: business.id,
               href: "/admin/services",
             },
-
             dedupeKey:
               `service:${service.id}:added:admin:${admin.id}`,
           });
@@ -1263,14 +1298,20 @@ export async function POST(request: Request) {
       }
     );
   } catch (error) {
-    console.error(
-      "Seller services POST error:",
-      error
-    );
+    const referenceId = randomUUID();
+    const failure = getServiceCreateFailure(error);
+
+    console.error("Seller services POST error:", {
+      referenceId,
+      prismaCode: failure.code,
+      error,
+    });
 
     return NextResponse.json(
       {
-        error: "Unable to create service.",
+        error: failure.message,
+        code: failure.code ?? "SERVICE_CREATE_FAILED",
+        referenceId,
       },
       {
         status: 500,
