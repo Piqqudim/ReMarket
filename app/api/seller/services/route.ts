@@ -431,64 +431,20 @@ function getServiceCreateFailure(error: unknown): {
   message: string;
   code: string | null;
 } {
+  // Keep database diagnostics in server logs only.
+  // Do not expose Prisma or migration internals to the browser.
   const prismaCode =
     error instanceof Prisma.PrismaClientKnownRequestError
       ? error.code
       : isRecord(error) && typeof error.code === "string"
         ? error.code
-        : null;
-
-  if (prismaCode === "P2021" || prismaCode === "P2022") {
-    return {
-      code: prismaCode,
-      message:
-        "The service database is not fully up to date. Apply the pending Prisma migration and regenerate the Prisma Client.",
-    };
-  }
-
-  if (prismaCode === "P2003") {
-    return {
-      code: prismaCode,
-      message:
-        "A selected category or business reference is no longer valid. Refresh the form and try again.",
-    };
-  }
-
-  if (prismaCode === "P2000") {
-    return {
-      code: prismaCode,
-      message:
-        "One of the service fields is longer than the database allows. Check the service details and image metadata.",
-    };
-  }
-
-  if (prismaCode === "P2011" || prismaCode === "P2012") {
-    return {
-      code: prismaCode,
-      message:
-        "A required service field is missing from the database operation. Check the Prisma schema and generated client are in sync.",
-    };
-  }
-
-  if (prismaCode === "P2009") {
-    return {
-      code: prismaCode,
-      message:
-        "The service data does not match the generated Prisma model. Regenerate Prisma Client and restart the application.",
-    };
-  }
-
-  if (error instanceof Prisma.PrismaClientValidationError) {
-    return {
-      code: "PRISMA_VALIDATION_ERROR",
-      message:
-        "The service data does not match the generated Prisma model. Check the server log for the invalid field.",
-    };
-  }
+        : error instanceof Prisma.PrismaClientValidationError
+          ? "PRISMA_VALIDATION_ERROR"
+          : null;
 
   return {
     code: prismaCode,
-    message: "Unable to create service. Please try again.",
+    message: "We couldn't create this service right now. Please try again.",
   };
 }
 
@@ -1310,7 +1266,6 @@ export async function POST(request: Request) {
     return NextResponse.json(
       {
         error: failure.message,
-        code: failure.code ?? "SERVICE_CREATE_FAILED",
         referenceId,
       },
       {
