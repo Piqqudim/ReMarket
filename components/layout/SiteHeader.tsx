@@ -1,4 +1,3 @@
-
 "use client";
 
 import {
@@ -372,6 +371,17 @@ export default function SiteHeader({
     pathname === "/services" ||
     pathname.startsWith("/services/");
 
+  const bookingMessagesActive =
+    pathname === "/bookings" ||
+    pathname.startsWith("/bookings/") ||
+    pathname.startsWith("/service-bookings/") ||
+    (account?.role === "SELLER" && pathname === "/seller");
+
+  const canAccessBookingMessages =
+    !accountLoading &&
+    (account?.role === "BUYER" ||
+      account?.role === "SELLER");
+
   function desktopLinkClass(
     active: boolean,
   ) {
@@ -731,25 +741,30 @@ export default function SiteHeader({
           {renderSearchForm()}
         </div>
 
-        {/* MESSAGES, NOTIFICATIONS AND ACCOUNT */}
+        {/* BOOKING CONVERSATIONS, NOTIFICATIONS AND ACCOUNT */}
 
         <div className="order-2 flex shrink-0 items-center justify-end gap-1.5 sm:gap-2 lg:order-4">
-          <Link
-            href="/messages"
-            aria-label="Messages"
-            title="Messages"
-            className={`flex h-10 w-10 items-center justify-center rounded-full transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#FF5A36] focus-visible:ring-offset-2 ${
-              pathname === "/messages" ||
-              pathname.startsWith("/messages/")
-                ? "bg-[#FFF1ED] text-[#9F2D18]"
-                : "text-[#5F554D] hover:bg-[#FFF1ED] hover:text-[#9F2D18]"
-            }`}
-          >
-            <MessageCircle
-              className="h-5 w-5"
-              aria-hidden="true"
-            />
-          </Link>
+          {canAccessBookingMessages && (
+            <Link
+              href={
+                account?.role === "SELLER"
+                  ? "/seller#service-bookings"
+                  : "/bookings"
+              }
+              aria-label="Booking conversations"
+              title="Booking conversations"
+              className={`flex h-10 w-10 items-center justify-center rounded-full transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#FF5A36] focus-visible:ring-offset-2 ${
+                bookingMessagesActive
+                  ? "bg-[#FFF1ED] text-[#9F2D18]"
+                  : "text-[#5F554D] hover:bg-[#FFF1ED] hover:text-[#9F2D18]"
+              }`}
+            >
+              <MessageCircle
+                className="h-5 w-5"
+                aria-hidden="true"
+              />
+            </Link>
+          )}
 
           <NotificationBell />
 

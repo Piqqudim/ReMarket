@@ -1,4 +1,3 @@
-
 "use client";
 
 import {
@@ -8,15 +7,12 @@ import {
   useState,
   type ReactNode,
 } from "react";
-
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-
 import {
   AlertCircle,
   ArrowLeft,
   ArrowRight,
-  BadgeCheck,
   CalendarDays,
   CheckCircle2,
   ChevronLeft,
@@ -31,15 +27,12 @@ import {
   X,
   XCircle,
 } from "lucide-react";
-
 import SiteHeader from "@/components/layout/SiteHeader";
 import MobileBottomNav from "@/components/layout/MobileBottomNav";
 
-/*
- * =========================================================
- * TYPES
- * =========================================================
- */
+/* -------------------------------------------------------------------------- */
+/* TYPES                                                                      */
+/* -------------------------------------------------------------------------- */
 
 type BookingStatus =
   | "PENDING"
@@ -57,11 +50,6 @@ type BookingFilter =
   | "ACTIVE"
   | "COMPLETED"
   | "CLOSED";
-
-type BuyerBookingAction =
-  | "ACCEPT_QUOTE"
-  | "REJECT_QUOTE"
-  | "CANCEL_BOOKING";
 
 type BookingLocation = {
   area: string | null;
@@ -87,40 +75,22 @@ type ServiceBooking = {
   bookingCode: string | null;
   status: BookingStatus;
   bookingType: "REQUEST" | "APPOINTMENT";
-
   requestedFor: string | null;
   scheduledFor: string | null;
-
   quantity: number;
   contactPhone: string | null;
-
   fulfillmentType: string | null;
   fulfillmentAddress: string | null;
-
   buyerMessage: string | null;
-
-  quotedPrice: number | null;
-  quoteMessage: string | null;
-  quoteSentAt: string | null;
-
-  agreedPrice: number | null;
-  quoteAcceptedAt: string | null;
-
-  currency: string;
-
   acceptedAt: string | null;
   declinedAt: string | null;
   declineReason: string | null;
-
   cancelledAt: string | null;
   cancellationReason: string | null;
-
   startedAt: string | null;
   completedAt: string | null;
-
   createdAt: string;
   updatedAt: string;
-
   service: BookingService;
 };
 
@@ -145,11 +115,9 @@ type Pagination = {
 
 type ApiPayload = Record<string, unknown>;
 
-/*
- * =========================================================
- * CONSTANTS
- * =========================================================
- */
+/* -------------------------------------------------------------------------- */
+/* CONSTANTS                                                                  */
+/* -------------------------------------------------------------------------- */
 
 const PAGE_SIZE = 20;
 const MAX_REASON_LENGTH = 2_000;
@@ -173,11 +141,9 @@ const EMPTY_PAGINATION: Pagination = {
   hasPreviousPage: false,
 };
 
-/*
- * =========================================================
- * GENERAL HELPERS
- * =========================================================
- */
+/* -------------------------------------------------------------------------- */
+/* GENERAL HELPERS                                                            */
+/* -------------------------------------------------------------------------- */
 
 function isRecord(value: unknown): value is ApiPayload {
   return (
@@ -191,84 +157,46 @@ function getString(
   value: unknown,
   fallback: string | null = null,
 ): string | null {
-  if (typeof value !== "string") {
-    return fallback;
-  }
-
+  if (typeof value !== "string") return fallback;
   const cleaned = value.trim();
-
-  return cleaned.length > 0
-    ? cleaned
-    : fallback;
+  return cleaned.length > 0 ? cleaned : fallback;
 }
 
 function getNumber(
   value: unknown,
   fallback: number | null = null,
 ): number | null {
-  if (
-    typeof value === "number" &&
-    Number.isFinite(value)
-  ) {
+  if (typeof value === "number" && Number.isFinite(value)) {
     return value;
   }
 
-  /*
-   * Prisma Decimal values can be serialized as strings.
-   */
-
-  if (
-    typeof value === "string" &&
-    value.trim() !== ""
-  ) {
+  if (typeof value === "string" && value.trim() !== "") {
     const parsed = Number(value.trim());
-
-    if (Number.isFinite(parsed)) {
-      return parsed;
-    }
+    if (Number.isFinite(parsed)) return parsed;
   }
 
   return fallback;
 }
 
 function getDate(value: unknown): string | null {
-  if (typeof value !== "string") {
-    return null;
-  }
-
+  if (typeof value !== "string") return null;
   const parsed = new Date(value);
-
-  return Number.isNaN(parsed.getTime())
-    ? null
-    : parsed.toISOString();
+  return Number.isNaN(parsed.getTime()) ? null : parsed.toISOString();
 }
 
-function getNestedRecord(
-  value: unknown,
-): ApiPayload | null {
+function getNestedRecord(value: unknown): ApiPayload | null {
   return isRecord(value) ? value : null;
 }
 
-function getBookingCollection(
-  payload: ApiPayload,
-): unknown[] {
-  if (Array.isArray(payload.bookings)) {
-    return payload.bookings;
-  }
-
-  if (Array.isArray(payload.items)) {
-    return payload.items;
-  }
-
-  if (Array.isArray(payload.data)) {
-    return payload.data;
-  }
+function getBookingCollection(payload: ApiPayload): unknown[] {
+  if (Array.isArray(payload.bookings)) return payload.bookings;
+  if (Array.isArray(payload.items)) return payload.items;
+  if (Array.isArray(payload.data)) return payload.data;
 
   if (isRecord(payload.data)) {
     if (Array.isArray(payload.data.bookings)) {
       return payload.data.bookings;
     }
-
     if (Array.isArray(payload.data.items)) {
       return payload.data.items;
     }
@@ -277,9 +205,7 @@ function getBookingCollection(
   return [];
 }
 
-function isBookingStatus(
-  value: unknown,
-): value is BookingStatus {
+function isBookingStatus(value: unknown): value is BookingStatus {
   return (
     value === "PENDING" ||
     value === "AWAITING_BUYER" ||
@@ -291,23 +217,12 @@ function isBookingStatus(
   );
 }
 
-/*
- * =========================================================
- * BOOKING SUMMARY
- * =========================================================
- *
- * The buyer API returns all-time status counts.
- * Invalid or incomplete summary data is not treated as
- * an authoritative all-time summary.
- * =========================================================
- */
+/* -------------------------------------------------------------------------- */
+/* BOOKING SUMMARY                                                            */
+/* -------------------------------------------------------------------------- */
 
-function parseBookingSummary(
-  value: unknown,
-): BookingSummary | null {
-  if (!isRecord(value)) {
-    return null;
-  }
+function parseBookingSummary(value: unknown): BookingSummary | null {
+  if (!isRecord(value)) return null;
 
   const keys = [
     "total",
@@ -324,7 +239,6 @@ function parseBookingSummary(
 
   for (const key of keys) {
     const amount = getNumber(value[key]);
-
     if (
       amount === null ||
       !Number.isSafeInteger(amount) ||
@@ -332,7 +246,6 @@ function parseBookingSummary(
     ) {
       return null;
     }
-
     counts[key] = amount;
   }
 
@@ -344,46 +257,25 @@ function calculatePageSummary(
 ): BookingSummary {
   return {
     total: bookings.length,
-
-    PENDING: bookings.filter(
-      (booking) => booking.status === "PENDING",
-    ).length,
-
+    PENDING: bookings.filter((item) => item.status === "PENDING").length,
     AWAITING_BUYER: bookings.filter(
-      (booking) => booking.status === "AWAITING_BUYER",
+      (item) => item.status === "AWAITING_BUYER",
     ).length,
-
-    ACCEPTED: bookings.filter(
-      (booking) => booking.status === "ACCEPTED",
-    ).length,
-
+    ACCEPTED: bookings.filter((item) => item.status === "ACCEPTED").length,
     IN_PROGRESS: bookings.filter(
-      (booking) => booking.status === "IN_PROGRESS",
+      (item) => item.status === "IN_PROGRESS",
     ).length,
-
-    COMPLETED: bookings.filter(
-      (booking) => booking.status === "COMPLETED",
-    ).length,
-
-    DECLINED: bookings.filter(
-      (booking) => booking.status === "DECLINED",
-    ).length,
-
-    CANCELLED: bookings.filter(
-      (booking) => booking.status === "CANCELLED",
-    ).length,
+    COMPLETED: bookings.filter((item) => item.status === "COMPLETED").length,
+    DECLINED: bookings.filter((item) => item.status === "DECLINED").length,
+    CANCELLED: bookings.filter((item) => item.status === "CANCELLED").length,
   };
 }
 
-/*
- * =========================================================
- * BOOKING RESPONSE NORMALIZATION
- * =========================================================
- */
+/* -------------------------------------------------------------------------- */
+/* BOOKING RESPONSE NORMALIZATION                                             */
+/* -------------------------------------------------------------------------- */
 
-function parseBooking(
-  value: unknown,
-): ServiceBooking | null {
+function parseBooking(value: unknown): ServiceBooking | null {
   if (
     !isRecord(value) ||
     typeof value.id !== "string" ||
@@ -393,19 +285,9 @@ function parseBooking(
   }
 
   const rawService = value.service;
-
-  /*
-   * The current buyer API returns provider information
-   * inside service.seller.
-   *
-   * service.business is retained as a fallback for older
-   * response formats.
-   */
-
   const rawBusiness =
     getNestedRecord(rawService.seller) ??
     getNestedRecord(rawService.business);
-
   const rawLocation = rawBusiness
     ? getNestedRecord(rawBusiness.location)
     : null;
@@ -413,20 +295,13 @@ function parseBooking(
   const rawImages = Array.isArray(rawService.images)
     ? rawService.images
     : [];
-
   const firstImage = rawImages.find(
-    (image) =>
-      isRecord(image) &&
-      typeof image.url === "string",
+    (image) => isRecord(image) && typeof image.url === "string",
   );
 
   const serviceImage =
     getString(rawService.imageUrl) ??
-    (
-      isRecord(firstImage)
-        ? getString(firstImage.url)
-        : null
-    );
+    (isRecord(firstImage) ? getString(firstImage.url) : null);
 
   const businessName =
     getString(rawBusiness?.name) ??
@@ -434,128 +309,65 @@ function parseBooking(
     getString(value.sellerName) ??
     "Service provider";
 
-  const location: BookingLocation | null =
-    rawLocation
-      ? {
-          area: getString(rawLocation.area),
-
-          street:
-            getString(rawLocation.street) ??
-            getString(rawLocation.address),
-        }
-      : null;
+  const location: BookingLocation | null = rawLocation
+    ? {
+        area: getString(rawLocation.area),
+        street:
+          getString(rawLocation.street) ??
+          getString(rawLocation.address),
+      }
+    : null;
 
   const status = isBookingStatus(value.status)
     ? value.status
     : "PENDING";
 
-  const bookingType =
-    value.bookingType === "APPOINTMENT"
-      ? "APPOINTMENT"
-      : "REQUEST";
-
   return {
     id: value.id,
-
     bookingCode: getString(value.bookingCode),
-
     status,
-    bookingType,
-
+    bookingType:
+      value.bookingType === "APPOINTMENT" ? "APPOINTMENT" : "REQUEST",
     requestedFor: getDate(value.requestedFor),
     scheduledFor: getDate(value.scheduledFor),
-
-    quantity: Math.max(
-      1,
-      getNumber(value.quantity, 1) ?? 1,
-    ),
-
+    quantity: Math.max(1, getNumber(value.quantity, 1) ?? 1),
     contactPhone: getString(value.contactPhone),
-
     fulfillmentType: getString(value.fulfillmentType),
-
-    fulfillmentAddress: getString(
-      value.fulfillmentAddress,
-    ),
-
+    fulfillmentAddress: getString(value.fulfillmentAddress),
     buyerMessage: getString(value.buyerMessage),
-
-    quotedPrice: getNumber(value.quotedPrice),
-    quoteMessage: getString(value.quoteMessage),
-    quoteSentAt: getDate(value.quoteSentAt),
-
-    agreedPrice: getNumber(value.agreedPrice),
-    quoteAcceptedAt: getDate(value.quoteAcceptedAt),
-
-    currency: getString(value.currency, "NGN") ?? "NGN",
-
     acceptedAt: getDate(value.acceptedAt),
     declinedAt: getDate(value.declinedAt),
     declineReason: getString(value.declineReason),
-
     cancelledAt: getDate(value.cancelledAt),
-
-    cancellationReason: getString(
-      value.cancellationReason,
-    ),
-
+    cancellationReason: getString(value.cancellationReason),
     startedAt: getDate(value.startedAt),
     completedAt: getDate(value.completedAt),
-
-    createdAt:
-      getDate(value.createdAt) ??
-      new Date().toISOString(),
-
-    updatedAt:
-      getDate(value.updatedAt) ??
-      new Date().toISOString(),
-
+    createdAt: getDate(value.createdAt) ?? new Date().toISOString(),
+    updatedAt: getDate(value.updatedAt) ?? new Date().toISOString(),
     service: {
       id: getString(rawService.id, "") ?? "",
-
-      name:
-        getString(
-          rawService.name,
-          "Service booking",
-        ) ?? "Service booking",
-
+      name: getString(rawService.name, "Service booking") ?? "Service booking",
       description: getString(rawService.description),
-
       imageUrl: serviceImage,
-
       price: getNumber(rawService.price),
       priceMin: getNumber(rawService.priceMin),
       priceMax: getNumber(rawService.priceMax),
-
-      durationMinutes: getNumber(
-        rawService.durationMinutes,
-      ),
-
+      durationMinutes: getNumber(rawService.durationMinutes),
       businessName,
-
       ownerName: getString(rawBusiness?.ownerName),
-
       location,
     },
   };
 }
 
-/*
- * =========================================================
- * FORMATTING
- * =========================================================
- */
+/* -------------------------------------------------------------------------- */
+/* FORMATTING                                                                 */
+/* -------------------------------------------------------------------------- */
 
 function formatDate(value: string | null): string {
-  if (!value) {
-    return "Not scheduled";
-  }
-
+  if (!value) return "Not scheduled";
   const date = new Date(value);
-
-  if (Number.isNaN(date.getTime())) {
-    return "Not available";
-  }
+  if (Number.isNaN(date.getTime())) return "Not available";
 
   return new Intl.DateTimeFormat("en-NG", {
     dateStyle: "medium",
@@ -564,235 +376,133 @@ function formatDate(value: string | null): string {
 }
 
 function formatDateOnly(value: string | null): string {
-  if (!value) {
-    return "Not provided";
-  }
-
+  if (!value) return "Not provided";
   const date = new Date(value);
-
-  if (Number.isNaN(date.getTime())) {
-    return "Not available";
-  }
+  if (Number.isNaN(date.getTime())) return "Not available";
 
   return new Intl.DateTimeFormat("en-NG", {
     dateStyle: "medium",
   }).format(date);
 }
 
-function formatMoney(
-  amount: number | null,
-  currency = "NGN",
-): string {
-  if (amount === null) {
-    return "Awaiting quotation";
-  }
-
-  try {
-    return new Intl.NumberFormat("en-NG", {
-      style: "currency",
-      currency,
-      maximumFractionDigits: 0,
-    }).format(amount);
-  } catch {
-    return `${currency} ${amount.toLocaleString("en-NG")}`;
-  }
-}
-
-function formatFulfillment(
-  value: string | null,
-): string {
+function formatFulfillment(value: string | null): string {
   switch (value) {
     case "AT_PROVIDER":
       return "Visit provider";
-
     case "AT_CUSTOMER":
       return "Provider visits you";
-
     case "REMOTE":
       return "Remote service";
-
     case "FLEXIBLE":
       return "Flexible arrangement";
-
     default:
       return "Not specified";
   }
 }
 
-function getBookingReference(
-  booking: ServiceBooking,
-): string {
+function getBookingReference(booking: ServiceBooking): string {
   return (
     booking.bookingCode ??
     `RM-SVC-${booking.id.slice(-8).toUpperCase()}`
   );
 }
 
-function getConversationHref(
-  bookingId: string,
-): string {
-  return (
-    `/service-bookings/${encodeURIComponent(
-      bookingId,
-    )}/messages`
-  );
-}
-
-function getStatusLabel(
-  status: BookingStatus,
-): string {
+function getStatusLabel(status: BookingStatus): string {
   switch (status) {
     case "PENDING":
       return "Awaiting provider";
-
     case "AWAITING_BUYER":
-      return "Your response needed";
-
+      return "Previously awaiting buyer";
     case "ACCEPTED":
       return "Confirmed";
-
     case "IN_PROGRESS":
       return "In progress";
-
     case "COMPLETED":
       return "Completed";
-
     case "DECLINED":
       return "Declined";
-
     case "CANCELLED":
       return "Cancelled";
   }
 }
 
-function getStatusClasses(
-  status: BookingStatus,
-): string {
+function getStatusClasses(status: BookingStatus): string {
   switch (status) {
     case "PENDING":
       return "border-[#F3D9A7] bg-[#FFF8E8] text-[#976515]";
-
     case "AWAITING_BUYER":
       return "border-[#FFD2C5] bg-[#FFF0EB] text-[#B53A20]";
-
     case "ACCEPTED":
     case "COMPLETED":
       return "border-[#BFE7D0] bg-[#EFFBF4] text-[#147A50]";
-
     case "IN_PROGRESS":
       return "border-[#C9DDF6] bg-[#F0F6FF] text-[#315F9B]";
-
     case "DECLINED":
     case "CANCELLED":
       return "border-[#E8D5D1] bg-[#FAF2F0] text-[#9F2D18]";
   }
 }
 
-function getBookingDescription(
-  booking: ServiceBooking,
-): string {
+function getBookingDescription(booking: ServiceBooking): string {
   switch (booking.status) {
     case "PENDING":
       return "Your booking has been sent. The provider has not responded yet.";
-
     case "AWAITING_BUYER":
-      return "The provider has sent a quotation. Review it and respond.";
-
+      return "This is an older booking status. Contact the provider directly if you need clarification.";
     case "ACCEPTED":
       return booking.bookingType === "APPOINTMENT"
-        ? "Your appointment has been accepted."
-        : "Your booking has been accepted.";
-
+        ? "Your appointment has been confirmed by the provider."
+        : "Your service request has been accepted by the provider.";
     case "IN_PROGRESS":
       return "The provider has started working on your service.";
-
     case "COMPLETED":
-      return "This service booking has been marked as completed.";
-
+      return "The provider has marked this service booking as completed.";
     case "DECLINED":
       return "The provider declined this booking.";
-
     case "CANCELLED":
       return "This booking has been cancelled.";
   }
 }
 
-function canBuyerCancelBooking(
-  status: BookingStatus,
-): boolean {
+function canBuyerCancelBooking(status: BookingStatus): boolean {
   return (
     status === "PENDING" ||
+    status === "AWAITING_BUYER" ||
     status === "ACCEPTED"
   );
 }
 
-/*
- * =========================================================
- * MAIN PAGE
- * =========================================================
- */
+/* -------------------------------------------------------------------------- */
+/* MAIN PAGE                                                                  */
+/* -------------------------------------------------------------------------- */
 
 export default function BuyerBookingsPage() {
   const router = useRouter();
 
-  /*
-   * -------------------------------------------------------
-   * STATE
-   * -------------------------------------------------------
-   */
-
   const [bookings, setBookings] = useState<ServiceBooking[]>([]);
-
-  const [summary, setSummary] =
-    useState<BookingSummary>(EMPTY_SUMMARY);
-
-  const [summaryAvailable, setSummaryAvailable] =
-    useState(false);
-
+  const [summary, setSummary] = useState<BookingSummary>(EMPTY_SUMMARY);
+  const [summaryAvailable, setSummaryAvailable] = useState(false);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
-
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
-
   const [filter, setFilter] = useState<BookingFilter>("ALL");
   const [search, setSearch] = useState("");
-
   const [page, setPage] = useState(1);
-
-  const [pagination, setPagination] =
-    useState<Pagination>(EMPTY_PAGINATION);
-
-  const [selectedBookingId, setSelectedBookingId] =
-    useState<string | null>(null);
-
-  const [actionLoading, setActionLoading] =
-    useState<BuyerBookingAction | null>(null);
-
+  const [pagination, setPagination] = useState<Pagination>(EMPTY_PAGINATION);
+  const [selectedBookingId, setSelectedBookingId] = useState<string | null>(null);
+  const [actionLoading, setActionLoading] = useState(false);
   const [responseReason, setResponseReason] = useState("");
   const [actionError, setActionError] = useState("");
 
-  /*
-   * -------------------------------------------------------
-   * LOAD BOOKINGS
-   * -------------------------------------------------------
-   *
-   * API:
-   * GET /api/service-bookings?page=1&pageSize=20
-   *
-   * The API returns all-time summary counts separately
-   * from the paginated booking records.
-   * -------------------------------------------------------
-   */
+  /* ------------------------------------------------------------------------ */
+  /* LOAD BOOKINGS                                                            */
+  /* ------------------------------------------------------------------------ */
 
   const loadBookings = useCallback(
-    async (manualRefresh = false) => {
-      if (manualRefresh) {
-        setRefreshing(true);
-      } else {
-        setLoading(true);
-      }
-
+    async (manualRefresh = false, signal?: AbortSignal) => {
+      if (manualRefresh) setRefreshing(true);
+      else setLoading(true);
       setError("");
 
       try {
@@ -805,30 +515,18 @@ export default function BuyerBookingsPage() {
           `/api/service-bookings?${params.toString()}`,
           {
             method: "GET",
-
-            headers: {
-              Accept: "application/json",
-            },
-
+            headers: { Accept: "application/json" },
             cache: "no-store",
+            signal,
           },
         );
 
-        const payload: unknown = await response
-          .json()
-          .catch(() => null);
-
-        /*
-         * AUTHENTICATION
-         */
+        const payload: unknown = await response.json().catch(() => null);
 
         if (response.status === 401) {
           router.push(
-            `/buyer/login?callbackUrl=${encodeURIComponent(
-              "/bookings",
-            )}`,
+            `/buyer/login?callbackUrl=${encodeURIComponent("/bookings")}`,
           );
-
           return;
         }
 
@@ -840,60 +538,30 @@ export default function BuyerBookingsPage() {
 
         if (!response.ok) {
           const message =
-            isRecord(payload) &&
-            typeof payload.error === "string"
+            isRecord(payload) && typeof payload.error === "string"
               ? payload.error
               : "Unable to load your service bookings.";
-
           throw new Error(message);
         }
 
         if (!isRecord(payload)) {
-          throw new Error(
-            "The bookings server returned an invalid response.",
-          );
+          throw new Error("The bookings server returned an invalid response.");
         }
-
-        /*
-         * NORMALIZE BOOKINGS
-         */
 
         const parsedBookings = getBookingCollection(payload)
           .map(parseBooking)
-          .filter(
-            (booking): booking is ServiceBooking =>
-              booking !== null,
-          );
+          .filter((item): item is ServiceBooking => item !== null);
 
         setBookings(parsedBookings);
 
-        /*
-         * ALL-TIME BOOKING SUMMARY
-         */
-
-        const serverSummary = parseBookingSummary(
-          payload.summary,
-        );
-
+        const serverSummary = parseBookingSummary(payload.summary);
         if (serverSummary) {
           setSummary(serverSummary);
           setSummaryAvailable(true);
         } else {
-          /*
-           * Fallback for an older API response.
-           * This counts only bookings on the loaded page.
-           */
-
-          setSummary(
-            calculatePageSummary(parsedBookings),
-          );
-
+          setSummary(calculatePageSummary(parsedBookings));
           setSummaryAvailable(false);
         }
-
-        /*
-         * PAGINATION
-         */
 
         const rawPagination =
           getNestedRecord(payload.pagination) ??
@@ -924,10 +592,7 @@ export default function BuyerBookingsPage() {
           Math.floor(
             getNumber(
               payload.totalPages,
-              getNumber(
-                rawPagination?.totalPages,
-                inferredTotalPages,
-              ),
+              getNumber(rawPagination?.totalPages, inferredTotalPages),
             ) ?? inferredTotalPages,
           ),
         );
@@ -952,76 +617,57 @@ export default function BuyerBookingsPage() {
           hasPreviousPage,
         });
       } catch (loadError) {
-        console.error(
-          "Buyer service bookings error:",
-          loadError,
-        );
+        if (loadError instanceof Error && loadError.name === "AbortError") {
+          return;
+        }
 
+        console.error("Buyer service bookings error:", loadError);
         setError(
           loadError instanceof Error
             ? loadError.message
             : "Unable to load your bookings.",
         );
       } finally {
-        setLoading(false);
-        setRefreshing(false);
+        if (!signal?.aborted) {
+          setLoading(false);
+          setRefreshing(false);
+        }
       }
     },
     [page, router],
   );
 
   useEffect(() => {
-    void loadBookings();
+    const controller = new AbortController();
+    void loadBookings(false, controller.signal);
+    return () => controller.abort();
   }, [loadBookings]);
 
-  /*
-   * -------------------------------------------------------
-   * SELECTED BOOKING
-   * -------------------------------------------------------
-   */
+  /* ------------------------------------------------------------------------ */
+  /* SELECTED BOOKING                                                         */
+  /* ------------------------------------------------------------------------ */
 
   const selectedBooking = useMemo(
     () =>
-      bookings.find(
-        (booking) => booking.id === selectedBookingId,
-      ) ?? null,
+      bookings.find((booking) => booking.id === selectedBookingId) ?? null,
     [bookings, selectedBookingId],
   );
 
-  /*
-   * -------------------------------------------------------
-   * SUMMARY COUNTS
-   * -------------------------------------------------------
-   */
+  /* ------------------------------------------------------------------------ */
+  /* SUMMARY AND FILTERING                                                    */
+  /* ------------------------------------------------------------------------ */
 
   const counts = useMemo(
     () => ({
       all: summary.total,
-
       needsResponse: summary.AWAITING_BUYER,
-
-      active:
-        summary.ACCEPTED +
-        summary.IN_PROGRESS,
-
+      pending: summary.PENDING,
+      active: summary.ACCEPTED + summary.IN_PROGRESS,
       completed: summary.COMPLETED,
-
-      closed:
-        summary.DECLINED +
-        summary.CANCELLED,
+      closed: summary.DECLINED + summary.CANCELLED,
     }),
     [summary],
   );
-
-  /*
-   * -------------------------------------------------------
-   * FILTER BOOKINGS
-   * -------------------------------------------------------
-   *
-   * Filtering is applied to the currently loaded page.
-   * Pagination still covers the buyer's complete history.
-   * -------------------------------------------------------
-   */
 
   const visibleBookings = useMemo(() => {
     const normalizedSearch = search.trim().toLowerCase();
@@ -1031,44 +677,31 @@ export default function BuyerBookingsPage() {
 
       switch (filter) {
         case "NEEDS_RESPONSE":
-          matchesFilter =
-            booking.status === "AWAITING_BUYER";
+          matchesFilter = booking.status === "AWAITING_BUYER";
           break;
-
         case "PENDING":
-          matchesFilter =
-            booking.status === "PENDING";
+          matchesFilter = booking.status === "PENDING";
           break;
-
         case "ACTIVE":
           matchesFilter =
             booking.status === "ACCEPTED" ||
             booking.status === "IN_PROGRESS";
           break;
-
         case "COMPLETED":
-          matchesFilter =
-            booking.status === "COMPLETED";
+          matchesFilter = booking.status === "COMPLETED";
           break;
-
         case "CLOSED":
           matchesFilter =
             booking.status === "DECLINED" ||
             booking.status === "CANCELLED";
           break;
-
         case "ALL":
           matchesFilter = true;
           break;
       }
 
-      if (!matchesFilter) {
-        return false;
-      }
-
-      if (!normalizedSearch) {
-        return true;
-      }
+      if (!matchesFilter) return false;
+      if (!normalizedSearch) return true;
 
       const searchable = [
         booking.bookingCode,
@@ -1085,179 +718,99 @@ export default function BuyerBookingsPage() {
     });
   }, [bookings, filter, search]);
 
-  /*
-   * =======================================================
-   * BUYER BOOKING ACTIONS
-   * =======================================================
-   *
-   * API:
-   * PATCH /api/service-bookings/[id]/buyer-action
-   *
-   * Actions:
-   * ACCEPT_QUOTE
-   * REJECT_QUOTE
-   * CANCEL_BOOKING
-   * =======================================================
-   */
+  /* ------------------------------------------------------------------------ */
+  /* BUYER CANCELLATION                                                       */
+  /* ------------------------------------------------------------------------ */
 
-  async function respondToBooking(
-    action: BuyerBookingAction,
-    booking: ServiceBooking,
-  ) {
-    if (actionLoading !== null) {
-      return;
-    }
+  async function cancelBooking(booking: ServiceBooking) {
+    if (actionLoading || !canBuyerCancelBooking(booking.status)) return;
 
+    const confirmed = window.confirm(
+      `Cancel your booking for ${booking.service.name}?`,
+    );
+    if (!confirmed) return;
+
+    setActionLoading(true);
     setActionError("");
     setNotice("");
 
-    let confirmationMessage = "";
-
-    if (action === "ACCEPT_QUOTE") {
-      confirmationMessage =
-        `Accept the quotation of ${formatMoney(
-          booking.quotedPrice,
-          booking.currency,
-        )} for ${booking.service.name}?`;
-    } else if (action === "REJECT_QUOTE") {
-      confirmationMessage =
-        `Decline the provider's quotation for ${booking.service.name}? This will cancel the booking.`;
-    } else {
-      confirmationMessage =
-        `Cancel your booking for ${booking.service.name}?`;
-    }
-
-    const confirmed = window.confirm(
-      confirmationMessage,
-    );
-
-    if (!confirmed) {
-      return;
-    }
-
-    setActionLoading(action);
-
     try {
       const response = await fetch(
-        `/api/service-bookings/${encodeURIComponent(
-          booking.id,
-        )}/buyer-action`,
+        `/api/service-bookings/${encodeURIComponent(booking.id)}/buyer-action`,
         {
           method: "PATCH",
-
           headers: {
             "Content-Type": "application/json",
             Accept: "application/json",
           },
-
           body: JSON.stringify({
-            action,
-            reason:
-              responseReason.trim() || undefined,
+            action: "CANCEL_BOOKING",
+            reason: responseReason.trim() || undefined,
           }),
         },
       );
 
-      const payload: unknown = await response
-        .json()
-        .catch(() => null);
+      const payload: unknown = await response.json().catch(() => null);
 
       if (response.status === 401) {
         router.push(
-          `/buyer/login?callbackUrl=${encodeURIComponent(
-            "/bookings",
-          )}`,
+          `/buyer/login?callbackUrl=${encodeURIComponent("/bookings")}`,
         );
-
         return;
       }
 
       if (!response.ok) {
         const message =
-          isRecord(payload) &&
-          typeof payload.error === "string"
+          isRecord(payload) && typeof payload.error === "string"
             ? payload.error
-            : "Unable to update this booking.";
-
+            : "Unable to cancel this booking.";
         throw new Error(message);
       }
 
       setNotice(
-        isRecord(payload) &&
-        typeof payload.message === "string"
+        isRecord(payload) && typeof payload.message === "string"
           ? payload.message
-          : action === "ACCEPT_QUOTE"
-            ? "Quotation accepted."
-            : action === "REJECT_QUOTE"
-              ? "Quotation declined."
-              : "Booking cancelled.",
+          : "Your booking has been cancelled.",
       );
-
       setResponseReason("");
-      setActionError("");
-
-      /*
-       * Reload booking details and all-time summary.
-       */
-
       await loadBookings(true);
-    } catch (responseError) {
-      console.error(
-        "Buyer booking action error:",
-        responseError,
-      );
-
+    } catch (cancelError) {
+      console.error("Buyer booking cancellation error:", cancelError);
       setActionError(
-        responseError instanceof Error
-          ? responseError.message
-          : "Unable to submit your response.",
+        cancelError instanceof Error
+          ? cancelError.message
+          : "Unable to cancel this booking.",
       );
     } finally {
-      setActionLoading(null);
+      setActionLoading(false);
     }
   }
 
-  /*
-   * =======================================================
-   * FILTER AND PAGINATION
-   * =======================================================
-   */
+  /* ------------------------------------------------------------------------ */
+  /* FILTER AND PAGINATION                                                    */
+  /* ------------------------------------------------------------------------ */
 
   function changeFilter(nextFilter: BookingFilter) {
     setFilter(nextFilter);
+    setPage(1);
     setSelectedBookingId(null);
     setActionError("");
     setResponseReason("");
   }
 
   function goToPage(nextPage: number) {
-    if (
-      nextPage < 1 ||
-      nextPage > pagination.totalPages
-    ) {
-      return;
-    }
-
+    if (nextPage < 1 || nextPage > pagination.totalPages) return;
     setSelectedBookingId(null);
-
     setPage(nextPage);
-
-    window.scrollTo({
-      top: 0,
-      behavior: "smooth",
-    });
+    window.scrollTo({ top: 0, behavior: "smooth" });
   }
 
-  /*
-   * =======================================================
-   * EMPTY STATE
-   * =======================================================
-   */
+  /* ------------------------------------------------------------------------ */
+  /* EMPTY STATE                                                              */
+  /* ------------------------------------------------------------------------ */
 
   function renderEmptyState(): ReactNode {
-    const hasFilters =
-      filter !== "ALL" ||
-      search.trim().length > 0;
+    const hasFilters = filter !== "ALL" || search.trim().length > 0;
 
     return (
       <div className="rounded-2xl border border-dashed border-[#EAE6DF] bg-[#FFFDFC] px-5 py-14 text-center">
@@ -1266,9 +819,7 @@ export default function BuyerBookingsPage() {
         </div>
 
         <h3 className="mt-5 text-lg font-bold text-[#2B211B]">
-          {hasFilters
-            ? "No matching bookings"
-            : "No service bookings yet"}
+          {hasFilters ? "No matching bookings" : "No service bookings yet"}
         </h3>
 
         <p className="mx-auto mt-2 max-w-md text-sm leading-6 text-[#82766C]">
@@ -1283,6 +834,7 @@ export default function BuyerBookingsPage() {
             onClick={() => {
               setFilter("ALL");
               setSearch("");
+              setPage(1);
             }}
             className="mt-5 rounded-xl border border-[#EAE6DF] bg-white px-5 py-2.5 text-sm font-semibold text-[#514840] transition hover:bg-[#FCFAF6]"
           >
@@ -1301,18 +853,11 @@ export default function BuyerBookingsPage() {
     );
   }
 
-  /*
-   * =======================================================
-   * BOOKING CARD
-   * =======================================================
-   */
+  /* ------------------------------------------------------------------------ */
+  /* BOOKING CARD                                                             */
+  /* ------------------------------------------------------------------------ */
 
-  function renderBookingCard(
-    booking: ServiceBooking,
-  ) {
-    const isAwaitingResponse =
-      booking.status === "AWAITING_BUYER";
-
+  function renderBookingCard(booking: ServiceBooking) {
     return (
       <article
         key={booking.id}
@@ -1371,7 +916,6 @@ export default function BuyerBookingsPage() {
               <p className="text-[10px] font-medium uppercase tracking-wide text-[#9A9087]">
                 Booking date
               </p>
-
               <p className="mt-1 text-xs font-semibold text-[#514840]">
                 {formatDateOnly(booking.createdAt)}
               </p>
@@ -1379,98 +923,62 @@ export default function BuyerBookingsPage() {
 
             <div>
               <p className="text-[10px] font-medium uppercase tracking-wide text-[#9A9087]">
-                {booking.scheduledFor
-                  ? "Confirmed date"
-                  : "Preferred date"}
+                {booking.scheduledFor ? "Confirmed date" : "Preferred date"}
               </p>
-
               <p className="mt-1 text-xs font-semibold text-[#514840]">
-                {formatDate(
-                  booking.scheduledFor ??
-                    booking.requestedFor,
-                )}
+                {formatDate(booking.scheduledFor ?? booking.requestedFor)}
               </p>
             </div>
           </div>
 
-          {isAwaitingResponse &&
-            booking.quotedPrice !== null && (
-              <div className="mt-4 rounded-xl border border-[#FFD2C5] bg-[#FFF3EF] p-3">
-                <p className="text-[10px] font-bold uppercase tracking-wide text-[#A3422C]">
-                  Quotation awaiting your response
-                </p>
-
-                <p className="mt-1 text-lg font-extrabold text-[#9F2D18]">
-                  {formatMoney(
-                    booking.quotedPrice,
-                    booking.currency,
-                  )}
-                </p>
-              </div>
-            )}
+          <p className="mt-4 text-xs leading-5 text-[#756B62]">
+            {getBookingDescription(booking)}
+          </p>
 
           <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
             <div>
-              <p className="text-[10px] text-[#9A9087]">
-                {booking.agreedPrice !== null
-                  ? "Agreed amount"
-                  : "Latest quotation"}
-              </p>
-
+              <p className="text-[10px] text-[#9A9087]">Quantity</p>
               <p className="mt-0.5 text-sm font-bold text-[#2B211B]">
-                {formatMoney(
-                  booking.agreedPrice ??
-                    booking.quotedPrice,
-                  booking.currency,
-                )}
+                {booking.quantity}
               </p>
             </div>
 
-            <button
-              type="button"
-              onClick={() => {
-                setSelectedBookingId(booking.id);
-                setResponseReason("");
-                setActionError("");
-              }}
-              className="inline-flex items-center gap-2 rounded-xl border border-[#EAE6DF] bg-white px-4 py-2.5 text-xs font-bold text-[#514840] transition hover:border-[#FFB5A1] hover:text-[#9F2D18]"
-            >
-              View details
-              <ArrowRight className="h-3.5 w-3.5" />
-            </button>
+            <div className="flex flex-wrap items-center gap-2">
+              <Link
+                href={`/service-bookings/${encodeURIComponent(booking.id)}/messages`}
+                className="inline-flex min-h-10 items-center gap-2 rounded-xl border border-[#F5C7BA] bg-[#FFF7F3] px-3 py-2.5 text-xs font-bold text-[#9F2D18] transition hover:border-[#FF9B82] hover:bg-[#FFF0E9]"
+              >
+                <MessageSquareText className="h-4 w-4" />
+                Messages
+              </Link>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setSelectedBookingId(booking.id);
+                  setResponseReason("");
+                  setActionError("");
+                }}
+                className="inline-flex min-h-10 items-center gap-2 rounded-xl border border-[#EAE6DF] bg-white px-4 py-2.5 text-xs font-bold text-[#514840] transition hover:border-[#FFB5A1] hover:text-[#9F2D18]"
+              >
+                View details
+                <ArrowRight className="h-3.5 w-3.5" />
+              </button>
+            </div>
           </div>
-
-          {/* SHARED CONVERSATION */}
-
-          <Link
-            href={getConversationHref(booking.id)}
-            className="mt-3 inline-flex min-h-11 w-full items-center justify-center gap-2 rounded-xl border border-[#FFD2C5] bg-[#FFF5F1] px-4 py-2.5 text-xs font-bold text-[#9F2D18] transition hover:bg-[#FFEAE2]"
-          >
-            <MessageSquareText className="h-4 w-4" />
-            Open conversation
-            <ArrowRight className="h-3.5 w-3.5" />
-          </Link>
         </div>
-
-        {isAwaitingResponse && (
-          <div className="flex items-center gap-2 border-t border-[#F4DCD5] bg-[#FFF9F6] px-4 py-3 text-xs font-semibold text-[#9F2D18] sm:px-5">
-            <AlertCircle className="h-4 w-4 shrink-0" />
-            A quotation needs your attention.
-          </div>
-        )}
       </article>
     );
   }
 
-  /*
-   * =======================================================
-   * BOOKING TIMELINE
-   * =======================================================
-   */
+  /* ------------------------------------------------------------------------ */
+  /* BOOKING TIMELINE                                                         */
+  /* ------------------------------------------------------------------------ */
 
-  function renderTimeline(
-    booking: ServiceBooking,
-  ) {
+  function renderTimeline(booking: ServiceBooking) {
+    const responseDate =
+      booking.acceptedAt ?? booking.declinedAt ?? booking.cancelledAt;
+
     const events = [
       {
         label: "Booking submitted",
@@ -1478,26 +986,19 @@ export default function BuyerBookingsPage() {
         completed: true,
       },
       {
-        label: booking.quoteSentAt
-          ? "Quotation sent"
-          : "Provider response",
-
-        date:
-          booking.quoteSentAt ??
-          booking.acceptedAt ??
-          booking.declinedAt,
-
-        completed: Boolean(
-          booking.quoteSentAt ||
-            booking.acceptedAt ||
-            booking.declinedAt,
-        ),
+        label: "Provider response",
+        date: responseDate,
+        completed: Boolean(responseDate),
       },
-      {
-        label: "Booking accepted",
-        date: booking.acceptedAt,
-        completed: Boolean(booking.acceptedAt),
-      },
+      ...(booking.bookingType === "APPOINTMENT"
+        ? [
+            {
+              label: "Appointment confirmed",
+              date: booking.scheduledFor,
+              completed: Boolean(booking.scheduledFor),
+            },
+          ]
+        : []),
       {
         label: "Service started",
         date: booking.startedAt,
@@ -1531,7 +1032,6 @@ export default function BuyerBookingsPage() {
                   <Clock3 className="h-4 w-4" />
                 )}
               </div>
-
               {index !== events.length - 1 && (
                 <div className="mt-1 h-5 w-px bg-[#EAE6DF]" />
               )}
@@ -1540,18 +1040,13 @@ export default function BuyerBookingsPage() {
             <div className="min-w-0 flex-1 pb-1">
               <p
                 className={`text-xs font-semibold ${
-                  event.completed
-                    ? "text-[#514840]"
-                    : "text-[#A49A90]"
+                  event.completed ? "text-[#514840]" : "text-[#A49A90]"
                 }`}
               >
                 {event.label}
               </p>
-
               <p className="mt-1 text-[10px] text-[#9A9087]">
-                {event.completed
-                  ? formatDate(event.date)
-                  : "Not yet"}
+                {event.completed ? formatDate(event.date) : "Not yet"}
               </p>
             </div>
           </div>
@@ -1563,13 +1058,10 @@ export default function BuyerBookingsPage() {
             <p className="text-xs font-bold text-[#9F2D18]">
               {getStatusLabel(booking.status)}
             </p>
-
             <p className="mt-1 text-xs text-[#756B61]">
               {booking.status === "DECLINED"
-                ? booking.declineReason ||
-                  "The provider declined this booking."
-                : booking.cancellationReason ||
-                  "This booking was cancelled."}
+                ? booking.declineReason || "The provider declined this booking."
+                : booking.cancellationReason || "This booking was cancelled."}
             </p>
           </div>
         )}
@@ -1577,28 +1069,15 @@ export default function BuyerBookingsPage() {
     );
   }
 
-  /*
-   * =======================================================
-   * BOOKING DETAILS MODAL
-   * =======================================================
-   */
+  /* ------------------------------------------------------------------------ */
+  /* BOOKING DETAILS MODAL                                                    */
+  /* ------------------------------------------------------------------------ */
 
   function renderBookingDetails(): ReactNode {
-    if (!selectedBooking) {
-      return null;
-    }
+    if (!selectedBooking) return null;
 
     const booking = selectedBooking;
-
-    const awaitingQuote =
-      booking.status === "AWAITING_BUYER" &&
-      booking.quotedPrice !== null &&
-      booking.quoteSentAt !== null &&
-      booking.quoteAcceptedAt === null;
-
-    const canCancel = canBuyerCancelBooking(
-      booking.status,
-    );
+    const canCancel = canBuyerCancelBooking(booking.status);
 
     return (
       <div
@@ -1608,14 +1087,11 @@ export default function BuyerBookingsPage() {
         aria-labelledby="booking-details-title"
       >
         <div className="flex max-h-[94dvh] w-full max-w-2xl flex-col overflow-hidden rounded-t-3xl border border-[#EAE6DF] bg-[#FFFDFC] shadow-2xl sm:rounded-3xl">
-          {/* MODAL HEADER */}
-
           <div className="flex items-center justify-between border-b border-[#EAE6DF] px-5 py-4 sm:px-6">
             <div className="min-w-0">
               <p className="text-[10px] font-bold uppercase tracking-wider text-[#A0968D]">
                 Service booking details
               </p>
-
               <h2
                 id="booking-details-title"
                 className="mt-1 truncate text-base font-extrabold text-[#2B211B] sm:text-lg"
@@ -1638,11 +1114,7 @@ export default function BuyerBookingsPage() {
             </button>
           </div>
 
-          {/* MODAL CONTENT */}
-
           <div className="flex-1 space-y-6 overflow-y-auto p-5 sm:p-6">
-            {/* STATUS */}
-
             <div className="flex flex-wrap items-center justify-between gap-3">
               <span
                 className={`inline-flex items-center rounded-full border px-3 py-1.5 text-xs font-bold ${getStatusClasses(
@@ -1651,13 +1123,10 @@ export default function BuyerBookingsPage() {
               >
                 {getStatusLabel(booking.status)}
               </span>
-
               <span className="text-[10px] text-[#91877E]">
                 {getBookingReference(booking)}
               </span>
             </div>
-
-            {/* SERVICE AND PROVIDER */}
 
             <div className="flex items-center gap-3 rounded-2xl border border-[#EAE6DF] bg-[#FCFAF6] p-3">
               <div className="h-16 w-16 shrink-0 overflow-hidden rounded-xl bg-white">
@@ -1678,11 +1147,9 @@ export default function BuyerBookingsPage() {
                 <p className="truncate text-sm font-bold text-[#2B211B]">
                   {booking.service.name}
                 </p>
-
                 <p className="mt-1 truncate text-xs text-[#756B62]">
                   {booking.service.businessName}
                 </p>
-
                 <p className="mt-1 text-[10px] text-[#9A9087]">
                   {booking.bookingType === "APPOINTMENT"
                     ? "Appointment booking"
@@ -1691,16 +1158,12 @@ export default function BuyerBookingsPage() {
               </div>
 
               <Link
-                href={`/service/${encodeURIComponent(
-                  booking.service.id,
-                )}`}
+                href={`/service/${encodeURIComponent(booking.service.id)}`}
                 className="shrink-0 text-xs font-bold text-[#E94A28] hover:underline"
               >
                 View service
               </Link>
             </div>
-
-            {/* STATUS DESCRIPTION */}
 
             <div className="rounded-xl border border-[#EAE6DF] bg-white p-4">
               <p className="text-xs leading-6 text-[#6F655C]">
@@ -1708,259 +1171,19 @@ export default function BuyerBookingsPage() {
               </p>
             </div>
 
-            {/* SHARED CONVERSATION */}
-
-            <Link
-              href={getConversationHref(booking.id)}
-              className="flex min-h-12 w-full items-center justify-center gap-2 rounded-xl border border-[#FFD2C5] bg-[#FFF5F1] px-4 py-3 text-xs font-bold text-[#9F2D18] transition hover:bg-[#FFEAE2]"
-            >
-              <MessageSquareText className="h-4 w-4" />
-              Open booking conversation
-              <ArrowRight className="h-4 w-4" />
-            </Link>
-
-            {/* QUOTATION PANEL */}
-
-            {awaitingQuote && (
-              <section className="rounded-2xl border border-[#FFC9B9] bg-[#FFF5F1] p-4 sm:p-5">
-                <div className="flex items-center gap-2 text-[#A43B22]">
-                  <MessageSquareText className="h-5 w-5" />
-
-                  <h3 className="text-sm font-extrabold">
-                    Provider quotation
-                  </h3>
-                </div>
-
-                <p className="mt-3 text-[10px] font-semibold uppercase tracking-wide text-[#9F604F]">
-                  Amount quoted
-                </p>
-
-                <p className="mt-1 text-2xl font-extrabold text-[#9F2D18]">
-                  {formatMoney(
-                    booking.quotedPrice,
-                    booking.currency,
-                  )}
-                </p>
-
-                {booking.quoteMessage && (
-                  <div className="mt-4 rounded-xl border border-[#F5D9D0] bg-white/80 p-3">
-                    <p className="text-[10px] font-bold uppercase tracking-wide text-[#9A746B]">
-                      Provider's message
-                    </p>
-
-                    <p className="mt-2 whitespace-pre-wrap text-xs leading-6 text-[#514840]">
-                      {booking.quoteMessage}
-                    </p>
-                  </div>
-                )}
-
-                <p className="mt-3 text-[10px] text-[#9A746B]">
-                  Sent {formatDate(booking.quoteSentAt)}
-                </p>
-
-                <div className="mt-5">
-                  <label
-                    htmlFor="quotation-response"
-                    className="mb-2 block text-xs font-bold text-[#514840]"
-                  >
-                    Reason (optional)
-                  </label>
-
-                  <textarea
-                    id="quotation-response"
-                    value={responseReason}
-                    onChange={(event) =>
-                      setResponseReason(
-                        event.target.value.slice(
-                          0,
-                          MAX_REASON_LENGTH,
-                        ),
-                      )
-                    }
-                    rows={3}
-                    maxLength={MAX_REASON_LENGTH}
-                    placeholder="Add a reason for declining this quotation..."
-                    className="w-full resize-y rounded-xl border border-[#EAE6DF] bg-white px-3 py-3 text-xs text-[#514840] outline-none transition placeholder:text-[#B3A69B] focus:border-[#FF9B82] focus:ring-2 focus:ring-[#FF5A36]/10"
-                  />
-
-                  <p className="mt-1 text-right text-[10px] text-[#A0968D]">
-                    {responseReason.length}/{MAX_REASON_LENGTH}
-                  </p>
-                </div>
-
-                {actionError && (
-                  <div
-                    role="alert"
-                    className="mt-3 rounded-xl border border-[#E9C6BF] bg-white p-3 text-xs text-[#9F2D18]"
-                  >
-                    {actionError}
-                  </div>
-                )}
-
-                <div className="mt-4 grid grid-cols-1 gap-2 sm:grid-cols-2">
-                  <button
-                    type="button"
-                    disabled={actionLoading !== null}
-                    onClick={() =>
-                      void respondToBooking(
-                        "REJECT_QUOTE",
-                        booking,
-                      )
-                    }
-                    className="inline-flex min-h-11 items-center justify-center gap-2 rounded-xl border border-[#E8C9C1] bg-white px-4 py-3 text-xs font-bold text-[#9F2D18] transition hover:bg-[#FFF0EB] disabled:cursor-not-allowed disabled:opacity-60"
-                  >
-                    {actionLoading === "REJECT_QUOTE" ? (
-                      <Loader2 className="h-4 w-4 animate-spin" />
-                    ) : (
-                      <XCircle className="h-4 w-4" />
-                    )}
-
-                    Decline quotation
-                  </button>
-
-                  <button
-                    type="button"
-                    disabled={actionLoading !== null}
-                    onClick={() =>
-                      void respondToBooking(
-                        "ACCEPT_QUOTE",
-                        booking,
-                      )
-                    }
-                    className="inline-flex min-h-11 items-center justify-center gap-2 rounded-xl bg-[#FF5A36] px-4 py-3 text-xs font-bold text-white transition hover:bg-[#E94A28] disabled:cursor-not-allowed disabled:opacity-60"
-                  >
-                    {actionLoading === "ACCEPT_QUOTE" ? (
-                      <Loader2 className="h-4 w-4 animate-spin" />
-                    ) : (
-                      <CheckCircle2 className="h-4 w-4" />
-                    )}
-
-                    Accept quotation
-                  </button>
-                </div>
-              </section>
-            )}
-
-            {/* GENERAL BOOKING CANCELLATION */}
-
-            {canCancel && (
-              <section className="rounded-2xl border border-[#E8D5D1] bg-[#FAF6F4] p-4 sm:p-5">
-                <div className="flex items-center gap-2 text-[#9F2D18]">
-                  <XCircle className="h-5 w-5" />
-
-                  <h3 className="text-sm font-extrabold">
-                    Cancel this booking
-                  </h3>
-                </div>
-
-                <p className="mt-2 text-xs leading-6 text-[#756B61]">
-                  You can cancel this booking before the provider
-                  starts the service. The provider will be notified.
-                </p>
-
-                <div className="mt-4">
-                  <label
-                    htmlFor="booking-cancel-reason"
-                    className="mb-2 block text-xs font-bold text-[#514840]"
-                  >
-                    Reason (optional)
-                  </label>
-
-                  <textarea
-                    id="booking-cancel-reason"
-                    value={responseReason}
-                    onChange={(event) =>
-                      setResponseReason(
-                        event.target.value.slice(
-                          0,
-                          MAX_REASON_LENGTH,
-                        ),
-                      )
-                    }
-                    rows={2}
-                    maxLength={MAX_REASON_LENGTH}
-                    placeholder="Tell the provider why you are cancelling..."
-                    className="w-full resize-y rounded-xl border border-[#EAE6DF] bg-white px-3 py-3 text-xs text-[#514840] outline-none transition placeholder:text-[#B3A69B] focus:border-[#FF9B82] focus:ring-2 focus:ring-[#FF5A36]/10"
-                  />
-                </div>
-
-                {actionError && (
-                  <div
-                    role="alert"
-                    className="mt-3 rounded-xl border border-[#E9C6BF] bg-white p-3 text-xs text-[#9F2D18]"
-                  >
-                    {actionError}
-                  </div>
-                )}
-
-                <button
-                  type="button"
-                  disabled={actionLoading !== null}
-                  onClick={() =>
-                    void respondToBooking(
-                      "CANCEL_BOOKING",
-                      booking,
-                    )
-                  }
-                  className="mt-4 inline-flex min-h-11 w-full items-center justify-center gap-2 rounded-xl border border-[#DDBDB5] bg-white px-4 py-3 text-xs font-bold text-[#9F2D18] transition hover:bg-[#FFF0EB] disabled:cursor-not-allowed disabled:opacity-60"
-                >
-                  {actionLoading === "CANCEL_BOOKING" ? (
-                    <Loader2 className="h-4 w-4 animate-spin" />
-                  ) : (
-                    <XCircle className="h-4 w-4" />
-                  )}
-
-                  Cancel booking
-                </button>
-              </section>
-            )}
-
-            {/* ACCEPTED QUOTATION */}
-
-            {!awaitingQuote &&
-              booking.agreedPrice !== null && (
-                <div className="rounded-2xl border border-[#BFE7D0] bg-[#F0FBF5] p-4">
-                  <div className="flex items-center gap-2 text-[#147A50]">
-                    <BadgeCheck className="h-5 w-5" />
-
-                    <p className="text-xs font-bold">
-                      Agreed service amount
-                    </p>
-                  </div>
-
-                  <p className="mt-2 text-xl font-extrabold text-[#147A50]">
-                    {formatMoney(
-                      booking.agreedPrice,
-                      booking.currency,
-                    )}
-                  </p>
-
-                  {booking.quoteAcceptedAt && (
-                    <p className="mt-1 text-[10px] text-[#5C8871]">
-                      Accepted {formatDate(booking.quoteAcceptedAt)}
-                    </p>
-                  )}
-                </div>
-              )}
-
-            {/* APPOINTMENT DETAILS */}
-
             {booking.bookingType === "APPOINTMENT" && (
               <section>
                 <h3 className="text-sm font-extrabold text-[#2B211B]">
                   Appointment information
                 </h3>
-
                 <div className="mt-3 grid gap-3 sm:grid-cols-2">
                   <div className="rounded-xl border border-[#EAE6DF] bg-white p-3">
                     <div className="flex items-center gap-2 text-[#9A9087]">
                       <CalendarDays className="h-4 w-4" />
-
                       <span className="text-[10px] font-bold uppercase tracking-wide">
-                        Preferred date
+                        Your preferred date
                       </span>
                     </div>
-
                     <p className="mt-2 text-xs font-bold text-[#514840]">
                       {formatDate(booking.requestedFor)}
                     </p>
@@ -1969,12 +1192,10 @@ export default function BuyerBookingsPage() {
                   <div className="rounded-xl border border-[#BFE7D0] bg-[#F0FBF5] p-3">
                     <div className="flex items-center gap-2 text-[#4A8968]">
                       <CalendarDays className="h-4 w-4" />
-
                       <span className="text-[10px] font-bold uppercase tracking-wide">
-                        Confirmed appointment
+                        Provider-confirmed time
                       </span>
                     </div>
-
                     <p className="mt-2 text-xs font-bold text-[#147A50]">
                       {formatDate(booking.scheduledFor)}
                     </p>
@@ -1983,87 +1204,57 @@ export default function BuyerBookingsPage() {
               </section>
             )}
 
-            {/* BOOKING INFORMATION */}
-
             <section>
               <h3 className="text-sm font-extrabold text-[#2B211B]">
                 Booking information
               </h3>
-
               <div className="mt-3 divide-y divide-[#F0ECE6] rounded-xl border border-[#EAE6DF] bg-white px-4">
                 <div className="flex items-start justify-between gap-3 py-3">
-                  <span className="text-xs text-[#91877E]">
-                    Booking created
-                  </span>
-
+                  <span className="text-xs text-[#91877E]">Booking created</span>
                   <span className="text-right text-xs font-semibold text-[#514840]">
                     {formatDate(booking.createdAt)}
                   </span>
                 </div>
-
                 <div className="flex items-start justify-between gap-3 py-3">
-                  <span className="text-xs text-[#91877E]">
-                    Quantity
-                  </span>
-
+                  <span className="text-xs text-[#91877E]">Quantity</span>
                   <span className="text-xs font-semibold text-[#514840]">
                     {booking.quantity}
                   </span>
                 </div>
-
                 <div className="flex items-start justify-between gap-3 py-3">
-                  <span className="text-xs text-[#91877E]">
-                    Fulfillment
-                  </span>
-
+                  <span className="text-xs text-[#91877E]">Fulfilment</span>
                   <span className="text-right text-xs font-semibold text-[#514840]">
-                    {formatFulfillment(
-                      booking.fulfillmentType,
-                    )}
+                    {formatFulfillment(booking.fulfillmentType)}
                   </span>
                 </div>
-
                 {booking.contactPhone && (
                   <div className="flex items-start justify-between gap-3 py-3">
-                    <span className="text-xs text-[#91877E]">
-                      Contact phone
-                    </span>
-
+                    <span className="text-xs text-[#91877E]">Contact phone</span>
                     <span className="text-right text-xs font-semibold text-[#514840]">
                       {booking.contactPhone}
                     </span>
                   </div>
                 )}
-
                 {booking.fulfillmentAddress && (
                   <div className="py-3">
-                    <span className="text-xs text-[#91877E]">
-                      Service address
-                    </span>
-
+                    <span className="text-xs text-[#91877E]">Service address</span>
                     <p className="mt-1 text-xs font-semibold leading-5 text-[#514840]">
                       {booking.fulfillmentAddress}
                     </p>
                   </div>
                 )}
-
                 {booking.service.location && (
                   <div className="flex items-start gap-2 py-3">
                     <MapPin className="mt-0.5 h-4 w-4 shrink-0 text-[#9A9087]" />
-
                     <div>
-                      <p className="text-xs text-[#91877E]">
-                        Provider location
-                      </p>
-
+                      <p className="text-xs text-[#91877E]">Provider location</p>
                       <p className="mt-1 text-xs font-semibold text-[#514840]">
                         {[
                           booking.service.location.street,
                           booking.service.location.area,
                         ]
                           .filter(Boolean)
-                          .join(", ") ||
-                          "Location not provided"}
+                          .join(", ") || "Location not provided"}
                       </p>
                     </div>
                   </div>
@@ -2071,14 +1262,11 @@ export default function BuyerBookingsPage() {
               </div>
             </section>
 
-            {/* ORIGINAL BUYER MESSAGE */}
-
             {booking.buyerMessage && (
               <section>
                 <h3 className="text-sm font-extrabold text-[#2B211B]">
                   Your original request
                 </h3>
-
                 <div className="mt-3 rounded-xl border border-[#EAE6DF] bg-[#FCFAF6] p-4">
                   <p className="whitespace-pre-wrap text-xs leading-6 text-[#655B52]">
                     {booking.buyerMessage}
@@ -2087,32 +1275,112 @@ export default function BuyerBookingsPage() {
               </section>
             )}
 
-            {/* BOOKING TIMELINE */}
+            <section className="rounded-2xl border border-[#F2D5CB] bg-[#FFF8F4] p-4 sm:p-5">
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                <div className="flex items-start gap-3">
+                  <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-[#FFE5DC] text-[#FF5A36]">
+                    <MessageSquareText className="h-5 w-5" />
+                  </div>
+                  <div>
+                    <h3 className="text-sm font-extrabold text-[#2B211B]">
+                      Conversation with the provider
+                    </h3>
+                    <p className="mt-1 text-xs leading-5 text-[#756B61]">
+                      Send a message or review your previous messages about this booking.
+                    </p>
+                  </div>
+                </div>
+                <Link
+                  href={`/service-bookings/${encodeURIComponent(booking.id)}/messages`}
+                  className="inline-flex min-h-10 shrink-0 items-center justify-center gap-2 rounded-xl bg-[#FF5A36] px-4 py-2.5 text-xs font-bold text-white transition hover:bg-[#E94A28]"
+                >
+                  Open conversation
+                  <ArrowRight className="h-3.5 w-3.5" />
+                </Link>
+              </div>
+            </section>
 
             <section>
               <h3 className="mb-4 text-sm font-extrabold text-[#2B211B]">
                 Booking progress
               </h3>
-
               {renderTimeline(booking)}
             </section>
-
-            {/* SERVICE DESCRIPTION */}
 
             {booking.service.description && (
               <section>
                 <h3 className="text-sm font-extrabold text-[#2B211B]">
                   About this service
                 </h3>
-
                 <p className="mt-2 whitespace-pre-wrap text-xs leading-6 text-[#756B61]">
                   {booking.service.description}
                 </p>
               </section>
             )}
-          </div>
 
-          {/* MODAL FOOTER */}
+            {canCancel && (
+              <section className="rounded-2xl border border-[#E8D5D1] bg-[#FAF6F4] p-4 sm:p-5">
+                <div className="flex items-center gap-2 text-[#9F2D18]">
+                  <XCircle className="h-5 w-5" />
+                  <h3 className="text-sm font-extrabold">Cancel this booking</h3>
+                </div>
+                <p className="mt-2 text-xs leading-6 text-[#756B61]">
+                  You can cancel while the booking is awaiting the provider or has been accepted, but before the service is in progress. The provider will be notified.
+                </p>
+                <div className="mt-4">
+                  <label
+                    htmlFor="booking-cancel-reason"
+                    className="mb-2 block text-xs font-bold text-[#514840]"
+                  >
+                    Reason (optional)
+                  </label>
+                  <textarea
+                    id="booking-cancel-reason"
+                    value={responseReason}
+                    onChange={(event) =>
+                      setResponseReason(
+                        event.target.value.slice(0, MAX_REASON_LENGTH),
+                      )
+                    }
+                    rows={2}
+                    maxLength={MAX_REASON_LENGTH}
+                    placeholder="Tell the provider why you are cancelling..."
+                    className="w-full resize-y rounded-xl border border-[#EAE6DF] bg-white px-3 py-3 text-xs text-[#514840] outline-none transition placeholder:text-[#B3A69B] focus:border-[#FF9B82] focus:ring-2 focus:ring-[#FF5A36]/10"
+                  />
+                </div>
+                {actionError && (
+                  <div
+                    role="alert"
+                    className="mt-3 rounded-xl border border-[#E9C6BF] bg-white p-3 text-xs text-[#9F2D18]"
+                  >
+                    {actionError}
+                  </div>
+                )}
+                <button
+                  type="button"
+                  disabled={actionLoading}
+                  onClick={() => void cancelBooking(booking)}
+                  className="mt-4 inline-flex min-h-11 w-full items-center justify-center gap-2 rounded-xl border border-[#DDBDB5] bg-white px-4 py-3 text-xs font-bold text-[#9F2D18] transition hover:bg-[#FFF0EB] disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  {actionLoading ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : (
+                    <XCircle className="h-4 w-4" />
+                  )}
+                  Cancel booking
+                </button>
+              </section>
+            )}
+
+            {actionError && !canCancel && (
+              <div
+                role="alert"
+                className="rounded-xl border border-[#E9C6BF] bg-[#FFF5F2] p-3 text-xs text-[#9F2D18]"
+              >
+                {actionError}
+              </div>
+            )}
+          </div>
 
           <div className="flex items-center justify-between gap-3 border-t border-[#EAE6DF] bg-[#FCFAF6] px-5 py-4 sm:px-6">
             <Link
@@ -2121,7 +1389,6 @@ export default function BuyerBookingsPage() {
             >
               Explore more services
             </Link>
-
             <button
               type="button"
               onClick={() => {
@@ -2139,19 +1406,15 @@ export default function BuyerBookingsPage() {
     );
   }
 
-  /*
-   * =======================================================
-   * PAGE RENDER
-   * =======================================================
-   */
+  /* ------------------------------------------------------------------------ */
+  /* PAGE RENDER                                                              */
+  /* ------------------------------------------------------------------------ */
 
   return (
     <div className="min-h-dvh bg-[#FFF7ED] text-[#2B211B]">
       <SiteHeader />
 
       <main className="mx-auto min-h-[70dvh] w-full max-w-7xl px-4 pb-28 pt-7 sm:px-6 lg:px-8 lg:pb-12 lg:pt-10">
-        {/* PAGE HEADING */}
-
         <div className="flex flex-col justify-between gap-5 sm:flex-row sm:items-end">
           <div>
             <Link
@@ -2166,14 +1429,12 @@ export default function BuyerBookingsPage() {
               <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-[#FFE5DC] text-[#FF5A36]">
                 <ClipboardList className="h-6 w-6" />
               </div>
-
               <div>
                 <h1 className="text-2xl font-extrabold tracking-tight text-[#2B211B] sm:text-3xl">
                   My Bookings
                 </h1>
-
                 <p className="mt-1 text-xs text-[#81766D] sm:text-sm">
-                  Manage your service requests and appointments.
+                  Track your service requests and appointments.
                 </p>
               </div>
             </div>
@@ -2185,24 +1446,15 @@ export default function BuyerBookingsPage() {
             disabled={loading || refreshing}
             className="inline-flex min-h-10 items-center justify-center gap-2 self-start rounded-xl border border-[#EAE6DF] bg-[#FFFDFC] px-4 py-2.5 text-xs font-bold text-[#514840] transition hover:border-[#F3B7A6] disabled:cursor-not-allowed disabled:opacity-60 sm:self-auto"
           >
-            <RefreshCw
-              className={`h-4 w-4 ${
-                refreshing ? "animate-spin" : ""
-              }`}
-            />
-
+            <RefreshCw className={`h-4 w-4 ${refreshing ? "animate-spin" : ""}`} />
             Refresh
           </button>
         </div>
 
-        {/* SUCCESS NOTICE */}
-
         {notice && (
           <div className="mt-6 flex items-start gap-3 rounded-xl border border-[#BFE7D0] bg-[#F0FBF5] p-4 text-xs text-[#176C49]">
             <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0" />
-
             <p className="flex-1">{notice}</p>
-
             <button
               type="button"
               onClick={() => setNotice("")}
@@ -2213,24 +1465,19 @@ export default function BuyerBookingsPage() {
           </div>
         )}
 
-        {/* SUMMARY CARDS */}
-
         <section className="mt-7 grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-5">
           {[
             {
-              label: summaryAvailable
-                ? "All bookings"
-                : "Loaded bookings",
-
+              label: summaryAvailable ? "All bookings" : "Loaded bookings",
               value: counts.all,
               icon: ClipboardList,
               style: "bg-[#FFFDFC] text-[#514840]",
             },
             {
-              label: "Needs response",
-              value: counts.needsResponse,
+              label: "Pending",
+              value: counts.pending,
               icon: AlertCircle,
-              style: "bg-[#FFF0EB] text-[#A43B22]",
+              style: "bg-[#FFF8E8] text-[#976515]",
             },
             {
               label: "Active",
@@ -2252,7 +1499,6 @@ export default function BuyerBookingsPage() {
             },
           ].map((item) => {
             const Icon = item.icon;
-
             return (
               <div
                 key={item.label}
@@ -2262,14 +1508,10 @@ export default function BuyerBookingsPage() {
                   <p className="text-[10px] font-semibold text-[#91877E] sm:text-xs">
                     {item.label}
                   </p>
-
-                  <div
-                    className={`flex h-8 w-8 items-center justify-center rounded-xl ${item.style}`}
-                  >
+                  <div className={`flex h-8 w-8 items-center justify-center rounded-xl ${item.style}`}>
                     <Icon className="h-4 w-4" />
                   </div>
                 </div>
-
                 <p className="mt-3 text-2xl font-extrabold tabular-nums text-[#2B211B]">
                   {loading ? "—" : item.value}
                 </p>
@@ -2286,46 +1528,38 @@ export default function BuyerBookingsPage() {
           </p>
         )}
 
-        {/* BOOKINGS AREA */}
-
         <section className="mt-7">
           <div className="flex flex-col justify-between gap-4 lg:flex-row lg:items-center">
             <div>
               <h2 className="text-lg font-extrabold text-[#2B211B]">
                 Your service bookings
               </h2>
-
               <p className="mt-1 text-xs text-[#91877E]">
-                View booking progress, provider quotations and appointment dates.
+                View booking progress, provider responses and appointment dates.
               </p>
             </div>
 
             <div className="relative w-full lg:max-w-sm">
               <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[#A0968D]" />
-
               <input
                 type="search"
                 value={search}
-                onChange={(event) =>
-                  setSearch(event.target.value)
-                }
+                onChange={(event) => setSearch(event.target.value)}
                 placeholder="Search by service or reference..."
                 className="h-11 w-full rounded-xl border border-[#EAE6DF] bg-[#FFFDFC] pl-10 pr-4 text-xs text-[#514840] outline-none transition placeholder:text-[#B3A69B] focus:border-[#FF9B82] focus:ring-2 focus:ring-[#FF5A36]/10"
               />
             </div>
           </div>
 
-          {/* FILTER TABS */}
-
           <div className="mt-5 flex gap-2 overflow-x-auto pb-2">
             {(
               [
                 ["ALL", "All"],
-                ["NEEDS_RESPONSE", "Needs response"],
                 ["PENDING", "Pending"],
                 ["ACTIVE", "Active"],
                 ["COMPLETED", "Completed"],
                 ["CLOSED", "Closed"],
+                ["NEEDS_RESPONSE", "Legacy status"],
               ] as const
             ).map(([value, label]) => (
               <button
@@ -2344,22 +1578,17 @@ export default function BuyerBookingsPage() {
             ))}
           </div>
 
-          {/* ERROR STATE */}
-
           {error && (
             <div className="mt-5 rounded-2xl border border-[#E9C6BF] bg-[#FFF5F2] p-5">
               <div className="flex items-start gap-3">
                 <AlertCircle className="mt-0.5 h-5 w-5 shrink-0 text-[#B23A24]" />
-
                 <div className="flex-1">
                   <h3 className="text-sm font-bold text-[#9F2D18]">
                     Unable to load bookings
                   </h3>
-
                   <p className="mt-1 text-xs leading-5 text-[#80665F]">
                     {error}
                   </p>
-
                   <button
                     type="button"
                     onClick={() => void loadBookings(true)}
@@ -2373,8 +1602,6 @@ export default function BuyerBookingsPage() {
             </div>
           )}
 
-          {/* LOADING STATE */}
-
           {loading && !error && (
             <div className="mt-5 grid gap-4 lg:grid-cols-2">
               {[1, 2, 3, 4].map((item) => (
@@ -2384,95 +1611,66 @@ export default function BuyerBookingsPage() {
                 >
                   <div className="flex gap-4">
                     <div className="h-20 w-20 rounded-xl bg-[#F0ECE6]" />
-
                     <div className="flex-1 space-y-3">
                       <div className="h-4 w-28 rounded bg-[#F0ECE6]" />
                       <div className="h-4 w-3/4 rounded bg-[#F0ECE6]" />
                       <div className="h-3 w-1/2 rounded bg-[#F0ECE6]" />
                     </div>
                   </div>
-
                   <div className="mt-5 h-12 rounded-xl bg-[#F0ECE6]" />
                 </div>
               ))}
             </div>
           )}
 
-          {/* BOOKING RESULTS */}
+          {!loading && !error && visibleBookings.length > 0 && (
+            <>
+              <div className="mt-5 grid gap-4 lg:grid-cols-2">
+                {visibleBookings.map(renderBookingCard)}
+              </div>
 
-          {!loading &&
-            !error &&
-            visibleBookings.length > 0 && (
-              <>
-                <div className="mt-5 grid gap-4 lg:grid-cols-2">
-                  {visibleBookings.map(renderBookingCard)}
+              <div className="mt-7 flex flex-wrap items-center justify-between gap-3">
+                <p className="text-xs text-[#91877E]">
+                  Page {pagination.page}
+                  {pagination.total !== null
+                    ? ` • ${pagination.total} bookings`
+                    : ""}
+                </p>
+
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    disabled={!pagination.hasPreviousPage || loading || refreshing}
+                    onClick={() => goToPage(page - 1)}
+                    className="flex h-10 items-center gap-1 rounded-xl border border-[#EAE6DF] bg-[#FFFDFC] px-3 text-xs font-bold text-[#514840] transition hover:bg-[#FCFAF6] disabled:cursor-not-allowed disabled:opacity-40"
+                  >
+                    <ChevronLeft className="h-4 w-4" />
+                    Previous
+                  </button>
+
+                  <span className="px-2 text-xs font-bold text-[#514840]">
+                    {pagination.page} / {pagination.totalPages}
+                  </span>
+
+                  <button
+                    type="button"
+                    disabled={!pagination.hasNextPage || loading || refreshing}
+                    onClick={() => goToPage(page + 1)}
+                    className="flex h-10 items-center gap-1 rounded-xl border border-[#EAE6DF] bg-[#FFFDFC] px-3 text-xs font-bold text-[#514840] transition hover:bg-[#FCFAF6] disabled:cursor-not-allowed disabled:opacity-40"
+                  >
+                    Next
+                    <ChevronRight className="h-4 w-4" />
+                  </button>
                 </div>
+              </div>
+            </>
+          )}
 
-                {/* PAGINATION */}
-
-                <div className="mt-7 flex flex-wrap items-center justify-between gap-3">
-                  <p className="text-xs text-[#91877E]">
-                    Page {pagination.page}
-
-                    {pagination.total !== null
-                      ? ` • ${pagination.total} bookings`
-                      : ""}
-                  </p>
-
-                  <div className="flex items-center gap-2">
-                    <button
-                      type="button"
-                      disabled={
-                        !pagination.hasPreviousPage ||
-                        loading ||
-                        refreshing
-                      }
-                      onClick={() =>
-                        goToPage(page - 1)
-                      }
-                      className="flex h-10 items-center gap-1 rounded-xl border border-[#EAE6DF] bg-[#FFFDFC] px-3 text-xs font-bold text-[#514840] transition hover:bg-[#FCFAF6] disabled:cursor-not-allowed disabled:opacity-40"
-                    >
-                      <ChevronLeft className="h-4 w-4" />
-                      Previous
-                    </button>
-
-                    <span className="px-2 text-xs font-bold text-[#514840]">
-                      {pagination.page} / {pagination.totalPages}
-                    </span>
-
-                    <button
-                      type="button"
-                      disabled={
-                        !pagination.hasNextPage ||
-                        loading ||
-                        refreshing
-                      }
-                      onClick={() =>
-                        goToPage(page + 1)
-                      }
-                      className="flex h-10 items-center gap-1 rounded-xl border border-[#EAE6DF] bg-[#FFFDFC] px-3 text-xs font-bold text-[#514840] transition hover:bg-[#FCFAF6] disabled:cursor-not-allowed disabled:opacity-40"
-                    >
-                      Next
-                      <ChevronRight className="h-4 w-4" />
-                    </button>
-                  </div>
-                </div>
-              </>
-            )}
-
-          {/* EMPTY STATE */}
-
-          {!loading &&
-            !error &&
-            visibleBookings.length === 0 &&
-            renderEmptyState()}
+          {!loading && !error && visibleBookings.length === 0 && renderEmptyState()}
         </section>
       </main>
 
-      {/* BOOKING DETAILS MODAL */}
-
       {selectedBooking && renderBookingDetails()}
-
       <MobileBottomNav />
     </div>
   );

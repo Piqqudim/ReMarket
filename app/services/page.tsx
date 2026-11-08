@@ -852,24 +852,87 @@ export default function ServicesPage() {
   /* LOAD SAVED SERVICES                                                      */
   /* ------------------------------------------------------------------------ */
 
-  const loadSavedServices = useCallback(async (signal?: AbortSignal) => {
+  const loadSavedServices = useCallback(async (signal?: AbortSignal): Promise<SavedServiceMap> => {
+    const combined: SavedServiceMap = {};
+
     try {
-      const response = await fetch("/api/saved", {
-        method: "GET",
-        cache: "no-store",
-        headers: { Accept: "application/json" },
-        signal,
-      });
+      const firstResponse = await fetch(
+        "/api/saved?type=SERVICE&page=1&limit=50",
+        {
+          method: "GET",
+          cache: "no-store",
+          headers: { Accept: "application/json" },
+          signal,
+        },
+      );
 
-      if (!response.ok) return;
-
-      const data: unknown = await response.json();
-      if (!signal?.aborted) {
-        setSavedServices(parseSavedServices(data));
+      if (firstResponse.status === 401 || firstResponse.status === 403) {
+        if (!signal?.aborted) setSavedServices({});
+        return {};
       }
+
+      if (!firstResponse.ok) {
+        throw new Error("Unable to load saved services.");
+      }
+
+      const firstData: unknown = await firstResponse.json();
+      Object.assign(combined, parseSavedServices(firstData));
+
+      const pagination = isRecord(firstData) && isRecord(firstData.pagination)
+        ? firstData.pagination
+        : null;
+      const totalPages = pagination && typeof pagination.totalPages === "number"
+        && Number.isInteger(pagination.totalPages) && pagination.totalPages > 0
+        ? Math.min(pagination.totalPages, 1000)
+        : 1;
+
+      // Fetch additional pages in small batches to support large saved collections.
+      for (let firstPage = 2; firstPage <= totalPages; firstPage += 4) {
+        if (signal?.aborted) return combined;
+
+        const pages = Array.from(
+          { length: Math.min(4, totalPages - firstPage + 1) },
+          (_, index) => firstPage + index,
+        );
+
+        const pageMaps = await Promise.all(
+          pages.map(async (pageNumber) => {
+            const response = await fetch(
+              `/api/saved?type=SERVICE&page=${pageNumber}&limit=50`,
+              {
+                method: "GET",
+                cache: "no-store",
+                headers: { Accept: "application/json" },
+                signal,
+              },
+            );
+
+            if (!response.ok) {
+              throw new Error("Unable to load all saved services.");
+            }
+
+            const data: unknown = await response.json();
+            return parseSavedServices(data);
+          }),
+        );
+
+        for (const pageMap of pageMaps) {
+          Object.assign(combined, pageMap);
+        }
+      }
+
+      if (!signal?.aborted) setSavedServices(combined);
+      return combined;
     } catch (error) {
-      if (signal?.aborted) return;
+      if (error instanceof DOMException && error.name === "AbortError") {
+        return combined;
+      }
+
       console.error("Unable to load saved services:", error);
+      if (!signal?.aborted && Object.keys(combined).length > 0) {
+        setSavedServices(combined);
+      }
+      return combined;
     }
   }, []);
 
@@ -1062,8 +1125,8 @@ export default function ServicesPage() {
 
         let savedId = getSavedRecordId(data);
         if (!savedId) {
-          await loadSavedServices();
-          savedId = null;
+          const refreshed = await loadSavedServices();
+          savedId = refreshed[service.id] ?? null;
         }
 
         if (savedId) {
@@ -1071,6 +1134,10 @@ export default function ServicesPage() {
             ...current,
             [service.id]: savedId!,
           }));
+        } else {
+          throw new Error(
+            "The save request succeeded, but the saved listing ID was not returned. Refresh and try again.",
+          );
         }
       }
     } catch (error) {

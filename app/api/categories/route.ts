@@ -16,7 +16,8 @@ type ListingType = "all" | "product" | "service";
 const CACHE_CONTROL =
   "public, max-age=60, s-maxage=60, stale-while-revalidate=300";
 
-const NO_STORE = "no-store, max-age=0, must-revalidate";
+const NO_STORE =
+  "no-store, max-age=0, must-revalidate";
 
 function clean(value: string | null): string {
   return value?.trim() ?? "";
@@ -120,11 +121,20 @@ function buildInheritedServiceCategoryWhere(
   };
 }
 
-function parseListingType(value: string): ListingType | null {
-  if (!value || value === "all") return "all";
-  if (value === "product" || value === "service") {
+function parseListingType(
+  value: string,
+): ListingType | null {
+  if (!value || value === "all") {
+    return "all";
+  }
+
+  if (
+    value === "product" ||
+    value === "service"
+  ) {
     return value;
   }
+
   return null;
 }
 
@@ -147,7 +157,9 @@ export async function GET(request: NextRequest) {
       request.nextUrl.searchParams.get("type"),
     ).toLowerCase();
 
-    const listingType = parseListingType(requestedType);
+    const listingType = parseListingType(
+      requestedType,
+    );
 
     if (!listingType) {
       return jsonError(
@@ -157,26 +169,52 @@ export async function GET(request: NextRequest) {
       );
     }
 
+    /*
+     * By default, public category requests continue
+     * returning only categories with active listings.
+     *
+     * Seller listing forms can request all active
+     * categories by passing includeEmpty=true.
+     */
+    const includeEmpty =
+      clean(
+        request.nextUrl.searchParams.get(
+          "includeEmpty",
+        ),
+      ).toLowerCase() === "true";
+
+    /*
+     * Always restrict the result to active categories.
+     * includeEmpty does not expose inactive categories.
+     */
     const categories = await prisma.category.findMany({
       where: {
         isActive: true,
       },
+
       orderBy: [
-        { sortOrder: "asc" },
-        { name: "asc" },
+        {
+          sortOrder: "asc",
+        },
+        {
+          name: "asc",
+        },
       ],
+
       select: {
         id: true,
         name: true,
         iconKey: true,
         isActive: true,
         sortOrder: true,
+
         _count: {
           select: {
             products: {
               where: {
                 status: BusinessStatus.ACTIVE,
                 deletedAt: null,
+
                 business: {
                   is: {
                     status: BusinessStatus.ACTIVE,
@@ -185,10 +223,12 @@ export async function GET(request: NextRequest) {
                 },
               },
             },
+
             services: {
               where: {
                 status: BusinessStatus.ACTIVE,
                 deletedAt: null,
+
                 business: {
                   is: {
                     status: BusinessStatus.ACTIVE,
@@ -203,32 +243,38 @@ export async function GET(request: NextRequest) {
     });
 
     /*
-     * Count uncategorised listings whose seller has this
-     * active category. The direct category counts above and
-     * these inherited counts do not overlap because these
-     * queries explicitly require category IS NULL.
+     * Count uncategorised listings whose seller has
+     * this active category.
+     *
+     * Direct category counts above and inherited counts
+     * do not overlap because inherited queries explicitly
+     * require category IS NULL.
      *
      * When type=product or type=service, only the relevant
      * inherited count is queried.
      */
     const inheritedCounts = await Promise.all(
       categories.map(async (category) => {
-        const [products, services] = await Promise.all([
-          listingType !== "service"
-            ? prisma.product.count({
-                where: buildInheritedProductCategoryWhere(
-                  category.name,
-                ),
-              })
-            : Promise.resolve(0),
-          listingType !== "product"
-            ? prisma.service.count({
-                where: buildInheritedServiceCategoryWhere(
-                  category.name,
-                ),
-              })
-            : Promise.resolve(0),
-        ]);
+        const [products, services] =
+          await Promise.all([
+            listingType !== "service"
+              ? prisma.product.count({
+                  where:
+                    buildInheritedProductCategoryWhere(
+                      category.name,
+                    ),
+                })
+              : Promise.resolve(0),
+
+            listingType !== "product"
+              ? prisma.service.count({
+                  where:
+                    buildInheritedServiceCategoryWhere(
+                      category.name,
+                    ),
+                })
+              : Promise.resolve(0),
+          ]);
 
         return {
           id: category.id,
@@ -239,14 +285,16 @@ export async function GET(request: NextRequest) {
     );
 
     const inheritedCountById = new Map(
-      inheritedCounts.map((item) => [item.id, item]),
+      inheritedCounts.map((item) => [
+        item.id,
+        item,
+      ]),
     );
 
     const formattedCategories = categories
       .map((category) => {
-        const inherited = inheritedCountById.get(
-          category.id,
-        );
+        const inherited =
+          inheritedCountById.get(category.id);
 
         const productCount =
           category._count.products +
@@ -262,14 +310,27 @@ export async function GET(request: NextRequest) {
           iconKey: category.iconKey,
           isActive: category.isActive,
           sortOrder: category.sortOrder,
+
           _count: {
             products: productCount,
             services: serviceCount,
-            totalListings: productCount + serviceCount,
+            totalListings:
+              productCount + serviceCount,
           },
         };
       })
       .filter((category) => {
+        /*
+         * Seller forms can use every active category,
+         * including categories with zero listings.
+         */
+        if (includeEmpty) {
+          return true;
+        }
+
+        /*
+         * Existing public filtering remains unchanged.
+         */
         if (listingType === "product") {
           return category._count.products > 0;
         }
@@ -290,12 +351,17 @@ export async function GET(request: NextRequest) {
       {
         headers: responseHeaders(
           rateLimit.headers,
-          CACHE_CONTROL,
+          includeEmpty
+            ? NO_STORE
+            : CACHE_CONTROL,
         ),
       },
     );
   } catch (error) {
-    console.error("Categories API error:", error);
+    console.error(
+      "Categories API error:",
+      error,
+    );
 
     return jsonError(
       "Unable to load categories.",

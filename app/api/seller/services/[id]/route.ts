@@ -1,4 +1,3 @@
-
 import {
   Availability as PrismaAvailability,
   NotificationPriority,
@@ -6,6 +5,7 @@ import {
   Prisma,
   ServiceFulfillmentType,
 } from "@prisma/client";
+
 import { NextResponse } from "next/server";
 
 import { prisma } from "@/lib/prisma";
@@ -14,6 +14,7 @@ import { requireSeller } from "@/lib/seller-auth";
 import { createNotification } from "@/lib/notifications";
 
 const MAX_SERVICE_ID_LENGTH = 100;
+const MAX_CATEGORY_ID_LENGTH = 100;
 const MAX_REQUEST_BYTES = 256 * 1024;
 
 const MAX_SERVICE_IMAGES = 20;
@@ -61,9 +62,14 @@ type JsonBodyResult =
       reason: "TOO_LARGE" | "INVALID_JSON";
     };
 
+/* -------------------------------------------------------------------------- */
+/* RESPONSE HELPERS                                                           */
+/* -------------------------------------------------------------------------- */
+
 function jsonHeaders() {
   return {
-    "Cache-Control": "no-store, max-age=0, must-revalidate",
+    "Cache-Control":
+      "no-store, max-age=0, must-revalidate",
     Pragma: "no-cache",
     Expires: "0",
   };
@@ -83,6 +89,10 @@ function jsonError(
     },
   );
 }
+
+/* -------------------------------------------------------------------------- */
+/* GENERAL HELPERS                                                            */
+/* -------------------------------------------------------------------------- */
 
 function isRecord(
   value: unknown,
@@ -128,15 +138,9 @@ function isFulfillmentType(
   );
 }
 
-/*
- * --------------------------------------------------
- * REQUEST BODY
- * --------------------------------------------------
- *
- * Enforces a request size limit while streaming.
- * This also protects requests without Content-Length.
- * --------------------------------------------------
- */
+/* -------------------------------------------------------------------------- */
+/* REQUEST BODY                                                               */
+/* -------------------------------------------------------------------------- */
 
 async function readJsonBody(
   request: Request,
@@ -212,6 +216,7 @@ async function readJsonBody(
 
   try {
     const bytes = new Uint8Array(totalBytes);
+
     let offset = 0;
 
     for (const chunk of chunks) {
@@ -235,11 +240,9 @@ async function readJsonBody(
   }
 }
 
-/*
- * --------------------------------------------------
- * INTEGER VALIDATION
- * --------------------------------------------------
- */
+/* -------------------------------------------------------------------------- */
+/* INTEGER VALIDATION                                                         */
+/* -------------------------------------------------------------------------- */
 
 function parseOptionalInteger(
   value: unknown,
@@ -291,11 +294,9 @@ function parseOptionalInteger(
   };
 }
 
-/*
- * --------------------------------------------------
- * IMAGE VALIDATION
- * --------------------------------------------------
- */
+/* -------------------------------------------------------------------------- */
+/* IMAGE VALIDATION                                                           */
+/* -------------------------------------------------------------------------- */
 
 function isSafeImageUrl(
   value: string,
@@ -322,6 +323,15 @@ function isSafeImageUrl(
   }
 }
 
+/**
+ * Accepted formats:
+ *
+ * 1. Plain URL strings for backward compatibility.
+ * 2. Objects containing url, publicId and sortOrder.
+ *
+ * Duplicate URLs are removed.
+ * The final positions are normalized to zero-based order.
+ */
 function parseServiceImages(
   value: unknown,
 ): {
@@ -350,11 +360,6 @@ function parseServiceImages(
     let url = "";
     let publicId: string | null = null;
     let sortOrder = index;
-
-    /*
-     * Backward compatibility:
-     * Plain image URL strings are accepted.
-     */
 
     if (typeof item === "string") {
       url = item.trim();
@@ -412,11 +417,6 @@ function parseServiceImages(
       };
     }
 
-    /*
-     * Empty image entries are ignored.
-     * images: [] intentionally removes all images.
-     */
-
     if (!url) {
       continue;
     }
@@ -434,11 +434,6 @@ function parseServiceImages(
       sortOrder,
     });
   }
-
-  /*
-   * Respect supplied order, remove duplicates
-   * and normalize positions to zero-based values.
-   */
 
   images.sort(
     (a, b) => a.sortOrder - b.sortOrder,
@@ -472,11 +467,9 @@ function getCompatibilityImageUrl(
   return images[0]?.url ?? null;
 }
 
-/*
- * --------------------------------------------------
- * KEYWORD VALIDATION
- * --------------------------------------------------
- */
+/* -------------------------------------------------------------------------- */
+/* KEYWORD VALIDATION                                                         */
+/* -------------------------------------------------------------------------- */
 
 function parseKeywords(
   value: unknown,
@@ -548,11 +541,9 @@ function parseKeywords(
   };
 }
 
-/*
- * --------------------------------------------------
- * NOTIFICATION HELPERS
- * --------------------------------------------------
- */
+/* -------------------------------------------------------------------------- */
+/* NOTIFICATION HELPERS                                                       */
+/* -------------------------------------------------------------------------- */
 
 async function notifyAdminsOfServiceEvent(
   input: {
@@ -561,7 +552,6 @@ async function notifyAdminsOfServiceEvent(
     message: string;
     serviceId: string;
     businessId: string;
-    businessName: string;
     dedupePrefix?: string;
   },
 ): Promise<void> {
@@ -570,6 +560,7 @@ async function notifyAdminsOfServiceEvent(
       where: {
         role: "ADMIN",
       },
+
       select: {
         id: true,
       },
@@ -579,13 +570,9 @@ async function notifyAdminsOfServiceEvent(
       try {
         await createNotification({
           userId: admin.id,
-
           type: input.type,
-
           title: input.title,
-
           message: input.message,
-
           priority: NotificationPriority.NORMAL,
 
           data: {
@@ -613,15 +600,9 @@ async function notifyAdminsOfServiceEvent(
   }
 }
 
-/*
- * --------------------------------------------------
- * SELLER SERVICE LOOKUP
- * --------------------------------------------------
- *
- * A seller may only access services belonging
- * to their own non-deleted business.
- * --------------------------------------------------
- */
+/* -------------------------------------------------------------------------- */
+/* SELLER SERVICE LOOKUP                                                      */
+/* -------------------------------------------------------------------------- */
 
 async function getSellerService(
   serviceId: string,
@@ -630,7 +611,6 @@ async function getSellerService(
   return prisma.service.findFirst({
     where: {
       id: serviceId,
-
       deletedAt: null,
 
       business: {
@@ -644,12 +624,8 @@ async function getSellerService(
 
       images: {
         orderBy: [
-          {
-            sortOrder: "asc",
-          },
-          {
-            createdAt: "asc",
-          },
+          { sortOrder: "asc" },
+          { createdAt: "asc" },
         ],
       },
 
@@ -663,11 +639,9 @@ async function getSellerService(
   });
 }
 
-/*
- * --------------------------------------------------
- * GET
- * --------------------------------------------------
- */
+/* -------------------------------------------------------------------------- */
+/* GET                                                                        */
+/* -------------------------------------------------------------------------- */
 
 export async function GET(
   _request: Request,
@@ -729,27 +703,9 @@ export async function GET(
   }
 }
 
-/*
- * --------------------------------------------------
- * PATCH
- * --------------------------------------------------
- *
- * Updates an existing seller service.
- *
- * Images:
- *
- * - images omitted:
- *     Preserve existing ServiceImage records.
- *
- * - images: []:
- *     Remove all ServiceImage records.
- *
- * - images: [...]:
- *     Replace existing ServiceImage records.
- *
- * Service status is intentionally not changed here.
- * --------------------------------------------------
- */
+/* -------------------------------------------------------------------------- */
+/* PATCH                                                                      */
+/* -------------------------------------------------------------------------- */
 
 export async function PATCH(
   request: Request,
@@ -820,18 +776,11 @@ export async function PATCH(
       );
     }
 
-    /*
-     * Use Prisma's unchecked update type because
-     * categoryId is updated as a scalar foreign key.
-     */
-
     const data: Prisma.ServiceUncheckedUpdateInput = {};
 
-    /*
-     * -----------------------------------------
-     * NAME
-     * -----------------------------------------
-     */
+    /* ---------------------------------------------------------------------- */
+    /* NAME                                                                   */
+    /* ---------------------------------------------------------------------- */
 
     if (hasOwn(body, "name")) {
       const name = cleanString(body.name);
@@ -853,11 +802,9 @@ export async function PATCH(
       data.name = name;
     }
 
-    /*
-     * -----------------------------------------
-     * DESCRIPTION
-     * -----------------------------------------
-     */
+    /* ---------------------------------------------------------------------- */
+    /* DESCRIPTION                                                            */
+    /* ---------------------------------------------------------------------- */
 
     if (hasOwn(body, "description")) {
       if (
@@ -884,11 +831,9 @@ export async function PATCH(
       data.description = description || null;
     }
 
-    /*
-     * -----------------------------------------
-     * AVAILABILITY
-     * -----------------------------------------
-     */
+    /* ---------------------------------------------------------------------- */
+    /* AVAILABILITY                                                           */
+    /* ---------------------------------------------------------------------- */
 
     if (hasOwn(body, "availability")) {
       if (!isAvailability(body.availability)) {
@@ -901,11 +846,14 @@ export async function PATCH(
       data.availability = body.availability;
     }
 
-    /*
-     * -----------------------------------------
-     * FULFILLMENT TYPE
-     * -----------------------------------------
-     */
+    const availabilityChanged =
+      hasOwn(body, "availability") &&
+      isAvailability(body.availability) &&
+      body.availability !== existing.availability;
+
+    /* ---------------------------------------------------------------------- */
+    /* FULFILLMENT TYPE                                                       */
+    /* ---------------------------------------------------------------------- */
 
     if (hasOwn(body, "fulfillmentType")) {
       if (!isFulfillmentType(body.fulfillmentType)) {
@@ -918,11 +866,9 @@ export async function PATCH(
       data.fulfillmentType = body.fulfillmentType;
     }
 
-    /*
-     * -----------------------------------------
-     * DURATION
-     * -----------------------------------------
-     */
+    /* ---------------------------------------------------------------------- */
+    /* DURATION                                                               */
+    /* ---------------------------------------------------------------------- */
 
     if (hasOwn(body, "durationMinutes")) {
       const durationResult = parseOptionalInteger(
@@ -949,11 +895,9 @@ export async function PATCH(
       data.durationMinutes = durationResult.value;
     }
 
-    /*
-     * -----------------------------------------
-     * KEYWORDS
-     * -----------------------------------------
-     */
+    /* ---------------------------------------------------------------------- */
+    /* KEYWORDS                                                               */
+    /* ---------------------------------------------------------------------- */
 
     if (hasOwn(body, "keywords")) {
       const keywordsResult = parseKeywords(
@@ -970,11 +914,9 @@ export async function PATCH(
       data.keywords = keywordsResult.value;
     }
 
-    /*
-     * -----------------------------------------
-     * CATEGORY
-     * -----------------------------------------
-     */
+    /* ---------------------------------------------------------------------- */
+    /* CATEGORY                                                               */
+    /* ---------------------------------------------------------------------- */
 
     if (hasOwn(body, "categoryId")) {
       if (
@@ -995,16 +937,27 @@ export async function PATCH(
       if (!categoryId) {
         data.categoryId = null;
       } else {
-        const category = await prisma.category.findFirst({
-          where: {
-            id: categoryId,
-            isActive: true,
-          },
+        if (
+          categoryId.length >
+          MAX_CATEGORY_ID_LENGTH
+        ) {
+          return jsonError(
+            "Category ID is too long.",
+            400,
+          );
+        }
 
-          select: {
-            id: true,
-          },
-        });
+        const category =
+          await prisma.category.findFirst({
+            where: {
+              id: categoryId,
+              isActive: true,
+            },
+
+            select: {
+              id: true,
+            },
+          });
 
         if (!category) {
           return jsonError(
@@ -1017,31 +970,30 @@ export async function PATCH(
       }
     }
 
-    /*
-     * -----------------------------------------
-     * PRICING
-     * -----------------------------------------
-     *
-     * IMPORTANT:
-     * Do not read data.price or other price fields
-     * back from Prisma's update input for validation.
-     *
-     * Prisma update inputs can contain update-operation
-     * objects. These separate variables always remain
-     * number | null.
-     *
-     * Omitted fields retain their existing database
-     * values. Explicit null values clear optional fields.
-     * -----------------------------------------
-     */
+    /* ---------------------------------------------------------------------- */
+    /* PRICING                                                                */
+    /* ---------------------------------------------------------------------- */
 
     const priceProvided = hasOwn(body, "price");
-    const priceMinProvided = hasOwn(body, "priceMin");
-    const priceMaxProvided = hasOwn(body, "priceMax");
 
-    let finalPrice: number | null = existing.price;
-    let finalPriceMin: number | null = existing.priceMin;
-    let finalPriceMax: number | null = existing.priceMax;
+    const priceMinProvided = hasOwn(
+      body,
+      "priceMin",
+    );
+
+    const priceMaxProvided = hasOwn(
+      body,
+      "priceMax",
+    );
+
+    let finalPrice: number | null =
+      existing.price;
+
+    let finalPriceMin: number | null =
+      existing.priceMin;
+
+    let finalPriceMax: number | null =
+      existing.priceMax;
 
     if (priceProvided) {
       const result = parseOptionalInteger(
@@ -1091,10 +1043,21 @@ export async function PATCH(
       data.priceMax = result.value;
     }
 
+    /*
+     * IMPORTANT:
+     *
+     * A service can have no fixed price or price range.
+     * The seller may quote the buyer after receiving a request.
+     *
+     * Any supplied price must still be valid.
+     */
     const pricingError = validateProductPricing(
       finalPrice,
       finalPriceMin,
       finalPriceMax,
+      {
+        requirePrice: false,
+      },
     );
 
     if (pricingError) {
@@ -1104,25 +1067,14 @@ export async function PATCH(
       );
     }
 
-    /*
-     * -----------------------------------------
-     * IMAGE UPDATE
-     * -----------------------------------------
-     *
-     * images omitted:
-     *     Preserve current images.
-     *
-     * images: []:
-     *     Remove current images.
-     *
-     * images: [...]:
-     *     Replace current images.
-     * -----------------------------------------
-     */
+    /* ---------------------------------------------------------------------- */
+    /* IMAGES                                                                 */
+    /* ---------------------------------------------------------------------- */
 
     const imagesProvided = hasOwn(body, "images");
 
-    let parsedImages: ParsedServiceImage[] | null = null;
+    let parsedImages: ParsedServiceImage[] | null =
+      null;
 
     if (imagesProvided) {
       const imagesResult = parseServiceImages(
@@ -1138,64 +1090,44 @@ export async function PATCH(
 
       parsedImages = imagesResult.value;
 
-      /*
-       * Keep Service.imageUrl synchronized
-       * with the first image.
-       */
-
       data.imageUrl = getCompatibilityImageUrl(
         parsedImages,
       );
     }
 
-    /*
-     * -----------------------------------------
-     * DETERMINE NOTIFICATION EVENT
-     * -----------------------------------------
-     */
+    /* ---------------------------------------------------------------------- */
+    /* CHECK FOR SUPPORTED CHANGES                                            */
+    /* ---------------------------------------------------------------------- */
 
-    const availabilityChanged =
-      hasOwn(body, "availability") &&
-      data.availability !== undefined &&
-      data.availability !== existing.availability;
+    if (Object.keys(data).length === 0) {
+      return jsonError(
+        "No supported changes were supplied.",
+        400,
+      );
+    }
 
-    const hasServiceChanges =
-      Object.keys(data).length > 0 ||
-      imagesProvided;
-
-    /*
-     * -----------------------------------------
-     * DATABASE TRANSACTION
-     * -----------------------------------------
-     *
-     * Service fields and image changes are saved
-     * together. An image operation failure rolls
-     * back the service update.
-     * -----------------------------------------
-     */
+    /* ---------------------------------------------------------------------- */
+    /* DATABASE TRANSACTION                                                   */
+    /* ---------------------------------------------------------------------- */
 
     const service = await prisma.$transaction(
       async (tx) => {
-        /*
-         * Reconfirm ownership and existence
-         * inside the transaction before updating.
-         */
-
-        const currentService = await tx.service.findFirst({
-          where: {
-            id: existing.id,
-            deletedAt: null,
-
-            business: {
-              ownerId: auth.user.id,
+        const currentService =
+          await tx.service.findFirst({
+            where: {
+              id: existing.id,
               deletedAt: null,
-            },
-          },
 
-          select: {
-            id: true,
-          },
-        });
+              business: {
+                ownerId: auth.user.id,
+                deletedAt: null,
+              },
+            },
+
+            select: {
+              id: true,
+            },
+          });
 
         if (!currentService) {
           throw new Error("SERVICE_NOT_FOUND");
@@ -1210,10 +1142,9 @@ export async function PATCH(
         });
 
         /*
-         * Replace ServiceImage records only when
-         * the request explicitly supplies images.
+         * Images are replaced only when the request
+         * explicitly supplies the images property.
          */
-
         if (imagesProvided) {
           await tx.serviceImage.deleteMany({
             where: {
@@ -1246,12 +1177,8 @@ export async function PATCH(
 
             images: {
               orderBy: [
-                {
-                  sortOrder: "asc",
-                },
-                {
-                  createdAt: "asc",
-                },
+                { sortOrder: "asc" },
+                { createdAt: "asc" },
               ],
             },
 
@@ -1266,49 +1193,37 @@ export async function PATCH(
       },
     );
 
-    /*
-     * -----------------------------------------
-     * NOTIFY ADMINS
-     * -----------------------------------------
-     *
-     * Notification failures do not roll back
-     * the successfully updated service.
-     * -----------------------------------------
-     */
+    /* ---------------------------------------------------------------------- */
+    /* ADMIN NOTIFICATIONS                                                    */
+    /* ---------------------------------------------------------------------- */
 
-    if (hasServiceChanges) {
-      if (availabilityChanged) {
-        await notifyAdminsOfServiceEvent({
-          type:
-            NotificationType.SERVICE_AVAILABILITY_CHANGED,
+    if (availabilityChanged) {
+      await notifyAdminsOfServiceEvent({
+        type:
+          NotificationType.SERVICE_AVAILABILITY_CHANGED,
 
-          title: "Service availability changed",
+        title: "Service availability changed",
 
-          message:
-            `The availability of "${service.name}" from ${service.business.name} has changed to ${service.availability}.`,
+        message:
+          `The availability of "${service.name}" from ${service.business.name} has changed to ${service.availability}.`,
 
-          serviceId: service.id,
+        serviceId: service.id,
 
-          businessId: service.business.id,
+        businessId: service.business.id,
+      });
+    } else {
+      await notifyAdminsOfServiceEvent({
+        type: NotificationType.SERVICE_UPDATED,
 
-          businessName: service.business.name,
-        });
-      } else {
-        await notifyAdminsOfServiceEvent({
-          type: NotificationType.SERVICE_UPDATED,
+        title: "Service updated",
 
-          title: "Service updated",
+        message:
+          `"${service.name}" from ${service.business.name} was updated by the seller.`,
 
-          message:
-            `"${service.name}" from ${service.business.name} was updated by the seller.`,
+        serviceId: service.id,
 
-          serviceId: service.id,
-
-          businessId: service.business.id,
-
-          businessName: service.business.name,
-        });
-      }
+        businessId: service.business.id,
+      });
     }
 
     return NextResponse.json(
@@ -1355,20 +1270,9 @@ export async function PATCH(
   }
 }
 
-/*
- * --------------------------------------------------
- * DELETE
- * --------------------------------------------------
- *
- * Soft delete only.
- *
- * ServiceImage records are intentionally preserved.
- * Images are not deleted from Cloudinary here.
- *
- * Existing bookings are also preserved. The service
- * record remains in the database for booking history.
- * --------------------------------------------------
- */
+/* -------------------------------------------------------------------------- */
+/* DELETE                                                                     */
+/* -------------------------------------------------------------------------- */
 
 export async function DELETE(
   _request: Request,
@@ -1435,10 +1339,6 @@ export async function DELETE(
       );
     }
 
-    /*
-     * Notify admins after soft deletion succeeds.
-     */
-
     await notifyAdminsOfServiceEvent({
       type: NotificationType.SERVICE_REMOVED,
 
@@ -1450,8 +1350,6 @@ export async function DELETE(
       serviceId: service.id,
 
       businessId: service.business.id,
-
-      businessName: service.business.name,
 
       dedupePrefix: "service-removed",
     });

@@ -13,10 +13,22 @@ import {
   X,
 } from "lucide-react";
 
+type UploadedImage = {
+  url: string;
+  publicId: string;
+};
+
 type ProductImageUploadProps = {
   value?: string[];
   onChange: (urls: string[]) => void;
+  onUploadComplete?: (images: UploadedImage[]) => void;
   disabled?: boolean;
+};
+
+type UploadResponse = {
+  url?: unknown;
+  publicId?: unknown;
+  error?: unknown;
 };
 
 const MAX_SIZE = 5 * 1024 * 1024;
@@ -27,13 +39,43 @@ const ALLOWED_TYPES = new Set([
   "image/webp",
 ]);
 
+function isUploadResponse(
+  value: unknown
+): value is UploadResponse {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    !Array.isArray(value)
+  );
+}
+
+function getUploadError(
+  data: unknown,
+  fallback: string
+): string {
+  if (
+    isUploadResponse(data) &&
+    typeof data.error === "string" &&
+    data.error.trim()
+  ) {
+    return data.error;
+  }
+
+  return fallback;
+}
+
 export default function ProductImageUpload({
   value = [],
   onChange,
+  onUploadComplete,
   disabled = false,
 }: ProductImageUploadProps) {
   const inputRef =
     useRef<HTMLInputElement | null>(null);
+
+  const valueRef = useRef<string[]>(value);
+
+  valueRef.current = value;
 
   const [uploading, setUploading] =
     useState(false);
@@ -41,31 +83,25 @@ export default function ProductImageUpload({
   const [error, setError] =
     useState("");
 
-  async function uploadFile(file: File) {
-    setError("");
-
+  async function uploadFile(
+    file: File
+  ): Promise<UploadedImage> {
     if (!ALLOWED_TYPES.has(file.type)) {
-      setError(
+      throw new Error(
         "Only JPEG, PNG, and WebP images are allowed."
       );
-
-      return null;
     }
 
     if (file.size === 0) {
-      setError(
+      throw new Error(
         "The selected image is empty."
       );
-
-      return null;
     }
 
     if (file.size > MAX_SIZE) {
-      setError(
+      throw new Error(
         "Each image must be 5MB or smaller."
       );
-
-      return null;
     }
 
     const formData = new FormData();
@@ -77,30 +113,71 @@ export default function ProductImageUpload({
       {
         method: "POST",
         body: formData,
+        cache: "no-store",
       }
     );
 
-    const data =
-      await response.json();
+    let data: unknown;
+
+    try {
+      data = await response.json();
+    } catch {
+      throw new Error(
+        "The image server returned an invalid response. Please try again."
+      );
+    }
 
     if (!response.ok) {
       throw new Error(
-        typeof data?.error === "string"
-          ? data.error
-          : "Image upload failed."
+        getUploadError(
+          data,
+          "Image upload failed."
+        )
       );
     }
 
     if (
-      typeof data?.url !== "string" ||
-      !data.url
+      !isUploadResponse(data) ||
+      typeof data.url !== "string" ||
+      !data.url.trim()
     ) {
       throw new Error(
-        "Upload did not return an image URL."
+        "The upload did not return a valid image URL."
       );
     }
 
-    return data.url as string;
+    let parsedUrl: URL;
+
+    try {
+      parsedUrl = new URL(data.url);
+    } catch {
+      throw new Error(
+        "The upload returned an invalid image URL."
+      );
+    }
+
+    if (
+      parsedUrl.protocol !== "https:" &&
+      parsedUrl.protocol !== "http:"
+    ) {
+      throw new Error(
+        "The uploaded image URL is not supported."
+      );
+    }
+
+    if (
+      typeof data.publicId !== "string" ||
+      !data.publicId.trim()
+    ) {
+      throw new Error(
+        "The upload did not return the image reference. Please try again."
+      );
+    }
+
+    return {
+      url: data.url,
+      publicId: data.publicId,
+    };
   }
 
   async function handleChange(
@@ -114,36 +191,98 @@ export default function ProductImageUpload({
       return;
     }
 
+    if (disabled || uploading) {
+      event.target.value = "";
+      return;
+    }
+
     setError("");
     setUploading(true);
 
+    const uploadedImages: UploadedImage[] = [];
+    const failedFiles: string[] = [];
+
     try {
-      const uploadedUrls: string[] = [];
-
+      /*
+       * Upload sequentially to avoid sending
+       * too many simultaneous Cloudinary requests.
+       *
+       * A failed image does not cancel the
+       * remaining uploads.
+       */
       for (const file of files) {
-        const url =
-          await uploadFile(file);
+        try {
+          const uploadedImage =
+            await uploadFile(file);
 
-        if (url) {
-          uploadedUrls.push(url);
+          uploadedImages.push(uploadedImage);
+        } catch (uploadError) {
+          console.error(
+            `Image upload failed for ${file.name}:`,
+            uploadError
+          );
+
+          failedFiles.push(
+            uploadError instanceof Error
+              ? uploadError.message
+              : `${file.name} could not be uploaded.`
+          );
         }
       }
 
-      if (uploadedUrls.length > 0) {
-        onChange([
-          ...value,
-          ...uploadedUrls,
-        ]);
+      /*
+       * Preserve every successfully uploaded image,
+       * even when another upload in the batch failed.
+       */
+      if (uploadedImages.length > 0) {
+        const existingUrls = valueRef.current;
+
+        const newImages = uploadedImages.filter(
+          (image) =>
+            !existingUrls.includes(image.url)
+        );
+
+        const nextUrls = [
+          ...existingUrls,
+          ...newImages.map((image) => image.url),
+        ];
+
+        valueRef.current = nextUrls;
+
+        onChange(nextUrls);
+
+        /*
+         * Optional callback for components that
+         * need Cloudinary public IDs as well as URLs.
+         *
+         * Existing product forms can continue using
+         * only onChange.
+         */
+        if (onUploadComplete && newImages.length > 0) {
+          onUploadComplete(newImages);
+        }
       }
-    } catch (error) {
+
+      if (failedFiles.length > 0) {
+        const uniqueErrors = Array.from(
+          new Set(failedFiles)
+        );
+
+        setError(
+          uploadedImages.length > 0
+            ? `${uploadedImages.length} image(s) uploaded successfully. ${uniqueErrors.join(" ")}`
+            : uniqueErrors.join(" ")
+        );
+      }
+    } catch (uploadError) {
       console.error(
         "Product image upload error:",
-        error
+        uploadError
       );
 
       setError(
-        error instanceof Error
-          ? error.message
+        uploadError instanceof Error
+          ? uploadError.message
           : "Image upload failed."
       );
     } finally {
@@ -156,12 +295,19 @@ export default function ProductImageUpload({
   }
 
   function removeImage(index: number) {
+    if (disabled || uploading) {
+      return;
+    }
+
     const nextImages = value.filter(
       (_, imageIndex) =>
         imageIndex !== index
     );
 
+    valueRef.current = nextImages;
+
     onChange(nextImages);
+
     setError("");
   }
 
@@ -176,8 +322,9 @@ export default function ProductImageUpload({
             >
               <img
                 src={url}
-                alt={`Product image ${index + 1}`}
+                alt={`Listing image ${index + 1}`}
                 className="aspect-square w-full object-cover"
+                loading="lazy"
               />
 
               {index === 0 && (
@@ -195,9 +342,7 @@ export default function ProductImageUpload({
                   removeImage(index)
                 }
                 className="absolute right-2 top-2 flex h-8 w-8 items-center justify-center rounded-full bg-white/95 text-gray-700 shadow-sm transition hover:bg-white disabled:cursor-not-allowed disabled:opacity-50"
-                aria-label={`Remove product image ${
-                  index + 1
-                }`}
+                aria-label={`Remove image ${index + 1}`}
               >
                 <X className="h-4 w-4" />
               </button>
@@ -230,8 +375,8 @@ export default function ProductImageUpload({
           {uploading
             ? "Uploading image..."
             : value.length > 0
-              ? "Add more product images"
-              : "Add product images"}
+              ? "Add more images"
+              : "Add listing images"}
         </p>
 
         <p className="mt-1 text-[10px] text-gray-400">
@@ -253,13 +398,15 @@ export default function ProductImageUpload({
 
       {value.length > 0 && (
         <p className="text-[10px] text-gray-400">
-          The first image is used as the
-          product cover.
+          The first image is used as the listing cover.
         </p>
       )}
 
       {error && (
-        <p className="text-[11px] font-medium text-red-600">
+        <p
+          role="alert"
+          className="text-[11px] font-medium text-red-600"
+        >
           {error}
         </p>
       )}

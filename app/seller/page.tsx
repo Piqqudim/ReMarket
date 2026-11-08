@@ -51,7 +51,13 @@ type BookingStatus =
   | "CANCELLED"
   | "COMPLETED";
 
-type BookingFilter = "ALL" | BookingStatus;
+type BookingFilter =
+  | "ALL"
+  | "PENDING"
+  | "ACCEPTED"
+  | "DECLINED"
+  | "CANCELLED"
+  | "COMPLETED";
 
 type SellerCategory = {
   id: string;
@@ -155,24 +161,39 @@ type ProductCapacity = {
 
 type SellerBooking = {
   id: string;
+  bookingCode: string | null;
+  serviceId: string;
+  sellerId: string | null;
   status: BookingStatus;
+  bookingType: "REQUEST" | "APPOINTMENT";
   requestedFor: string | null;
+  scheduledFor: string | null;
   quantity: number;
   contactPhone: string | null;
   buyerMessage: string | null;
+  fulfillmentType: string | null;
+  fulfillmentAddress: string | null;
+  declineReason: string | null;
+  cancellationReason: string | null;
+  acceptedAt: string | null;
+  declinedAt: string | null;
+  cancelledAt: string | null;
+  completedAt: string | null;
   createdAt: string;
-  messageCount: number;
+  updatedAt: string;
   buyer: {
     id: string;
-    name: string;
+    name: string | null;
     email: string | null;
   };
   service: {
     id: string;
     name: string;
+    bookingType: "REQUEST" | "APPOINTMENT";
+    fulfillmentType: string | null;
+    imageUrl: string | null;
   };
 };
-
 type BookingSummary = {
   total: number;
   PENDING: number;
@@ -579,6 +600,20 @@ function formatBookingDate(value: string | null): string {
       });
 }
 
+function toDateTimeLocalValue(value: string | null): string {
+  if (!value) return "";
+
+  const date = new Date(value);
+
+  if (Number.isNaN(date.getTime())) return "";
+
+  const localDate = new Date(
+    date.getTime() - date.getTimezoneOffset() * 60_000,
+  );
+
+  return localDate.toISOString().slice(0, 16);
+}
+
 function normalizeSellerBooking(
   value: unknown,
 ): SellerBooking | null {
@@ -588,14 +623,11 @@ function normalizeSellerBooking(
 
   const service = isRecord(value.service) ? value.service : {};
   const buyer = isRecord(value.buyer) ? value.buyer : {};
-  const count = isRecord(value._count) ? value._count : {};
 
   const rawStatus =
-    typeof value.status === "string"
-      ? value.status
-      : "PENDING";
+    typeof value.status === "string" ? value.status : "PENDING";
 
-  const allowed: BookingStatus[] = [
+  const allowedStatuses: BookingStatus[] = [
     "PENDING",
     "AWAITING_BUYER",
     "ACCEPTED",
@@ -605,56 +637,67 @@ function normalizeSellerBooking(
     "COMPLETED",
   ];
 
-  const status = allowed.includes(rawStatus as BookingStatus)
-    ? rawStatus as BookingStatus
+  const status = allowedStatuses.includes(rawStatus as BookingStatus)
+    ? (rawStatus as BookingStatus)
     : "PENDING";
+
+  const rawBookingType =
+    value.bookingType === "APPOINTMENT" ||
+    service.bookingType === "APPOINTMENT"
+      ? "APPOINTMENT"
+      : "REQUEST";
+
+  const nullableString = (input: unknown): string | null =>
+    typeof input === "string" ? input : null;
 
   return {
     id: value.id,
+    bookingCode: nullableString(value.bookingCode),
+    serviceId:
+      typeof value.serviceId === "string" ? value.serviceId : "",
+    sellerId: nullableString(value.sellerId),
     status,
-    requestedFor:
-      typeof value.requestedFor === "string"
-        ? value.requestedFor
-        : null,
+    bookingType: rawBookingType,
+    requestedFor: nullableString(value.requestedFor),
+    scheduledFor: nullableString(value.scheduledFor),
     quantity:
-      typeof value.quantity === "number"
+      typeof value.quantity === "number" && Number.isFinite(value.quantity)
         ? value.quantity
         : 1,
-    contactPhone:
-      typeof value.contactPhone === "string"
-        ? value.contactPhone
-        : null,
-    buyerMessage:
-      typeof value.buyerMessage === "string"
-        ? value.buyerMessage
-        : null,
+    contactPhone: nullableString(value.contactPhone),
+    buyerMessage: nullableString(value.buyerMessage),
+    fulfillmentType: nullableString(value.fulfillmentType),
+    fulfillmentAddress: nullableString(value.fulfillmentAddress),
+    declineReason: nullableString(value.declineReason),
+    cancellationReason: nullableString(value.cancellationReason),
+    acceptedAt: nullableString(value.acceptedAt),
+    declinedAt: nullableString(value.declinedAt),
+    cancelledAt: nullableString(value.cancelledAt),
+    completedAt: nullableString(value.completedAt),
     createdAt:
-      typeof value.createdAt === "string"
-        ? value.createdAt
-        : "",
-    messageCount:
-      typeof count.messages === "number"
-        ? count.messages
-        : typeof value.messageCount === "number"
-          ? value.messageCount
-          : 0,
+      typeof value.createdAt === "string" ? value.createdAt : "",
+    updatedAt:
+      typeof value.updatedAt === "string" ? value.updatedAt : "",
     buyer: {
       id: typeof buyer.id === "string" ? buyer.id : "",
-      name:
-        typeof buyer.name === "string"
-          ? buyer.name
-          : "Customer",
-      email:
-        typeof buyer.email === "string"
-          ? buyer.email
-          : null,
+      name: typeof buyer.name === "string" ? buyer.name : null,
+      email: typeof buyer.email === "string" ? buyer.email : null,
     },
     service: {
-      id: typeof service.id === "string" ? service.id : "",
+      id:
+        typeof service.id === "string"
+          ? service.id
+          : typeof value.serviceId === "string"
+            ? value.serviceId
+            : "",
       name:
-        typeof service.name === "string"
-          ? service.name
-          : "Service",
+        typeof service.name === "string" ? service.name : "Service",
+      bookingType:
+        service.bookingType === "APPOINTMENT"
+          ? "APPOINTMENT"
+          : "REQUEST",
+      fulfillmentType: nullableString(service.fulfillmentType),
+      imageUrl: nullableString(service.imageUrl),
     },
   };
 }
@@ -699,121 +742,164 @@ function SellerBookingInbox() {
   const [totalPages, setTotalPages] = useState(1);
   const [totalBookings, setTotalBookings] = useState(0);
   const [updatingId, setUpdatingId] = useState("");
+  const [appointmentDates, setAppointmentDates] = useState<
+    Record<string, string>
+  >({});
 
-  const loadBookings = useCallback(async (showSpinner = true) => {
-    if (showSpinner) {
-      setLoading(true);
-    } else {
-      setRefreshing(true);
-    }
-
-    setLoadError("");
-
-    try {
-      const params = new URLSearchParams({
-        page: String(page),
-        pageSize: String(BOOKING_PAGE_SIZE),
-        status: filter,
-      });
-
-      const response = await fetch(
-        `/api/seller/service-bookings?${params.toString()}`,
-        { cache: "no-store" },
-      );
-
-      const data: unknown = await response.json().catch(() => null);
-
-      if (
-        response.status === 401 ||
-        response.status === 403
-      ) {
-        throw new Error(
-          "Your seller session has expired. Please sign in again.",
-        );
+  const loadBookings = useCallback(
+    async (showSpinner = true, signal?: AbortSignal) => {
+      if (showSpinner) {
+        setLoading(true);
+      } else {
+        setRefreshing(true);
       }
 
-      if (response.status === 404) {
-        throw new Error(
-          "The seller booking inbox API has not been added yet.",
-        );
-      }
+      setLoadError("");
 
-      if (!response.ok) {
-        throw new Error(
-          getResponseError(data, "Unable to load booking requests."),
-        );
-      }
+      try {
+        const params = new URLSearchParams({
+          page: String(page),
+          pageSize: String(BOOKING_PAGE_SIZE),
+        });
 
-      if (!isRecord(data) || !Array.isArray(data.bookings)) {
-        throw new Error("The booking response was invalid.");
-      }
+        if (filter !== "ALL") {
+          params.set("status", filter);
+        }
 
-      const normalized = data.bookings
-        .map(normalizeSellerBooking)
-        .filter(
-          (booking): booking is SellerBooking =>
-            booking !== null,
+        const response = await fetch(
+          `/api/seller/service-bookings?${params.toString()}`,
+          {
+            cache: "no-store",
+            signal,
+          },
         );
 
-      setBookings(normalized);
-      setSummary(normalizeBookingSummary(data.summary));
+        const data: unknown = await response.json().catch(() => null);
 
-      setTotalBookings(
-        typeof data.total === "number"
-          ? data.total
-          : normalized.length,
-      );
+        if (signal?.aborted) return;
 
-      setTotalPages(
-        typeof data.totalPages === "number" &&
-        Number.isFinite(data.totalPages)
-          ? Math.max(1, data.totalPages)
-          : 1,
-      );
-    } catch (error) {
-      setLoadError(
-        error instanceof Error
-          ? error.message
-          : "Unable to load booking requests.",
-      );
-    } finally {
-      setLoading(false);
-      setRefreshing(false);
-    }
-  }, [filter, page]);
+        if (response.status === 401 || response.status === 403) {
+          throw new Error(
+            "Your seller session has expired. Please sign in again.",
+          );
+        }
+
+        if (response.status === 404) {
+          throw new Error(
+            "The seller booking inbox API has not been added yet.",
+          );
+        }
+
+        if (!response.ok) {
+          throw new Error(
+            getResponseError(data, "Unable to load booking requests."),
+          );
+        }
+
+        if (!isRecord(data) || !Array.isArray(data.bookings)) {
+          throw new Error("The booking response was invalid.");
+        }
+
+        const normalized = data.bookings
+          .map(normalizeSellerBooking)
+          .filter(
+            (booking): booking is SellerBooking => booking !== null,
+          );
+
+        setBookings(normalized);
+        setSummary(normalizeBookingSummary(data.summary));
+        setTotalBookings(
+          typeof data.total === "number" && Number.isFinite(data.total)
+            ? data.total
+            : normalized.length,
+        );
+        setTotalPages(
+          typeof data.totalPages === "number" &&
+          Number.isFinite(data.totalPages)
+            ? Math.max(1, data.totalPages)
+            : 1,
+        );
+      } catch (error) {
+        if (signal?.aborted) return;
+
+        setLoadError(
+          error instanceof Error
+            ? error.message
+            : "Unable to load booking requests.",
+        );
+      } finally {
+        if (!signal?.aborted) {
+          setLoading(false);
+          setRefreshing(false);
+        }
+      }
+    },
+    [filter, page],
+  );
 
   useEffect(() => {
-    void loadBookings();
+    const controller = new AbortController();
+    void loadBookings(true, controller.signal);
+    return () => controller.abort();
   }, [loadBookings]);
 
-  async function changeBookingStatus(
-    id: string,
-    action: "ACCEPT" | "DECLINE",
+  async function performBookingAction(
+    booking: SellerBooking,
+    action:
+      | "ACCEPT"
+      | "DECLINE"
+      | "CONFIRM_APPOINTMENT"
+      | "COMPLETE"
+      | "CANCEL",
   ) {
     if (updatingId) return;
 
-    setUpdatingId(id);
+    setUpdatingId(booking.id);
     setActionError("");
     setActionMessage("");
 
     try {
+      const body: Record<string, unknown> = { action };
+
+      if (action === "CONFIRM_APPOINTMENT") {
+        const selectedDate =
+          appointmentDates[booking.id] ??
+          toDateTimeLocalValue(booking.requestedFor);
+
+        if (!selectedDate) {
+          throw new Error(
+            "Select the appointment date and time first.",
+          );
+        }
+
+        const appointmentDate = new Date(selectedDate);
+
+        if (
+          Number.isNaN(appointmentDate.getTime()) ||
+          appointmentDate.getTime() <= Date.now()
+        ) {
+          throw new Error(
+            "Choose a valid appointment date and time in the future.",
+          );
+        }
+
+        body.scheduledFor = appointmentDate.toISOString();
+      }
+
       const response = await fetch(
-        `/api/service-bookings/${encodeURIComponent(id)}`,
+        `/api/service-bookings/${encodeURIComponent(booking.id)}`,
         {
           method: "PATCH",
           headers: {
             "Content-Type": "application/json",
           },
-          body: JSON.stringify({ action }),
+          body: JSON.stringify(body),
         },
       );
 
       const data: unknown = await response.json().catch(() => null);
 
-      if (
-        response.status === 401 ||
-        response.status === 403
-      ) {
+      if (response.status === 401 || response.status === 403) {
         throw new Error(
           "Your seller session has expired. Please sign in again.",
         );
@@ -825,12 +911,15 @@ function SellerBookingInbox() {
         );
       }
 
-      setActionMessage(
-        action === "ACCEPT"
-          ? "Booking accepted."
-          : "Booking declined.",
-      );
+      const successMessages: Record<typeof action, string> = {
+        ACCEPT: "Booking accepted.",
+        DECLINE: "Booking declined.",
+        CONFIRM_APPOINTMENT: "Appointment confirmed.",
+        COMPLETE: "Booking marked as completed.",
+        CANCEL: "Booking cancelled.",
+      };
 
+      setActionMessage(successMessages[action]);
       await loadBookings(false);
     } catch (error) {
       setActionError(
@@ -843,24 +932,24 @@ function SellerBookingInbox() {
     }
   }
 
-  const filters: {
-    value: BookingFilter;
-    label: string;
-  }[] = [
+  const filters: { value: BookingFilter; label: string }[] = [
     { value: "PENDING", label: "Pending" },
-    { value: "AWAITING_BUYER", label: "Awaiting buyer" },
     { value: "ACCEPTED", label: "Accepted" },
-    { value: "IN_PROGRESS", label: "In progress" },
+    { value: "COMPLETED", label: "Completed" },
     { value: "DECLINED", label: "Declined" },
     { value: "CANCELLED", label: "Cancelled" },
-    { value: "COMPLETED", label: "Completed" },
     { value: "ALL", label: "All" },
   ];
 
   function getFilterCount(value: BookingFilter) {
-    return value === "ALL"
-      ? summary.total
-      : summary[value];
+    return value === "ALL" ? summary.total : summary[value];
+  }
+
+  function selectFilter(value: BookingFilter) {
+    setFilter(value);
+    setPage(1);
+    setActionError("");
+    setActionMessage("");
   }
 
   return (
@@ -876,9 +965,7 @@ function SellerBookingInbox() {
             </p>
 
             <div className="mt-1 flex flex-wrap items-center gap-2">
-              <h2 className="text-lg font-bold">
-                Booking requests
-              </h2>
+              <h2 className="text-lg font-bold">Service bookings</h2>
 
               {summary.PENDING > 0 && (
                 <span className="rounded-full bg-[#FFF5D9] px-2.5 py-1 text-[10px] font-bold text-[#9A6700]">
@@ -888,7 +975,7 @@ function SellerBookingInbox() {
             </div>
 
             <p className="mt-1 text-xs leading-5 text-gray-500">
-              Review customer requests and respond to bookings for your services.
+              Review customer requests, confirm appointments and update bookings.
             </p>
           </div>
 
@@ -905,17 +992,50 @@ function SellerBookingInbox() {
           </button>
         </div>
 
+        <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-4">
+          <div className="rounded-xl bg-[#FCFAF6] p-3">
+            <p className="text-[10px] font-semibold uppercase tracking-wide text-gray-400">
+              Total bookings
+            </p>
+            <p className="mt-1 text-xl font-bold text-[#17202A]">
+              {summary.total}
+            </p>
+          </div>
+
+          <div className="rounded-xl bg-[#FFF8E8] p-3">
+            <p className="text-[10px] font-semibold uppercase tracking-wide text-gray-500">
+              Pending
+            </p>
+            <p className="mt-1 text-xl font-bold text-[#986500]">
+              {summary.PENDING}
+            </p>
+          </div>
+
+          <div className="rounded-xl bg-[#EFFBF6] p-3">
+            <p className="text-[10px] font-semibold uppercase tracking-wide text-gray-500">
+              Accepted
+            </p>
+            <p className="mt-1 text-xl font-bold text-[#137A59]">
+              {summary.ACCEPTED}
+            </p>
+          </div>
+
+          <div className="rounded-xl bg-[#F1F5FF] p-3">
+            <p className="text-[10px] font-semibold uppercase tracking-wide text-gray-500">
+              Completed
+            </p>
+            <p className="mt-1 text-xl font-bold text-[#3566B8]">
+              {summary.COMPLETED}
+            </p>
+          </div>
+        </div>
+
         <div className="mt-4 flex gap-2 overflow-x-auto pb-1">
           {filters.map((item) => (
             <button
               key={item.value}
               type="button"
-              onClick={() => {
-                setFilter(item.value);
-                setPage(1);
-                setActionError("");
-                setActionMessage("");
-              }}
+              onClick={() => selectFilter(item.value)}
               aria-pressed={filter === item.value}
               className={`shrink-0 rounded-full px-3 py-2 text-[11px] font-bold transition ${
                 filter === item.value
@@ -943,30 +1063,26 @@ function SellerBookingInbox() {
           </p>
         )}
 
-        {loading ? (
-          <div className="flex items-center justify-center gap-2 py-10 text-sm text-gray-500">
-            <LoaderCircle className="h-5 w-5 animate-spin text-[#FF5A36]" />
-            Loading booking requests...
-          </div>
-        ) : loadError ? (
-          <div className="rounded-2xl border border-dashed border-[#D9DEE5] bg-[#FCFAF6] px-5 py-8 text-center">
-            <AlertCircle className="mx-auto h-7 w-7 text-[#C5402D]" />
-
-            <p className="mt-3 text-sm font-bold text-gray-800">
-              Booking inbox unavailable
-            </p>
-
-            <p className="mx-auto mt-1 max-w-lg text-xs leading-5 text-gray-500">
-              {loadError}
-            </p>
-
+        {loadError && !loading && (
+          <div
+            role="alert"
+            className="mb-4 rounded-xl border border-[#F1D5D0] bg-[#FFF0EE] px-4 py-3 text-xs leading-5 text-[#C5402D]"
+          >
+            {loadError}
             <button
               type="button"
               onClick={() => void loadBookings()}
-              className={`${primaryButtonClass} mt-4`}
+              className="ml-2 font-bold underline"
             >
               Try again
             </button>
+          </div>
+        )}
+
+        {loading ? (
+          <div className="flex items-center justify-center gap-2 py-10 text-sm text-gray-500">
+            <LoaderCircle className="h-5 w-5 animate-spin text-[#FF5A36]" />
+            Loading service bookings...
           </div>
         ) : bookings.length === 0 ? (
           <div className="rounded-2xl border border-dashed border-[#D9DEE5] bg-[#FCFAF6] px-5 py-10 text-center">
@@ -979,13 +1095,28 @@ function SellerBookingInbox() {
             </h3>
 
             <p className="mt-1 text-xs leading-5 text-gray-500">
-              New requests from customers will appear here.
+              Customer bookings for your services will appear here.
             </p>
           </div>
         ) : (
-          <>
-            <div className="grid gap-3">
-              {bookings.map((booking) => (
+          <div className="grid gap-3">
+            {bookings.map((booking) => {
+              const isAppointment = booking.bookingType === "APPOINTMENT";
+              const isPending = booking.status === "PENDING";
+              const isUpdating = updatingId === booking.id;
+              const actionDisabled = Boolean(updatingId);
+              const appointmentValue =
+                appointmentDates[booking.id] ??
+                toDateTimeLocalValue(booking.requestedFor);
+              const canComplete =
+                booking.status === "ACCEPTED" ||
+                booking.status === "IN_PROGRESS";
+              const canCancel =
+                booking.status === "ACCEPTED" ||
+                booking.status === "IN_PROGRESS" ||
+                booking.status === "AWAITING_BUYER";
+
+              return (
                 <article
                   key={booking.id}
                   className="rounded-2xl border border-[#E8E4DE] bg-white p-4 sm:p-5"
@@ -1002,217 +1133,269 @@ function SellerBookingInbox() {
                         >
                           {getBookingStatusLabel(booking.status)}
                         </span>
+
+                        <span className="rounded-full bg-[#FCFAF6] px-2.5 py-1 text-[10px] font-semibold text-gray-500">
+                          {isAppointment ? "Appointment" : "Request"}
+                        </span>
                       </div>
 
                       <p className="mt-2 text-xs text-gray-500">
-                        Request ID:{" "}
-                        <span className="font-medium text-gray-700">
-                          {booking.id}
+                        Booking ID:{" "}
+                        <span className="break-all font-medium text-gray-700">
+                          {booking.bookingCode || booking.id}
                         </span>
                       </p>
                     </div>
 
                     <div className="flex items-center gap-1.5 text-[11px] text-gray-500">
                       <Clock3 className="h-3.5 w-3.5" />
-                      Requested {formatBookingDate(booking.createdAt)}
+                      Received {formatBookingDate(booking.createdAt)}
                     </div>
                   </div>
 
                   <div className="mt-4 grid gap-3 rounded-xl bg-[#FCFAF6] p-3 sm:grid-cols-2">
-                    <div className="flex items-start gap-2">
+                    <div className="flex min-w-0 items-start gap-2">
                       <UserRound className="mt-0.5 h-4 w-4 shrink-0 text-[#FF5A36]" />
-
                       <div className="min-w-0">
                         <p className="text-[10px] font-semibold uppercase text-gray-400">
                           Customer
                         </p>
-
                         <p className="mt-1 break-words text-xs font-bold text-gray-800">
-                          {booking.buyer.name}
+                          {booking.buyer.name || "Customer"}
                         </p>
-
                         {booking.buyer.email && (
                           <p className="mt-0.5 break-all text-[11px] text-gray-500">
                             {booking.buyer.email}
+                          </p>
+                        )}
+                        {booking.contactPhone && (
+                          <p className="mt-1 text-[11px] text-gray-500">
+                            Phone: {booking.contactPhone}
                           </p>
                         )}
                       </div>
                     </div>
 
                     <div className="flex items-start gap-2">
-                      <CalendarDays className="mt-0.5 h-4 w-4 shrink-0 text-[#FF5A36]" />
-
-                      <div>
-                        <p className="text-[10px] font-semibold uppercase text-gray-400">
-                          Preferred date
-                        </p>
-
-                        <p className="mt-1 text-xs font-bold text-gray-800">
-                          {formatBookingDate(booking.requestedFor)}
-                        </p>
-                      </div>
-                    </div>
-
-                    <div className="flex items-start gap-2">
                       <Package className="mt-0.5 h-4 w-4 shrink-0 text-[#FF5A36]" />
-
                       <div>
                         <p className="text-[10px] font-semibold uppercase text-gray-400">
-                          Quantity
+                          Booking details
                         </p>
-
                         <p className="mt-1 text-xs font-bold text-gray-800">
-                          {booking.quantity}
+                          Quantity: {booking.quantity}
                         </p>
+                        {booking.fulfillmentType && (
+                          <p className="mt-1 text-[11px] text-gray-500">
+                            Fulfilment: {booking.fulfillmentType.replace(/_/g, " ")}
+                          </p>
+                        )}
+                        {booking.fulfillmentAddress && (
+                          <p className="mt-1 break-words text-[11px] leading-5 text-gray-500">
+                            Address: {booking.fulfillmentAddress}
+                          </p>
+                        )}
                       </div>
                     </div>
-
-                    {booking.contactPhone && (
-                      <div className="flex items-start gap-2">
-                        <Phone className="mt-0.5 h-4 w-4 shrink-0 text-[#FF5A36]" />
-
-                        <div>
-                          <p className="text-[10px] font-semibold uppercase text-gray-400">
-                            Contact phone
-                          </p>
-
-                          <p className="mt-1 text-xs font-bold text-gray-800">
-                            {booking.contactPhone}
-                          </p>
-                        </div>
-                      </div>
-                    )}
                   </div>
 
                   {booking.buyerMessage && (
                     <div className="mt-3 rounded-xl border border-[#E8E4DE] p-3">
                       <p className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wide text-gray-400">
                         <MessageSquare className="h-3.5 w-3.5" />
-                        Customer message
+                        Customer instructions
                       </p>
-
                       <p className="mt-2 whitespace-pre-wrap break-words text-xs leading-5 text-gray-700">
                         {booking.buyerMessage}
                       </p>
                     </div>
                   )}
 
-                  <div className="mt-4 flex flex-col gap-3 border-t border-[#F0ECE6] pt-3 sm:flex-row sm:items-center sm:justify-between">
-                    <span className="text-[11px] text-gray-500">
-                      {booking.messageCount} booking{" "}
-                      {booking.messageCount === 1 ? "message" : "messages"}
-                    </span>
+                  {isAppointment && (
+                    <div className="mt-3 rounded-xl border border-[#E8E4DE] p-3">
+                      <p className="text-[10px] font-semibold uppercase tracking-wide text-gray-400">
+                        Appointment
+                      </p>
 
-                    <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-                      {/* Every booking can open its conversation history. */}
-                      <Link
-                        href={`/service-bookings/${encodeURIComponent(booking.id)}/messages`}
-                        className={`${secondaryButtonClass} min-h-10`}
-                      >
-                        <MessageSquare className="h-4 w-4" />
-                        View conversation
-                      </Link>
+                      {isPending ? (
+                        <>
+                          <p className="mt-1 text-xs text-gray-600">
+                            Customer's preferred time: {formatBookingDate(booking.requestedFor)}
+                          </p>
 
-                      {booking.status === "PENDING" ? (
-                        <div className="flex gap-2">
-                          <button
-                            type="button"
-                            disabled={updatingId === booking.id}
-                            onClick={() =>
-                              void changeBookingStatus(
-                                booking.id,
-                                "DECLINE",
-                              )
-                            }
-                            className="inline-flex min-h-10 flex-1 items-center justify-center gap-2 rounded-xl border border-[#F1D5D0] px-4 text-xs font-bold text-[#C5402D] hover:bg-[#FFF0EE] disabled:opacity-50 sm:flex-none"
+                          <label
+                            htmlFor={`appointment-${booking.id}`}
+                            className="mt-3 block text-xs font-semibold text-gray-700"
                           >
-                            {updatingId === booking.id ? (
-                              <LoaderCircle className="h-4 w-4 animate-spin" />
-                            ) : (
-                              <Ban className="h-4 w-4" />
-                            )}
-                            Decline
-                          </button>
+                            Confirm appointment date and time
+                          </label>
 
-                          <button
-                            type="button"
-                            disabled={updatingId === booking.id}
-                            onClick={() =>
-                              void changeBookingStatus(
-                                booking.id,
-                                "ACCEPT",
-                              )
+                          <input
+                            id={`appointment-${booking.id}`}
+                            type="datetime-local"
+                            min={toDateTimeLocalValue(new Date().toISOString())}
+                            value={appointmentValue}
+                            onChange={(event) =>
+                              setAppointmentDates((current) => ({
+                                ...current,
+                                [booking.id]: event.target.value,
+                              }))
                             }
-                            className={`${primaryButtonClass} min-h-10 flex-1 sm:flex-none`}
-                          >
-                            {updatingId === booking.id ? (
-                              <LoaderCircle className="h-4 w-4 animate-spin" />
-                            ) : (
-                              <Check className="h-4 w-4" />
-                            )}
-                            Accept booking
-                          </button>
-                        </div>
+                            disabled={isUpdating}
+                            className="mt-2 min-h-11 w-full rounded-xl border border-[#D9DEE5] bg-white px-3 py-2 text-sm outline-none focus:border-[#FF694F] focus:ring-4 focus:ring-[#FF694F]/10 sm:max-w-xs"
+                          />
+                        </>
                       ) : (
-                        <span className="text-[11px] font-semibold text-gray-500">
-                          {booking.status === "ACCEPTED"
-                            ? "This booking has been accepted."
-                            : booking.status === "AWAITING_BUYER"
-                              ? "This booking is waiting for the customer's response."
-                              : booking.status === "IN_PROGRESS"
-                                ? "This booking is currently in progress."
-                                : booking.status === "DECLINED"
-                                  ? "This booking was declined."
-                                  : booking.status === "CANCELLED"
-                                    ? "This booking was cancelled."
-                                    : "This booking is completed."}
-                        </span>
+                        <p className="mt-1 text-xs text-gray-700">
+                          Confirmed time:{" "}
+                          <span className="font-semibold">
+                            {formatBookingDate(booking.scheduledFor)}
+                          </span>
+                        </p>
                       )}
                     </div>
+                  )}
+
+                  {booking.status === "DECLINED" && booking.declineReason && (
+                    <p className="mt-3 text-xs text-[#C5402D]">
+                      Decline reason: {booking.declineReason}
+                    </p>
+                  )}
+
+                  {booking.status === "CANCELLED" && booking.cancellationReason && (
+                    <p className="mt-3 text-xs text-gray-500">
+                      Cancellation reason: {booking.cancellationReason}
+                    </p>
+                  )}
+
+                  <div className="mt-4 flex flex-col gap-2 border-t border-[#F0ECE6] pt-3 sm:flex-row sm:flex-wrap sm:items-center">
+                    <Link
+                      href={`/service-bookings/${encodeURIComponent(booking.id)}/messages`}
+                      className="inline-flex min-h-10 items-center justify-center gap-2 self-start rounded-xl border border-[#F5C7BA] bg-[#FFF7F3] px-4 py-2.5 text-xs font-bold text-[#9F2D18] transition hover:border-[#FF9B82] hover:bg-[#FFF0E9]"
+                    >
+                      <MessageSquare className="h-4 w-4" />
+                      Open conversation
+                    </Link>
+
+                    {isPending && (
+                      <>
+                        <button
+                          type="button"
+                          disabled={actionDisabled || (isAppointment && !appointmentValue)}
+                          onClick={() =>
+                            void performBookingAction(
+                              booking,
+                              isAppointment ? "CONFIRM_APPOINTMENT" : "ACCEPT",
+                            )
+                          }
+                          className={`${primaryButtonClass} min-h-10`}
+                        >
+                          {isUpdating ? (
+                            <LoaderCircle className="h-4 w-4 animate-spin" />
+                          ) : (
+                            <Check className="h-4 w-4" />
+                          )}
+                          {isAppointment ? "Confirm appointment" : "Accept booking"}
+                        </button>
+
+                        <button
+                          type="button"
+                          disabled={actionDisabled}
+                          onClick={() =>
+                            void performBookingAction(booking, "DECLINE")
+                          }
+                          className="inline-flex min-h-10 items-center justify-center gap-2 rounded-xl border border-[#F1D5D0] px-4 py-2.5 text-xs font-bold text-[#C5402D] transition hover:bg-[#FFF0EE] disabled:opacity-50"
+                        >
+                          {isUpdating ? (
+                            <LoaderCircle className="h-4 w-4 animate-spin" />
+                          ) : (
+                            <Ban className="h-4 w-4" />
+                          )}
+                          Decline
+                        </button>
+                      </>
+                    )}
+
+                    {canComplete && (
+                      <button
+                        type="button"
+                        disabled={actionDisabled}
+                        onClick={() =>
+                          void performBookingAction(booking, "COMPLETE")
+                        }
+                        className="inline-flex min-h-10 items-center justify-center gap-2 rounded-xl bg-[#137A59] px-4 py-2.5 text-xs font-bold text-white transition hover:bg-[#0E6549] disabled:opacity-50"
+                      >
+                        {isUpdating ? (
+                          <LoaderCircle className="h-4 w-4 animate-spin" />
+                        ) : (
+                          <CheckCircle2 className="h-4 w-4" />
+                        )}
+                        Mark as completed
+                      </button>
+                    )}
+
+                    {canCancel && (
+                      <button
+                        type="button"
+                        disabled={actionDisabled}
+                        onClick={() => {
+                          if (
+                            window.confirm(
+                              "Are you sure you want to cancel this booking?",
+                            )
+                          ) {
+                            void performBookingAction(booking, "CANCEL");
+                          }
+                        }}
+                        className="inline-flex min-h-10 items-center justify-center gap-2 rounded-xl border border-[#F1D5D0] px-4 py-2.5 text-xs font-semibold text-[#C5402D] transition hover:bg-[#FFF0EE] disabled:opacity-50"
+                      >
+                        <Ban className="h-4 w-4" />
+                        Cancel booking
+                      </button>
+                    )}
+
+                    {!isPending && !canComplete && !canCancel && (
+                      <p className="text-[11px] text-gray-400">
+                        No further actions are available for this booking.
+                      </p>
+                    )}
                   </div>
                 </article>
-              ))}
+              );
+            })}
+          </div>
+        )}
+
+        {!loading && totalBookings > 0 && (
+          <div className="mt-5 flex flex-col gap-3 border-t border-[#F0ECE6] pt-4 sm:flex-row sm:items-center sm:justify-between">
+            <p className="text-[11px] text-gray-500">
+              Showing {bookings.length} of {totalBookings} bookings · Page {page} of {totalPages}
+            </p>
+
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                disabled={page <= 1 || loading || refreshing}
+                onClick={() => setPage((current) => Math.max(1, current - 1))}
+                className={secondaryButtonClass}
+              >
+                <ChevronLeft className="h-4 w-4" />
+                Previous
+              </button>
+
+              <button
+                type="button"
+                disabled={page >= totalPages || loading || refreshing}
+                onClick={() =>
+                  setPage((current) => Math.min(totalPages, current + 1))
+                }
+                className={secondaryButtonClass}
+              >
+                Next
+                <ChevronRight className="h-4 w-4" />
+              </button>
             </div>
-
-            <div className="mt-5 flex flex-col gap-3 border-t border-[#F0ECE6] pt-4 sm:flex-row sm:items-center sm:justify-between">
-              <p className="text-[11px] text-gray-500">
-                Showing {bookings.length} of {totalBookings} booking requests ·
-                Page {page} of {totalPages}
-              </p>
-
-              <div className="flex items-center gap-2">
-                <button
-                  type="button"
-                  disabled={page <= 1 || loading || refreshing}
-                  onClick={() =>
-                    setPage((current) => Math.max(1, current - 1))
-                  }
-                  className={secondaryButtonClass}
-                >
-                  <ChevronLeft className="h-4 w-4" />
-                  Previous
-                </button>
-
-                <button
-                  type="button"
-                  disabled={
-                    page >= totalPages ||
-                    loading ||
-                    refreshing
-                  }
-                  onClick={() =>
-                    setPage((current) =>
-                      Math.min(totalPages, current + 1),
-                    )
-                  }
-                  className={secondaryButtonClass}
-                >
-                  Next
-                  <ChevronRight className="h-4 w-4" />
-                </button>
-              </div>
-            </div>
-          </>
+          </div>
         )}
       </div>
     </section>
@@ -1225,6 +1408,7 @@ function SellerBookingInbox() {
 
 export default function SellerDashboard() {
   const router = useRouter();
+  const businessEditorRef = useRef<HTMLElement | null>(null);
 
   const [business, setBusiness] = useState<SellerBusiness | null>(null);
 
@@ -1374,6 +1558,26 @@ export default function SellerDashboard() {
     setSuccess("");
   }, []);
 
+  /*
+   * The business editor is rendered after the service manager
+   * and booking inbox. Scroll to it after React mounts the form
+   * so the Edit Business action takes the seller directly there.
+   */
+  useEffect(() => {
+    if (!editingBusiness) return;
+
+    const frame = window.requestAnimationFrame(() => {
+      businessEditorRef.current?.scrollIntoView({
+        behavior: "smooth",
+        block: "start",
+      });
+    });
+
+    return () => {
+      window.cancelAnimationFrame(frame);
+    };
+  }, [editingBusiness]);
+
   /* ------------------------------------------------------------------------ */
   /* LOAD DASHBOARD                                                           */
   /* ------------------------------------------------------------------------ */
@@ -1429,7 +1633,7 @@ export default function SellerDashboard() {
         productsResponse,
       ] = await Promise.all([
         fetch(
-          "/api/categories",
+          "/api/categories?includeEmpty=true",
           { cache: "no-store", signal },
         ).catch(() => null),
 
@@ -4153,7 +4357,11 @@ export default function SellerDashboard() {
 
             {/* EDIT BUSINESS */}
             {editingBusiness && (
-              <section className="mt-5 rounded-[22px] border border-[#E8E4DE] bg-white shadow-sm">
+              <section
+                ref={businessEditorRef}
+                id="business-editor"
+                className="mt-5 scroll-mt-24 rounded-[22px] border border-[#E8E4DE] bg-white shadow-sm"
+              >
                 <div className="flex flex-col gap-3 border-b border-[#EAE6DF] px-5 py-5 sm:flex-row sm:items-center sm:justify-between sm:px-6">
                   <div>
                     <p className="text-xs font-semibold uppercase tracking-[0.12em] text-[#FF5A36]">

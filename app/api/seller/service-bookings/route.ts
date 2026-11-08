@@ -1,7 +1,6 @@
-
 import {
-  ServiceBookingStatus,
   Prisma,
+  ServiceBookingStatus,
 } from "@prisma/client";
 
 import { NextRequest, NextResponse } from "next/server";
@@ -11,11 +10,9 @@ import { prisma } from "@/lib/prisma";
 import { authOptions } from "@/lib/auth";
 import { checkPublicRateLimit } from "@/lib/rate-limit";
 
-/*
- * ---------------------------------------------------------
- * CONFIGURATION
- * ---------------------------------------------------------
- */
+/* =========================================================
+   CONFIGURATION
+========================================================= */
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -27,63 +24,63 @@ const MAX_PAGE_SIZE = 50;
 const MAX_DATABASE_OFFSET = 2_147_483_647;
 const MAX_SERVICE_ID_LENGTH = 100;
 
-/*
- * ---------------------------------------------------------
- * ALLOWED STATUSES
- * ---------------------------------------------------------
- */
-
-const ALLOWED_STATUSES = new Set<ServiceBookingStatus>(
-  Object.values(ServiceBookingStatus)
+const ALLOWED_STATUSES = new Set<string>(
+  Object.values(ServiceBookingStatus),
 );
 
-/*
- * ---------------------------------------------------------
- * BOOKING INCLUDE
- * ---------------------------------------------------------
- */
+/* =========================================================
+   BOOKING SELECT
 
-const bookingInclude = {
+   Deliberately excludes:
+   - Merchant private notes.
+   - Quotation details.
+   - Booking message contents.
+
+   messageCount is temporarily retained because the current
+   seller dashboard displays it. The conversation UI will be
+   removed in the dashboard MVP update.
+========================================================= */
+
+const bookingSelect = {
+  id: true,
+  bookingCode: true,
+
+  serviceId: true,
+  buyerId: true,
+  sellerId: true,
+
+  status: true,
+  bookingType: true,
+
+  requestedFor: true,
+  scheduledFor: true,
+
+  quantity: true,
+  contactPhone: true,
+  buyerMessage: true,
+
+  fulfillmentType: true,
+  fulfillmentAddress: true,
+
+  declineReason: true,
+  cancellationReason: true,
+
+  acceptedAt: true,
+  declinedAt: true,
+  cancelledAt: true,
+  startedAt: true,
+  completedAt: true,
+
+  createdAt: true,
+  updatedAt: true,
+
   service: {
     select: {
       id: true,
       name: true,
-      description: true,
-
-      price: true,
-      priceMin: true,
-      priceMax: true,
-
-      durationMinutes: true,
-
       bookingType: true,
       fulfillmentType: true,
-      availability: true,
-
       imageUrl: true,
-
-      images: {
-        select: {
-          id: true,
-          url: true,
-          sortOrder: true,
-        },
-
-        orderBy: [
-          { sortOrder: "asc" },
-          { createdAt: "asc" },
-        ],
-
-        take: 1,
-      },
-
-      category: {
-        select: {
-          id: true,
-          name: true,
-          iconKey: true,
-        },
-      },
     },
   },
 
@@ -91,24 +88,8 @@ const bookingInclude = {
     select: {
       id: true,
       name: true,
+      email: true,
     },
-  },
-
-  messages: {
-    select: {
-      id: true,
-      body: true,
-      senderId: true,
-      readAt: true,
-      createdAt: true,
-    },
-
-    orderBy: [
-      { createdAt: "desc" },
-      { id: "desc" },
-    ],
-
-    take: 1,
   },
 
   _count: {
@@ -116,28 +97,23 @@ const bookingInclude = {
       messages: true,
     },
   },
-} satisfies Prisma.ServiceBookingInclude;
+} satisfies Prisma.ServiceBookingSelect;
 
 type BookingRecord = Prisma.ServiceBookingGetPayload<{
-  include: typeof bookingInclude;
+  select: typeof bookingSelect;
 }>;
 
-/*
- * ---------------------------------------------------------
- * RESPONSE HEADERS
- * ---------------------------------------------------------
- */
+/* =========================================================
+   RESPONSE HELPERS
+========================================================= */
 
-function responseHeaders(
-  baseHeaders?: HeadersInit
-): Headers {
+function responseHeaders(baseHeaders?: HeadersInit): Headers {
   const headers = new Headers(baseHeaders);
 
   headers.set(
     "Cache-Control",
-    "private, no-store, max-age=0, must-revalidate"
+    "private, no-store, max-age=0, must-revalidate",
   );
-
   headers.set("Pragma", "no-cache");
   headers.set("Expires", "0");
 
@@ -147,7 +123,7 @@ function responseHeaders(
 function jsonError(
   message: string,
   status: number,
-  baseHeaders?: HeadersInit
+  baseHeaders?: HeadersInit,
 ) {
   return NextResponse.json(
     {
@@ -158,66 +134,46 @@ function jsonError(
     {
       status,
       headers: responseHeaders(baseHeaders),
-    }
+    },
   );
 }
 
-/*
- * ---------------------------------------------------------
- * PAGINATION
- * ---------------------------------------------------------
- */
+/* =========================================================
+   PAGINATION
+========================================================= */
 
 function parsePositiveInteger(
   value: string | null,
-  fallback: number
+  fallback: number,
 ): number | null {
-  if (value === null) {
-    return fallback;
-  }
+  if (value === null) return fallback;
 
   const normalized = value.trim();
-
-  if (!/^\d+$/.test(normalized)) {
-    return null;
-  }
+  if (!/^\d+$/.test(normalized)) return null;
 
   const parsed = Number(normalized);
 
-  return (
-    Number.isSafeInteger(parsed) &&
-    parsed >= 1
-  )
+  return Number.isSafeInteger(parsed) && parsed >= 1
     ? parsed
     : null;
 }
 
-function parsePagination(
-  searchParams: URLSearchParams
-) {
+function parsePagination(searchParams: URLSearchParams) {
   const page = parsePositiveInteger(
     searchParams.get("page"),
-    DEFAULT_PAGE
+    DEFAULT_PAGE,
   );
-
-  if (page === null) {
-    return null;
-  }
 
   const requestedPageSize = parsePositiveInteger(
     searchParams.get("pageSize"),
-    DEFAULT_PAGE_SIZE
+    DEFAULT_PAGE_SIZE,
   );
 
-  if (requestedPageSize === null) {
+  if (page === null || requestedPageSize === null) {
     return null;
   }
 
-  const pageSize = Math.min(
-    requestedPageSize,
-    MAX_PAGE_SIZE
-  );
-
+  const pageSize = Math.min(requestedPageSize, MAX_PAGE_SIZE);
   const skip = (page - 1) * pageSize;
 
   if (
@@ -227,167 +183,74 @@ function parsePagination(
     return null;
   }
 
-  return {
-    page,
-    pageSize,
-    skip,
-  };
+  return { page, pageSize, skip };
 }
 
-/*
- * ---------------------------------------------------------
- * BOOKING RESPONSE FORMAT
- * ---------------------------------------------------------
- *
- * Includes the fields needed by the seller dashboard:
- *
- * - Booking reference and type.
- * - Requested and confirmed dates.
- * - Customer details.
- * - Fulfillment details.
- * - Quotation and agreed price.
- * - Booking lifecycle timestamps.
- * - Latest conversation message.
- * - Message count.
- *
- * Private merchantNote is never returned.
- * ---------------------------------------------------------
- */
+/* =========================================================
+   BOOKING RESPONSE FORMAT
+========================================================= */
 
-function formatBooking(
-  booking: BookingRecord
-) {
+function formatBooking(booking: BookingRecord) {
   return {
     id: booking.id,
-
     bookingCode: booking.bookingCode,
-
     serviceId: booking.serviceId,
-
     bookingType: booking.bookingType,
-
     status: booking.status,
 
-    requestedFor:
-      booking.requestedFor?.toISOString() ?? null,
-
-    scheduledFor:
-      booking.scheduledFor?.toISOString() ?? null,
+    requestedFor: booking.requestedFor?.toISOString() ?? null,
+    scheduledFor: booking.scheduledFor?.toISOString() ?? null,
 
     quantity: booking.quantity,
-
     contactPhone: booking.contactPhone,
-
     buyerMessage: booking.buyerMessage,
 
     fulfillmentType: booking.fulfillmentType,
-
     fulfillmentAddress: booking.fulfillmentAddress,
 
-    quotedPrice: booking.quotedPrice,
-
-    quoteMessage: booking.quoteMessage,
-
-    quoteSentAt:
-      booking.quoteSentAt?.toISOString() ?? null,
-
-    agreedPrice: booking.agreedPrice,
-
-    quoteAcceptedAt:
-      booking.quoteAcceptedAt?.toISOString() ?? null,
-
-    currency: booking.currency,
-
     declineReason: booking.declineReason,
+    cancellationReason: booking.cancellationReason,
 
-    cancellationReason:
-      booking.cancellationReason,
+    acceptedAt: booking.acceptedAt?.toISOString() ?? null,
+    declinedAt: booking.declinedAt?.toISOString() ?? null,
+    cancelledAt: booking.cancelledAt?.toISOString() ?? null,
+    startedAt: booking.startedAt?.toISOString() ?? null,
+    completedAt: booking.completedAt?.toISOString() ?? null,
 
-    acceptedAt:
-      booking.acceptedAt?.toISOString() ?? null,
+    createdAt: booking.createdAt.toISOString(),
+    updatedAt: booking.updatedAt.toISOString(),
 
-    declinedAt:
-      booking.declinedAt?.toISOString() ?? null,
-
-    cancelledAt:
-      booking.cancelledAt?.toISOString() ?? null,
-
-    startedAt:
-      booking.startedAt?.toISOString() ?? null,
-
-    completedAt:
-      booking.completedAt?.toISOString() ?? null,
-
-    createdAt:
-      booking.createdAt.toISOString(),
-
-    updatedAt:
-      booking.updatedAt.toISOString(),
-
-    buyer: {
-      id: booking.buyer.id,
-      name: booking.buyer.name,
-    },
-
+    buyer: booking.buyer,
     service: booking.service,
 
-    latestMessage: booking.messages[0]
-      ? {
-          id: booking.messages[0].id,
-          body: booking.messages[0].body,
-          senderId: booking.messages[0].senderId,
-
-          readAt:
-            booking.messages[0].readAt?.toISOString() ?? null,
-
-          createdAt:
-            booking.messages[0].createdAt.toISOString(),
-        }
-      : null,
-
+    // Temporary dashboard compatibility; no message content is exposed.
     messageCount: booking._count.messages,
   };
 }
 
-/*
- * ---------------------------------------------------------
- * SELLER OWNERSHIP
- * ---------------------------------------------------------
- *
- * NEW BOOKINGS:
- * sellerId identifies the seller assigned when the
- * booking was created.
- *
- * LEGACY BOOKINGS:
- * sellerId may be null. In that case, ownership is
- * resolved through:
- *
- * ServiceBooking -> Service -> Business -> ownerId.
- *
- * Importantly, sellers with existing assigned bookings
- * do not need to own a current Business record to access
- * those bookings through their saved sellerId.
- * ---------------------------------------------------------
- */
+/* =========================================================
+   SELLER OWNERSHIP
+
+   New bookings are assigned through sellerId.
+   Older bookings with sellerId=null are resolved through:
+   ServiceBooking -> Service -> Business -> ownerId.
+
+   A booking assigned to another seller is never included
+   through the legacy ownership fallback.
+========================================================= */
 
 function sellerBookingWhere(
-  sellerId: string
+  sellerId: string,
 ): Prisma.ServiceBookingWhereInput {
   return {
     OR: [
-      {
-        sellerId,
-      },
-
+      { sellerId },
       {
         sellerId: null,
-
         service: {
           is: {
             business: {
-              is: {
-                ownerId: sellerId,
-              },
+              is: { ownerId: sellerId },
             },
           },
         },
@@ -396,59 +259,34 @@ function sellerBookingWhere(
   };
 }
 
-/*
- * =========================================================
- * GET /api/seller/service-bookings
- * =========================================================
- *
- * Returns incoming bookings belonging to the
- * authenticated seller.
- *
- * Supports:
- *
- * - All seven booking statuses.
- * - Optional service filtering.
- * - Pagination.
- * - Overall seller booking status summaries.
- * - Saved seller ownership.
- * - Legacy business-owner fallback.
- *
- * The summary is independent of the selected status,
- * service filter and current page.
- * =========================================================
- */
+/* =========================================================
+   GET /api/seller/service-bookings
 
-export async function GET(
-  request: NextRequest
-) {
-  /*
-   * RATE LIMITING
-   */
+   Returns bookings belonging to the authenticated seller.
+   Supports status filtering, service filtering, pagination
+   and seller-wide status summaries.
+========================================================= */
 
+export async function GET(request: NextRequest) {
   const rateLimit = checkPublicRateLimit(
     request,
-    "request-read"
+    "request-read",
   );
 
   if (!rateLimit.allowed) {
     return jsonError(
       "Too many booking requests. Please try again shortly.",
       429,
-      rateLimit.headers
+      rateLimit.headers,
     );
   }
 
   try {
-    /*
-     * AUTHENTICATION
-     */
+    /* AUTHENTICATION */
 
     const session = await getServerSession(authOptions);
-
     const sessionUser = session?.user as
-      | {
-          id?: unknown;
-        }
+      | { id?: unknown }
       | undefined;
 
     if (
@@ -458,30 +296,20 @@ export async function GET(
       return jsonError(
         "Please sign in to view your bookings.",
         401,
-        rateLimit.headers
+        rateLimit.headers,
       );
     }
 
-    /*
-     * CONFIRM ACCOUNT
-     */
-
     const account = await prisma.user.findUnique({
-      where: {
-        id: sessionUser.id,
-      },
-
-      select: {
-        id: true,
-        role: true,
-      },
+      where: { id: sessionUser.id },
+      select: { id: true, role: true },
     });
 
     if (!account) {
       return jsonError(
         "Your account could not be found.",
         401,
-        rateLimit.headers
+        rateLimit.headers,
       );
     }
 
@@ -489,189 +317,96 @@ export async function GET(
       return jsonError(
         "A seller account is required to access incoming bookings.",
         403,
-        rateLimit.headers
+        rateLimit.headers,
       );
     }
 
-    /*
-     * RESOLVE CURRENT BUSINESS
-     *
-     * This is optional because sellerId snapshots allow
-     * sellers to retain access to previously assigned
-     * bookings even if their current business ownership
-     * relationship changes.
-     *
-     * The business is still returned for the dashboard
-     * when one exists.
-     */
+    /* QUERY PARAMETERS */
 
-    const business = await prisma.business.findUnique({
-      where: {
-        ownerId: account.id,
-      },
-
-      select: {
-        id: true,
-        name: true,
-      },
-    });
-
-    /*
-     * PAGINATION
-     */
-
-    const searchParams =
-      request.nextUrl.searchParams;
-
-    const pagination = parsePagination(
-      searchParams
-    );
+    const searchParams = request.nextUrl.searchParams;
+    const pagination = parsePagination(searchParams);
 
     if (!pagination) {
       return jsonError(
         "Invalid pagination parameters.",
         400,
-        rateLimit.headers
+        rateLimit.headers,
       );
     }
 
-    /*
-     * STATUS FILTER
-     */
-
     const statusParam = (
       searchParams.get("status") ?? ""
-    )
-      .trim()
-      .toUpperCase();
+    ).trim().toUpperCase();
 
     if (
       statusParam &&
       statusParam !== "ALL" &&
-      !ALLOWED_STATUSES.has(
-        statusParam as ServiceBookingStatus
-      )
+      !ALLOWED_STATUSES.has(statusParam)
     ) {
       return jsonError(
         "Invalid booking status filter.",
         400,
-        rateLimit.headers
+        rateLimit.headers,
       );
     }
-
-    /*
-     * SERVICE FILTER
-     */
 
     const serviceId = (
       searchParams.get("serviceId") ?? ""
     ).trim();
 
-    if (
-      serviceId.length > MAX_SERVICE_ID_LENGTH
-    ) {
+    if (serviceId.length > MAX_SERVICE_ID_LENGTH) {
       return jsonError(
         "Invalid service ID.",
         400,
-        rateLimit.headers
+        rateLimit.headers,
       );
     }
 
-    /*
-     * SELLER OWNERSHIP
-     *
-     * A seller can see:
-     *
-     * 1. Bookings explicitly assigned to their sellerId.
-     * 2. Older bookings without sellerId belonging to
-     *    their currently owned business.
-     *
-     * A booking assigned to another seller is excluded.
-     */
+    /* SELLER-OWNED BOOKINGS */
 
-    const sellerWhere = sellerBookingWhere(
-      account.id
-    );
-
-    /*
-     * FINAL BOOKING FILTER
-     */
-
+    const sellerWhere = sellerBookingWhere(account.id);
     const conditions: Prisma.ServiceBookingWhereInput[] = [
       sellerWhere,
     ];
 
-    if (
-      statusParam &&
-      statusParam !== "ALL"
-    ) {
+    if (statusParam && statusParam !== "ALL") {
       conditions.push({
         status: statusParam as ServiceBookingStatus,
       });
     }
 
     if (serviceId) {
-      conditions.push({
-        serviceId,
-      });
+      conditions.push({ serviceId });
     }
 
     const where: Prisma.ServiceBookingWhereInput = {
       AND: conditions,
     };
 
-    /*
-     * FETCH BOOKINGS AND SUMMARY
-     *
-     * The summary uses seller ownership only.
-     *
-     * It is not affected by:
-     * - Status filter.
-     * - Service filter.
-     * - Pagination.
-     */
+    /* LOAD RESULTS AND STATUS SUMMARY */
 
-    const [
-      total,
-      bookings,
-      statusCounts,
-    ] = await Promise.all([
-      prisma.serviceBooking.count({
-        where,
-      }),
+    const [total, bookings, statusCounts] = await Promise.all([
+      prisma.serviceBooking.count({ where }),
 
       prisma.serviceBooking.findMany({
         where,
-
-        include: bookingInclude,
-
+        select: bookingSelect,
         orderBy: [
-          {
-            createdAt: "desc",
-          },
-          {
-            id: "desc",
-          },
+          { createdAt: "desc" },
+          { id: "desc" },
         ],
-
         skip: pagination.skip,
         take: pagination.pageSize,
       }),
 
       prisma.serviceBooking.groupBy({
         by: ["status"],
-
         where: sellerWhere,
-
-        _count: {
-          _all: true,
-        },
+        _count: { _all: true },
       }),
     ]);
 
-    /*
-     * BUILD STATUS COUNTS
-     */
+    /* STATUS COUNTS */
 
     const counts: Record<ServiceBookingStatus, number> = {
       PENDING: 0,
@@ -689,63 +424,42 @@ export async function GET(
 
     const summaryTotal = Object.values(counts).reduce(
       (sum, count) => sum + count,
-      0
+      0,
     );
 
-    /*
-     * PAGINATION METADATA
-     */
+    /* PAGINATION METADATA */
 
-    const totalPages = Math.ceil(
-      total / pagination.pageSize
-    );
-
-    /*
-     * SUCCESS RESPONSE
-     */
+    const totalPages = Math.ceil(total / pagination.pageSize);
 
     return NextResponse.json(
       {
         bookings: bookings.map(formatBooking),
-
-        seller: {
-          businessId: business?.id ?? null,
-          businessName: business?.name ?? null,
-        },
-
         summary: {
           total: summaryTotal,
           ...counts,
         },
-
         page: pagination.page,
         pageSize: pagination.pageSize,
-
         total,
         totalPages,
-
-        hasNextPage:
-          pagination.page < totalPages,
-
+        hasNextPage: pagination.page < totalPages,
         hasPreviousPage:
-          pagination.page > 1 &&
-          pagination.page <= totalPages,
+          pagination.page > 1 && pagination.page <= totalPages,
       },
-
       {
         headers: responseHeaders(rateLimit.headers),
-      }
+      },
     );
   } catch (error) {
     console.error(
       "Seller service bookings API error:",
-      error
+      error,
     );
 
     return jsonError(
       "Unable to load incoming service bookings.",
       500,
-      rateLimit.headers
+      rateLimit.headers,
     );
   }
 }

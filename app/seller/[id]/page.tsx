@@ -7,7 +7,6 @@ import {
   useEffect,
   useRef,
   useState,
-  useSyncExternalStore,
 } from "react";
 
 import Link from "next/link";
@@ -41,12 +40,6 @@ import {
 
 import { trackContactEvent } from "@/lib/contact-event";
 
-import {
-  isBusinessSaved,
-  saveBusiness,
-  removeSavedBusiness,
-  SAVED_BUSINESSES_CHANGED_EVENT,
-} from "@/lib/saved";
 
 const NAV_ITEMS = [
   {
@@ -191,6 +184,156 @@ type ReMarketRole = "ADMIN" | "SELLER" | "BUYER";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+
+type SavedListingType = "PRODUCT" | "SERVICE";
+type SavedListingIds = Record<string, string>;
+
+function savedListingKey(type: SavedListingType, listingId: string): string {
+  return `${type}:${listingId}`;
+}
+
+function normalizeSavedItemsPage(
+  payload: unknown,
+  expectedType: SavedListingType,
+): SavedListingIds {
+  const result: SavedListingIds = {};
+
+  if (!isRecord(payload) || !Array.isArray(payload.items)) {
+    return result;
+  }
+
+  for (const item of payload.items as unknown[]) {
+    if (!isRecord(item) || item.type !== expectedType || !isRecord(item.listing)) {
+      continue;
+    }
+
+    if (typeof item.id !== "string" || typeof item.listing.id !== "string") {
+      continue;
+    }
+
+    result[savedListingKey(expectedType, item.listing.id)] = item.id;
+  }
+
+  return result;
+}
+
+function getSavedPaginationPages(payload: unknown): number {
+  if (!isRecord(payload) || !isRecord(payload.pagination)) {
+    return 1;
+  }
+
+  const totalPages = payload.pagination.totalPages;
+
+  return typeof totalPages === "number" && Number.isInteger(totalPages) && totalPages > 0
+    ? totalPages
+    : 1;
+}
+
+/**
+ * Loads all saved rows for one listing type using the paginated
+ * /api/saved endpoint. The endpoint caps each page at 50 rows.
+ */
+async function fetchSavedListingType(
+  type: SavedListingType,
+  signal: AbortSignal,
+): Promise<SavedListingIds> {
+  const firstResponse = await fetch(
+    `/api/saved?type=${type}&page=1&limit=50`,
+    {
+      cache: "no-store",
+      headers: { Accept: "application/json" },
+      signal,
+    },
+  );
+
+  if (firstResponse.status === 401 || firstResponse.status === 403) {
+    return {};
+  }
+
+  if (!firstResponse.ok) {
+    throw new Error(`Unable to load saved ${type.toLowerCase()} listings.`);
+  }
+
+  const firstPayload: unknown = await firstResponse.json();
+  const result = normalizeSavedItemsPage(firstPayload, type);
+  const totalPages = getSavedPaginationPages(firstPayload);
+
+  // Fetch remaining pages in small batches to avoid a large burst
+  // of requests for accounts with many saved listings.
+  for (let firstPage = 2; firstPage <= totalPages; firstPage += 4) {
+    const pageNumbers = Array.from(
+      { length: Math.min(4, totalPages - firstPage + 1) },
+      (_, index) => firstPage + index,
+    );
+
+    const pageResults = await Promise.all(
+      pageNumbers.map(async (page) => {
+        const response = await fetch(
+          `/api/saved?type=${type}&page=${page}&limit=50`,
+          {
+            cache: "no-store",
+            headers: { Accept: "application/json" },
+            signal,
+          },
+        );
+
+        if (!response.ok) {
+          throw new Error(`Unable to load saved ${type.toLowerCase()} listings.`);
+        }
+
+        const payload: unknown = await response.json();
+        return normalizeSavedItemsPage(payload, type);
+      }),
+    );
+
+    for (const pageResult of pageResults) {
+      Object.assign(result, pageResult);
+    }
+  }
+
+  return result;
+}
+
+function SaveListingButton({
+  listingType,
+  listingId,
+  isSaved,
+  isSaving,
+  isDisabled,
+  onToggle,
+}: {
+  listingType: SavedListingType;
+  listingId: string;
+  isSaved: boolean;
+  isSaving: boolean;
+  isDisabled: boolean;
+  onToggle: (type: SavedListingType, id: string) => void;
+}) {
+  const label = listingType === "PRODUCT" ? "product" : "service";
+
+  return (
+    <button
+      type="button"
+      onClick={() => onToggle(listingType, listingId)}
+      disabled={isSaving || isDisabled}
+      aria-pressed={isSaved}
+      aria-label={isSaved ? `Remove ${label} from Saved` : `Save ${label}`}
+      title={isSaved ? "Remove from Saved" : "Save for later"}
+      className={`inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border transition disabled:cursor-wait disabled:opacity-60 ${
+        isSaved
+          ? "border-[#FFB39F] bg-[#FFF0E9] text-[#9F2D18]"
+          : "border-[#E8E4DE] bg-white text-[#746D67] hover:border-[#FFB39F] hover:bg-[#FFF0E9] hover:text-[#9F2D18]"
+      }`}
+    >
+      {isSaving ? (
+        <LoaderCircle size={16} className="animate-spin" />
+      ) : (
+        <Heart size={17} fill={isSaved ? "currentColor" : "none"} />
+      )}
+    </button>
+  );
 }
 
 function formatReviewDate(value: string): string {
@@ -549,38 +692,6 @@ function isTrackableContactPlatform(
   );
 }
 
-function subscribeSavedBusinesses(
-  onStoreChange: () => void
-) {
-  window.addEventListener(
-    SAVED_BUSINESSES_CHANGED_EVENT,
-    onStoreChange
-  );
-
-  window.addEventListener(
-    "storage",
-    onStoreChange
-  );
-
-  return () => {
-    window.removeEventListener(
-      SAVED_BUSINESSES_CHANGED_EVENT,
-      onStoreChange
-    );
-
-    window.removeEventListener(
-      "storage",
-      onStoreChange
-    );
-  };
-}
-
-function getSavedBusinessesSnapshot(
-  id: string
-) {
-  return isBusinessSaved(id);
-}
-
 function SellerPageContent({
   id,
 }: {
@@ -627,21 +738,49 @@ function SellerPageContent({
   const [ratingBreakdown, setRatingBreakdown] = useState<RatingBreakdown>({ 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 });
   const reviewRequestIdRef = useRef(0);
 
-  const getSavedSnapshot =
-    useCallback(
-      () =>
-        getSavedBusinessesSnapshot(
-          id
-        ),
-      [id]
-    );
+  const [savedListingIds, setSavedListingIds] = useState<SavedListingIds>({});
+  const [savedListingsLoading, setSavedListingsLoading] = useState(true);
+  const [savingListingKey, setSavingListingKey] = useState<string | null>(null);
+  const [savedNotice, setSavedNotice] = useState("");
+  const [savedAuthRequired, setSavedAuthRequired] = useState(false);
 
-  const saved =
-    useSyncExternalStore(
-      subscribeSavedBusinesses,
-      getSavedSnapshot,
-      () => false
-    );
+  useEffect(() => {
+    const controller = new AbortController();
+
+    async function loadSavedListings() {
+      setSavedListingsLoading(true);
+
+      try {
+        const [products, services] = await Promise.all([
+          fetchSavedListingType("PRODUCT", controller.signal),
+          fetchSavedListingType("SERVICE", controller.signal),
+        ]);
+
+        if (controller.signal.aborted) return;
+
+        setSavedListingIds({ ...products, ...services });
+      } catch (savedLoadError) {
+        if (
+          savedLoadError instanceof DOMException &&
+          savedLoadError.name === "AbortError"
+        ) {
+          return;
+        }
+
+        console.error("Seller saved listings load error:", savedLoadError);
+      } finally {
+        if (!controller.signal.aborted) {
+          setSavedListingsLoading(false);
+        }
+      }
+    }
+
+    void loadSavedListings();
+
+    return () => {
+      controller.abort();
+    };
+  }, [id]);
 
   useEffect(() => {
     let cancelled = false;
@@ -1457,51 +1596,134 @@ function SellerPageContent({
     } finally { setReviewDeletingId(null); }
   }
 
-  function toggleSavedBusiness() {
-    if (!seller) {
-      return;
-    }
+  async function toggleSavedListing(
+    type: SavedListingType,
+    listingId: string,
+  ) {
+    const key = savedListingKey(type, listingId);
 
-    if (
-      isBusinessSaved(
-        seller.id
-      )
-    ) {
-      removeSavedBusiness(
-        seller.id
+    if (savingListingKey) return;
+
+    const existingSavedListingId = savedListingIds[key];
+
+    setSavingListingKey(key);
+    setSavedNotice("");
+    setSavedAuthRequired(false);
+
+    try {
+      if (existingSavedListingId) {
+        const response = await fetch(
+          `/api/saved/${encodeURIComponent(existingSavedListingId)}`,
+          {
+            method: "DELETE",
+            cache: "no-store",
+            headers: { Accept: "application/json" },
+          },
+        );
+
+        const payload: unknown = await response.json().catch(() => null);
+
+        if (response.status === 401) {
+          setSavedAuthRequired(true);
+          throw new Error("Sign in again to manage your saved listings.");
+        }
+
+        // A 404 means the saved row was already removed elsewhere.
+        if (response.status === 404) {
+          setSavedListingIds((current) => {
+            const next = { ...current };
+            delete next[key];
+            return next;
+          });
+          setSavedNotice("This item was already removed from Saved.");
+          return;
+        }
+
+        if (!response.ok) {
+          throw new Error(
+            isRecord(payload) && typeof payload.error === "string"
+              ? payload.error
+              : "Unable to remove this listing from Saved.",
+          );
+        }
+
+        setSavedListingIds((current) => {
+          const next = { ...current };
+          delete next[key];
+          return next;
+        });
+
+        setSavedNotice(
+          type === "PRODUCT"
+            ? "Product removed from Saved."
+            : "Service removed from Saved.",
+        );
+        return;
+      }
+
+      const response = await fetch("/api/saved", {
+        method: "POST",
+        cache: "no-store",
+        headers: {
+          "Content-Type": "application/json",
+          Accept: "application/json",
+        },
+        body: JSON.stringify({ type, listingId }),
+      });
+
+      const payload: unknown = await response.json().catch(() => null);
+
+      if (response.status === 401) {
+        setSavedAuthRequired(true);
+        throw new Error("Sign in to save products and services.");
+      }
+
+      if (!response.ok) {
+        throw new Error(
+          isRecord(payload) && typeof payload.error === "string"
+            ? payload.error
+            : "Unable to save this listing.",
+        );
+      }
+
+      const savedItem = isRecord(payload) && isRecord(payload.item)
+        ? payload.item
+        : null;
+
+      const savedId = savedItem && typeof savedItem.id === "string"
+        ? savedItem.id
+        : null;
+
+      if (!savedId) {
+        throw new Error(
+          "The save request succeeded, but the saved listing ID was not returned. Refresh and try again.",
+        );
+      }
+
+      setSavedListingIds((current) => ({
+        ...current,
+        [key]: savedId,
+      }));
+
+      const alreadySaved = isRecord(payload) && payload.alreadySaved === true;
+
+      setSavedNotice(
+        alreadySaved
+          ? "This item is already in Saved."
+          : type === "PRODUCT"
+            ? "Product added to Saved."
+            : "Service added to Saved.",
       );
-
-      return;
+    } catch (saveError) {
+      console.error("Saved listing action error:", saveError);
+      setSavedNotice(
+        saveError instanceof Error
+          ? saveError.message
+          : "Something went wrong. Please try again.",
+      );
+    } finally {
+      setSavingListingKey(null);
     }
-
-    const categoryName =
-      seller.category ||
-      seller.categories?.[0] ||
-      "Services";
-
-    saveBusiness({
-      id: seller.id,
-
-      name: seller.name,
-
-      area:
-        seller.location?.area ??
-        "Local",
-
-      category:
-        categoryName,
-
-      verified:
-        seller.verified ||
-        seller.verification ===
-          "VERIFIED",
-
-      availability:
-        seller.availability,
-
-      imageUrl:
-        seller.imageUrl ?? null,
-    });
   }
 
   function handleContactClick(
@@ -1524,15 +1746,6 @@ function SellerPageContent({
         seller.id,
       platform,
     });
-  }
-
-  function handleSaveClick(
-    event: MouseEvent<HTMLButtonElement>
-  ) {
-    event.preventDefault();
-    event.stopPropagation();
-
-    toggleSavedBusiness();
   }
 
   function getDirectionsUrl() {
@@ -1774,6 +1987,25 @@ function SellerPageContent({
 
               Back to Shop
             </Link>
+
+            {savedNotice && (
+              <div
+                role="status"
+                aria-live="polite"
+                className="mb-5 flex flex-wrap items-center gap-2 rounded-xl border border-[#F0C9BF] bg-[#FFF1ED] px-4 py-3 text-[11px] font-semibold text-[#9F2D18]"
+              >
+                <Heart size={15} />
+                <span>{savedNotice}</span>
+                {savedAuthRequired && (
+                  <Link
+                    href={`/buyer/login?callbackUrl=${encodeURIComponent(`/seller/${id}`)}`}
+                    className="font-extrabold underline underline-offset-2"
+                  >
+                    Sign in
+                  </Link>
+                )}
+              </div>
+            )}
 
             {loading && (
               <div className="space-y-5">
@@ -2024,45 +2256,6 @@ function SellerPageContent({
                           </div>
                         </div>
 
-                        <button
-                          type="button"
-                          aria-label={
-                            saved
-                              ? `Remove ${seller.name} from saved businesses`
-                              : `Save ${seller.name} from saved businesses`
-                          }
-                          aria-pressed={
-                            saved
-                          }
-                          onClick={
-                            handleSaveClick
-                          }
-                          className={`
-                            flex
-                            h-10
-                            w-10
-                            shrink-0
-                            items-center
-                            justify-center
-                            rounded-xl
-                            border
-                            transition
-                            ${
-                              saved
-                                ? "border-[#FFB39F] bg-[#FFF0E9] text-[#9F2D18]"
-                                : "border-[#E5E0D9] bg-white text-[#746D67] hover:border-[#FFB39F] hover:text-[#FF5A36]"
-                            }
-                          `}
-                        >
-                          <Heart
-                            size={18}
-                            fill={
-                              saved
-                                ? "currentColor"
-                                : "none"
-                            }
-                          />
-                        </button>
                       </div>
 
                       {seller.location?.area && (
@@ -2234,7 +2427,7 @@ function SellerPageContent({
                                 )}
 
                                 <div className="p-4">
-                                  <div className="flex items-start justify-between gap-3">
+                                  <div className="flex items-start justify-between gap-2">
                                     <div className="min-w-0">
                                       <h3 className="text-[13px] font-bold text-[#2E2925]">
                                         <Link
@@ -2252,23 +2445,26 @@ function SellerPageContent({
                                       )}
                                     </div>
 
-                                    <span
-                                      className={`
-                                        shrink-0
-                                        rounded-full
-                                        px-2
-                                        py-1
-                                        text-[9px]
-                                        font-bold
-                                        ${getAvailabilityStyle(
+                                    <div className="flex shrink-0 items-center gap-2">
+                                      <SaveListingButton
+                                        listingType="PRODUCT"
+                                        listingId={product.id}
+                                        isSaved={Boolean(savedListingIds[savedListingKey("PRODUCT", product.id)])}
+                                        isSaving={savingListingKey === savedListingKey("PRODUCT", product.id)}
+                                        isDisabled={savedListingsLoading}
+                                        onToggle={(type, listingId) => {
+                                          void toggleSavedListing(type, listingId);
+                                        }}
+                                      />
+
+                                      <span
+                                        className={`shrink-0 rounded-full px-2 py-1 text-[9px] font-bold ${getAvailabilityStyle(
                                           product.availability
-                                        )}
-                                      `}
-                                    >
-                                      {getAvailabilityLabel(
-                                        product.availability
-                                      )}
-                                    </span>
+                                        )}`}
+                                      >
+                                        {getAvailabilityLabel(product.availability)}
+                                      </span>
+                                    </div>
                                   </div>
 
                                   {product.description && (
@@ -2689,7 +2885,7 @@ function SellerPageContent({
                               )}
 
                               <div className="p-4">
-                                <div className="flex items-start justify-between gap-3">
+                                <div className="flex items-start justify-between gap-2">
                                   <div className="min-w-0">
                                     <h3 className="break-words text-[13px] font-bold text-[#2E2925]">
                                       {service.name}
@@ -2700,9 +2896,23 @@ function SellerPageContent({
                                       </p>
                                     )}
                                   </div>
-                                  <span className={`shrink-0 rounded-full px-2 py-1 text-[9px] font-bold ${getAvailabilityStyle(service.availability)}`}>
-                                    {getAvailabilityLabel(service.availability)}
-                                  </span>
+
+                                  <div className="flex shrink-0 items-center gap-2">
+                                    <SaveListingButton
+                                      listingType="SERVICE"
+                                      listingId={service.id}
+                                      isSaved={Boolean(savedListingIds[savedListingKey("SERVICE", service.id)])}
+                                      isSaving={savingListingKey === savedListingKey("SERVICE", service.id)}
+                                      isDisabled={savedListingsLoading}
+                                      onToggle={(type, listingId) => {
+                                        void toggleSavedListing(type, listingId);
+                                      }}
+                                    />
+
+                                    <span className={`shrink-0 rounded-full px-2 py-1 text-[9px] font-bold ${getAvailabilityStyle(service.availability)}`}>
+                                      {getAvailabilityLabel(service.availability)}
+                                    </span>
+                                  </div>
                                 </div>
 
                                 {service.description && (

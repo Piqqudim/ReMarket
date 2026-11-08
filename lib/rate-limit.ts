@@ -1,4 +1,3 @@
-
 import { NextRequest } from "next/server";
 
 type RateLimitConfig = {
@@ -73,8 +72,16 @@ const PUBLIC_RATE_LIMITS: Record<
     windowMs: 60_000,
   },
 
+  /*
+   * A seller may upload up to 20 images
+   * for one service listing.
+   *
+   * Allow 25 requests per five minutes to
+   * accommodate the complete image gallery
+   * and a small number of retries.
+   */
   upload: {
-    limit: 10,
+    limit: 25,
     windowMs: 5 * 60_000,
   },
 

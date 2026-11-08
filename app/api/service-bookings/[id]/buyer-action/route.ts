@@ -1,4 +1,3 @@
-
 import {
   NotificationPriority,
   NotificationType,
@@ -14,11 +13,9 @@ import { authOptions } from "@/lib/auth";
 import { checkPublicRateLimit } from "@/lib/rate-limit";
 import { createNotification } from "@/lib/notifications";
 
-/*
- * ---------------------------------------------------------
- * CONFIGURATION
- * ---------------------------------------------------------
- */
+/* =========================================================
+   CONFIGURATION
+========================================================= */
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -28,29 +25,16 @@ const MAX_BODY_SIZE = 12_000;
 const MAX_REASON_LENGTH = 2_000;
 const MAX_BOOKING_ID_LENGTH = 100;
 
-type BuyerBookingAction =
-  | "ACCEPT_QUOTE"
-  | "REJECT_QUOTE"
-  | "CANCEL_BOOKING";
-
-const BUYER_BOOKING_ACTIONS: readonly BuyerBookingAction[] = [
-  "ACCEPT_QUOTE",
-  "REJECT_QUOTE",
-  "CANCEL_BOOKING",
-];
-
-/*
- * ---------------------------------------------------------
- * RESPONSE HELPERS
- * ---------------------------------------------------------
- */
+/* =========================================================
+   RESPONSE HELPERS
+========================================================= */
 
 function responseHeaders(baseHeaders?: HeadersInit): Headers {
   const headers = new Headers(baseHeaders);
 
   headers.set(
     "Cache-Control",
-    "private, no-store, max-age=0, must-revalidate"
+    "private, no-store, max-age=0, must-revalidate",
   );
 
   headers.set("Pragma", "no-cache");
@@ -62,27 +46,23 @@ function responseHeaders(baseHeaders?: HeadersInit): Headers {
 function jsonError(
   message: string,
   status: number,
-  baseHeaders?: HeadersInit
+  baseHeaders?: HeadersInit,
 ) {
   return NextResponse.json(
-    {
-      error: message,
-    },
+    { error: message },
     {
       status,
       headers: responseHeaders(baseHeaders),
-    }
+    },
   );
 }
 
-/*
- * ---------------------------------------------------------
- * GENERAL HELPERS
- * ---------------------------------------------------------
- */
+/* =========================================================
+   GENERAL HELPERS
+========================================================= */
 
 function isRecord(
-  value: unknown
+  value: unknown,
 ): value is Record<string, unknown> {
   return (
     typeof value === "object" &&
@@ -99,7 +79,7 @@ function clean(value: unknown): string {
 
 function parseOptionalText(
   value: unknown,
-  maximumLength: number
+  maximumLength: number,
 ): string | null | "INVALID" {
   if (value === undefined || value === null) {
     return null;
@@ -122,16 +102,14 @@ function parseOptionalText(
   return result;
 }
 
-/*
- * ---------------------------------------------------------
- * BOOKING ID
- * ---------------------------------------------------------
- */
+/* =========================================================
+   BOOKING ID
+========================================================= */
 
 async function getBookingId(
   context: {
     params: Promise<{ id: string }>;
-  }
+  },
 ): Promise<string | null> {
   const { id } = await context.params;
 
@@ -150,11 +128,9 @@ async function getBookingId(
   return bookingId;
 }
 
-/*
- * ---------------------------------------------------------
- * REQUEST BODY PROTECTION
- * ---------------------------------------------------------
- */
+/* =========================================================
+   REQUEST BODY SIZE PROTECTION
+========================================================= */
 
 class RequestBodyTooLargeError extends Error {
   constructor() {
@@ -164,7 +140,7 @@ class RequestBodyTooLargeError extends Error {
 }
 
 async function readLimitedRequestBody(
-  request: NextRequest
+  request: NextRequest,
 ): Promise<string> {
   const stream = request.body;
 
@@ -217,25 +193,9 @@ async function readLimitedRequestBody(
   }).decode(bytes);
 }
 
-/*
- * ---------------------------------------------------------
- * ACTION VALIDATION
- * ---------------------------------------------------------
- */
-
-function isBuyerBookingAction(
-  value: string
-): value is BuyerBookingAction {
-  const actions: readonly string[] = BUYER_BOOKING_ACTIONS;
-
-  return actions.includes(value);
-}
-
-/*
- * ---------------------------------------------------------
- * AUTHENTICATION
- * ---------------------------------------------------------
- */
+/* =========================================================
+   AUTHENTICATION
+========================================================= */
 
 async function getAuthenticatedBuyer() {
   const session = await getServerSession(authOptions);
@@ -292,21 +252,9 @@ async function getAuthenticatedBuyer() {
   } as const;
 }
 
-/*
- * ---------------------------------------------------------
- * BOOKING SELECT
- * ---------------------------------------------------------
- *
- * Includes:
- * - Buyer and seller snapshots.
- * - Quotation information.
- * - Cancellation information.
- * - Service information.
- * - Legacy business owner fallback.
- *
- * business.ownerId is nullable in the Prisma schema.
- * ---------------------------------------------------------
- */
+/* =========================================================
+   BOOKING SELECT
+========================================================= */
 
 const buyerBookingSelect = {
   id: true,
@@ -316,13 +264,6 @@ const buyerBookingSelect = {
   sellerId: true,
 
   status: true,
-
-  quotedPrice: true,
-  quoteMessage: true,
-  quoteSentAt: true,
-
-  agreedPrice: true,
-  quoteAcceptedAt: true,
 
   cancelledAt: true,
   cancellationReason: true,
@@ -352,7 +293,6 @@ type BuyerActionOutcome =
   | {
       success: true;
       booking: BuyerBookingRecord;
-      action: BuyerBookingAction;
     }
   | {
       success: false;
@@ -360,74 +300,45 @@ type BuyerActionOutcome =
       status: number;
     };
 
-/*
- * ---------------------------------------------------------
- * QUOTATION VALIDATION
- * ---------------------------------------------------------
- *
- * A buyer can only respond when:
- *
- * 1. The booking is awaiting a buyer response.
- * 2. A quotation was actually sent.
- * 3. A quoted amount exists.
- * 4. The quotation has not already been accepted.
- * ---------------------------------------------------------
- */
+/* =========================================================
+   PATCH /api/service-bookings/[id]/buyer-action
 
-function hasPendingQuotation(
-  booking: BuyerBookingRecord
-): boolean {
-  return (
-    booking.status === "AWAITING_BUYER" &&
-    booking.quoteSentAt !== null &&
-    booking.quotedPrice !== null &&
-    booking.quoteAcceptedAt === null
-  );
-}
+   MVP BUYER ACTION:
 
-/*
- * =========================================================
- * PATCH /api/service-bookings/[id]/buyer-action
- * =========================================================
- *
- * BUYER ACTIONS
- *
- * ACCEPT_QUOTE
- * REJECT_QUOTE
- * CANCEL_BOOKING
- *
- * Buyers can only manage bookings belonging to their
- * authenticated account.
- * =========================================================
- */
+   CANCEL_BOOKING
+
+   Buyers can only cancel bookings belonging to their
+   authenticated account.
+
+   Allowed cancellation statuses:
+   - PENDING
+   - AWAITING_BUYER (legacy records)
+   - ACCEPTED
+========================================================= */
 
 export async function PATCH(
   request: NextRequest,
   context: {
     params: Promise<{ id: string }>;
-  }
+  },
 ) {
-  /*
-   * RATE LIMITING
-   */
+  /* RATE LIMITING */
 
   const rateLimit = checkPublicRateLimit(
     request,
-    "request-create"
+    "request-create",
   );
 
   if (!rateLimit.allowed) {
     return jsonError(
       "Too many booking updates. Please try again shortly.",
       429,
-      rateLimit.headers
+      rateLimit.headers,
     );
   }
 
   try {
-    /*
-     * AUTHENTICATION
-     */
+    /* AUTHENTICATION */
 
     const {
       buyer,
@@ -439,13 +350,11 @@ export async function PATCH(
       return jsonError(
         error ?? "Authentication required.",
         status,
-        rateLimit.headers
+        rateLimit.headers,
       );
     }
 
-    /*
-     * BOOKING ID
-     */
+    /* BOOKING ID */
 
     const bookingId = await getBookingId(context);
 
@@ -453,13 +362,11 @@ export async function PATCH(
       return jsonError(
         "Invalid booking ID.",
         400,
-        rateLimit.headers
+        rateLimit.headers,
       );
     }
 
-    /*
-     * BODY SIZE VALIDATION
-     */
+    /* BODY SIZE VALIDATION */
 
     const contentLengthHeader =
       request.headers.get("content-length");
@@ -475,7 +382,7 @@ export async function PATCH(
         return jsonError(
           "Request body is too large or invalid.",
           413,
-          rateLimit.headers
+          rateLimit.headers,
         );
       }
     }
@@ -491,20 +398,18 @@ export async function PATCH(
         return jsonError(
           "Request body is too large.",
           413,
-          rateLimit.headers
+          rateLimit.headers,
         );
       }
 
       return jsonError(
         "Unable to read the request body.",
         400,
-        rateLimit.headers
+        rateLimit.headers,
       );
     }
 
-    /*
-     * JSON VALIDATION
-     */
+    /* JSON VALIDATION */
 
     let body: unknown;
 
@@ -514,7 +419,7 @@ export async function PATCH(
       return jsonError(
         "Invalid JSON request body.",
         400,
-        rateLimit.headers
+        rateLimit.headers,
       );
     }
 
@@ -522,53 +427,45 @@ export async function PATCH(
       return jsonError(
         "Invalid request body.",
         400,
-        rateLimit.headers
+        rateLimit.headers,
       );
     }
 
-    /*
-     * ACTION
-     */
+    /* ACTION VALIDATION */
 
-    const actionValue = clean(body.action).toUpperCase();
+    const action = clean(body.action).toUpperCase();
 
-    if (!isBuyerBookingAction(actionValue)) {
+    if (action !== "CANCEL_BOOKING") {
       return jsonError(
-        "Invalid buyer booking action.",
+        "Only booking cancellation is available.",
         400,
-        rateLimit.headers
+        rateLimit.headers,
       );
     }
 
-    const action: BuyerBookingAction = actionValue;
-
-    /*
-     * OPTIONAL REASON
-     */
+    /* OPTIONAL CANCELLATION REASON */
 
     const reasonResult = parseOptionalText(
       body.reason,
-      MAX_REASON_LENGTH
+      MAX_REASON_LENGTH,
     );
 
     if (reasonResult === "INVALID") {
       return jsonError(
-        "The reason is too long or invalid.",
+        "The cancellation reason is too long or invalid.",
         400,
-        rateLimit.headers
+        rateLimit.headers,
       );
     }
 
     const reason = reasonResult;
 
-    /*
-     * PROCESS BUYER ACTION
-     */
+    /* PROCESS CANCELLATION */
 
     const result = await prisma.$transaction(
       async (tx): Promise<BuyerActionOutcome> => {
         /*
-         * LOAD ONLY THE BUYER'S OWN BOOKING
+         * Load only the booking belonging to this buyer.
          */
 
         const booking = await tx.serviceBooking.findFirst({
@@ -588,155 +485,48 @@ export async function PATCH(
           };
         }
 
+        /*
+         * The buyer can cancel:
+         *
+         * - PENDING
+         * - ACCEPTED
+         *
+         * AWAITING_BUYER is retained for older records
+         * created before quotation negotiation is removed.
+         */
+
+        const cancellableStatuses: ServiceBookingStatus[] = [
+          ServiceBookingStatus.PENDING,
+          ServiceBookingStatus.AWAITING_BUYER,
+          ServiceBookingStatus.ACCEPTED,
+        ];
+
+        if (!cancellableStatuses.includes(booking.status)) {
+          return {
+            success: false,
+            message: "This booking can no longer be cancelled.",
+            status: 409,
+          };
+        }
+
         const now = new Date();
 
         /*
-         * UNCHECKED UPDATE INPUT
+         * UncheckedUpdateManyInput is required because
+         * cancelledById is a scalar foreign-key field.
          *
-         * This allows direct updates to scalar foreign-key
-         * fields such as cancelledById.
-         *
-         * Buyer ownership is still enforced by the
-         * conditional database update.
+         * Buyer ownership is independently enforced in
+         * the conditional update below.
          */
 
         const updateData: Prisma.ServiceBookingUncheckedUpdateManyInput =
-          {};
-
-        /*
-         * ACCEPT QUOTATION
-         *
-         * The agreed amount is copied directly from the
-         * stored seller quotation.
-         *
-         * The browser cannot supply or alter the amount.
-         */
-
-        if (action === "ACCEPT_QUOTE") {
-          if (booking.status !== "AWAITING_BUYER") {
-            return {
-              success: false,
-              message:
-                "There is no quotation awaiting your response.",
-              status: 409,
-            };
-          }
-
-          if (
-            !booking.quoteSentAt ||
-            booking.quotedPrice === null
-          ) {
-            return {
-              success: false,
-              message:
-                "A valid seller quotation could not be found.",
-              status: 409,
-            };
-          }
-
-          if (booking.quoteAcceptedAt) {
-            return {
-              success: false,
-              message:
-                "This quotation has already been accepted.",
-              status: 409,
-            };
-          }
-
-          updateData.status = "ACCEPTED";
-
-          updateData.agreedPrice = booking.quotedPrice;
-
-          updateData.quoteAcceptedAt = now;
-          updateData.acceptedAt = now;
-        }
-
-        /*
-         * REJECT QUOTATION
-         *
-         * Rejection cancels the booking and records
-         * the buyer as the person who cancelled it.
-         */
-
-        else if (action === "REJECT_QUOTE") {
-          if (booking.status !== "AWAITING_BUYER") {
-            return {
-              success: false,
-              message:
-                "There is no quotation awaiting your response.",
-              status: 409,
-            };
-          }
-
-          if (
-            !booking.quoteSentAt ||
-            booking.quotedPrice === null
-          ) {
-            return {
-              success: false,
-              message:
-                "A valid seller quotation could not be found.",
-              status: 409,
-            };
-          }
-
-          if (booking.quoteAcceptedAt) {
-            return {
-              success: false,
-              message:
-                "This quotation has already been accepted.",
-              status: 409,
-            };
-          }
-
-          updateData.status = "CANCELLED";
-
-          updateData.cancelledAt = now;
-          updateData.cancelledById = buyer.id;
-
-          updateData.cancellationReason =
-            reason ?? "Buyer declined the quotation.";
-        }
-
-        /*
-         * CANCEL BOOKING
-         *
-         * Buyers may cancel:
-         * - PENDING
-         * - AWAITING_BUYER
-         * - ACCEPTED
-         *
-         * Once a service is IN_PROGRESS, cancellation
-         * must be handled through an appropriate
-         * cancellation/dispute process.
-         */
-
-        else if (action === "CANCEL_BOOKING") {
-          const cancellableStatuses: ServiceBookingStatus[] = [
-            "PENDING",
-            "AWAITING_BUYER",
-            "ACCEPTED",
-          ];
-
-          if (
-            !cancellableStatuses.includes(booking.status)
-          ) {
-            return {
-              success: false,
-              message:
-                "This booking can no longer be cancelled.",
-              status: 409,
-            };
-          }
-
-          updateData.status = "CANCELLED";
-
-          updateData.cancelledAt = now;
-          updateData.cancelledById = buyer.id;
-
-          updateData.cancellationReason =
-            reason ?? "Cancelled by buyer.";
-        }
+          {
+            status: ServiceBookingStatus.CANCELLED,
+            cancelledAt: now,
+            cancelledById: buyer.id,
+            cancellationReason:
+              reason ?? "Cancelled by buyer.",
+          };
 
         /*
          * CONDITIONAL DATABASE UPDATE
@@ -745,12 +535,10 @@ export async function PATCH(
          * - Booking ID.
          * - Buyer ownership.
          * - Original status.
-         * - Original updatedAt value.
-         * - Original quotation values when responding
-         *   to a quotation.
+         * - Original updatedAt.
          *
          * This prevents stale requests from overwriting
-         * a newer booking or quotation update.
+         * a newer booking update.
          */
 
         const updatedCount =
@@ -758,18 +546,8 @@ export async function PATCH(
             where: {
               id: booking.id,
               buyerId: buyer.id,
-
               status: booking.status,
               updatedAt: booking.updatedAt,
-
-              ...(action === "ACCEPT_QUOTE" ||
-              action === "REJECT_QUOTE"
-                ? {
-                    quoteSentAt: booking.quoteSentAt,
-                    quotedPrice: booking.quotedPrice,
-                    quoteAcceptedAt: null,
-                  }
-                : {}),
             },
 
             data: updateData,
@@ -784,9 +562,7 @@ export async function PATCH(
           };
         }
 
-        /*
-         * LOAD UPDATED BOOKING
-         */
+        /* LOAD UPDATED BOOKING */
 
         const updatedBooking =
           await tx.serviceBooking.findUnique({
@@ -800,8 +576,7 @@ export async function PATCH(
         if (!updatedBooking) {
           return {
             success: false,
-            message:
-              "Unable to retrieve the updated booking.",
+            message: "Unable to retrieve the updated booking.",
             status: 500,
           };
         }
@@ -809,89 +584,41 @@ export async function PATCH(
         return {
           success: true,
           booking: updatedBooking,
-          action,
         };
       },
 
       {
         isolationLevel:
           Prisma.TransactionIsolationLevel.Serializable,
-      }
+      },
     );
 
-    /*
-     * HANDLE UPDATE FAILURE
-     */
+    /* HANDLE UPDATE FAILURE */
 
     if (!result.success) {
       return jsonError(
         result.message,
         result.status,
-        rateLimit.headers
+        rateLimit.headers,
       );
     }
 
-    /*
-     * FIND SELLER
-     *
-     * New bookings use their saved sellerId.
-     *
-     * Older bookings without sellerId use the
-     * owning business account as a fallback.
-     */
+    /* RESOLVE SELLER */
 
     const booking = result.booking;
+
+    /*
+     * New bookings use their saved sellerId.
+     *
+     * Legacy bookings without sellerId use the
+     * owning business account as a fallback.
+     */
 
     const sellerUserId =
       booking.sellerId ??
       booking.service.business.ownerId;
 
-    /*
-     * SELLER NOTIFICATION DETAILS
-     */
-
-    const notificationDetails: Record<
-      BuyerBookingAction,
-      {
-        title: string;
-        message: string;
-        priority: NotificationPriority;
-      }
-    > = {
-      ACCEPT_QUOTE: {
-        title: "Buyer accepted your quotation",
-        message:
-          `The buyer accepted your quotation for ${booking.service.name}.`,
-        priority: NotificationPriority.NORMAL,
-      },
-
-      REJECT_QUOTE: {
-        title: "Buyer declined your quotation",
-        message:
-          `The buyer declined your quotation for ${booking.service.name}.`,
-        priority: NotificationPriority.HIGH,
-      },
-
-      CANCEL_BOOKING: {
-        title: "Buyer cancelled a service booking",
-        message:
-          `The buyer cancelled their booking for ${booking.service.name}.`,
-        priority: NotificationPriority.HIGH,
-      },
-    };
-
-    const notification =
-      notificationDetails[result.action];
-
-    /*
-     * NOTIFY SELLER
-     *
-     * Notification creation happens after the booking
-     * transaction has successfully committed.
-     *
-     * A notification failure does not undo the buyer's
-     * successful booking action.
-     */
+    /* NOTIFY SELLER */
 
     if (sellerUserId) {
       try {
@@ -900,10 +627,12 @@ export async function PATCH(
 
           type: NotificationType.SERVICE_BOOKING_UPDATED,
 
-          title: notification.title,
-          message: notification.message,
+          title: "Buyer cancelled a service booking",
 
-          priority: notification.priority,
+          message:
+            `The buyer cancelled their booking for ${booking.service.name}.`,
+
+          priority: NotificationPriority.HIGH,
 
           data: {
             bookingId: booking.id,
@@ -911,28 +640,20 @@ export async function PATCH(
             serviceId: booking.service.id,
             serviceName: booking.service.name,
             status: booking.status,
-            action: result.action,
+            action: "CANCEL_BOOKING",
             href: "/seller#service-bookings",
           },
 
-          /*
-           * The notification helper also applies
-           * recipient-specific deduplication.
-           *
-           * The seller suffix is retained to remain
-           * compatible with previous notification keys.
-           */
-
           dedupeKey:
             `service-booking:${booking.id}:` +
-            `${result.action}:` +
+            `CANCEL_BOOKING:` +
             `${booking.updatedAt.getTime()}:` +
             `seller:${sellerUserId}`,
         });
       } catch (notificationError) {
         console.error(
-          "Buyer service booking notification error:",
-          notificationError
+          "Buyer booking cancellation notification error:",
+          notificationError,
         );
       }
     } else {
@@ -940,41 +661,21 @@ export async function PATCH(
         "Buyer booking notification skipped: no seller ID.",
         {
           bookingId: booking.id,
-        }
+        },
       );
     }
 
-    /*
-     * SUCCESS RESPONSE
-     */
-
-    const successMessage =
-      result.action === "ACCEPT_QUOTE"
-        ? "You have accepted the seller's quotation."
-        : result.action === "REJECT_QUOTE"
-          ? "You have declined the seller's quotation."
-          : "Your booking has been cancelled.";
+    /* SUCCESS RESPONSE */
 
     return NextResponse.json(
       {
-        message: successMessage,
+        message: "Your booking has been cancelled.",
 
         booking: {
           id: booking.id,
           bookingCode: booking.bookingCode,
 
           status: booking.status,
-
-          quotedPrice: booking.quotedPrice,
-          quoteMessage: booking.quoteMessage,
-
-          quoteSentAt:
-            booking.quoteSentAt?.toISOString() ?? null,
-
-          agreedPrice: booking.agreedPrice,
-
-          quoteAcceptedAt:
-            booking.quoteAcceptedAt?.toISOString() ?? null,
 
           cancelledAt:
             booking.cancelledAt?.toISOString() ?? null,
@@ -994,12 +695,12 @@ export async function PATCH(
       {
         status: 200,
         headers: responseHeaders(rateLimit.headers),
-      }
+      },
     );
   } catch (error) {
     console.error(
-      "Buyer service booking action error:",
-      error
+      "Buyer service booking cancellation error:",
+      error,
     );
 
     if (
@@ -1009,14 +710,14 @@ export async function PATCH(
       return jsonError(
         "This booking was updated by another request. Refresh and try again.",
         409,
-        rateLimit.headers
+        rateLimit.headers,
       );
     }
 
     return jsonError(
-      "Unable to update this booking. Please try again.",
+      "Unable to cancel this booking. Please try again.",
       500,
-      rateLimit.headers
+      rateLimit.headers,
     );
   }
 }

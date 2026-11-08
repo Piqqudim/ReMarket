@@ -1,4 +1,3 @@
-
 import {
   NotificationPriority,
   NotificationType,
@@ -14,11 +13,9 @@ import { authOptions } from "@/lib/auth";
 import { checkPublicRateLimit } from "@/lib/rate-limit";
 import { createNotification } from "@/lib/notifications";
 
-/*
- * ---------------------------------------------------------
- * CONFIGURATION
- * ---------------------------------------------------------
- */
+/* =========================================================
+   CONFIGURATION
+========================================================= */
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -26,27 +23,21 @@ export const revalidate = 0;
 
 const MAX_BODY_SIZE = 12_000;
 const MAX_REASON_LENGTH = 2_000;
-const MAX_QUOTE_MESSAGE_LENGTH = 2_000;
 const MAX_BOOKING_ID_LENGTH = 100;
-const MAX_QUOTED_PRICE = 2_147_483_647;
 
 const BOOKING_ACTIONS = [
   "ACCEPT",
   "DECLINE",
-  "SEND_QUOTE",
   "CONFIRM_APPOINTMENT",
-  "START",
   "COMPLETE",
   "CANCEL",
 ] as const;
 
 type BookingAction = (typeof BOOKING_ACTIONS)[number];
 
-/*
- * ---------------------------------------------------------
- * PRISMA BOOKING SELECT
- * ---------------------------------------------------------
- */
+/* =========================================================
+   BOOKING SELECT
+========================================================= */
 
 const managedBookingSelect = {
   id: true,
@@ -61,18 +52,14 @@ const managedBookingSelect = {
   requestedFor: true,
   scheduledFor: true,
 
-  quotedPrice: true,
-  quoteMessage: true,
-  quoteSentAt: true,
-  quoteAcceptedAt: true,
-
-  agreedPrice: true,
-
   acceptedAt: true,
   declinedAt: true,
   cancelledAt: true,
   startedAt: true,
   completedAt: true,
+
+  cancellationReason: true,
+  declineReason: true,
 
   updatedAt: true,
 
@@ -99,18 +86,16 @@ type BookingOutcome =
       status: number;
     };
 
-/*
- * ---------------------------------------------------------
- * RESPONSE HELPERS
- * ---------------------------------------------------------
- */
+/* =========================================================
+   RESPONSE HELPERS
+========================================================= */
 
 function responseHeaders(baseHeaders?: HeadersInit): Headers {
   const headers = new Headers(baseHeaders);
 
   headers.set(
     "Cache-Control",
-    "private, no-store, max-age=0, must-revalidate"
+    "private, no-store, max-age=0, must-revalidate",
   );
 
   headers.set("Pragma", "no-cache");
@@ -122,27 +107,23 @@ function responseHeaders(baseHeaders?: HeadersInit): Headers {
 function jsonError(
   message: string,
   status: number,
-  baseHeaders?: HeadersInit
+  baseHeaders?: HeadersInit,
 ) {
   return NextResponse.json(
-    {
-      error: message,
-    },
+    { error: message },
     {
       status,
       headers: responseHeaders(baseHeaders),
-    }
+    },
   );
 }
 
-/*
- * ---------------------------------------------------------
- * GENERAL HELPERS
- * ---------------------------------------------------------
- */
+/* =========================================================
+   GENERAL HELPERS
+========================================================= */
 
 function isRecord(
-  value: unknown
+  value: unknown,
 ): value is Record<string, unknown> {
   return (
     typeof value === "object" &&
@@ -159,7 +140,7 @@ function clean(value: unknown): string {
 
 function parseOptionalText(
   value: unknown,
-  maximumLength: number
+  maximumLength: number,
 ): string | null | "INVALID" {
   if (value === undefined || value === null) {
     return null;
@@ -182,16 +163,14 @@ function parseOptionalText(
   return result;
 }
 
-/*
- * ---------------------------------------------------------
- * BOOKING ID
- * ---------------------------------------------------------
- */
+/* =========================================================
+   BOOKING ID
+========================================================= */
 
 async function getBookingId(
   context: {
     params: Promise<{ id: string }>;
-  }
+  },
 ): Promise<string | null> {
   const { id } = await context.params;
 
@@ -210,11 +189,9 @@ async function getBookingId(
   return bookingId;
 }
 
-/*
- * ---------------------------------------------------------
- * REQUEST BODY SIZE PROTECTION
- * ---------------------------------------------------------
- */
+/* =========================================================
+   REQUEST BODY SIZE PROTECTION
+========================================================= */
 
 class RequestBodyTooLargeError extends Error {
   constructor() {
@@ -224,7 +201,7 @@ class RequestBodyTooLargeError extends Error {
 }
 
 async function readLimitedRequestBody(
-  request: NextRequest
+  request: NextRequest,
 ): Promise<string> {
   const stream = request.body;
 
@@ -277,61 +254,24 @@ async function readLimitedRequestBody(
   }).decode(bytes);
 }
 
-/*
- * ---------------------------------------------------------
- * ACTION VALIDATION
- * ---------------------------------------------------------
- */
+/* =========================================================
+   ACTION VALIDATION
+========================================================= */
 
 function isBookingAction(
-  value: string
+  value: string,
 ): value is BookingAction {
   const actions: readonly string[] = BOOKING_ACTIONS;
 
   return actions.includes(value);
 }
 
-/*
- * ---------------------------------------------------------
- * QUOTATION VALIDATION
- * ---------------------------------------------------------
- */
-
-function parseQuotedPrice(
-  value: unknown
-): number | null {
-  let amount: number;
-
-  if (typeof value === "number") {
-    amount = value;
-  } else if (
-    typeof value === "string" &&
-    value.trim()
-  ) {
-    amount = Number(value.trim());
-  } else {
-    return null;
-  }
-
-  if (
-    !Number.isSafeInteger(amount) ||
-    amount < 0 ||
-    amount > MAX_QUOTED_PRICE
-  ) {
-    return null;
-  }
-
-  return amount;
-}
-
-/*
- * ---------------------------------------------------------
- * APPOINTMENT DATE VALIDATION
- * ---------------------------------------------------------
- */
+/* =========================================================
+   APPOINTMENT DATE VALIDATION
+========================================================= */
 
 function parseScheduledDate(
-  value: unknown
+  value: unknown,
 ): Date | null {
   if (
     typeof value !== "string" ||
@@ -353,11 +293,9 @@ function parseScheduledDate(
   return scheduledFor;
 }
 
-/*
- * ---------------------------------------------------------
- * AUTHENTICATION
- * ---------------------------------------------------------
- */
+/* =========================================================
+   AUTHENTICATION
+========================================================= */
 
 async function getAuthenticatedSeller() {
   const session = await getServerSession(authOptions);
@@ -414,27 +352,26 @@ async function getAuthenticatedSeller() {
   } as const;
 }
 
+/* =========================================================
+   BOOKING OWNERSHIP
+========================================================= */
+
 /*
- * ---------------------------------------------------------
- * BOOKING OWNERSHIP
- * ---------------------------------------------------------
- *
  * New bookings:
  * ServiceBooking.sellerId = authenticated seller ID.
  *
- * Older bookings:
+ * Legacy bookings:
  * sellerId may be null, so ownership is checked through:
  *
  * ServiceBooking -> Service -> Business -> ownerId.
  *
- * An assigned booking belonging to another seller cannot
- * be accessed through the legacy ownership fallback.
- * ---------------------------------------------------------
+ * A booking assigned to another seller cannot be accessed
+ * through the legacy ownership fallback.
  */
 
 function sellerBookingWhere(
   bookingId: string,
-  sellerId: string
+  sellerId: string,
 ): Prisma.ServiceBookingWhereInput {
   return {
     id: bookingId,
@@ -461,15 +398,13 @@ function sellerBookingWhere(
   };
 }
 
-/*
- * ---------------------------------------------------------
- * NOTIFICATION CONTENT
- * ---------------------------------------------------------
- */
+/* =========================================================
+   BUYER NOTIFICATION CONTENT
+========================================================= */
 
 function getBuyerNotification(
   action: BookingAction,
-  booking: ManagedBooking
+  booking: ManagedBooking,
 ): {
   title: string;
   message: string;
@@ -499,24 +434,10 @@ function getBuyerNotification(
       priority: NotificationPriority.HIGH,
     },
 
-    SEND_QUOTE: {
-      title: "New service quotation",
-      message:
-        `The provider has sent you a quotation for ${serviceName}.`,
-      priority: NotificationPriority.NORMAL,
-    },
-
     CONFIRM_APPOINTMENT: {
       title: "Appointment confirmed",
       message:
         `Your appointment for ${serviceName} has been confirmed.`,
-      priority: NotificationPriority.NORMAL,
-    },
-
-    START: {
-      title: "Service in progress",
-      message:
-        `The provider has started working on ${serviceName}.`,
       priority: NotificationPriority.NORMAL,
     },
 
@@ -538,59 +459,50 @@ function getBuyerNotification(
   return details[action];
 }
 
-/*
- * =========================================================
- * PATCH /api/service-bookings/[id]
- * =========================================================
- *
- * SELLER ACTIONS
- *
- * ACCEPT
- * DECLINE
- * SEND_QUOTE
- * CONFIRM_APPOINTMENT
- * START
- * COMPLETE
- * CANCEL
- *
- * All updates verify:
- * - Seller authentication.
- * - Booking ownership.
- * - Valid booking state.
- * - Current booking version.
- *
- * Buyer notifications are created after the database
- * transaction succeeds.
- * =========================================================
- */
+/* =========================================================
+   PATCH /api/service-bookings/[id]
+
+   SELLER ACTIONS:
+
+   ACCEPT
+   DECLINE
+   CONFIRM_APPOINTMENT
+   COMPLETE
+   CANCEL
+
+   All updates verify:
+   - Seller authentication.
+   - Booking ownership.
+   - Valid booking state.
+   - Current booking version.
+
+   Buyer notifications are created after the database
+   transaction succeeds.
+========================================================= */
 
 export async function PATCH(
   request: NextRequest,
   context: {
     params: Promise<{ id: string }>;
-  }
+  },
 ) {
-  /*
-   * RATE LIMITING
-   */
+  /* RATE LIMITING */
 
   const rateLimit = checkPublicRateLimit(
     request,
-    "request-create"
+    "request-create",
   );
 
   if (!rateLimit.allowed) {
     return jsonError(
       "Too many booking updates. Please try again shortly.",
       429,
-      rateLimit.headers
+      rateLimit.headers,
     );
   }
 
   try {
-    /*
-     * AUTHENTICATION
-     */
+    /* AUTHENTICATION */
 
     const {
       seller,
@@ -602,13 +514,11 @@ export async function PATCH(
       return jsonError(
         error ?? "Authentication required.",
         status,
-        rateLimit.headers
+        rateLimit.headers,
       );
     }
 
-    /*
-     * BOOKING ID
-     */
+    /* BOOKING ID */
 
     const bookingId = await getBookingId(context);
 
@@ -616,13 +526,11 @@ export async function PATCH(
       return jsonError(
         "Invalid booking ID.",
         400,
-        rateLimit.headers
+        rateLimit.headers,
       );
     }
 
-    /*
-     * BODY SIZE VALIDATION
-     */
+    /* BODY SIZE VALIDATION */
 
     const contentLengthHeader =
       request.headers.get("content-length");
@@ -638,7 +546,7 @@ export async function PATCH(
         return jsonError(
           "Request body is too large or invalid.",
           413,
-          rateLimit.headers
+          rateLimit.headers,
         );
       }
     }
@@ -654,20 +562,18 @@ export async function PATCH(
         return jsonError(
           "Request body is too large.",
           413,
-          rateLimit.headers
+          rateLimit.headers,
         );
       }
 
       return jsonError(
         "Unable to read the request body.",
         400,
-        rateLimit.headers
+        rateLimit.headers,
       );
     }
 
-    /*
-     * JSON VALIDATION
-     */
+    /* JSON VALIDATION */
 
     let body: unknown;
 
@@ -677,7 +583,7 @@ export async function PATCH(
       return jsonError(
         "Invalid JSON request body.",
         400,
-        rateLimit.headers
+        rateLimit.headers,
       );
     }
 
@@ -685,13 +591,11 @@ export async function PATCH(
       return jsonError(
         "Invalid request body.",
         400,
-        rateLimit.headers
+        rateLimit.headers,
       );
     }
 
-    /*
-     * ACTION
-     */
+    /* ACTION VALIDATION */
 
     const actionValue = clean(body.action).toUpperCase();
 
@@ -699,99 +603,59 @@ export async function PATCH(
       return jsonError(
         "Invalid booking action.",
         400,
-        rateLimit.headers
+        rateLimit.headers,
       );
     }
 
     const action: BookingAction = actionValue;
 
-    /*
-     * OPTIONAL REASON
-     */
+    /* OPTIONAL REASON */
 
     const reasonResult = parseOptionalText(
       body.reason,
-      MAX_REASON_LENGTH
+      MAX_REASON_LENGTH,
     );
 
     if (reasonResult === "INVALID") {
       return jsonError(
         "The reason is too long or invalid.",
         400,
-        rateLimit.headers
+        rateLimit.headers,
       );
     }
 
     const reason = reasonResult;
 
-    /*
-     * QUOTATION INPUT
-     */
-
-    let quotedPrice: number | null = null;
-    let quoteMessage: string | null = null;
-
-    if (action === "SEND_QUOTE") {
-      quotedPrice = parseQuotedPrice(body.quotedPrice);
-
-      if (quotedPrice === null) {
-        return jsonError(
-          "Enter a valid quotation amount.",
-          400,
-          rateLimit.headers
-        );
-      }
-
-      const quoteMessageResult = parseOptionalText(
-        body.quoteMessage,
-        MAX_QUOTE_MESSAGE_LENGTH
-      );
-
-      if (quoteMessageResult === "INVALID") {
-        return jsonError(
-          "The quotation message is too long or invalid.",
-          400,
-          rateLimit.headers
-        );
-      }
-
-      quoteMessage = quoteMessageResult;
-    }
-
-    /*
-     * APPOINTMENT INPUT
-     */
+    /* APPOINTMENT DATE */
 
     let scheduledFor: Date | null = null;
 
     if (action === "CONFIRM_APPOINTMENT") {
       scheduledFor = parseScheduledDate(
-        body.scheduledFor
+        body.scheduledFor,
       );
 
       if (!scheduledFor) {
         return jsonError(
           "Enter a valid future appointment date and time.",
           400,
-          rateLimit.headers
+          rateLimit.headers,
         );
       }
     }
 
-    /*
-     * PROCESS BOOKING UPDATE
-     */
+    /* PROCESS BOOKING UPDATE */
 
     const result = await prisma.$transaction(
       async (tx): Promise<BookingOutcome> => {
         /*
-         * LOAD BOOKING ONLY IF THIS SELLER OWNS IT
+         * Load booking only if this seller owns it.
          */
 
         const booking = await tx.serviceBooking.findFirst({
           where: sellerBookingWhere(
             bookingId,
-            seller.id
+            seller.id,
           ),
 
           select: managedBookingSelect,
@@ -807,9 +671,7 @@ export async function PATCH(
 
         const now = new Date();
 
-        /*
-         * RECHECK APPOINTMENT DATE
-         */
+        /* RECHECK APPOINTMENT DATE */
 
         if (
           action === "CONFIRM_APPOINTMENT" &&
@@ -818,20 +680,14 @@ export async function PATCH(
         ) {
           return {
             success: false,
-            message:
-              "The appointment time must be in the future.",
+            message: "The appointment time must be in the future.",
             status: 400,
           };
         }
 
         /*
-         * UPDATE DATA
-         *
-         * UncheckedUpdateManyInput permits direct updates
-         * to scalar foreign-key fields.
-         *
-         * Setting sellerId also assigns older bookings
-         * to the seller who is legitimately managing them.
+         * Assign sellerId when managing an older booking
+         * that did not previously have a seller snapshot.
          */
 
         const updateData: Prisma.ServiceBookingUncheckedUpdateManyInput =
@@ -839,16 +695,13 @@ export async function PATCH(
             sellerId: seller.id,
           };
 
-        /*
-         * ACCEPT REQUEST
-         */
+        /* ACCEPT NORMAL SERVICE REQUEST */
 
         if (action === "ACCEPT") {
-          if (booking.status !== "PENDING") {
+          if (booking.status !== ServiceBookingStatus.PENDING) {
             return {
               success: false,
-              message:
-                "Only pending bookings can be accepted.",
+              message: "Only pending bookings can be accepted.",
               status: 409,
             };
           }
@@ -862,77 +715,37 @@ export async function PATCH(
             };
           }
 
-          if (
-            booking.quoteSentAt &&
-            !booking.quoteAcceptedAt
-          ) {
-            return {
-              success: false,
-              message:
-                "The buyer must respond to the outstanding quotation first.",
-              status: 409,
-            };
-          }
-
-          updateData.status = "ACCEPTED";
+          updateData.status = ServiceBookingStatus.ACCEPTED;
           updateData.acceptedAt = now;
         }
 
-        /*
-         * DECLINE BOOKING
-         */
+        /* DECLINE BOOKING */
 
         else if (action === "DECLINE") {
-          if (
-            booking.status !== "PENDING" &&
-            booking.status !== "AWAITING_BUYER"
-          ) {
+          const declinableStatuses: ServiceBookingStatus[] = [
+            ServiceBookingStatus.PENDING,
+
+            // Retained only for older records created before
+            // quotation negotiation is removed from the MVP.
+            ServiceBookingStatus.AWAITING_BUYER,
+          ];
+
+          if (!declinableStatuses.includes(booking.status)) {
             return {
               success: false,
-              message:
-                "This booking can no longer be declined.",
+              message: "This booking can no longer be declined.",
               status: 409,
             };
           }
 
-          updateData.status = "DECLINED";
+          updateData.status = ServiceBookingStatus.DECLINED;
           updateData.declinedAt = now;
 
           updateData.declineReason =
             reason ?? "Declined by seller.";
         }
 
-        /*
-         * SEND OR UPDATE QUOTATION
-         */
-
-        else if (action === "SEND_QUOTE") {
-          if (
-            booking.status !== "PENDING" &&
-            booking.status !== "AWAITING_BUYER"
-          ) {
-            return {
-              success: false,
-              message:
-                "A quotation can only be sent for a pending booking.",
-              status: 409,
-            };
-          }
-
-          updateData.status = "AWAITING_BUYER";
-
-          updateData.quotedPrice = quotedPrice;
-          updateData.quoteMessage = quoteMessage;
-          updateData.quoteSentAt = now;
-
-          // A new quotation requires a fresh buyer response.
-          updateData.quoteAcceptedAt = null;
-          updateData.agreedPrice = null;
-        }
-
-        /*
-         * CONFIRM APPOINTMENT
-         */
+        /* CONFIRM APPOINTMENT */
 
         else if (action === "CONFIRM_APPOINTMENT") {
           if (booking.bookingType !== "APPOINTMENT") {
@@ -944,108 +757,73 @@ export async function PATCH(
             };
           }
 
-          if (
-            booking.status !== "PENDING" &&
-            booking.status !== "AWAITING_BUYER" &&
-            booking.status !== "ACCEPTED"
-          ) {
+          if (booking.status !== ServiceBookingStatus.PENDING) {
             return {
               success: false,
               message:
-                "This appointment can no longer be confirmed.",
+                "Only pending appointment requests can be confirmed.",
               status: 409,
             };
           }
 
-          if (
-            booking.status === "ACCEPTED" &&
-            booking.scheduledFor
-          ) {
+          if (!scheduledFor) {
             return {
               success: false,
-              message:
-                "This appointment has already been confirmed.",
-              status: 409,
+              message: "A valid appointment date is required.",
+              status: 400,
             };
           }
 
-          if (
-            booking.quoteSentAt &&
-            !booking.quoteAcceptedAt
-          ) {
-            return {
-              success: false,
-              message:
-                "The buyer must accept the quotation before the appointment can be confirmed.",
-              status: 409,
-            };
-          }
-
-          updateData.status = "ACCEPTED";
+          updateData.status = ServiceBookingStatus.ACCEPTED;
           updateData.scheduledFor = scheduledFor;
           updateData.acceptedAt = now;
         }
 
-        /*
-         * START SERVICE
-         */
-
-        else if (action === "START") {
-          if (booking.status !== "ACCEPTED") {
-            return {
-              success: false,
-              message:
-                "Only accepted bookings can be started.",
-              status: 409,
-            };
-          }
-
-          updateData.status = "IN_PROGRESS";
-          updateData.startedAt = now;
-        }
-
-        /*
-         * COMPLETE SERVICE
-         */
+        /* COMPLETE SERVICE */
 
         else if (action === "COMPLETE") {
-          if (booking.status !== "IN_PROGRESS") {
+          const completableStatuses: ServiceBookingStatus[] = [
+            ServiceBookingStatus.ACCEPTED,
+
+            // Allows older bookings already marked IN_PROGRESS
+            // to be completed after this simplified workflow deploys.
+            ServiceBookingStatus.IN_PROGRESS,
+          ];
+
+          if (!completableStatuses.includes(booking.status)) {
             return {
               success: false,
               message:
-                "Only services in progress can be completed.",
+                "Only accepted bookings can be marked as completed.",
               status: 409,
             };
           }
 
-          updateData.status = "COMPLETED";
+          updateData.status = ServiceBookingStatus.COMPLETED;
           updateData.completedAt = now;
         }
 
-        /*
-         * CANCEL BOOKING
-         */
+        /* CANCEL BOOKING */
 
         else if (action === "CANCEL") {
           const cancellableStatuses: ServiceBookingStatus[] = [
-            "PENDING",
-            "AWAITING_BUYER",
-            "ACCEPTED",
-            "IN_PROGRESS",
+            ServiceBookingStatus.PENDING,
+            ServiceBookingStatus.ACCEPTED,
+
+            // Retained for existing records.
+            ServiceBookingStatus.AWAITING_BUYER,
+            ServiceBookingStatus.IN_PROGRESS,
           ];
 
-          if (
-            !cancellableStatuses.includes(booking.status)
-          ) {
+          if (!cancellableStatuses.includes(booking.status)) {
             return {
               success: false,
-              message:
-                "This booking can no longer be cancelled.",
+              message: "This booking can no longer be cancelled.",
               status: 409,
             };
           }
 
-          updateData.status = "CANCELLED";
+          updateData.status = ServiceBookingStatus.CANCELLED;
           updateData.cancelledAt = now;
           updateData.cancelledById = seller.id;
 
@@ -1063,7 +841,8 @@ export async function PATCH(
          * - Original status.
          * - Original updatedAt value.
          *
-         * This protects against stale concurrent updates.
+         * This prevents stale requests from overwriting
+         * newer booking updates.
          */
 
         const updatedCount =
@@ -1072,7 +851,7 @@ export async function PATCH(
               AND: [
                 sellerBookingWhere(
                   booking.id,
-                  seller.id
+                  seller.id,
                 ),
 
                 {
@@ -1101,9 +880,7 @@ export async function PATCH(
           };
         }
 
-        /*
-         * LOAD UPDATED BOOKING
-         */
+        /* LOAD UPDATED BOOKING */
 
         const updatedBooking =
           await tx.serviceBooking.findUnique({
@@ -1117,8 +894,7 @@ export async function PATCH(
         if (!updatedBooking) {
           return {
             success: false,
-            message:
-              "Unable to retrieve the updated booking.",
+            message: "Unable to retrieve the updated booking.",
             status: 500,
           };
         }
@@ -1132,47 +908,27 @@ export async function PATCH(
       {
         isolationLevel:
           Prisma.TransactionIsolationLevel.Serializable,
-      }
+      },
     );
 
-    /*
-     * HANDLE UPDATE FAILURE
-     */
+    /* HANDLE UPDATE FAILURE */
 
     if (!result.success) {
       return jsonError(
         result.message,
         result.status,
-        rateLimit.headers
+        rateLimit.headers,
       );
     }
 
-    /*
-     * NOTIFY BUYER
-     *
-     * Notification creation is deliberately outside
-     * the booking transaction.
-     *
-     * A notification failure must not undo a successful
-     * booking update.
-     */
+    /* NOTIFY BUYER */
 
     const booking = result.booking;
 
     const notification = getBuyerNotification(
       action,
-      booking
+      booking,
     );
-
-    /*
-     * DEDUPLICATION KEY
-     *
-     * The notification helper adds recipient-specific
-     * scoping to this event key.
-     *
-     * Keep the buyer suffix for compatibility with
-     * the previous version of this endpoint.
-     */
 
     const notificationDedupeKey =
       `service-booking:${booking.id}:` +
@@ -1198,6 +954,8 @@ export async function PATCH(
           serviceName: booking.service.name,
           status: booking.status,
           action,
+          scheduledFor:
+            booking.scheduledFor?.toISOString() ?? null,
           href: "/bookings",
         },
 
@@ -1206,13 +964,11 @@ export async function PATCH(
     } catch (notificationError) {
       console.error(
         "Service booking update notification error:",
-        notificationError
+        notificationError,
       );
     }
 
-    /*
-     * SUCCESS RESPONSE
-     */
+    /* SUCCESS RESPONSE */
 
     return NextResponse.json(
       {
@@ -1231,17 +987,6 @@ export async function PATCH(
           scheduledFor:
             booking.scheduledFor?.toISOString() ?? null,
 
-          quotedPrice: booking.quotedPrice,
-          quoteMessage: booking.quoteMessage,
-
-          quoteSentAt:
-            booking.quoteSentAt?.toISOString() ?? null,
-
-          quoteAcceptedAt:
-            booking.quoteAcceptedAt?.toISOString() ?? null,
-
-          agreedPrice: booking.agreedPrice,
-
           acceptedAt:
             booking.acceptedAt?.toISOString() ?? null,
 
@@ -1251,8 +996,8 @@ export async function PATCH(
           cancelledAt:
             booking.cancelledAt?.toISOString() ?? null,
 
-          startedAt:
-            booking.startedAt?.toISOString() ?? null,
+          cancellationReason:
+            booking.cancellationReason,
 
           completedAt:
             booking.completedAt?.toISOString() ?? null,
@@ -1266,12 +1011,12 @@ export async function PATCH(
       {
         status: 200,
         headers: responseHeaders(rateLimit.headers),
-      }
+      },
     );
   } catch (error) {
     console.error(
       "Merchant service booking update error:",
-      error
+      error,
     );
 
     if (
@@ -1281,14 +1026,14 @@ export async function PATCH(
       return jsonError(
         "This booking was updated by another request. Refresh and try again.",
         409,
-        rateLimit.headers
+        rateLimit.headers,
       );
     }
 
     return jsonError(
       "Unable to update this booking. Please try again.",
       500,
-      rateLimit.headers
+      rateLimit.headers,
     );
   }
 }
