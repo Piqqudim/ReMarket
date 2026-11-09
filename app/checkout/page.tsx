@@ -45,6 +45,7 @@ type CheckoutCartItem = {
   imageUrl: string | null;
   quantity: number;
   unitPrice: number | null;
+  originalPrice: number | null;
   lineTotal: number | null;
   purchasable: boolean;
   unavailableReason: string | null;
@@ -122,6 +123,30 @@ function formatNaira(amount: number): string {
   }).format(amount);
 }
 
+/**
+ * Returns an original price only when it is a valid higher
+ * previous price than the current selling price.
+ * It is display-only and is never used for checkout totals.
+ */
+function getValidOriginalPrice(
+  rawOriginalPrice: unknown,
+  unitPrice: number | null,
+): number | null {
+  const originalPrice = getSafeInteger(rawOriginalPrice);
+
+  if (
+    unitPrice === null ||
+    unitPrice <= 0 ||
+    originalPrice === null ||
+    originalPrice <= unitPrice ||
+    originalPrice > MAX_ORDER_TOTAL
+  ) {
+    return null;
+  }
+
+  return originalPrice;
+}
+
 /* =========================================================
    CART RESPONSE PARSER
 
@@ -137,6 +162,7 @@ function formatNaira(amount: number): string {
            id,
            name,
            price,
+           originalPrice,
            imageUrl,
            business: {}
          },
@@ -203,15 +229,20 @@ function parseCheckoutCart(
     )!;
 
     const unitPrice = getSafeInteger(product?.price);
+    const originalPrice = getValidOriginalPrice(
+      product?.originalPrice,
+      unitPrice,
+    );
 
     const stockQuantity =
       getSafeInteger(product?.stockQuantity);
 
+    // Product pricing now uses one selling price. The optional
+    // originalPrice is only a display reference for discounts.
     const validFixedPrice =
       unitPrice !== null &&
       unitPrice > 0 &&
-      product?.priceMin === null &&
-      product?.priceMax === null;
+      unitPrice <= MAX_ORDER_TOTAL;
 
     const validQuantity =
       quantity <= MAX_QUANTITY_PER_PRODUCT;
@@ -319,6 +350,7 @@ function parseCheckoutCart(
       imageUrl,
       quantity,
       unitPrice,
+      originalPrice,
       lineTotal,
       purchasable,
       unavailableReason,
@@ -333,7 +365,7 @@ function parseCheckoutCart(
 
   const calculatedSubtotal = items.reduce(
     (sum, item) => {
-      if (item.lineTotal === null) {
+      if (item.lineTotal === null || !item.purchasable) {
         return sum;
       }
 
@@ -451,7 +483,7 @@ export default function CheckoutPage() {
     () =>
       items.reduce(
         (sum, item) =>
-          sum + (item.lineTotal ?? 0),
+          sum + (item.purchasable ? item.lineTotal ?? 0 : 0),
         0,
       ),
     [items],
@@ -467,6 +499,7 @@ export default function CheckoutPage() {
 
   const allLineTotalsValid = items.every(
     (item) =>
+      item.purchasable &&
       item.lineTotal !== null &&
       Number.isSafeInteger(item.lineTotal) &&
       item.lineTotal > 0,
@@ -1250,53 +1283,69 @@ export default function CheckoutPage() {
                 </p>
 
                 <div className="mt-5 space-y-4">
-                  {items.map((item) => (
-                    <div
-                      key={item.id}
-                      className="flex gap-3"
-                    >
-                      <div className="flex h-14 w-14 shrink-0 items-center justify-center overflow-hidden rounded-xl border border-[#EAE6DF] bg-[#FCFAF6]">
-                        {item.imageUrl ? (
-                          <img
-                            src={item.imageUrl}
-                            alt={item.name}
-                            className="h-full w-full object-cover"
-                          />
-                        ) : (
-                          <Package className="h-6 w-6 text-[#B6A99E]" />
-                        )}
-                      </div>
+                  {items.map((item) => {
+                    const originalLineTotal =
+                      item.originalPrice !== null
+                        ? item.originalPrice * item.quantity
+                        : null;
 
-                      <div className="min-w-0 flex-1">
-                        <p className="line-clamp-2 text-[11px] font-bold leading-5 text-[#292522]">
-                          {item.name}
-                        </p>
-
-                        <p className="mt-1 text-[10px] text-[#91877E]">
-                          {item.businessName}
-                        </p>
-
-                        <div className="mt-1 flex items-center justify-between gap-2">
-                          <span className="text-[10px] text-[#756B61]">
-                            Quantity: {item.quantity}
-                          </span>
-
-                          <span className="text-xs font-extrabold text-[#9F2D18]">
-                            {item.lineTotal !== null
-                              ? formatNaira(item.lineTotal)
-                              : "Price unavailable"}
-                          </span>
+                    return (
+                      <div
+                        key={item.id}
+                        className="flex gap-3"
+                      >
+                        <div className="flex h-14 w-14 shrink-0 items-center justify-center overflow-hidden rounded-xl border border-[#EAE6DF] bg-[#FCFAF6]">
+                          {item.imageUrl ? (
+                            <img
+                              src={item.imageUrl}
+                              alt={item.name}
+                              className="h-full w-full object-cover"
+                            />
+                          ) : (
+                            <Package className="h-6 w-6 text-[#B6A99E]" />
+                          )}
                         </div>
 
-                        {!item.purchasable && (
-                          <p className="mt-1 text-[10px] text-red-600">
-                            {item.unavailableReason ??
-                              "Unavailable for checkout"}
+                        <div className="min-w-0 flex-1">
+                          <p className="line-clamp-2 text-[11px] font-bold leading-5 text-[#292522]">
+                            {item.name}
                           </p>
-                        )}
+
+                          <p className="mt-1 text-[10px] text-[#91877E]">
+                            {item.businessName}
+                          </p>
+
+                          <div className="mt-1 flex items-center justify-between gap-2">
+                            <span className="text-[10px] text-[#756B61]">
+                              Quantity: {item.quantity}
+                            </span>
+
+                            <div className="text-right">
+                              {originalLineTotal !== null &&
+                                Number.isSafeInteger(originalLineTotal) && (
+                                  <p className="text-[10px] text-[#91877E] line-through">
+                                    {formatNaira(originalLineTotal)}
+                                  </p>
+                                )}
+
+                              <span className="text-xs font-extrabold text-[#9F2D18]">
+                                {item.lineTotal !== null
+                                  ? formatNaira(item.lineTotal)
+                                  : "Price unavailable"}
+                              </span>
+                            </div>
+                          </div>
+
+                          {!item.purchasable && (
+                            <p className="mt-1 text-[10px] text-red-600">
+                              {item.unavailableReason ??
+                                "Unavailable for checkout"}
+                            </p>
+                          )}
+                        </div>
                       </div>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
 
                 <div className="my-5 border-t border-[#EAE6DF]" />

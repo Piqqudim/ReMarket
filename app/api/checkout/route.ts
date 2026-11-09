@@ -410,8 +410,6 @@ async function createCheckout(
                       id: true,
                       name: true,
                       price: true,
-                      priceMin: true,
-                      priceMax: true,
                       imageUrl: true,
                       availability: true,
                       status: true,
@@ -506,7 +504,11 @@ async function createCheckout(
             }
 
             /*
-             * FIXED PRICE VALIDATION
+             * FIXED SELLING PRICE VALIDATION
+             *
+             * Product price is the current selling price.
+             * Optional originalPrice is display-only and is
+             * never used to calculate what the buyer pays.
              */
 
             const unitPrice = product.price;
@@ -515,12 +517,10 @@ async function createCheckout(
               unitPrice === null ||
               !Number.isSafeInteger(unitPrice) ||
               unitPrice <= 0 ||
-              unitPrice > MAX_ORDER_TOTAL ||
-              product.priceMin !== null ||
-              product.priceMax !== null
+              unitPrice > MAX_ORDER_TOTAL
             ) {
               throw new CheckoutError(
-                `"${product.name}" does not have a valid confirmed fixed price and cannot be checked out yet.`,
+                `"${product.name}" does not have a valid confirmed fixed selling price and cannot be checked out yet.`,
                 409,
               );
             }

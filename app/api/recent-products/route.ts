@@ -14,8 +14,7 @@ const recentProductSelect = {
   name: true,
   description: true,
   price: true,
-  priceMin: true,
-  priceMax: true,
+  originalPrice: true,
   availability: true,
   imageUrl: true,
   createdAt: true,
@@ -179,8 +178,20 @@ function serializeProduct(
     ...fields
   } = product;
 
+  // Only expose an original price when it represents a valid discount.
+  const originalPrice =
+    product.price !== null &&
+    Number.isSafeInteger(product.price) &&
+    product.price > 0 &&
+    product.originalPrice !== null &&
+    Number.isSafeInteger(product.originalPrice) &&
+    product.originalPrice > product.price
+      ? product.originalPrice
+      : null;
+
   return {
     ...fields,
+    originalPrice,
 
     // Product.imageUrl is the compatibility mirror.
     // The first ProductImage is used as a fallback.

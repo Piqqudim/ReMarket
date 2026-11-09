@@ -16,6 +16,7 @@ export type CartItemData = {
   name: string;
   description: string | null;
   unitPrice: number | null;
+  originalPrice: number | null;
   quantity: number;
   lineTotal: number | null;
   availability: string;
@@ -68,11 +69,19 @@ export default function CartItem({
     item.purchasable ||
     item.unavailableReason?.toLowerCase().includes("stock") === true;
 
+  // Only show a discount when the original price is valid
+  // and greater than the current selling price.
+  const hasDiscount =
+    item.unitPrice !== null &&
+    item.unitPrice > 0 &&
+    item.originalPrice !== null &&
+    Number.isSafeInteger(item.originalPrice) &&
+    item.originalPrice > item.unitPrice;
+
   return (
     <article className="rounded-2xl border border-[#EAE6DF] bg-white p-3 sm:p-4">
       <div className="flex gap-3 sm:gap-4">
         {/* PRODUCT IMAGE */}
-
         <Link
           href={`/product/${encodeURIComponent(item.productId)}`}
           className="flex h-24 w-24 shrink-0 items-center justify-center overflow-hidden rounded-xl border border-[#EAE6DF] bg-[#FCFAF6] sm:h-28 sm:w-28"
@@ -90,7 +99,6 @@ export default function CartItem({
         </Link>
 
         {/* PRODUCT INFORMATION */}
-
         <div className="min-w-0 flex-1">
           <div className="flex items-start justify-between gap-2">
             <div className="min-w-0">
@@ -121,12 +129,19 @@ export default function CartItem({
             </button>
           </div>
 
-          <p className="mt-3 text-sm font-black text-[#9F2D18]">
-            {formatNaira(item.unitPrice)}
-          </p>
+          <div className="mt-3 flex flex-wrap items-center gap-x-2 gap-y-1">
+            <p className="text-sm font-black text-[#9F2D18]">
+              {formatNaira(item.unitPrice)}
+            </p>
+
+            {hasDiscount && (
+              <p className="text-xs font-medium text-[#9B9188] line-through">
+                {formatNaira(item.originalPrice)}
+              </p>
+            )}
+          </div>
 
           {/* QUANTITY AND LINE TOTAL */}
-
           <div className="mt-3 flex flex-wrap items-center justify-between gap-3">
             <div className="inline-flex h-9 items-center overflow-hidden rounded-lg border border-[#EAE6DF] bg-[#FCFAF6]">
               <button
@@ -183,7 +198,6 @@ export default function CartItem({
       </div>
 
       {/* AVAILABILITY MESSAGE */}
-
       {!item.purchasable && (
         <div
           role="alert"

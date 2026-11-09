@@ -20,7 +20,12 @@ const noStore = {
  * GET /api/cart
  *
  * Retrieves the authenticated buyer's cart.
- * Checks product availability, pricing and inventory.
+ * Checks product availability, fixed selling price and inventory.
+ *
+ * Pricing:
+ * - price is the actual selling price used for checkout calculations.
+ * - originalPrice is optional and is only for discount display.
+ * - Product priceMin/priceMax are no longer used.
  */
 export async function GET() {
   const access = await requireBuyer();
@@ -43,8 +48,7 @@ export async function GET() {
                 name: true,
                 description: true,
                 price: true,
-                priceMin: true,
-                priceMax: true,
+                originalPrice: true,
                 availability: true,
                 status: true,
                 deletedAt: true,
@@ -62,6 +66,10 @@ export async function GET() {
 
                 images: {
                   take: 1,
+                  orderBy: [
+                    { sortOrder: "asc" },
+                    { createdAt: "asc" },
+                  ],
                 },
               },
             },
@@ -86,36 +94,43 @@ export async function GET() {
         product.business.status === "ACTIVE" &&
         product.business.deletedAt === null;
 
+      /*
+       * A product is fixed-price when it has one positive selling price.
+       * The old priceMin/priceMax fields are intentionally not consulted.
+       */
       const hasFixedPrice =
         product !== null &&
         product.price !== null &&
         Number.isSafeInteger(product.price) &&
-        product.price > 0 &&
-        product.priceMin === null &&
-        product.priceMax === null;
+        product.price > 0;
+
+      /*
+       * originalPrice is for display only. It never changes the amount
+       * charged to the buyer. Ignore invalid legacy or inconsistent values.
+       */
+      const validOriginalPrice =
+        product !== null &&
+        hasFixedPrice &&
+        product.originalPrice !== null &&
+        Number.isSafeInteger(product.originalPrice) &&
+        product.originalPrice > (product.price ?? 0)
+          ? product.originalPrice
+          : null;
 
       // null means inventory tracking is disabled.
       // Zero means out of stock.
       const hasValidStock =
         product !== null &&
-        (
-          product.stockQuantity === null ||
-          (
-            Number.isSafeInteger(product.stockQuantity) &&
-            product.stockQuantity >= 0
-          )
-        );
+        (product.stockQuantity === null ||
+          (Number.isSafeInteger(product.stockQuantity) &&
+            product.stockQuantity >= 0));
 
       const hasEnoughStock =
         product !== null &&
-        (
-          product.stockQuantity === null ||
-          (
-            product.stockQuantity !== null &&
+        (product.stockQuantity === null ||
+          (product.stockQuantity !== null &&
             validQuantity &&
-            product.stockQuantity >= item.quantity
-          )
-        );
+            product.stockQuantity >= item.quantity));
 
       let lineTotal: number | null = null;
 
@@ -125,8 +140,8 @@ export async function GET() {
         product?.price !== null &&
         product?.price !== undefined
       ) {
-        const calculatedTotal =
-          product.price * item.quantity;
+        // Use the selling price, never the original/discounted display price.
+        const calculatedTotal = product.price * item.quantity;
 
         if (
           Number.isSafeInteger(calculatedTotal) &&
@@ -154,7 +169,7 @@ export async function GET() {
           "This product is no longer available.";
       } else if (!hasFixedPrice) {
         unavailableReason =
-          "This product does not have a confirmed fixed price.";
+          "This product does not have a confirmed fixed selling price.";
       } else if (!hasValidStock) {
         unavailableReason =
           "The inventory information for this product is invalid.";
@@ -172,6 +187,9 @@ export async function GET() {
         product: product
           ? {
               ...product,
+              // Return only a valid original price for discount display.
+              originalPrice: validOriginalPrice,
+              hasDiscount: validOriginalPrice !== null,
               isAvailable,
               hasFixedPrice,
               hasValidStock,
@@ -200,7 +218,8 @@ export async function GET() {
     ) {
       return NextResponse.json(
         {
-          error: "Your cart total exceeds the maximum allowed order value.",
+          error:
+            "Your cart total exceeds the maximum allowed order value.",
         },
         {
           status: 409,
@@ -240,8 +259,7 @@ export async function GET() {
       (item) => item.purchasable,
     ).length;
 
-    const unavailableItems =
-      items.length - purchasableItems;
+    const unavailableItems = items.length - purchasableItems;
 
     return NextResponse.json(
       {

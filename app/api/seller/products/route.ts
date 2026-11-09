@@ -6,7 +6,6 @@ import {
 import { NextResponse } from "next/server";
 
 import { prisma } from "@/lib/prisma";
-import { validateProductPricing } from "@/lib/product-pricing";
 import { requireSellerAccount } from "@/lib/seller-auth";
 import { createNotification } from "@/lib/notifications";
 import {
@@ -95,8 +94,7 @@ function isPrismaInt(value: number): boolean {
 /**
  * Parse an optional non-negative Prisma Int.
  *
- * null or undefined means inventory tracking is disabled
- * when used for stockQuantity.
+ * null or undefined means no value was supplied.
  *
  * Booleans, objects, arrays, decimals, negative values,
  * and values outside the supported Int range are rejected.
@@ -709,6 +707,12 @@ export async function GET() {
  * Product preparation is permitted for pending or
  * inactive businesses, but not deleted businesses.
  *
+ * Pricing:
+ * - price = current selling price.
+ * - originalPrice = optional previous/original price.
+ * - originalPrice must be greater than price.
+ * - Product price ranges are no longer accepted.
+ *
  * Stock:
  * - null = inventory tracking disabled.
  * - 0 = out of stock.
@@ -846,15 +850,47 @@ export async function POST(request: Request) {
 
     const keywordsResult = parseKeywords(body.keywords);
     const priceResult = parseOptionalInteger(body.price);
-    const priceMinResult = parseOptionalInteger(body.priceMin);
-    const priceMaxResult = parseOptionalInteger(body.priceMax);
+    const originalPriceResult = parseOptionalInteger(
+      body.originalPrice
+    );
 
-    // NEW: validate initial stock quantity.
+    // Validate initial stock quantity.
     const stockQuantityResult = parseOptionalInteger(
       body.stockQuantity
     );
 
     const imagesResult = parseProductImages(body.images);
+
+    /*
+     * Reject non-empty legacy price-range values.
+     * The seller form must submit one selling price.
+     */
+    const hasLegacyPriceRange = [
+      body.priceMin,
+      body.priceMax,
+    ].some((value) => {
+      if (value === undefined || value === null) {
+        return false;
+      }
+
+      return !(
+        typeof value === "string" &&
+        value.trim() === ""
+      );
+    });
+
+    if (hasLegacyPriceRange) {
+      return NextResponse.json(
+        {
+          error:
+            "Product price ranges are no longer supported. Enter one selling price instead.",
+        },
+        {
+          status: 400,
+          headers: jsonHeaders(),
+        }
+      );
+    }
 
     const legacyImageUrlProvided = hasOwn(body, "imageUrl");
     const legacyImageUrl = cleanString(body.imageUrl);
@@ -976,8 +1012,7 @@ export async function POST(request: Request) {
 
     if (
       !priceResult.valid ||
-      !priceMinResult.valid ||
-      !priceMaxResult.valid
+      !originalPriceResult.valid
     ) {
       return NextResponse.json(
         {
@@ -991,7 +1026,7 @@ export async function POST(request: Request) {
       );
     }
 
-    // NEW: reject invalid stock quantities.
+    // Validate stock quantity.
     if (!stockQuantityResult.valid) {
       return NextResponse.json(
         {
@@ -1005,21 +1040,41 @@ export async function POST(request: Request) {
       );
     }
 
+    /*
+     * --------------------------------------------------
+     * PRODUCT PRICING VALIDATION
+     * --------------------------------------------------
+     */
+
     const price = priceResult.value;
-    const priceMin = priceMinResult.value;
-    const priceMax = priceMaxResult.value;
+    const originalPrice = originalPriceResult.value;
 
-    const pricingError = validateProductPricing(
-      price,
-      priceMin,
-      priceMax
-    );
+    if (originalPrice !== null) {
+      if (price === null || price <= 0) {
+        return NextResponse.json(
+          {
+            error:
+              "An original price can only be added when the product has a fixed selling price.",
+          },
+          {
+            status: 400,
+            headers: jsonHeaders(),
+          }
+        );
+      }
 
-    if (pricingError) {
-      return NextResponse.json(
-        { error: pricingError },
-        { status: 400, headers: jsonHeaders() }
-      );
+      if (originalPrice <= price) {
+        return NextResponse.json(
+          {
+            error:
+              "Original price must be greater than the selling price.",
+          },
+          {
+            status: 400,
+            headers: jsonHeaders(),
+          }
+        );
+      }
     }
 
     if (
@@ -1171,11 +1226,13 @@ export async function POST(request: Request) {
             }
           : undefined,
 
+        // Current selling price.
         price,
-        priceMin,
-        priceMax,
 
-        // NEW: save initial inventory quantity.
+        // Optional original price for discount display.
+        originalPrice,
+
+        // Inventory tracking.
         // Omitted/null means inventory tracking is disabled.
         stockQuantity: stockQuantityResult.value,
 

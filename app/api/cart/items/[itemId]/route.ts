@@ -81,6 +81,11 @@ async function withSerializableRetry<T>(
  *
  * Updates the quantity of an item belonging
  * to the currently authenticated buyer.
+ *
+ * Product pricing uses one current selling price (price).
+ * originalPrice is display-only and is not used to calculate
+ * the amount payable. Legacy priceMin/priceMax fields are
+ * no longer part of cart validation.
  */
 export async function PATCH(
   request: Request,
@@ -164,13 +169,10 @@ export async function PATCH(
                 select: {
                   id: true,
                   price: true,
-                  priceMin: true,
-                  priceMax: true,
                   status: true,
                   deletedAt: true,
                   availability: true,
                   stockQuantity: true,
-
                   business: {
                     select: {
                       status: true,
@@ -206,13 +208,11 @@ export async function PATCH(
             );
           }
 
-          // 3. Confirm that the product still has a fixed price.
+          // 3. Confirm that the product has one valid fixed selling price.
           const hasFixedPrice =
             product.price !== null &&
             Number.isSafeInteger(product.price) &&
-            product.price > 0 &&
-            product.priceMin === null &&
-            product.priceMax === null;
+            product.price > 0;
 
           if (!hasFixedPrice || product.price === null) {
             throw new CartRouteError(
@@ -248,7 +248,7 @@ export async function PATCH(
             );
           }
 
-          // 6. Validate the product line total.
+          // 6. Validate the product line total using the current selling price.
           const lineTotal = product.price * quantity;
 
           if (

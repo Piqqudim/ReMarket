@@ -145,7 +145,6 @@ enum ServiceFulfillmentType {
 /**
  * REQUEST:
  * Buyer submits what they need and the merchant responds.
- *
  * APPOINTMENT:
  * Buyer requests a preferred date/time and the merchant
  * confirms the appointment.
@@ -396,6 +395,9 @@ model User {
 
   // Seller orders assigned to this seller account.
   sellerOrders SellerOrder[] @relation("SellerOrders")
+
+  // Reviews written for individual products.
+  productReviews ProductReview[]
 }
 
 /**
@@ -410,12 +412,12 @@ model Referral {
   // User who referred the new account.
   referrerId String
 
-  referrer User @relation("ReferralReferrer",fields: [referrerId],references: [id],onDelete: Restrict)
+  referrer User @relation("ReferralReferrer", fields: [referrerId], references: [id], onDelete: Restrict)
 
   // The referred account can have only one referrer.
   referredUserId String @unique
 
-  referredUser User @relation("ReferralReferredUser",fields: [referredUserId],references: [id],onDelete: Cascade)
+  referredUser User @relation("ReferralReferredUser", fields: [referredUserId], references: [id], onDelete: Cascade)
 
   referrerRole Role
   referredRole Role
@@ -427,6 +429,10 @@ model Referral {
   rejectionReason String?
 
   rewards ReferralReward[]
+
+  /**
+   * REVIEWS
+   */
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -441,11 +447,11 @@ model ReferralReward {
 
   userId String
 
-  user User @relation("ReferralRewardOwner",fields: [userId],references: [id],onDelete: Restrict)
+  user User @relation("ReferralRewardOwner", fields: [userId], references: [id], onDelete: Restrict)
 
   referralId String?
 
-  referral Referral? @relation(fields: [referralId],references: [id],onDelete: SetNull)
+  referral Referral? @relation(fields: [referralId], references: [id], onDelete: SetNull)
 
   type ReferralRewardType
 
@@ -506,7 +512,7 @@ model BusinessSocialLink {
 
   businessId String
 
-  business Business @relation(fields: [businessId],references: [id],onDelete: Cascade)
+  business Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
 
   platform SocialPlatform
   handle   String
@@ -544,9 +550,9 @@ model BusinessCategory {
   businessId String
   categoryId String
 
-  business Business @relation(fields: [businessId],references: [id],onDelete: Cascade)
+  business Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
 
-  category Category @relation(fields: [categoryId],references: [id],onDelete: Cascade)
+  category Category @relation(fields: [categoryId], references: [id], onDelete: Cascade)
 
   @@id([businessId, categoryId])
   @@index([categoryId])
@@ -567,13 +573,13 @@ model Business {
 
   ownerId String? @unique
 
-  owner User? @relation(fields: [ownerId],references: [id],onDelete: SetNull)
+  owner User? @relation(fields: [ownerId], references: [id], onDelete: SetNull)
 
   description String?
 
   locationId String?
 
-  location Location? @relation(fields: [locationId],references: [id],onDelete: SetNull)
+  location Location? @relation(fields: [locationId], references: [id], onDelete: SetNull)
 
   priceMin Int?
   priceMax Int?
@@ -640,11 +646,11 @@ model BusinessReview {
 
   businessId String
 
-  business Business @relation(fields: [businessId],references: [id],onDelete: Cascade)
+  business Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
 
   userId String
 
-  user User @relation(fields: [userId],references: [id],onDelete: Cascade)
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   rating Int
 
@@ -664,24 +670,25 @@ model BusinessReview {
  * PRODUCTS
  * ============================================================
  */
-
 model Product {
   id String @id @default(cuid())
 
   businessId String
 
-  business Business @relation(fields: [businessId],references: [id],onDelete: Cascade)
+  business Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
 
   name        String
   description String?
 
   categoryId String?
 
-  category Category? @relation(fields: [categoryId],references: [id])
+  category Category? @relation(fields: [categoryId], references: [id])
 
-  price    Int?
-  priceMin Int?
-  priceMax Int?
+  // Product pricing
+  price         Int?
+  priceMin      Int?
+  priceMax      Int?
+  originalPrice Int?
 
   savedBy SavedListing[]
 
@@ -699,34 +706,34 @@ model Product {
 
   deletedById String?
 
-  deletedBy User? @relation("ProductDeletedBy",fields: [deletedById],references: [id],onDelete: SetNull)
+  deletedBy User? @relation("ProductDeletedBy", fields: [deletedById], references: [id], onDelete: SetNull)
 
   createdAt DateTime @default(now())
 
   updatedAt DateTime @updatedAt
 
   /**
-   * ==========================================================
    * INVENTORY
-   * ==========================================================
-   *
-   * null = inventory tracking is not enabled.
-   * 0    = tracked product is out of stock.
+   * null = inventory tracking disabled.
+   * 0    = out of stock.
    * > 0  = available quantity.
-   *
-   * The checkout API must validate and update this field
-   * inside a database transaction.
    */
 
   stockQuantity Int?
 
   /**
-   * CART AND ORDER RELATIONS
+   * CART AND ORDERS
    */
 
   cartItems CartItem[]
 
   orderItems OrderItem[]
+
+  /**
+   * PRODUCT REVIEWS
+   */
+
+  productReviews ProductReview[]
 
   @@index([businessId])
   @@index([businessId, deletedAt])
@@ -746,7 +753,7 @@ model ProductImage {
 
   productId String
 
-  product Product @relation(fields: [productId],references: [id],onDelete: Cascade)
+  product Product @relation(fields: [productId], references: [id], onDelete: Cascade)
 
   url      String
   publicId String?
@@ -770,14 +777,14 @@ model Service {
 
   businessId String
 
-  business Business @relation(fields: [businessId],references: [id],onDelete: Cascade)
+  business Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
 
   name        String
   description String?
 
   categoryId String?
 
-  category Category? @relation(fields: [categoryId],references: [id],onDelete: SetNull)
+  category Category? @relation(fields: [categoryId], references: [id], onDelete: SetNull)
 
   price    Int?
   priceMin Int?
@@ -805,7 +812,7 @@ model Service {
 
   deletedById String?
 
-  deletedBy User? @relation("ServiceDeletedBy",fields: [deletedById],references: [id],onDelete: SetNull)
+  deletedBy User? @relation("ServiceDeletedBy", fields: [deletedById], references: [id], onDelete: SetNull)
 
   bookings ServiceBooking[]
 
@@ -832,7 +839,7 @@ model ServiceImage {
 
   serviceId String
 
-  service Service @relation(fields: [serviceId],references: [id],onDelete: Cascade)
+  service Service @relation(fields: [serviceId], references: [id], onDelete: Cascade)
 
   url      String
   publicId String?
@@ -858,15 +865,15 @@ model ServiceBooking {
 
   serviceId String
 
-  service Service @relation(fields: [serviceId],references: [id],onDelete: Restrict)
+  service Service @relation(fields: [serviceId], references: [id], onDelete: Restrict)
 
   buyerId String
 
-  buyer User @relation("ServiceBookingBuyer",fields: [buyerId],references: [id],onDelete: Restrict)
+  buyer User @relation("ServiceBookingBuyer", fields: [buyerId], references: [id], onDelete: Restrict)
 
   sellerId String?
 
-  seller User? @relation("ServiceBookingSeller",fields: [sellerId],references: [id],onDelete: Restrict)
+  seller User? @relation("ServiceBookingSeller", fields: [sellerId], references: [id], onDelete: Restrict)
 
   bookingType ServiceBookingType @default(REQUEST)
 
@@ -908,7 +915,7 @@ model ServiceBooking {
   cancellationReason String?
   cancelledById      String?
 
-  cancelledBy User? @relation("ServiceBookingCancelledBy",fields: [cancelledById],references: [id],onDelete: SetNull)
+  cancelledBy User? @relation("ServiceBookingCancelledBy", fields: [cancelledById], references: [id], onDelete: SetNull)
 
   messages ServiceBookingMessage[]
 
@@ -934,11 +941,11 @@ model ServiceBookingMessage {
 
   bookingId String
 
-  booking ServiceBooking @relation(fields: [bookingId],references: [id],onDelete: Cascade)
+  booking ServiceBooking @relation(fields: [bookingId], references: [id], onDelete: Cascade)
 
   senderId String
 
-  sender User @relation("ServiceBookingMessageSender",fields: [senderId],references: [id],onDelete: Restrict)
+  sender User @relation("ServiceBookingMessageSender", fields: [senderId], references: [id], onDelete: Restrict)
 
   body String
 
@@ -965,7 +972,7 @@ model BuyerRequest {
 
   categoryId String?
 
-  category Category? @relation(fields: [categoryId],references: [id],onDelete: SetNull)
+  category Category? @relation(fields: [categoryId], references: [id], onDelete: SetNull)
 
   budget       Int?
   locationArea String?
@@ -991,11 +998,11 @@ model Match {
 
   requestId String
 
-  request BuyerRequest @relation(fields: [requestId],references: [id],onDelete: Cascade)
+  request BuyerRequest @relation(fields: [requestId], references: [id], onDelete: Cascade)
 
   businessId String
 
-  business Business @relation(fields: [businessId],references: [id],onDelete: Cascade)
+  business Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
 
   score         Int     @default(0)
   addedManually Boolean @default(false)
@@ -1017,7 +1024,7 @@ model ContactEvent {
 
   businessId String
 
-  business Business @relation(fields: [businessId],references: [id])
+  business Business @relation(fields: [businessId], references: [id])
 
   requestId String?
 
@@ -1051,13 +1058,13 @@ model BusinessViewEvent {
 
   businessId String
 
-  business Business @relation(fields: [businessId],references: [id])
+  business Business @relation(fields: [businessId], references: [id])
 
   visitorId String
 
   userId String?
 
-  user User? @relation(fields: [userId],references: [id],onDelete: SetNull)
+  user User? @relation(fields: [userId], references: [id], onDelete: SetNull)
 
   createdAt DateTime @default(now())
 
@@ -1093,11 +1100,11 @@ model BusinessDeletionRequest {
 
   businessId String
 
-  business Business @relation(fields: [businessId],references: [id],onDelete: Restrict)
+  business Business @relation(fields: [businessId], references: [id], onDelete: Restrict)
 
   requestedById String
 
-  requestedBy User @relation("BusinessDeletionRequestedBy",fields: [requestedById],references: [id],onDelete: Restrict)
+  requestedBy User @relation("BusinessDeletionRequestedBy", fields: [requestedById], references: [id], onDelete: Restrict)
 
   reason String?
 
@@ -1105,7 +1112,7 @@ model BusinessDeletionRequest {
 
   reviewedById String?
 
-  reviewedBy User? @relation("BusinessDeletionReviewedBy",fields: [reviewedById],references: [id],onDelete: SetNull)
+  reviewedBy User? @relation("BusinessDeletionReviewedBy", fields: [reviewedById], references: [id], onDelete: SetNull)
 
   reviewedAt DateTime?
 
@@ -1129,11 +1136,11 @@ model BusinessClaimRequest {
 
   businessId String
 
-  business Business @relation(fields: [businessId],references: [id],onDelete: Restrict)
+  business Business @relation(fields: [businessId], references: [id], onDelete: Restrict)
 
   requestedById String
 
-  requestedBy User @relation("BusinessClaimRequestedBy",fields: [requestedById],references: [id],onDelete: Restrict)
+  requestedBy User @relation("BusinessClaimRequestedBy", fields: [requestedById], references: [id], onDelete: Restrict)
 
   reason String?
 
@@ -1141,7 +1148,7 @@ model BusinessClaimRequest {
 
   reviewedById String?
 
-  reviewedBy User? @relation("BusinessClaimReviewedBy",fields: [reviewedById],references: [id],onDelete: SetNull)
+  reviewedBy User? @relation("BusinessClaimReviewedBy", fields: [reviewedById], references: [id], onDelete: SetNull)
 
   reviewedAt DateTime?
 
@@ -1166,7 +1173,7 @@ model Notification {
 
   userId String
 
-  user User @relation(fields: [userId],references: [id],onDelete: Cascade)
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   type     NotificationType
   title    String
@@ -1181,7 +1188,7 @@ model Notification {
 
   announcementId String?
 
-  announcement NotificationAnnouncement? @relation(fields: [announcementId],references: [id],onDelete: SetNull)
+  announcement NotificationAnnouncement? @relation(fields: [announcementId], references: [id], onDelete: SetNull)
 
   deliveries NotificationDelivery[]
 
@@ -1199,7 +1206,7 @@ model NotificationDelivery {
 
   notificationId String
 
-  notification Notification @relation(fields: [notificationId],references: [id],onDelete: Cascade)
+  notification Notification @relation(fields: [notificationId], references: [id], onDelete: Cascade)
 
   channel NotificationChannel
 
@@ -1226,7 +1233,7 @@ model NotificationPreference {
 
   userId String
 
-  user User @relation(fields: [userId],references: [id],onDelete: Cascade)
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   notificationType NotificationType
 
@@ -1255,7 +1262,7 @@ model NotificationAnnouncement {
 
   createdById String
 
-  createdBy User @relation("NotificationAnnouncementCreatedBy",fields: [createdById],references: [id],onDelete: Restrict)
+  createdBy User @relation("NotificationAnnouncementCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
 
   data Json?
 
@@ -1292,7 +1299,7 @@ model AdminContent {
 
   createdById String
 
-  createdBy User @relation("AdminContentCreatedBy",fields: [createdById],references: [id],onDelete: Restrict)
+  createdBy User @relation("AdminContentCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -1312,15 +1319,15 @@ model SavedListing {
 
   userId String
 
-  user User @relation(fields: [userId],references: [id],onDelete: Cascade)
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   productId String?
 
-  product Product? @relation(fields: [productId],references: [id],onDelete: Cascade)
+  product Product? @relation(fields: [productId], references: [id], onDelete: Cascade)
 
   serviceId String?
 
-  service Service? @relation(fields: [serviceId],references: [id],onDelete: Cascade)
+  service Service? @relation(fields: [serviceId], references: [id], onDelete: Cascade)
 
   createdAt DateTime @default(now())
 
@@ -1335,7 +1342,6 @@ model SavedListing {
  * ============================================================
  * SHOPPING CART
  * ============================================================
- *
  * Each buyer has one active cart.
  * A cart can contain products from multiple businesses.
  */
@@ -1345,7 +1351,7 @@ model Cart {
 
   buyerId String @unique
 
-  buyer User @relation(fields: [buyerId],references: [id],onDelete: Cascade)
+  buyer User @relation(fields: [buyerId], references: [id], onDelete: Cascade)
 
   items CartItem[]
 
@@ -1360,11 +1366,11 @@ model CartItem {
 
   cartId String
 
-  cart Cart @relation(fields: [cartId],references: [id],onDelete: Cascade)
+  cart Cart @relation(fields: [cartId], references: [id], onDelete: Cascade)
 
   productId String
 
-  product Product @relation(fields: [productId],references: [id],onDelete: Restrict)
+  product Product @relation(fields: [productId], references: [id], onDelete: Restrict)
 
   quantity Int @default(1)
 
@@ -1380,9 +1386,7 @@ model CartItem {
  * ============================================================
  * BUYER ORDERS
  * ============================================================
- *
  * One buyer checkout creates one parent order.
- *
  * If the buyer purchases from multiple businesses,
  * separate SellerOrder records are created underneath it.
  */
@@ -1395,7 +1399,7 @@ model Order {
 
   buyerId String
 
-  buyer User @relation("BuyerOrders",fields: [buyerId],references: [id],onDelete: Restrict)
+  buyer User @relation("BuyerOrders", fields: [buyerId], references: [id], onDelete: Restrict)
 
   status OrderStatus @default(PLACED)
 
@@ -1411,7 +1415,6 @@ model Order {
 
   /**
    * DELIVERY INFORMATION SNAPSHOT
-   *
    * These values are copied into the order at checkout.
    * Later changes to the buyer's profile or address
    * must not change an existing order's delivery details.
@@ -1448,15 +1451,12 @@ model Order {
  * ============================================================
  * SELLER ORDERS
  * ============================================================
- *
  * Each seller receives a separate order record.
- *
  * Example:
  * A buyer purchases from three businesses.
  * ReMarket creates:
  * - One Order.
  * - Three SellerOrder records.
- *
  * Each seller manages their own fulfilment.
  */
 
@@ -1467,15 +1467,15 @@ model SellerOrder {
 
   orderId String
 
-  order Order @relation(fields: [orderId],references: [id],onDelete: Restrict)
+  order Order @relation(fields: [orderId], references: [id], onDelete: Restrict)
 
   sellerId String
 
-  seller User @relation("SellerOrders",fields: [sellerId],references: [id],onDelete: Restrict)
+  seller User @relation("SellerOrders", fields: [sellerId], references: [id], onDelete: Restrict)
 
   businessId String
 
-  business Business @relation(fields: [businessId],references: [id],onDelete: Restrict)
+  business Business @relation(fields: [businessId], references: [id], onDelete: Restrict)
 
   status SellerOrderStatus @default(PENDING_ACCEPTANCE)
 
@@ -1512,9 +1512,7 @@ model SellerOrder {
  * ============================================================
  * ORDER ITEMS
  * ============================================================
- *
  * Product name, price and image are snapshots.
- *
  * They remain available in order history even if the
  * original product is subsequently edited or removed.
  */
@@ -1524,12 +1522,12 @@ model OrderItem {
 
   sellerOrderId String
 
-  sellerOrder SellerOrder @relation(fields: [sellerOrderId],references: [id],onDelete: Cascade)
+  sellerOrder SellerOrder @relation(fields: [sellerOrderId], references: [id], onDelete: Cascade)
 
   // Nullable so historical orders survive product removal.
   productId String?
 
-  product Product? @relation(fields: [productId],references: [id],onDelete: SetNull)
+  product Product? @relation(fields: [productId], references: [id], onDelete: SetNull)
 
   productName String
 
@@ -1551,9 +1549,7 @@ model OrderItem {
  * ============================================================
  * PAYMENTS
  * ============================================================
- *
  * This model stores payment records and provider references.
- *
  * It does not activate any payment provider.
  * Payment processing will be connected separately after
  * ReMarket settles its payment-provider arrangement.
@@ -1564,7 +1560,7 @@ model Payment {
 
   orderId String
 
-  order Order @relation(fields: [orderId],references: [id],onDelete: Restrict)
+  order Order @relation(fields: [orderId], references: [id], onDelete: Restrict)
 
   amount Int
 
@@ -1594,4 +1590,24 @@ model Payment {
 
   @@index([orderId, createdAt])
   @@index([status, createdAt])
+}
+
+model ProductReview {
+  id        String @id @default(cuid())
+  productId String
+  userId    String
+
+  rating  Int
+  comment String?
+
+  product Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([productId, userId])
+  @@index([productId, createdAt])
+  @@index([userId, createdAt])
 }

@@ -89,6 +89,7 @@ function getNumber(
            id,
            name,
            price,
+           originalPrice,
            business: {},
            ...
          },
@@ -152,12 +153,10 @@ function parseCartResponse(
       const business: CartItemData["business"] = {
         id: getString(rawBusiness?.id, "unavailable-business")!,
         name: getString(rawBusiness?.name, "Business unavailable")!,
-
         status: getString(
           rawBusiness?.status,
           "INACTIVE",
         )!,
-
         deletedAt: getString(rawBusiness?.deletedAt),
       };
 
@@ -174,6 +173,17 @@ function parseCartResponse(
         getString(firstImage?.url);
 
       const unitPrice = getNumber(rawProduct?.price);
+      const rawOriginalPrice = getNumber(rawProduct?.originalPrice);
+
+      // Original price is only valid for discount display when it is
+      // greater than the current selling price. It is never used in totals.
+      const originalPrice =
+        unitPrice !== null &&
+        unitPrice > 0 &&
+        rawOriginalPrice !== null &&
+        rawOriginalPrice > unitPrice
+          ? rawOriginalPrice
+          : null;
 
       const lineTotal = getNumber(rawItem.lineTotal);
 
@@ -183,37 +193,26 @@ function parseCartResponse(
 
       const item: CartItemData = {
         id: rawItem.id,
-
         productId,
-
         name: getString(
           rawProduct?.name,
           "Product unavailable",
         )!,
-
         description: getString(rawProduct?.description),
-
         unitPrice,
-
+        originalPrice,
         quantity: rawItem.quantity as number,
-
         lineTotal,
-
         availability: getString(
           rawProduct?.availability,
           "UNAVAILABLE",
         )!,
-
         stockQuantity: getNumber(
           rawProduct?.stockQuantity,
         ),
-
         imageUrl,
-
         business,
-
         purchasable,
-
         unavailableReason:
           getString(rawItem.unavailableReason) ??
           (purchasable
@@ -231,6 +230,7 @@ function parseCartResponse(
   );
 
   // Exclude unavailable products from the payable subtotal.
+  // The API's lineTotal is calculated from the current selling price.
   const calculatedSubtotal = items.reduce(
     (sum, item) =>
       sum +
@@ -240,16 +240,13 @@ function parseCartResponse(
 
   return {
     items,
-
     itemCount:
       typeof value.itemCount === "number" &&
       Number.isSafeInteger(value.itemCount) &&
       value.itemCount >= 0
         ? value.itemCount
         : calculatedItemCount,
-
     subtotal: calculatedSubtotal,
-
     currency:
       typeof value.currency === "string"
         ? value.currency
@@ -265,25 +262,14 @@ export default function CartPage() {
   const router = useRouter();
 
   const [items, setItems] = useState<CartItemData[]>([]);
-
   const [itemCount, setItemCount] = useState(0);
-
   const [subtotal, setSubtotal] = useState(0);
-
   const [loading, setLoading] = useState(true);
-
   const [refreshing, setRefreshing] = useState(false);
-
-  const [busyItemId, setBusyItemId] = useState<string | null>(
-    null,
-  );
-
+  const [busyItemId, setBusyItemId] = useState<string | null>(null);
   const [clearingCart, setClearingCart] = useState(false);
-
   const [error, setError] = useState("");
-
   const [feedback, setFeedback] = useState("");
-
   const [refreshKey, setRefreshKey] = useState(0);
 
   /* =====================================================
@@ -447,7 +433,6 @@ export default function CartPage() {
       }
 
       setFeedback("Cart updated successfully.");
-
       setRefreshKey((current) => current + 1);
     } catch (updateError) {
       setError(
@@ -507,7 +492,6 @@ export default function CartPage() {
       }
 
       setFeedback("Product removed from your cart.");
-
       setRefreshKey((current) => current + 1);
     } catch (removeError) {
       setError(
@@ -578,7 +562,6 @@ export default function CartPage() {
       setItems([]);
       setItemCount(0);
       setSubtotal(0);
-
       setFeedback("Your cart has been cleared.");
     } catch (clearError) {
       setError(
@@ -628,9 +611,7 @@ export default function CartPage() {
         className="min-h-dvh overflow-x-clip bg-[#FFFDFC] pb-28 text-[#17202A] lg:pb-10"
       >
         <div className="mx-auto max-w-[1500px] px-4 pb-8 pt-5 sm:px-6 lg:px-8 lg:pt-7">
-
           {/* BREADCRUMB */}
-
           <div className="mb-5 flex items-center gap-2 text-[11px] text-[#756B61]">
             <Link href="/" className="hover:text-[#9F2D18]">
               Home
@@ -653,7 +634,6 @@ export default function CartPage() {
           </div>
 
           {/* PAGE HEADING */}
-
           <div className="mb-6 flex flex-wrap items-center justify-between gap-4">
             <div>
               <p className="text-[10px] font-extrabold uppercase tracking-[0.16em] text-[#FF5A36]">
@@ -702,7 +682,6 @@ export default function CartPage() {
           </div>
 
           {/* ERROR */}
-
           {error && (
             <div
               role="alert"
@@ -724,7 +703,6 @@ export default function CartPage() {
           )}
 
           {/* FEEDBACK */}
-
           {feedback && (
             <p
               role="status"
@@ -735,7 +713,6 @@ export default function CartPage() {
           )}
 
           {/* REFRESHING */}
-
           {refreshing && (
             <p
               role="status"
@@ -747,7 +724,6 @@ export default function CartPage() {
           )}
 
           {/* EMPTY CART */}
-
           {items.length === 0 ? (
             <section className="mx-auto max-w-xl rounded-[24px] border border-[#EAE6DF] bg-white px-6 py-12 text-center shadow-[0_4px_20px_rgba(23,32,42,0.035)]">
               <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-2xl bg-[#FFF1ED] text-[#9F2D18]">
@@ -789,11 +765,8 @@ export default function CartPage() {
             </section>
           ) : (
             /* CART CONTENT */
-
             <div className="grid grid-cols-1 items-start gap-5 lg:grid-cols-[minmax(0,1fr)_360px] lg:gap-6">
-
               {/* CART ITEMS */}
-
               <section>
                 <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
                   <h2 className="text-sm font-extrabold text-[#17202A]">
@@ -831,7 +804,6 @@ export default function CartPage() {
               </section>
 
               {/* SUMMARY */}
-
               <div className="lg:sticky lg:top-24">
                 <CartSummary
                   itemCount={itemCount}

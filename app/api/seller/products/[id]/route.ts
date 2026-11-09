@@ -6,7 +6,6 @@ import {
 import { NextResponse } from "next/server";
 
 import { prisma } from "@/lib/prisma";
-import { validateProductPricing } from "@/lib/product-pricing";
 import { requireSellerAccount } from "@/lib/seller-auth";
 import { createNotification } from "@/lib/notifications";
 
@@ -55,8 +54,7 @@ type ProductUpdateData = {
   imageUrl?: string | null;
   availability?: ProductAvailability;
   price?: number | null;
-  priceMin?: number | null;
-  priceMax?: number | null;
+  originalPrice?: number | null;
   stockQuantity?: number | null;
   keywords?: string[];
 };
@@ -764,9 +762,17 @@ export async function GET(
  * PATCH
  * --------------------------------------------------
  *
- * Supports editing product details and stock quantity.
+ * Supports editing product details, pricing,
+ * and stock quantity.
  *
- * Stock rules:
+ * Pricing:
+ * - price = current selling price.
+ * - originalPrice = optional original price.
+ * - originalPrice must be greater than price.
+ * - originalPrice can be cleared with null or "".
+ * - Product price ranges are no longer supported.
+ *
+ * Stock:
  * null = inventory tracking disabled.
  * 0 = out of stock.
  * > 0 = available tracked quantity.
@@ -851,6 +857,38 @@ export async function PATCH(
       );
     }
 
+    /*
+     * Reject old non-empty product price ranges.
+     * Empty/null legacy values are ignored for compatibility.
+     */
+
+    const hasLegacyPriceRange = [
+      "priceMin",
+      "priceMax",
+    ].some((key) => {
+      if (!hasOwn(body, key)) {
+        return false;
+      }
+
+      const value = body[key];
+
+      if (value === undefined || value === null) {
+        return false;
+      }
+
+      return !(
+        typeof value === "string" &&
+        value.trim() === ""
+      );
+    });
+
+    if (hasLegacyPriceRange) {
+      return jsonError(
+        "Product price ranges are no longer supported. Enter one selling price instead.",
+        400,
+      );
+    }
+
     const supportedPatchFields = new Set([
       "name",
       "description",
@@ -858,10 +896,11 @@ export async function PATCH(
       "keywords",
       "categoryId",
       "price",
-      "priceMin",
-      "priceMax",
+      "originalPrice",
       "stockQuantity",
       "images",
+      "priceMin",
+      "priceMax",
     ]);
 
     const unsupportedFields = Object.keys(body).filter(
@@ -1017,19 +1056,23 @@ export async function PATCH(
     }
 
     /*
+     * --------------------------------------------------
      * PRICING
+     * --------------------------------------------------
      */
 
     const priceProvided = hasOwn(body, "price");
-    const priceMinProvided = hasOwn(body, "priceMin");
-    const priceMaxProvided = hasOwn(body, "priceMax");
+    const originalPriceProvided = hasOwn(
+      body,
+      "originalPrice",
+    );
 
     if (priceProvided) {
       const result = parseOptionalInteger(body.price);
 
       if (!result.valid) {
         return jsonError(
-          "Price must be a whole number between 0 and 2,147,483,647.",
+          "Selling price must be a whole number between 0 and 2,147,483,647.",
           400,
         );
       }
@@ -1037,59 +1080,53 @@ export async function PATCH(
       data.price = result.value;
     }
 
-    if (priceMinProvided) {
+    if (originalPriceProvided) {
       const result = parseOptionalInteger(
-        body.priceMin,
+        body.originalPrice,
       );
 
       if (!result.valid) {
         return jsonError(
-          "Minimum price must be a whole number between 0 and 2,147,483,647.",
+          "Original price must be a whole number between 0 and 2,147,483,647.",
           400,
         );
       }
 
-      data.priceMin = result.value;
+      data.originalPrice = result.value;
     }
 
-    if (priceMaxProvided) {
-      const result = parseOptionalInteger(
-        body.priceMax,
-      );
-
-      if (!result.valid) {
-        return jsonError(
-          "Maximum price must be a whole number between 0 and 2,147,483,647.",
-          400,
-        );
-      }
-
-      data.priceMax = result.value;
-    }
+    /*
+     * Validate the final combination of prices.
+     *
+     * This matters when the seller edits only the selling
+     * price while an original price is already saved.
+     */
 
     const finalPrice = priceProvided
       ? data.price ?? null
       : existing.price;
 
-    const finalPriceMin = priceMinProvided
-      ? data.priceMin ?? null
-      : existing.priceMin;
+    const finalOriginalPrice = originalPriceProvided
+      ? data.originalPrice ?? null
+      : existing.originalPrice;
 
-    const finalPriceMax = priceMaxProvided
-      ? data.priceMax ?? null
-      : existing.priceMax;
+    if (finalOriginalPrice !== null) {
+      if (
+        finalPrice === null ||
+        finalPrice <= 0
+      ) {
+        return jsonError(
+          "An original price can only be saved when the product has a positive selling price. Set a selling price or clear the original price.",
+          400,
+        );
+      }
 
-    const pricingError = validateProductPricing(
-      finalPrice,
-      finalPriceMin,
-      finalPriceMax,
-    );
-
-    if (pricingError) {
-      return jsonError(
-        pricingError,
-        400,
-      );
+      if (finalOriginalPrice <= finalPrice) {
+        return jsonError(
+          "Original price must be greater than the selling price.",
+          400,
+        );
+      }
     }
 
     /*

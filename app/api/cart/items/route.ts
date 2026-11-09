@@ -88,10 +88,16 @@ async function withSerializableRetry<T>(
 }
 
 /**
- * POST /api/cart/item
+ * POST /api/cart/items
  *
  * Adds a product to the authenticated buyer's cart.
  * If the product already exists, its quantity increases.
+ *
+ * Pricing:
+ * - Product.price is the current selling price.
+ * - Product.originalPrice is discount-display metadata only.
+ * - The buyer is always charged Product.price.
+ * - Product price ranges are no longer used.
  */
 export async function POST(request: Request) {
   const access = await requireBuyer();
@@ -184,8 +190,6 @@ export async function POST(request: Request) {
             select: {
               id: true,
               price: true,
-              priceMin: true,
-              priceMax: true,
               stockQuantity: true,
             },
           });
@@ -196,13 +200,12 @@ export async function POST(request: Request) {
             );
           }
 
-          // 2. Only confirmed fixed-price products can be added.
+          // 2. Only products with a positive fixed selling price can be added.
+          // originalPrice is not used for checkout calculations.
           if (
             product.price === null ||
             !Number.isSafeInteger(product.price) ||
-            product.price <= 0 ||
-            product.priceMin !== null ||
-            product.priceMax !== null
+            product.price <= 0
           ) {
             throw new CartConflictError(
               "Only products with a confirmed fixed price can be added to the cart.",
@@ -283,7 +286,7 @@ export async function POST(request: Request) {
             );
           }
 
-          // 7. Validate the product line total.
+          // 7. Validate the line total using the current selling price.
           const lineTotal = product.price * nextQuantity;
 
           if (
@@ -367,7 +370,7 @@ export async function POST(request: Request) {
 }
 
 /**
- * DELETE /api/cart/item
+ * DELETE /api/cart/items
  *
  * Removes a product from the authenticated buyer's cart.
  * Requires productId in the JSON request body.

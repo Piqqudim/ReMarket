@@ -1,4 +1,3 @@
-
 import {
   Availability,
   Prisma,
@@ -28,8 +27,7 @@ const productSelect = {
   name: true,
   description: true,
   price: true,
-  priceMin: true,
-  priceMax: true,
+  originalPrice: true,
   availability: true,
   keywords: true,
   imageUrl: true,
@@ -441,6 +439,12 @@ function buildLocationWhere(
   };
 }
 
+/*
+ * Buyer-facing budget filters now apply only to the
+ * product's current selling price. Product price ranges
+ * (priceMin / priceMax) are no longer part of the model's
+ * public product pricing flow.
+ */
 function buildProductPriceConditions(
   filters: ProductFilters,
 ): Prisma.ProductWhereInput[] {
@@ -453,48 +457,10 @@ function buildProductPriceConditions(
   if (minPrice !== null && maxPrice !== null) {
     return [
       {
-        OR: [
-          {
-            price: {
-              gte: minPrice,
-              lte: maxPrice,
-            },
-          },
-          {
-            AND: [
-              {
-                priceMin: {
-                  lte: maxPrice,
-                },
-              },
-              {
-                OR: [
-                  {
-                    priceMax: {
-                      gte: minPrice,
-                    },
-                  },
-                  {
-                    priceMax: null,
-                  },
-                ],
-              },
-            ],
-          },
-          {
-            AND: [
-              {
-                priceMin: null,
-              },
-              {
-                priceMax: {
-                  gte: minPrice,
-                  lte: maxPrice,
-                },
-              },
-            ],
-          },
-        ],
+        price: {
+          gte: minPrice,
+          lte: maxPrice,
+        },
       },
     ];
   }
@@ -502,62 +468,18 @@ function buildProductPriceConditions(
   if (minPrice !== null) {
     return [
       {
-        OR: [
-          {
-            price: {
-              gte: minPrice,
-            },
-          },
-          {
-            priceMax: {
-              gte: minPrice,
-            },
-          },
-          {
-            AND: [
-              {
-                priceMax: null,
-              },
-              {
-                priceMin: {
-                  gte: minPrice,
-                },
-              },
-            ],
-          },
-        ],
+        price: {
+          gte: minPrice,
+        },
       },
     ];
   }
 
-  const maximum = maxPrice!;
-
   return [
     {
-      OR: [
-        {
-          price: {
-            lte: maximum,
-          },
-        },
-        {
-          priceMin: {
-            lte: maximum,
-          },
-        },
-        {
-          AND: [
-            {
-              priceMin: null,
-            },
-            {
-              priceMax: {
-                lte: maximum,
-              },
-            },
-          ],
-        },
-      ],
+      price: {
+        lte: maxPrice!,
+      },
     },
   ];
 }
@@ -1011,31 +933,40 @@ export async function GET(request: NextRequest) {
       }),
     ]);
 
-    const products = records.map((product) => ({
-      id: product.id,
-      name: product.name,
-      description: product.description,
-      price: product.price,
-      priceMin: product.priceMin,
-      priceMax: product.priceMax,
-      availability: product.availability,
-      keywords: product.keywords,
-      imageUrl: product.imageUrl,
-      createdAt: product.createdAt,
-      updatedAt: product.updatedAt,
+    const products = records.map((product) => {
+      const validOriginalPrice =
+        product.originalPrice !== null &&
+        product.price !== null &&
+        product.price > 0 &&
+        product.originalPrice > product.price
+          ? product.originalPrice
+          : null;
 
-      category: product.category?.isActive
-        ? product.category
-        : null,
+      return {
+        id: product.id,
+        name: product.name,
+        description: product.description,
+        price: product.price,
+        originalPrice: validOriginalPrice,
+        availability: product.availability,
+        keywords: product.keywords,
+        imageUrl: product.imageUrl,
+        createdAt: product.createdAt,
+        updatedAt: product.updatedAt,
 
-      images: product.images.map((image) => ({
-        id: image.id,
-        url: image.url,
-        sortOrder: image.sortOrder,
-      })),
+        category: product.category?.isActive
+          ? product.category
+          : null,
 
-      seller: formatSeller(product.business),
-    }));
+        images: product.images.map((image) => ({
+          id: image.id,
+          url: image.url,
+          sortOrder: image.sortOrder,
+        })),
+
+        seller: formatSeller(product.business),
+      };
+    });
 
     const totalPages = Math.ceil(
       total / pagination.pageSize,

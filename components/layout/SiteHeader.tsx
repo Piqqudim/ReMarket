@@ -6,17 +6,13 @@ import {
   useState,
   type FormEvent,
 } from "react";
-
 import { usePathname, useRouter } from "next/navigation";
 import { getSession, signOut } from "next-auth/react";
 import Link from "next/link";
-
 import {
   ArrowRight,
-  CalendarDays,
   Loader2,
   LogOut,
-  MessageCircle,
   Search,
   ShoppingBag,
   Store,
@@ -26,6 +22,11 @@ import {
 import NotificationBell from "@/components/NotificationBell";
 
 type AccountRole = "ADMIN" | "BUYER" | "SELLER";
+
+/*
+ * Keep the old prop values accepted so existing SiteHeader callers continue
+ * to compile. Search is now product-only while Services are paused.
+ */
 type DiscoveryMode = "ALL" | "PRODUCTS" | "SERVICES";
 
 type SiteHeaderProps = {
@@ -51,49 +52,30 @@ function parseAccountRole(value: unknown): AccountRole | null {
   return null;
 }
 
-export default function SiteHeader({
-  searchMode = "ALL",
-}: SiteHeaderProps) {
+export default function SiteHeader(_props: SiteHeaderProps) {
   const router = useRouter();
   const pathname = usePathname();
 
   const [searchQuery, setSearchQuery] = useState("");
+  const [account, setAccount] = useState<HeaderAccount | null>(null);
+  const [accountLoading, setAccountLoading] = useState(true);
+  const [sessionError, setSessionError] = useState(false);
+  const [accountMenuOpen, setAccountMenuOpen] = useState(false);
+  const [loggingOut, setLoggingOut] = useState(false);
+  const [accountMenuError, setAccountMenuError] = useState("");
 
-  const [account, setAccount] =
-    useState<HeaderAccount | null>(null);
-
-  const [accountLoading, setAccountLoading] =
-    useState(true);
-
-  const [sessionError, setSessionError] =
-    useState(false);
-
-  const [accountMenuOpen, setAccountMenuOpen] =
-    useState(false);
-
-  const [loggingOut, setLoggingOut] =
-    useState(false);
-
-  const [accountMenuError, setAccountMenuError] =
-    useState("");
-
-  const accountMenuRef =
-    useRef<HTMLDivElement | null>(null);
-
+  const accountMenuRef = useRef<HTMLDivElement | null>(null);
   const requestVersionRef = useRef(0);
 
-  /*
-   * =========================================
-   * ACCOUNT SESSION
-   * =========================================
-   */
+  /* ---------------------------------------------------------------------- */
+  /* ACCOUNT SESSION                                                        */
+  /* ---------------------------------------------------------------------- */
 
   useEffect(() => {
     let cancelled = false;
 
     async function refreshAccount() {
-      const requestVersion =
-        ++requestVersionRef.current;
+      const requestVersion = ++requestVersionRef.current;
 
       try {
         const session = await getSession();
@@ -121,34 +103,17 @@ export default function SiteHeader({
         }
 
         setAccount({
-          id:
-            typeof rawUser.id === "string"
-              ? rawUser.id
-              : null,
-
+          id: typeof rawUser.id === "string" ? rawUser.id : null,
           name:
-            typeof rawUser.name === "string"
-              ? rawUser.name
-              : null,
-
+            typeof rawUser.name === "string" ? rawUser.name : null,
           email:
-            typeof rawUser.email === "string"
-              ? rawUser.email
-              : null,
-
+            typeof rawUser.email === "string" ? rawUser.email : null,
           role: parseAccountRole(rawUser.role),
         });
-
         setSessionError(false);
       } catch (error) {
-        console.error(
-          "Header session error:",
-          error,
-        );
-
-        if (!cancelled) {
-          setSessionError(true);
-        }
+        console.error("Header session error:", error);
+        if (!cancelled) setSessionError(true);
       } finally {
         if (
           !cancelled &&
@@ -164,38 +129,24 @@ export default function SiteHeader({
     }
 
     void refreshAccount();
-
-    window.addEventListener(
-      "focus",
-      handleWindowFocus,
-    );
+    window.addEventListener("focus", handleWindowFocus);
 
     return () => {
       cancelled = true;
-
       requestVersionRef.current += 1;
-
-      window.removeEventListener(
-        "focus",
-        handleWindowFocus,
-      );
+      window.removeEventListener("focus", handleWindowFocus);
     };
   }, []);
 
-  /*
-   * =========================================
-   * ACCOUNT MENU BEHAVIOUR
-   * =========================================
-   */
+  /* ---------------------------------------------------------------------- */
+  /* ACCOUNT MENU BEHAVIOUR                                                 */
+  /* ---------------------------------------------------------------------- */
 
   useEffect(() => {
-    if (!accountMenuOpen) {
-      return;
-    }
+    if (!accountMenuOpen) return;
 
     function handlePointerDown(event: PointerEvent) {
       const target = event.target;
-
       if (
         target instanceof Node &&
         accountMenuRef.current &&
@@ -206,37 +157,17 @@ export default function SiteHeader({
     }
 
     function handleKeyDown(event: KeyboardEvent) {
-      if (event.key === "Escape") {
-        setAccountMenuOpen(false);
-      }
+      if (event.key === "Escape") setAccountMenuOpen(false);
     }
 
-    document.addEventListener(
-      "pointerdown",
-      handlePointerDown,
-    );
-
-    document.addEventListener(
-      "keydown",
-      handleKeyDown,
-    );
+    document.addEventListener("pointerdown", handlePointerDown);
+    document.addEventListener("keydown", handleKeyDown);
 
     return () => {
-      document.removeEventListener(
-        "pointerdown",
-        handlePointerDown,
-      );
-
-      document.removeEventListener(
-        "keydown",
-        handleKeyDown,
-      );
+      document.removeEventListener("pointerdown", handlePointerDown);
+      document.removeEventListener("keydown", handleKeyDown);
     };
   }, [accountMenuOpen]);
-
-  /*
-   * Close the menu when navigating to another page.
-   */
 
   useEffect(() => {
     setAccountMenuOpen(false);
@@ -248,35 +179,21 @@ export default function SiteHeader({
     setAccountMenuError("");
   }
 
-  /*
-   * =========================================
-   * SEARCH
-   * =========================================
-   */
+  /* ---------------------------------------------------------------------- */
+  /* PRODUCT SEARCH                                                         */
+  /* ---------------------------------------------------------------------- */
 
-  function handleSearch(
-    event: FormEvent<HTMLFormElement>,
-  ) {
+  function handleSearch(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-
     const query = searchQuery.trim();
-
-    if (!query) {
-      return;
-    }
+    if (!query) return;
 
     const params = new URLSearchParams({
       q: query,
+      type: "product",
     });
 
-    if (searchMode === "PRODUCTS") {
-      params.set("type", "product");
-    } else if (searchMode === "SERVICES") {
-      params.set("type", "service");
-    }
-
     closeAccountMenu();
-
     router.push(`/search?${params.toString()}`);
   }
 
@@ -291,63 +208,47 @@ export default function SiteHeader({
           className="ml-3 h-5 w-5 shrink-0 text-[#81766C]"
           aria-hidden="true"
         />
-
         <input
           type="search"
           value={searchQuery}
-          onChange={(event) =>
-            setSearchQuery(event.target.value)
-          }
-          placeholder="Search products or services..."
-          aria-label="Search ReMarket"
+          onChange={(event) => setSearchQuery(event.target.value)}
+          placeholder="Search products nearby..."
+          aria-label="Search products"
           autoComplete="off"
+          maxLength={100}
           className="min-w-0 flex-1 bg-transparent px-3 text-sm text-[#17202A] outline-none placeholder:text-[#91877E]"
         />
-
         <button
           type="submit"
-          aria-label="Search"
+          aria-label="Search products"
           disabled={!searchQuery.trim()}
           className="flex h-9 w-10 shrink-0 items-center justify-center rounded-full bg-[#FF5A36] text-white transition hover:bg-[#E94A28] disabled:cursor-not-allowed disabled:opacity-60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#FF5A36] focus-visible:ring-offset-2"
         >
-          <Search
-            className="h-4 w-4"
-            aria-hidden="true"
-          />
+          <Search className="h-4 w-4" aria-hidden="true" />
         </button>
       </form>
     );
   }
 
-  /*
-   * =========================================
-   * LOGOUT
-   * =========================================
-   */
+  /* ---------------------------------------------------------------------- */
+  /* LOGOUT                                                                 */
+  /* ---------------------------------------------------------------------- */
 
   async function handleLogout() {
-    if (loggingOut) {
-      return;
-    }
+    if (loggingOut) return;
 
     setLoggingOut(true);
     setAccountMenuError("");
 
     try {
-      await signOut({
-        redirect: false,
-        callbackUrl: "/",
-      });
-
+      await signOut({ redirect: false, callbackUrl: "/" });
       setAccount(null);
       setSessionError(false);
       setAccountMenuOpen(false);
-
       router.replace("/");
       router.refresh();
     } catch (error) {
       console.error("Logout failed:", error);
-
       setAccountMenuError(
         "We couldn't log you out. Please try again.",
       );
@@ -356,35 +257,18 @@ export default function SiteHeader({
     }
   }
 
-  /*
-   * =========================================
-   * NAVIGATION ACTIVE STATES
-   * =========================================
-   */
+  /* ---------------------------------------------------------------------- */
+  /* NAVIGATION                                                             */
+  /* ---------------------------------------------------------------------- */
 
   const productsActive =
     pathname === "/shop" ||
     pathname.startsWith("/shop/") ||
-    pathname.startsWith("/product/");
+    pathname.startsWith("/product/") ||
+    pathname === "/search" ||
+    pathname.startsWith("/search/");
 
-  const servicesActive =
-    pathname === "/services" ||
-    pathname.startsWith("/services/");
-
-  const bookingMessagesActive =
-    pathname === "/bookings" ||
-    pathname.startsWith("/bookings/") ||
-    pathname.startsWith("/service-bookings/") ||
-    (account?.role === "SELLER" && pathname === "/seller");
-
-  const canAccessBookingMessages =
-    !accountLoading &&
-    (account?.role === "BUYER" ||
-      account?.role === "SELLER");
-
-  function desktopLinkClass(
-    active: boolean,
-  ) {
+  function desktopLinkClass(active: boolean) {
     return `rounded-full px-3 py-2.5 text-sm font-semibold transition ${
       active
         ? "bg-[#FFF1ED] text-[#9F2D18]"
@@ -392,11 +276,9 @@ export default function SiteHeader({
     }`;
   }
 
-  /*
-   * =========================================
-   * ACCOUNT MENU CONTENT
-   * =========================================
-   */
+  /* ---------------------------------------------------------------------- */
+  /* ACCOUNT MENU CONTENT                                                   */
+  /* ---------------------------------------------------------------------- */
 
   const accountMenuContent = (
     <div
@@ -413,24 +295,19 @@ export default function SiteHeader({
             className="h-4 w-4 animate-spin text-[#FF5A36]"
             aria-hidden="true"
           />
-
           Checking your account...
         </div>
       ) : account ? (
         <>
           <div className="border-b border-[#EAE6DF] bg-[#FCFAF6] p-4">
             <p className="truncate text-sm font-bold text-[#17202A]">
-              {account.name ||
-                account.email ||
-                "My account"}
+              {account.name || account.email || "My account"}
             </p>
-
             {account.name && account.email && (
               <p className="mt-0.5 truncate text-xs text-[#756B61]">
                 {account.email}
               </p>
             )}
-
             <span className="mt-2 inline-flex rounded-full bg-[#FFE0D6] px-2.5 py-1 text-[10px] font-bold text-[#9F2D18]">
               {account.role === "ADMIN"
                 ? "Administrator"
@@ -440,15 +317,12 @@ export default function SiteHeader({
                     ? "Buyer account"
                     : "Account"}
             </span>
-
             {account.role === null && (
               <p className="mt-2 text-[11px] leading-4 text-[#756B61]">
                 Your account role could not be identified.
               </p>
             )}
           </div>
-
-          {/* ADMIN NAVIGATION */}
 
           {account.role === "ADMIN" ? (
             <Link
@@ -463,7 +337,6 @@ export default function SiteHeader({
               Admin dashboard
             </Link>
           ) : account.role === "SELLER" ? (
-            /* SELLER NAVIGATION */
             <>
               <Link
                 href="/seller"
@@ -476,7 +349,6 @@ export default function SiteHeader({
                 />
                 Seller dashboard
               </Link>
-
               <Link
                 href="/seller/profile"
                 onClick={closeAccountMenu}
@@ -486,11 +358,10 @@ export default function SiteHeader({
                   className="h-4 w-4 text-[#756B61]"
                   aria-hidden="true"
                 />
-                Business profile
+                Seller profile
               </Link>
             </>
           ) : (
-            /* BUYER PROFILE */
             <Link
               href="/profile"
               onClick={closeAccountMenu}
@@ -504,29 +375,6 @@ export default function SiteHeader({
             </Link>
           )}
 
-          {/* BUYER BOOKINGS */}
-
-          {account.role === "BUYER" && (
-            <Link
-              href="/bookings"
-              onClick={closeAccountMenu}
-              className={`flex items-center gap-3 px-4 py-3 text-sm font-semibold transition hover:bg-[#FCFAF6] hover:text-[#9F2D18] ${
-                pathname === "/bookings" ||
-                pathname.startsWith("/bookings/")
-                  ? "bg-[#FFF7F4] text-[#9F2D18]"
-                  : "text-[#17202A]"
-              }`}
-            >
-              <CalendarDays
-                className="h-4 w-4 text-[#FF5A36]"
-                aria-hidden="true"
-              />
-              My bookings
-            </Link>
-          )}
-
-          {/* SAVED LISTINGS */}
-
           {account.role !== "ADMIN" && (
             <Link
               href="/saved"
@@ -537,11 +385,9 @@ export default function SiteHeader({
                 className="h-4 w-4 text-[#756B61]"
                 aria-hidden="true"
               />
-              Saved listings
+              Saved products
             </Link>
           )}
-
-          {/* SELLER ONBOARDING */}
 
           {account.role === "BUYER" && (
             <div className="border-t border-[#EAE6DF] p-3">
@@ -552,14 +398,12 @@ export default function SiteHeader({
               >
                 <span>
                   <span className="block text-xs font-bold text-[#9F2D18]">
-                    Have a business?
+                    Sell on ReMarket
                   </span>
-
                   <span className="mt-1 block text-[11px] text-[#756B61]">
-                    Start selling on ReMarket.
+                    Start listing your products.
                   </span>
                 </span>
-
                 <ArrowRight
                   className="h-4 w-4 shrink-0 text-[#9F2D18]"
                   aria-hidden="true"
@@ -567,8 +411,6 @@ export default function SiteHeader({
               </Link>
             </div>
           )}
-
-          {/* LOGOUT */}
 
           <div className="border-t border-[#EAE6DF] p-2">
             <button
@@ -583,15 +425,10 @@ export default function SiteHeader({
                   aria-hidden="true"
                 />
               ) : (
-                <LogOut
-                  className="h-4 w-4"
-                  aria-hidden="true"
-                />
+                <LogOut className="h-4 w-4" aria-hidden="true" />
               )}
-
               {loggingOut ? "Logging out..." : "Log out"}
             </button>
-
             {accountMenuError && (
               <p
                 role="alert"
@@ -603,24 +440,21 @@ export default function SiteHeader({
           </div>
         </>
       ) : (
-        /* SIGNED-OUT NAVIGATION */
         <>
           <div className="border-b border-[#EAE6DF] bg-[#FCFAF6] p-4">
             <p className="text-sm font-bold text-[#17202A]">
               Welcome to ReMarket
             </p>
-
             <p className="mt-1 text-xs leading-5 text-[#756B61]">
-              Sign in to access your account and saved listings.
+              Sign in to access your account and saved products.
             </p>
-
             {sessionError && (
               <p
                 role="alert"
                 className="mt-2 text-[11px] leading-4 text-[#9F2D18]"
               >
-                We could not verify your session. Refresh the page if
-                you have already signed in.
+                We could not verify your session. Refresh the page if you
+                have already signed in.
               </p>
             )}
           </div>
@@ -645,7 +479,6 @@ export default function SiteHeader({
             >
               Create an account
             </Link>
-
             <Link
               href="/seller/signup"
               onClick={closeAccountMenu}
@@ -659,11 +492,9 @@ export default function SiteHeader({
     </div>
   );
 
-  /*
-   * =========================================
-   * HEADER
-   * =========================================
-   */
+  /* ---------------------------------------------------------------------- */
+  /* HEADER                                                                 */
+  /* ---------------------------------------------------------------------- */
 
   return (
     <header className="sticky top-0 z-40 border-b border-[#EAE6DF] bg-white/95 shadow-[0_2px_12px_rgba(23,32,42,0.035)] backdrop-blur">
@@ -680,100 +511,50 @@ export default function SiteHeader({
         "
       >
         {/* LOGO */}
-
         <Link
           href="/"
           aria-label="ReMarket home"
           className="order-1 flex min-w-0 items-center gap-2.5 lg:w-[170px] lg:shrink-0 xl:w-[190px]"
         >
           <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-[#FF5A36] text-white shadow-sm">
-            <ShoppingBag
-              className="h-5 w-5"
-              aria-hidden="true"
-            />
+            <ShoppingBag className="h-5 w-5" aria-hidden="true" />
           </span>
-
           <span className="truncate text-xl font-extrabold tracking-tight text-[#9F2D18] lg:text-[21px]">
             ReMarket
           </span>
         </Link>
 
-        {/* DESKTOP NAVIGATION */}
-
+        {/* PRODUCT-FOCUSED DESKTOP NAVIGATION */}
         <nav
           aria-label="Main navigation"
           className="order-2 hidden shrink-0 items-center gap-1 lg:flex"
         >
           <Link
             href="/"
-            aria-current={
-              pathname === "/" ? "page" : undefined
-            }
+            aria-current={pathname === "/" ? "page" : undefined}
             className={desktopLinkClass(pathname === "/")}
           >
             Home
           </Link>
-
           <Link
             href="/shop"
-            aria-current={
-              productsActive ? "page" : undefined
-            }
+            aria-current={productsActive ? "page" : undefined}
             className={desktopLinkClass(productsActive)}
           >
             Products
           </Link>
-
-          <Link
-            href="/services"
-            aria-current={
-              servicesActive ? "page" : undefined
-            }
-            className={desktopLinkClass(servicesActive)}
-          >
-            Services
-          </Link>
         </nav>
 
-        {/* SEARCH */}
-
+        {/* PRODUCT SEARCH */}
         <div className="order-3 col-span-2 min-w-0 lg:col-span-1 lg:min-w-[180px] lg:flex-1">
           {renderSearchForm()}
         </div>
 
-        {/* BOOKING CONVERSATIONS, NOTIFICATIONS AND ACCOUNT */}
-
+        {/* NOTIFICATIONS AND ACCOUNT */}
         <div className="order-2 flex shrink-0 items-center justify-end gap-1.5 sm:gap-2 lg:order-4">
-          {canAccessBookingMessages && (
-            <Link
-              href={
-                account?.role === "SELLER"
-                  ? "/seller#service-bookings"
-                  : "/bookings"
-              }
-              aria-label="Booking conversations"
-              title="Booking conversations"
-              className={`flex h-10 w-10 items-center justify-center rounded-full transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#FF5A36] focus-visible:ring-offset-2 ${
-                bookingMessagesActive
-                  ? "bg-[#FFF1ED] text-[#9F2D18]"
-                  : "text-[#5F554D] hover:bg-[#FFF1ED] hover:text-[#9F2D18]"
-              }`}
-            >
-              <MessageCircle
-                className="h-5 w-5"
-                aria-hidden="true"
-              />
-            </Link>
-          )}
-
           <NotificationBell />
 
-          {/* SINGLE ACCOUNT MENU */}
-
-          <div
-            ref={accountMenuRef}
-            className="relative shrink-0"
-          >
+          <div ref={accountMenuRef} className="relative shrink-0">
             <button
               type="button"
               onClick={() => {
@@ -790,15 +571,9 @@ export default function SiteHeader({
               }`}
             >
               {account?.role === "SELLER" ? (
-                <Store
-                  className="h-5 w-5"
-                  aria-hidden="true"
-                />
+                <Store className="h-5 w-5" aria-hidden="true" />
               ) : (
-                <UserCircle
-                  className="h-6 w-6"
-                  aria-hidden="true"
-                />
+                <UserCircle className="h-6 w-6" aria-hidden="true" />
               )}
             </button>
 

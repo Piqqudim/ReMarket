@@ -49,6 +49,32 @@ function normalizeSocialHandle(
   return clean;
 }
 
+/**
+ * Only expose an original price when it represents a valid discount:
+ * - The current selling price must be a positive fixed price.
+ * - The original price must be greater than the selling price.
+ *
+ * The original price is display information only. Checkout and order
+ * calculations must continue to use Product.price.
+ */
+function getValidOriginalPrice(
+  price: number | null,
+  originalPrice: number | null,
+): number | null {
+  if (
+    price === null ||
+    !Number.isSafeInteger(price) ||
+    price <= 0 ||
+    originalPrice === null ||
+    !Number.isSafeInteger(originalPrice) ||
+    originalPrice <= price
+  ) {
+    return null;
+  }
+
+  return originalPrice;
+}
+
 export async function GET(
   request: NextRequest,
   {
@@ -151,8 +177,7 @@ export async function GET(
             name: true,
             description: true,
             price: true,
-            priceMin: true,
-            priceMax: true,
+            originalPrice: true,
             availability: true,
             imageUrl: true,
             keywords: true,
@@ -176,6 +201,7 @@ export async function GET(
         },
 
         // Only active, non-deleted services are visible on public profiles.
+        // Service price ranges remain supported independently of product pricing.
         services: {
           where: {
             status: "ACTIVE",
@@ -373,8 +399,10 @@ export async function GET(
         name: product.name,
         description: product.description,
         price: product.price,
-        priceMin: product.priceMin,
-        priceMax: product.priceMax,
+        originalPrice: getValidOriginalPrice(
+          product.price,
+          product.originalPrice,
+        ),
         availability: product.availability,
         imageUrl: product.imageUrl,
         keywords: product.keywords,
