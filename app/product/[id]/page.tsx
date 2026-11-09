@@ -17,7 +17,6 @@ import {
   ArrowLeft,
   ArrowRight,
   BadgeCheck,
-  Check,
   ChevronLeft,
   ChevronRight,
   Heart,
@@ -26,13 +25,13 @@ import {
   MapPin,
   Package,
   Share2,
-  ShieldCheck,
   Store,
   X,
 } from "lucide-react";
 
 import SiteHeader from "@/components/layout/SiteHeader";
 import MobileBottomNav from "@/components/layout/MobileBottomNav";
+import AddToCartButton from "@/components/cart/AddToCartButton";
 
 /* =========================================================
    TYPES
@@ -1376,9 +1375,6 @@ function ProductPageContent({
 
   const business = product.business;
 
-  const mainImage =
-    images[activeImageIndex] ?? null;
-
   const locationLabel = [
     business.location?.street,
     business.location?.area,
@@ -1467,22 +1463,27 @@ function ProductPageContent({
             <section className="min-w-0">
               <div className="relative overflow-hidden rounded-[22px] border border-[#EAE6DF] bg-[#FCFAF6]">
                 <div className="relative flex aspect-square max-h-[680px] items-center justify-center">
-                  {mainImage ? (
-                    <img
-                      src={mainImage}
-                      alt={product.name}
-                      fetchPriority="high"
-                      className="h-full w-full object-contain"
-                    />
-                  ) : (
-                    <div className="flex flex-col items-center gap-3 text-[#B6A99E]">
-                      <ImageIcon className="h-12 w-12" />
+                  {(() => {
+                    const mainImage =
+                      images[activeImageIndex] ?? null;
 
-                      <span className="text-xs font-semibold">
-                        No product image
-                      </span>
-                    </div>
-                  )}
+                    return mainImage ? (
+                      <img
+                        src={mainImage}
+                        alt={product.name}
+                        fetchPriority="high"
+                        className="h-full w-full object-contain"
+                      />
+                    ) : (
+                      <div className="flex flex-col items-center gap-3 text-[#B6A99E]">
+                        <ImageIcon className="h-12 w-12" />
+
+                        <span className="text-xs font-semibold">
+                          No product image
+                        </span>
+                      </div>
+                    );
+                  })()}
 
                   {images.length > 1 && (
                     <>
@@ -1727,26 +1728,18 @@ function ProductPageContent({
                 )}
               </div>
 
-              {/* PURCHASE STATUS NOTICE */}
+              {/* =====================================
+                  PRODUCT PURCHASE / ADD TO CART
+              ===================================== */}
 
-              <div className="mt-4 rounded-2xl border border-[#F0D7B3] bg-[#FFF8EC] p-4">
-                <div className="flex items-start gap-3">
-                  <ShieldCheck className="mt-0.5 h-5 w-5 shrink-0 text-[#9F2D18]" />
-
-                  <div>
-                    <h2 className="text-xs font-extrabold text-[#5E4730]">
-                      Product purchase information
-                    </h2>
-
-                    <p className="mt-1.5 text-[11px] leading-5 text-[#796B5C]">
-                      Online product ordering and checkout
-                      are not available yet. You can review
-                      the product and seller information
-                      while ReMarket's purchase flow is being
-                      developed.
-                    </p>
-                  </div>
-                </div>
+              <div className="mt-4">
+                <AddToCartButton
+                  productId={product.id}
+                  availability={product.availability}
+                  price={product.price}
+                  priceMin={product.priceMin}
+                  priceMax={product.priceMax}
+                />
               </div>
             </section>
           </div>

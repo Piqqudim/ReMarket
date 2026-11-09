@@ -7,7 +7,7 @@ import { NextResponse } from "next/server";
 
 import { prisma } from "@/lib/prisma";
 import { validateProductPricing } from "@/lib/product-pricing";
-import { requireSeller } from "@/lib/seller-auth";
+import { requireSellerAccount } from "@/lib/seller-auth";
 import { createNotification } from "@/lib/notifications";
 
 const MAX_PRODUCT_ID_LENGTH = 100;
@@ -57,6 +57,7 @@ type ProductUpdateData = {
   price?: number | null;
   priceMin?: number | null;
   priceMax?: number | null;
+  stockQuantity?: number | null;
   keywords?: string[];
 };
 
@@ -139,7 +140,8 @@ async function readJsonBody(
     const declaredLength = Number(contentLength);
 
     if (
-      Number.isFinite(declaredLength) &&
+      !Number.isFinite(declaredLength) ||
+      declaredLength < 0 ||
       declaredLength > maximumBytes
     ) {
       return {
@@ -297,6 +299,7 @@ function isSafeImageUrl(
     return (
       (url.protocol === "http:" ||
         url.protocol === "https:") &&
+      Boolean(url.hostname) &&
       !url.username &&
       !url.password
     );
@@ -458,12 +461,6 @@ function getCompatibilityImageUrl(
  * --------------------------------------------------
  * KEYWORD VALIDATION
  * --------------------------------------------------
- *
- * Same limits as seller product creation:
- * - Maximum 30 keywords.
- * - Maximum 80 characters per keyword.
- * - Maximum 1,500 combined characters.
- * --------------------------------------------------
  */
 
 function parseKeywords(
@@ -547,7 +544,6 @@ async function notifyAdminsOfProductEvent(
     message: string;
     productId: string;
     businessId: string;
-    businessName: string;
     dedupePrefix?: string;
   },
 ): Promise<void> {
@@ -565,13 +561,9 @@ async function notifyAdminsOfProductEvent(
       try {
         await createNotification({
           userId: admin.id,
-
           type: input.type,
-
           title: input.title,
-
           message: input.message,
-
           priority: NotificationPriority.NORMAL,
 
           data: {
@@ -601,11 +593,55 @@ async function notifyAdminsOfProductEvent(
 
 /*
  * --------------------------------------------------
+ * SELLER BUSINESS VALIDATION
+ * --------------------------------------------------
+ *
+ * Business.ownerId is nullable in the Prisma schema.
+ * The ownership comparison rejects null owners.
+ * --------------------------------------------------
+ */
+
+function validateSellerBusiness(
+  business: {
+    id: string;
+    ownerId: string | null;
+    deletedAt: Date | null;
+  } | null,
+  sellerId: string,
+) {
+  if (!business) {
+    return jsonError(
+      "You do not have a business linked to this seller account.",
+      404,
+    );
+  }
+
+  if (business.ownerId !== sellerId) {
+    return jsonError(
+      "You are not allowed to manage this business.",
+      403,
+    );
+  }
+
+  if (business.deletedAt) {
+    return jsonError(
+      "This business has been deleted.",
+      410,
+    );
+  }
+
+  return null;
+}
+
+/*
+ * --------------------------------------------------
  * SELLER PRODUCT LOOKUP
  * --------------------------------------------------
  *
  * A seller may only access products belonging
  * to their own non-deleted business.
+ *
+ * The business does not have to be ACTIVE.
  * --------------------------------------------------
  */
 
@@ -616,7 +652,6 @@ async function getSellerProduct(
   return prisma.product.findFirst({
     where: {
       id: productId,
-
       deletedAt: null,
 
       business: {
@@ -663,13 +698,22 @@ export async function GET(
     }>;
   },
 ) {
-  const auth = await requireSeller();
+  const auth = await requireSellerAccount();
 
   if (!auth.authorized) {
     return auth.response;
   }
 
   try {
+    const businessError = validateSellerBusiness(
+      auth.business,
+      auth.user.id,
+    );
+
+    if (businessError) {
+      return businessError;
+    }
+
     const { id } = await context.params;
 
     if (
@@ -720,20 +764,12 @@ export async function GET(
  * PATCH
  * --------------------------------------------------
  *
- * Updates an existing seller product.
+ * Supports editing product details and stock quantity.
  *
- * Images:
- *
- * - images omitted:
- *     Preserve existing ProductImage records.
- *
- * - images: []:
- *     Remove all ProductImage records.
- *
- * - images: [...]:
- *     Replace existing ProductImage records.
- *
- * Product status is intentionally not changed here.
+ * Stock rules:
+ * null = inventory tracking disabled.
+ * 0 = out of stock.
+ * > 0 = available tracked quantity.
  * --------------------------------------------------
  */
 
@@ -745,13 +781,22 @@ export async function PATCH(
     }>;
   },
 ) {
-  const auth = await requireSeller();
+  const auth = await requireSellerAccount();
 
   if (!auth.authorized) {
     return auth.response;
   }
 
   try {
+    const businessError = validateSellerBusiness(
+      auth.business,
+      auth.user.id,
+    );
+
+    if (businessError) {
+      return businessError;
+    }
+
     const { id } = await context.params;
 
     if (
@@ -776,10 +821,6 @@ export async function PATCH(
       );
     }
 
-    /*
-     * Read and validate the request body with
-     * a streaming size limit.
-     */
     const bodyResult = await readJsonBody(request);
 
     if (!bodyResult.ok) {
@@ -810,12 +851,34 @@ export async function PATCH(
       );
     }
 
+    const supportedPatchFields = new Set([
+      "name",
+      "description",
+      "availability",
+      "keywords",
+      "categoryId",
+      "price",
+      "priceMin",
+      "priceMax",
+      "stockQuantity",
+      "images",
+    ]);
+
+    const unsupportedFields = Object.keys(body).filter(
+      (key) => !supportedPatchFields.has(key),
+    );
+
+    if (unsupportedFields.length > 0) {
+      return jsonError(
+        `Unsupported product fields: ${unsupportedFields.join(", ")}.`,
+        400,
+      );
+    }
+
     const data: ProductUpdateData = {};
 
     /*
-     * -----------------------------------------
      * NAME
-     * -----------------------------------------
      */
 
     if (hasOwn(body, "name")) {
@@ -839,9 +902,7 @@ export async function PATCH(
     }
 
     /*
-     * -----------------------------------------
      * DESCRIPTION
-     * -----------------------------------------
      */
 
     if (hasOwn(body, "description")) {
@@ -870,9 +931,7 @@ export async function PATCH(
     }
 
     /*
-     * -----------------------------------------
      * AVAILABILITY
-     * -----------------------------------------
      */
 
     if (hasOwn(body, "availability")) {
@@ -887,9 +946,7 @@ export async function PATCH(
     }
 
     /*
-     * -----------------------------------------
      * KEYWORDS
-     * -----------------------------------------
      */
 
     if (hasOwn(body, "keywords")) {
@@ -908,9 +965,7 @@ export async function PATCH(
     }
 
     /*
-     * -----------------------------------------
      * CATEGORY
-     * -----------------------------------------
      */
 
     if (hasOwn(body, "categoryId")) {
@@ -932,6 +987,13 @@ export async function PATCH(
       if (!categoryId) {
         data.categoryId = null;
       } else {
+        if (categoryId.length > 100) {
+          return jsonError(
+            "Category ID is too long.",
+            400,
+          );
+        }
+
         const category = await prisma.category.findFirst({
           where: {
             id: categoryId,
@@ -955,15 +1017,7 @@ export async function PATCH(
     }
 
     /*
-     * -----------------------------------------
      * PRICING
-     * -----------------------------------------
-     *
-     * Validate the final combined values,
-     * including fields omitted from this PATCH.
-     *
-     * Explicit null values are preserved.
-     * -----------------------------------------
      */
 
     const priceProvided = hasOwn(body, "price");
@@ -1039,19 +1093,26 @@ export async function PATCH(
     }
 
     /*
-     * -----------------------------------------
+     * INVENTORY / STOCK QUANTITY
+     */
+
+    if (hasOwn(body, "stockQuantity")) {
+      const stockResult = parseOptionalInteger(
+        body.stockQuantity,
+      );
+
+      if (!stockResult.valid) {
+        return jsonError(
+          "Stock quantity must be null or a whole number between 0 and 2,147,483,647.",
+          400,
+        );
+      }
+
+      data.stockQuantity = stockResult.value;
+    }
+
+    /*
      * IMAGE UPDATE
-     * -----------------------------------------
-     *
-     * images omitted:
-     *     Preserve current images.
-     *
-     * images: []:
-     *     Remove current images.
-     *
-     * images: [...]:
-     *     Replace current images.
-     * -----------------------------------------
      */
 
     const imagesProvided = hasOwn(body, "images");
@@ -1072,19 +1133,13 @@ export async function PATCH(
 
       parsedImages = imagesResult.value;
 
-      /*
-       * Keep the legacy imageUrl field synchronized
-       * with the first image.
-       */
       data.imageUrl = getCompatibilityImageUrl(
         parsedImages,
       );
     }
 
     /*
-     * -----------------------------------------
-     * DETERMINE NOTIFICATION EVENT
-     * -----------------------------------------
+     * NOTIFICATION EVENT
      */
 
     const availabilityChanged =
@@ -1096,23 +1151,19 @@ export async function PATCH(
       Object.keys(data).length > 0 ||
       imagesProvided;
 
+    if (!hasProductChanges) {
+      return jsonError(
+        "No supported product changes were supplied.",
+        400,
+      );
+    }
+
     /*
-     * -----------------------------------------
      * DATABASE TRANSACTION
-     * -----------------------------------------
-     *
-     * Product fields and image changes are saved
-     * together. If the image operation fails,
-     * the product update is rolled back.
-     * -----------------------------------------
      */
 
     const product = await prisma.$transaction(
       async (tx) => {
-        /*
-         * Reconfirm product ownership and existence
-         * inside the transaction before updating.
-         */
         const currentProduct = await tx.product.findFirst({
           where: {
             id: existing.id,
@@ -1141,10 +1192,6 @@ export async function PATCH(
           data,
         });
 
-        /*
-         * Replace ProductImage records only when
-         * the request explicitly supplies images.
-         */
         if (imagesProvided) {
           await tx.productImage.deleteMany({
             where: {
@@ -1167,9 +1214,6 @@ export async function PATCH(
           }
         }
 
-        /*
-         * Return the final updated product.
-         */
         return tx.product.findUniqueOrThrow({
           where: {
             id: existing.id,
@@ -1201,45 +1245,34 @@ export async function PATCH(
     );
 
     /*
-     * -----------------------------------------
      * NOTIFY ADMINS
-     * -----------------------------------------
      *
      * Notification failures do not roll back
      * the successfully updated product.
-     * -----------------------------------------
      */
 
     if (hasProductChanges) {
       if (availabilityChanged) {
         await notifyAdminsOfProductEvent({
           type: NotificationType.PRODUCT_AVAILABILITY_CHANGED,
-
           title: "Product availability changed",
 
           message:
             `The availability of "${product.name}" from ${product.business.name} has changed to ${product.availability}.`,
 
           productId: product.id,
-
           businessId: product.business.id,
-
-          businessName: product.business.name,
         });
       } else {
         await notifyAdminsOfProductEvent({
           type: NotificationType.PRODUCT_UPDATED,
-
           title: "Product updated",
 
           message:
             `"${product.name}" from ${product.business.name} was updated by the seller.`,
 
           productId: product.id,
-
           businessId: product.business.id,
-
-          businessName: product.business.name,
         });
       }
     }
@@ -1299,9 +1332,7 @@ export async function PATCH(
  * Product.imageUrl and image records are not removed
  * from Cloudinary by this endpoint.
  *
- * A soft-deleted product no longer counts toward
- * the seller's active product capacity because
- * active capacity counts only deletedAt: null.
+ * Pending and inactive businesses are allowed.
  * --------------------------------------------------
  */
 
@@ -1313,13 +1344,22 @@ export async function DELETE(
     }>;
   },
 ) {
-  const auth = await requireSeller();
+  const auth = await requireSellerAccount();
 
   if (!auth.authorized) {
     return auth.response;
   }
 
   try {
+    const businessError = validateSellerBusiness(
+      auth.business,
+      auth.user.id,
+    );
+
+    if (businessError) {
+      return businessError;
+    }
+
     const { id } = await context.params;
 
     if (
@@ -1373,29 +1413,23 @@ export async function DELETE(
     /*
      * Notify admins after the soft deletion succeeds.
      */
+
     await notifyAdminsOfProductEvent({
       type: NotificationType.PRODUCT_REMOVED,
-
       title: "Product removed",
 
       message:
         `"${product.business.name}" has removed the product "${product.name}".`,
 
       productId: product.id,
-
       businessId: product.business.id,
-
-      businessName: product.business.name,
-
       dedupePrefix: "product-removed",
     });
 
     return NextResponse.json(
       {
         message: "Product deleted successfully.",
-
         productId: product.id,
-
         deletedAt: deletedAt.toISOString(),
       },
       {

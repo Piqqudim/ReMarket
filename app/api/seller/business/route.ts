@@ -1,4 +1,3 @@
-
 import {
   NotificationPriority,
   NotificationType,
@@ -6,7 +5,10 @@ import {
 import { NextResponse } from "next/server";
 
 import { prisma } from "@/lib/prisma";
-import { requireSeller } from "@/lib/seller-auth";
+import {
+  requireSeller,
+  requireSellerAccount,
+} from "@/lib/seller-auth";
 import { geocodeBusinessLocation } from "@/lib/geocoding";
 import { createNotification } from "@/lib/notifications";
 
@@ -24,6 +26,7 @@ const ALLOWED_AVAILABILITY = [
 ] as const;
 
 type AvailabilityValue = (typeof ALLOWED_AVAILABILITY)[number];
+
 type SocialPlatform =
   | "WHATSAPP"
   | "INSTAGRAM"
@@ -129,6 +132,7 @@ function jsonHeaders() {
 function isValidHttpUrl(value: string): boolean {
   try {
     const url = new URL(value);
+
     return (
       (url.protocol === "http:" || url.protocol === "https:") &&
       Boolean(url.hostname) &&
@@ -172,6 +176,7 @@ function isSocialPlatform(value: unknown): value is SocialPlatform {
 
 function normalizeNigerianPhone(value: string): string {
   let clean = value.trim().replace(/[^\d+]/g, "");
+
   if (!clean) return "";
 
   if (clean.startsWith("00")) clean = clean.slice(2);
@@ -188,12 +193,17 @@ function normalizeSocialHandle(
   handle: string,
 ): string {
   const clean = handle.trim();
+
   if (!clean) return "";
 
   if (platform === "WHATSAPP" || platform === "PHONE") {
-    if (clean.startsWith("http://") || clean.startsWith("https://")) {
+    if (
+      clean.startsWith("http://") ||
+      clean.startsWith("https://")
+    ) {
       return clean;
     }
+
     return normalizeNigerianPhone(clean);
   }
 
@@ -225,6 +235,7 @@ function parseSocialLinkUpdates(
     if (typeof record.handle !== "string") return null;
 
     let handle = record.handle.trim();
+
     if (handle.length > MAX_SOCIAL_HANDLE_LENGTH) return null;
 
     if (record.platform === "PHONE") {
@@ -267,7 +278,12 @@ function parseCategoryIds(value: unknown): string[] | null {
     if (typeof item !== "string") return null;
 
     const id = item.trim();
-    if (!id || id.length > MAX_CATEGORY_ID_LENGTH || seen.has(id)) {
+
+    if (
+      !id ||
+      id.length > MAX_CATEGORY_ID_LENGTH ||
+      seen.has(id)
+    ) {
       return null;
     }
 
@@ -290,7 +306,9 @@ function composeLocationAddress(
     area,
     city,
     "Nigeria",
-  ].filter(Boolean).join(", ");
+  ]
+    .filter(Boolean)
+    .join(", ");
 }
 
 function parseLocationInput(
@@ -306,7 +324,13 @@ function parseLocationInput(
     ? composeLocationAddress(houseNumber, street, area, city)
     : suppliedAddress;
 
-  return { area, address, houseNumber, street, city };
+  return {
+    area,
+    address,
+    houseNumber,
+    street,
+    city,
+  };
 }
 
 function parseStoredLocationAddress(
@@ -314,7 +338,11 @@ function parseStoredLocationAddress(
   area: string,
 ): ParsedStoredAddress {
   if (!address) {
-    return { houseNumber: "", street: "", city: "" };
+    return {
+      houseNumber: "",
+      street: "",
+      city: "",
+    };
   }
 
   let parts = address
@@ -323,7 +351,11 @@ function parseStoredLocationAddress(
     .filter(Boolean);
 
   if (!parts.length) {
-    return { houseNumber: "", street: "", city: "" };
+    return {
+      houseNumber: "",
+      street: "",
+      city: "",
+    };
   }
 
   if (parts[parts.length - 1].toLowerCase() === "nigeria") {
@@ -346,11 +378,19 @@ function parseStoredLocationAddress(
   }
 
   if (!parts.length) {
-    return { houseNumber: "", street: "", city: "" };
+    return {
+      houseNumber: "",
+      street: "",
+      city: "",
+    };
   }
 
   if (parts.length === 1) {
-    return { houseNumber: "", street: parts[0], city: "" };
+    return {
+      houseNumber: "",
+      street: parts[0],
+      city: "",
+    };
   }
 
   if (parts.length === 2) {
@@ -406,6 +446,7 @@ async function loadSellerBusiness(ownerId: string) {
 
 function isRequestBodyTooLarge(request: Request): boolean {
   const contentLength = request.headers.get("content-length");
+
   if (contentLength === null) return false;
 
   const parsed = Number(contentLength);
@@ -481,18 +522,28 @@ async function notifyAdminsOfBusinessUpdate(
           dedupeKey: null,
         });
       } catch (error) {
-        console.error("Business admin notification error:", error);
+        console.error(
+          "Business admin notification error:",
+          error,
+        );
       }
     }
   } catch (error) {
-    console.error("Business admin lookup error:", error);
+    console.error(
+      "Business admin lookup error:",
+      error,
+    );
   }
 }
 
 /* GET */
 export async function GET() {
+  // An existing active business is required.
   const auth = await requireSeller();
-  if (!auth.authorized) return auth.response;
+
+  if (!auth.authorized) {
+    return auth.response;
+  }
 
   try {
     const business = await loadSellerBusiness(auth.user.id);
@@ -513,13 +564,23 @@ export async function GET() {
 
 /* POST */
 export async function POST(request: Request) {
-  const auth = await requireSeller();
-  if (!auth.authorized) return auth.response;
+  // A seller account is sufficient to create a first business.
+  const auth = await requireSellerAccount();
 
+  if (!auth.authorized) {
+    return auth.response;
+  }
+
+  // Prevent creating another business if one is already linked.
   if (auth.business) {
     return NextResponse.json(
-      { error: "This seller account already has a business." },
-      { status: 409, headers: jsonHeaders() },
+      {
+        error: "This seller account already has a business.",
+      },
+      {
+        status: 409,
+        headers: jsonHeaders(),
+      },
     );
   }
 
@@ -632,7 +693,10 @@ export async function POST(request: Request) {
       );
     }
 
-    if (imageUrl.length > 2000 || (imageUrl && !isValidHttpUrl(imageUrl))) {
+    if (
+      imageUrl.length > 2000 ||
+      (imageUrl && !isValidHttpUrl(imageUrl))
+    ) {
       return NextResponse.json(
         { error: "Image URL must be a valid HTTP or HTTPS URL." },
         { status: 400, headers: jsonHeaders() },
@@ -667,7 +731,10 @@ export async function POST(request: Request) {
       priceMin > priceMax
     ) {
       return NextResponse.json(
-        { error: "Minimum price cannot be greater than maximum price." },
+        {
+          error:
+            "Minimum price cannot be greater than maximum price.",
+        },
         { status: 400, headers: jsonHeaders() },
       );
     }
@@ -678,7 +745,10 @@ export async function POST(request: Request) {
 
     if (longProvided && lngProvided) {
       return NextResponse.json(
-        { error: "Provide longitude using either 'long' or 'lng', not both." },
+        {
+          error:
+            "Provide longitude using either 'long' or 'lng', not both.",
+        },
         { status: 400, headers: jsonHeaders() },
       );
     }
@@ -689,7 +759,10 @@ export async function POST(request: Request) {
 
     if (parsedLat === "INVALID" || parsedLong === "INVALID") {
       return NextResponse.json(
-        { error: "Latitude and longitude must be valid numbers." },
+        {
+          error:
+            "Latitude and longitude must be valid numbers.",
+        },
         { status: 400, headers: jsonHeaders() },
       );
     }
@@ -714,13 +787,17 @@ export async function POST(request: Request) {
 
       if (!socialLinks) {
         return NextResponse.json(
-          { error: "socialLinks must be an array of valid links." },
+          {
+            error:
+              "socialLinks must be an array of valid links.",
+          },
           { status: 400, headers: jsonHeaders() },
         );
       }
     }
 
     const legacyPhoneProvided = hasOwn(payload, "phone");
+
     const legacyPhoneRaw = legacyPhoneProvided
       ? cleanString(payload.phone)
       : "";
@@ -736,7 +813,10 @@ export async function POST(request: Request) {
       ? normalizeNigerianPhone(legacyPhoneRaw)
       : null;
 
-    if (normalizedLegacyPhone && normalizedLegacyPhone.length > 50) {
+    if (
+      normalizedLegacyPhone &&
+      normalizedLegacyPhone.length > 50
+    ) {
       return NextResponse.json(
         { error: "Phone number is too long." },
         { status: 400, headers: jsonHeaders() },
@@ -785,12 +865,17 @@ export async function POST(request: Request) {
 
       if (categories.length !== finalCategoryIds.length) {
         return NextResponse.json(
-          { error: "One or more selected categories are invalid or inactive." },
+          {
+            error:
+              "One or more selected categories are invalid or inactive.",
+          },
           { status: 400, headers: jsonHeaders() },
         );
       }
     }
 
+    // Second duplicate check protects against a business
+    // being created after authentication but before this request.
     const existingBusiness = await prisma.business.findUnique({
       where: { ownerId: auth.user.id },
       select: { id: true },
@@ -798,7 +883,10 @@ export async function POST(request: Request) {
 
     if (existingBusiness) {
       return NextResponse.json(
-        { error: "This seller account already has a business." },
+        {
+          error:
+            "This seller account already has a business.",
+        },
         { status: 409, headers: jsonHeaders() },
       );
     }
@@ -807,7 +895,11 @@ export async function POST(request: Request) {
     let resolvedLong = parsedLong;
     let resolvedStreet: string | null = street || null;
 
-    if (resolvedLat === null && resolvedLong === null && address) {
+    if (
+      resolvedLat === null &&
+      resolvedLong === null &&
+      address
+    ) {
       try {
         const geocoded = await geocodeBusinessLocation({
           address,
@@ -869,13 +961,14 @@ export async function POST(request: Request) {
           phone,
           imageUrl: imageUrl || null,
           showContactInfo,
-          categories: categories.length > 0
-            ? {
-                create: categories.map((category) => ({
-                  categoryId: category.id,
-                })),
-              }
-            : undefined,
+          categories:
+            categories.length > 0
+              ? {
+                  create: categories.map((category) => ({
+                    categoryId: category.id,
+                  })),
+                }
+              : undefined,
         },
       });
 
@@ -931,7 +1024,10 @@ export async function POST(request: Request) {
       error.code === "P2002"
     ) {
       return NextResponse.json(
-        { error: "This seller account already has a business." },
+        {
+          error:
+            "This seller account already has a business.",
+        },
         { status: 409, headers: jsonHeaders() },
       );
     }
@@ -945,8 +1041,12 @@ export async function POST(request: Request) {
 
 /* PATCH */
 export async function PATCH(request: Request) {
+  // Editing requires an existing active seller business.
   const auth = await requireSeller();
-  if (!auth.authorized) return auth.response;
+
+  if (!auth.authorized) {
+    return auth.response;
+  }
 
   try {
     if (isRequestBodyTooLarge(request)) {
@@ -994,7 +1094,10 @@ export async function PATCH(request: Request) {
       )
     ) {
       return NextResponse.json(
-        { error: "Provide at least one supported field to update." },
+        {
+          error:
+            "Provide at least one supported field to update.",
+        },
         { status: 400, headers: jsonHeaders() },
       );
     }
@@ -1024,14 +1127,20 @@ export async function PATCH(request: Request) {
 
     if (!existingBusiness) {
       return NextResponse.json(
-        { error: "You do not have a business linked to this seller account." },
+        {
+          error:
+            "You do not have a business linked to this seller account.",
+        },
         { status: 404, headers: jsonHeaders() },
       );
     }
 
     if (existingBusiness.ownerId !== auth.user.id) {
       return NextResponse.json(
-        { error: "You are not allowed to edit this business." },
+        {
+          error:
+            "You are not allowed to edit this business.",
+        },
         { status: 403, headers: jsonHeaders() },
       );
     }
@@ -1045,18 +1154,24 @@ export async function PATCH(request: Request) {
 
     const has = (key: string) => hasOwn(payload, key);
 
-    const name = has("name") ? cleanString(payload.name) : undefined;
+    const name = has("name")
+      ? cleanString(payload.name)
+      : undefined;
+
     const ownerName = has("ownerName")
       ? cleanString(payload.ownerName)
       : undefined;
+
     const description = has("description")
       ? cleanString(payload.description)
       : undefined;
+
     const imageUrl = has("imageUrl")
       ? cleanString(payload.imageUrl)
       : undefined;
 
     const availabilityProvided = has("availability");
+
     const availability = availabilityProvided
       ? parseAvailability(payload.availability)
       : undefined;
@@ -1067,7 +1182,10 @@ export async function PATCH(request: Request) {
       typeof payload.showContactInfo !== "boolean"
     ) {
       return NextResponse.json(
-        { error: "Contact visibility must be true or false." },
+        {
+          error:
+            "Contact visibility must be true or false.",
+        },
         { status: 400, headers: jsonHeaders() },
       );
     }
@@ -1085,7 +1203,10 @@ export async function PATCH(request: Request) {
       (description !== undefined && description.length > 2000)
     ) {
       return NextResponse.json(
-        { error: "Business name, owner name or description is too long." },
+        {
+          error:
+            "Business name, owner name or description is too long.",
+        },
         { status: 400, headers: jsonHeaders() },
       );
     }
@@ -1099,7 +1220,10 @@ export async function PATCH(request: Request) {
 
     if (imageUrl && !isValidHttpUrl(imageUrl)) {
       return NextResponse.json(
-        { error: "Image URL must be a valid HTTP or HTTPS URL." },
+        {
+          error:
+            "Image URL must be a valid HTTP or HTTPS URL.",
+        },
         { status: 400, headers: jsonHeaders() },
       );
     }
@@ -1143,7 +1267,10 @@ export async function PATCH(request: Request) {
       resultingPriceMin > resultingPriceMax
     ) {
       return NextResponse.json(
-        { error: "Minimum price cannot be greater than maximum price." },
+        {
+          error:
+            "Minimum price cannot be greater than maximum price.",
+        },
         { status: 400, headers: jsonHeaders() },
       );
     }
@@ -1158,7 +1285,10 @@ export async function PATCH(request: Request) {
 
       if (!parsedCategoryIds) {
         return NextResponse.json(
-          { error: "categoryIds must be an array of valid IDs." },
+          {
+            error:
+              "categoryIds must be an array of valid IDs.",
+          },
           { status: 400, headers: jsonHeaders() },
         );
       }
@@ -1176,7 +1306,10 @@ export async function PATCH(request: Request) {
 
         if (validCategories.length !== categoryIds.length) {
           return NextResponse.json(
-            { error: "One or more selected categories are invalid or inactive." },
+            {
+              error:
+                "One or more selected categories are invalid or inactive.",
+            },
             { status: 400, headers: jsonHeaders() },
           );
         }
@@ -1191,13 +1324,17 @@ export async function PATCH(request: Request) {
 
       if (!socialLinks) {
         return NextResponse.json(
-          { error: "socialLinks must be an array of valid links." },
+          {
+            error:
+              "socialLinks must be an array of valid links.",
+          },
           { status: 400, headers: jsonHeaders() },
         );
       }
     }
 
     const legacyPhoneProvided = has("phone");
+
     const legacyPhoneRaw = legacyPhoneProvided
       ? cleanString(payload.phone)
       : "";
@@ -1253,7 +1390,10 @@ export async function PATCH(request: Request) {
 
     if (longProvided && lngProvided) {
       return NextResponse.json(
-        { error: "Provide longitude using either 'long' or 'lng', not both." },
+        {
+          error:
+            "Provide longitude using either 'long' or 'lng', not both.",
+        },
         { status: 400, headers: jsonHeaders() },
       );
     }
@@ -1277,13 +1417,20 @@ export async function PATCH(request: Request) {
     } | null = null;
 
     if (locationWasProvided) {
-      const currentArea = existingBusiness.location?.area ?? "";
+      const currentArea =
+        existingBusiness.location?.area ?? "";
+
       const currentStoredStreet =
         existingBusiness.location?.street ?? null;
+
       const currentAddress =
         existingBusiness.location?.address ?? null;
-      const currentLat = existingBusiness.location?.lat ?? null;
-      const currentLong = existingBusiness.location?.long ?? null;
+
+      const currentLat =
+        existingBusiness.location?.lat ?? null;
+
+      const currentLong =
+        existingBusiness.location?.long ?? null;
 
       const parsedExistingAddress = parseStoredLocationAddress(
         currentAddress,
@@ -1332,7 +1479,10 @@ export async function PATCH(request: Request) {
 
         if (!resultingStreet) {
           return NextResponse.json(
-            { error: "Street, road, or close is required." },
+            {
+              error:
+                "Street, road, or close is required.",
+            },
             { status: 400, headers: jsonHeaders() },
           );
         }
@@ -1343,7 +1493,10 @@ export async function PATCH(request: Request) {
           resultingCity.length > 100
         ) {
           return NextResponse.json(
-            { error: "Street, house number or city is too long." },
+            {
+              error:
+                "Street, house number or city is too long.",
+            },
             { status: 400, headers: jsonHeaders() },
           );
         }
@@ -1396,9 +1549,15 @@ export async function PATCH(request: Request) {
             )
           : currentLong;
 
-      if (parsedLat === "INVALID" || parsedLong === "INVALID") {
+      if (
+        parsedLat === "INVALID" ||
+        parsedLong === "INVALID"
+      ) {
         return NextResponse.json(
-          { error: "Latitude and longitude must be valid numbers." },
+          {
+            error:
+              "Latitude and longitude must be valid numbers.",
+          },
           { status: 400, headers: jsonHeaders() },
         );
       }
@@ -1416,13 +1575,17 @@ export async function PATCH(request: Request) {
       }
 
       const areaChanged = currentArea !== resultingArea;
+
       const addressChanged =
         currentAddress !== (resultingAddress || null);
+
       const coordinatesChanged =
-        currentLat !== parsedLat || currentLong !== parsedLong;
+        currentLat !== parsedLat ||
+        currentLong !== parsedLong;
 
       let resolvedLat = parsedLat;
       let resolvedLong = parsedLong;
+
       let resolvedStreet: string | null =
         resultingStreet || null;
 
@@ -1455,6 +1618,7 @@ export async function PATCH(request: Request) {
                 "Updated business address could not be geocoded:",
                 error,
               );
+
               resolvedLat = null;
               resolvedLong = null;
             }
@@ -1510,11 +1674,18 @@ export async function PATCH(request: Request) {
     } = {};
 
     if (name !== undefined) updateData.name = name;
-    if (ownerName !== undefined) updateData.ownerName = ownerName || null;
+
+    if (ownerName !== undefined) {
+      updateData.ownerName = ownerName || null;
+    }
+
     if (description !== undefined) {
       updateData.description = description || null;
     }
-    if (imageUrl !== undefined) updateData.imageUrl = imageUrl || null;
+
+    if (imageUrl !== undefined) {
+      updateData.imageUrl = imageUrl || null;
+    }
 
     if (
       availabilityProvided &&
@@ -1524,11 +1695,17 @@ export async function PATCH(request: Request) {
       updateData.availability = availability;
     }
 
-    if (priceMinProvided) updateData.priceMin = priceMin ?? null;
-    if (priceMaxProvided) updateData.priceMax = priceMax ?? null;
+    if (priceMinProvided) {
+      updateData.priceMin = priceMin ?? null;
+    }
+
+    if (priceMaxProvided) {
+      updateData.priceMax = priceMax ?? null;
+    }
 
     if (has("showContactInfo")) {
-      updateData.showContactInfo = payload.showContactInfo as boolean;
+      updateData.showContactInfo =
+        payload.showContactInfo as boolean;
     }
 
     if (phoneUpdate !== undefined) {
@@ -1558,7 +1735,9 @@ export async function PATCH(request: Request) {
 
       if (categoryIdsProvided) {
         await tx.businessCategory.deleteMany({
-          where: { businessId: existingBusiness.id },
+          where: {
+            businessId: existingBusiness.id,
+          },
         });
 
         if (categoryIds.length > 0) {
@@ -1650,7 +1829,10 @@ export async function PATCH(request: Request) {
       error.code === "P2002"
     ) {
       return NextResponse.json(
-        { error: "This business update conflicts with an existing record." },
+        {
+          error:
+            "This business update conflicts with an existing record.",
+        },
         { status: 409, headers: jsonHeaders() },
       );
     }

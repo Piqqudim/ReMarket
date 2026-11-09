@@ -1,24 +1,48 @@
 "use client";
 
 import {
-  useCallback, useEffect, useMemo, useRef, useState,
-  type FormEvent, type KeyboardEvent as ReactKeyboardEvent, type ReactNode,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type FormEvent,
+  type KeyboardEvent as ReactKeyboardEvent,
+  type ReactNode,
 } from "react";
 import Link from "next/link";
 import { signOut } from "next-auth/react";
 import { useRouter } from "next/navigation";
 import ProductImageUpload from "@/components/ProductImageUpload";
-import SellerServiceManager from "@/components/SellerServiceManager";
 import { validateProductPricing } from "@/lib/product-pricing";
 import NotificationBell from "@/components/NotificationBell";
 import {
-  Store, MapPin, ChevronDown, Phone, Package, LogOut,
-  ExternalLink, LoaderCircle, Plus, CheckCircle2, AlertCircle,
-  Pencil, X, Trash2, AlertTriangle, UserRound, ShieldCheck,
-  Share2, Copy, ArrowRight, Circle, ClipboardCheck,
-  LockKeyhole, Globe, CalendarDays, Clock3, RefreshCw,
-  MessageSquare, Check, Ban, ChevronLeft, ChevronRight,
-  Bookmark, BriefcaseBusiness,
+  Store,
+  MapPin,
+  ChevronDown,
+  Phone,
+  Package,
+  LogOut,
+  ExternalLink,
+  LoaderCircle,
+  Plus,
+  CheckCircle2,
+  AlertCircle,
+  Pencil,
+  X,
+  Trash2,
+  AlertTriangle,
+  UserRound,
+  ShieldCheck,
+  Share2,
+  Copy,
+  ArrowRight,
+  Circle,
+  ClipboardCheck,
+  LockKeyhole,
+  Globe,
+  RefreshCw,
+  Bookmark,
 } from "lucide-react";
 
 /* -------------------------------------------------------------------------- */
@@ -27,11 +51,11 @@ import {
 
 const MAX_ACTIVE_PRODUCTS = 100;
 const DEFAULT_COUNTRY = "Nigeria";
-const BOOKING_PAGE_SIZE = 12;
 
 type Availability = "AVAILABLE" | "ASK_SELLER" | "UNAVAILABLE";
 type RecordStatus = "ACTIVE" | "INACTIVE" | "PENDING";
 type VerificationStatus = "VERIFIED" | "UNVERIFIED";
+
 type SocialPlatform =
   | "WHATSAPP"
   | "INSTAGRAM"
@@ -40,24 +64,11 @@ type SocialPlatform =
   | "PHONE"
   | "DIRECTIONS";
 
-type BusinessSharePlatform = "WHATSAPP" | "FACEBOOK" | "LINKEDIN" | "X";
-
-type BookingStatus =
-  | "PENDING"
-  | "AWAITING_BUYER"
-  | "ACCEPTED"
-  | "IN_PROGRESS"
-  | "DECLINED"
-  | "CANCELLED"
-  | "COMPLETED";
-
-type BookingFilter =
-  | "ALL"
-  | "PENDING"
-  | "ACCEPTED"
-  | "DECLINED"
-  | "CANCELLED"
-  | "COMPLETED";
+type BusinessSharePlatform =
+  | "WHATSAPP"
+  | "FACEBOOK"
+  | "LINKEDIN"
+  | "X";
 
 type SellerCategory = {
   id: string;
@@ -85,6 +96,7 @@ type SellerProduct = {
   priceMin: number | null;
   priceMax: number | null;
   availability: Availability;
+  stockQuantity: number | null;
   imageUrl: string | null;
   images: SellerProductImage[];
   status: RecordStatus;
@@ -150,6 +162,7 @@ type ProductForm = {
   priceMin: string;
   priceMax: string;
   availability: Availability;
+  stockQuantity: string;
   images: string[];
 };
 
@@ -157,52 +170,6 @@ type ProductCapacity = {
   maxActiveProducts: number;
   baseMaxActiveProducts: number;
   referralBonusSlots: number;
-};
-
-type SellerBooking = {
-  id: string;
-  bookingCode: string | null;
-  serviceId: string;
-  sellerId: string | null;
-  status: BookingStatus;
-  bookingType: "REQUEST" | "APPOINTMENT";
-  requestedFor: string | null;
-  scheduledFor: string | null;
-  quantity: number;
-  contactPhone: string | null;
-  buyerMessage: string | null;
-  fulfillmentType: string | null;
-  fulfillmentAddress: string | null;
-  declineReason: string | null;
-  cancellationReason: string | null;
-  acceptedAt: string | null;
-  declinedAt: string | null;
-  cancelledAt: string | null;
-  completedAt: string | null;
-  createdAt: string;
-  updatedAt: string;
-  buyer: {
-    id: string;
-    name: string | null;
-    email: string | null;
-  };
-  service: {
-    id: string;
-    name: string;
-    bookingType: "REQUEST" | "APPOINTMENT";
-    fulfillmentType: string | null;
-    imageUrl: string | null;
-  };
-};
-type BookingSummary = {
-  total: number;
-  PENDING: number;
-  AWAITING_BUYER: number;
-  ACCEPTED: number;
-  IN_PROGRESS: number;
-  DECLINED: number;
-  CANCELLED: number;
-  COMPLETED: number;
 };
 
 type ApiBusinessResponse = {
@@ -224,21 +191,11 @@ type ApiErrorResponse = {
 };
 
 type ApiSellerProductsResponse = {
+  products?: SellerProduct[];
   maxActiveProducts?: unknown;
   baseMaxActiveProducts?: unknown;
   referralBonusSlots?: unknown;
   error?: unknown;
-};
-
-const EMPTY_BOOKING_SUMMARY: BookingSummary = {
-  total: 0,
-  PENDING: 0,
-  AWAITING_BUYER: 0,
-  ACCEPTED: 0,
-  IN_PROGRESS: 0,
-  DECLINED: 0,
-  CANCELLED: 0,
-  COMPLETED: 0,
 };
 
 const SOCIAL_PLATFORMS: {
@@ -304,6 +261,7 @@ const INITIAL_PRODUCT_FORM: ProductForm = {
   priceMin: "",
   priceMax: "",
   availability: "ASK_SELLER",
+  stockQuantity: "",
   images: [],
 };
 
@@ -344,7 +302,9 @@ async function readJsonSafely<T>(response: Response): Promise<T | null> {
 }
 
 function getResponseError(data: unknown, fallback: string): string {
-  return isRecord(data) && typeof data.error === "string" && data.error.trim()
+  return isRecord(data) &&
+    typeof data.error === "string" &&
+    data.error.trim()
     ? data.error
     : fallback;
 }
@@ -413,9 +373,12 @@ function buildSocialLinks(values: Record<SocialPlatform, string>) {
 function looksLikeHouseNumber(value: string): boolean {
   const normalized = value.trim().toLowerCase();
 
-  return Boolean(normalized) && (
-    /^\d+[a-z]?\b/.test(normalized) ||
-    /^(shop|house|building|block|plot|suite|unit|flat)\b/.test(normalized)
+  return (
+    Boolean(normalized) &&
+    (
+      /^\d+[a-z]?\b/.test(normalized) ||
+      /^(shop|house|building|block|plot|suite|unit|flat)\b/.test(normalized)
+    )
   );
 }
 
@@ -531,34 +494,45 @@ function getInitialBusinessForm(
     city: parsed.city,
     categoryId: business.categories?.[0]?.category?.id ?? "",
     availability: business.availability ?? "ASK_SELLER",
-    priceMin: business.priceMin != null
-      ? String(business.priceMin)
-      : "",
-    priceMax: business.priceMax != null
-      ? String(business.priceMax)
-      : "",
+    priceMin:
+      business.priceMin != null
+        ? String(business.priceMin)
+        : "",
+    priceMax:
+      business.priceMax != null
+        ? String(business.priceMax)
+        : "",
     showContactInfo: business.showContactInfo === true,
   };
 }
 
 function getStatusClasses(status: string): string {
   if (
-    status === "ACTIVE" ||
-    status === "ACCEPTED" ||
-    status === "COMPLETED" ||
-    status === "IN_PROGRESS"
+    [
+      "ACTIVE",
+      "ACCEPTED",
+      "PROCESSING",
+      "READY_FOR_DISPATCH",
+      "DISPATCHED",
+      "DELIVERED",
+      "COMPLETED",
+      "IN_PROGRESS",
+    ].includes(status)
   ) {
     return "bg-[#DDF5EA] text-[#137A59]";
   }
 
   if (
-    status === "PENDING" ||
-    status === "AWAITING_BUYER"
+    [
+      "PENDING",
+      "PENDING_ACCEPTANCE",
+      "AWAITING_BUYER",
+    ].includes(status)
   ) {
     return "bg-[#FFF5D9] text-[#9A6700]";
   }
 
-  if (status === "APPROVED") {
+  if (status === "APPROVED" || status === "VERIFIED") {
     return "bg-[#E7F0FF] text-[#3566B8]";
   }
 
@@ -573,331 +547,172 @@ function formatAvailability(value: Availability): string {
       : "Ask seller";
 }
 
-function getBookingStatusLabel(status: BookingStatus): string {
-  const labels: Record<BookingStatus, string> = {
-    PENDING: "Pending",
-    AWAITING_BUYER: "Awaiting buyer",
-    ACCEPTED: "Accepted",
-    IN_PROGRESS: "In progress",
-    DECLINED: "Declined",
-    CANCELLED: "Cancelled",
-    COMPLETED: "Completed",
-  };
+/* -------------------------------------------------------------------------- */
+/* SELLER COMMERCE TYPES AND HELPERS                                          */
+/* -------------------------------------------------------------------------- */
 
-  return labels[status];
+type SellerDashboardOrderItem = {
+  id: string;
+  productId: string | null;
+  productName: string;
+  productImageUrl: string | null;
+  unitPrice: number;
+  quantity: number;
+  lineTotal: number;
+};
+
+type SellerDashboardOrder = {
+  id: string;
+  sellerOrderCode: string;
+  status: string;
+  subtotal: number;
+  createdAt: string;
+  acceptedAt: string | null;
+  rejectedAt: string | null;
+  dispatchedAt: string | null;
+  deliveredAt: string | null;
+  completedAt: string | null;
+  cancelledAt: string | null;
+  order: {
+    id: string;
+    orderCode: string;
+    status: string;
+    createdAt: string;
+    deliveryRecipient: string;
+    deliveryPhone: string;
+    deliveryAddress: string;
+    deliveryArea: string;
+    deliveryLandmark: string | null;
+    deliveryNotes: string | null;
+    buyer?: {
+      id: string;
+      name: string | null;
+    };
+  };
+  items: SellerDashboardOrderItem[];
+};
+
+type SellerDashboardData = {
+  hasBusiness?: boolean;
+  listings?: {
+    products?: {
+      total?: number;
+      active?: number;
+    };
+  };
+  inventory?: {
+    trackedProducts?: number;
+    untrackedProducts?: number;
+    inStockProducts?: number;
+    outOfStockProducts?: number;
+    totalTrackedUnits?: number;
+  };
+  orders?: {
+    total?: number;
+    pendingAcceptance?: number;
+    accepted?: number;
+    processing?: number;
+    readyForDispatch?: number;
+    dispatched?: number;
+    delivered?: number;
+    completed?: number;
+    rejected?: number;
+    cancelled?: number;
+  };
+  recentOrders?: SellerDashboardOrder[];
+};
+
+function safeCount(value: unknown): number {
+  return typeof value === "number" &&
+    Number.isSafeInteger(value) &&
+    value >= 0
+    ? value
+    : 0;
 }
 
-function formatBookingDate(value: string | null): string {
-  if (!value) return "Date not specified";
+function formatNaira(value: number): string {
+  return `₦${value.toLocaleString("en-NG", {
+    maximumFractionDigits: 0,
+  })}`;
+}
 
+function formatSellerOrderDate(value: string): string {
   const date = new Date(value);
 
   return Number.isNaN(date.getTime())
-    ? "Date not specified"
+    ? "Date unavailable"
     : date.toLocaleString("en-NG", {
         dateStyle: "medium",
         timeStyle: "short",
+        timeZone: "Africa/Lagos",
       });
 }
 
-function toDateTimeLocalValue(value: string | null): string {
-  if (!value) return "";
+function getSellerOrderActions(status: string) {
+  switch (status) {
+    case "PENDING_ACCEPTANCE":
+      return [
+        { status: "ACCEPTED", label: "Accept order" },
+        { status: "REJECTED", label: "Reject order" },
+      ];
 
-  const date = new Date(value);
+    case "ACCEPTED":
+      return [
+        { status: "PROCESSING", label: "Start preparing" },
+      ];
 
-  if (Number.isNaN(date.getTime())) return "";
+    case "PROCESSING":
+      return [
+        { status: "READY_FOR_DISPATCH", label: "Mark ready" },
+      ];
 
-  const localDate = new Date(
-    date.getTime() - date.getTimezoneOffset() * 60_000,
-  );
+    case "READY_FOR_DISPATCH":
+      return [
+        { status: "DISPATCHED", label: "Mark dispatched" },
+      ];
 
-  return localDate.toISOString().slice(0, 16);
-}
+    case "DISPATCHED":
+      return [
+        { status: "DELIVERED", label: "Mark delivered" },
+      ];
 
-function normalizeSellerBooking(
-  value: unknown,
-): SellerBooking | null {
-  if (!isRecord(value) || typeof value.id !== "string") {
-    return null;
+    default:
+      return [];
   }
-
-  const service = isRecord(value.service) ? value.service : {};
-  const buyer = isRecord(value.buyer) ? value.buyer : {};
-
-  const rawStatus =
-    typeof value.status === "string" ? value.status : "PENDING";
-
-  const allowedStatuses: BookingStatus[] = [
-    "PENDING",
-    "AWAITING_BUYER",
-    "ACCEPTED",
-    "IN_PROGRESS",
-    "DECLINED",
-    "CANCELLED",
-    "COMPLETED",
-  ];
-
-  const status = allowedStatuses.includes(rawStatus as BookingStatus)
-    ? (rawStatus as BookingStatus)
-    : "PENDING";
-
-  const rawBookingType =
-    value.bookingType === "APPOINTMENT" ||
-    service.bookingType === "APPOINTMENT"
-      ? "APPOINTMENT"
-      : "REQUEST";
-
-  const nullableString = (input: unknown): string | null =>
-    typeof input === "string" ? input : null;
-
-  return {
-    id: value.id,
-    bookingCode: nullableString(value.bookingCode),
-    serviceId:
-      typeof value.serviceId === "string" ? value.serviceId : "",
-    sellerId: nullableString(value.sellerId),
-    status,
-    bookingType: rawBookingType,
-    requestedFor: nullableString(value.requestedFor),
-    scheduledFor: nullableString(value.scheduledFor),
-    quantity:
-      typeof value.quantity === "number" && Number.isFinite(value.quantity)
-        ? value.quantity
-        : 1,
-    contactPhone: nullableString(value.contactPhone),
-    buyerMessage: nullableString(value.buyerMessage),
-    fulfillmentType: nullableString(value.fulfillmentType),
-    fulfillmentAddress: nullableString(value.fulfillmentAddress),
-    declineReason: nullableString(value.declineReason),
-    cancellationReason: nullableString(value.cancellationReason),
-    acceptedAt: nullableString(value.acceptedAt),
-    declinedAt: nullableString(value.declinedAt),
-    cancelledAt: nullableString(value.cancelledAt),
-    completedAt: nullableString(value.completedAt),
-    createdAt:
-      typeof value.createdAt === "string" ? value.createdAt : "",
-    updatedAt:
-      typeof value.updatedAt === "string" ? value.updatedAt : "",
-    buyer: {
-      id: typeof buyer.id === "string" ? buyer.id : "",
-      name: typeof buyer.name === "string" ? buyer.name : null,
-      email: typeof buyer.email === "string" ? buyer.email : null,
-    },
-    service: {
-      id:
-        typeof service.id === "string"
-          ? service.id
-          : typeof value.serviceId === "string"
-            ? value.serviceId
-            : "",
-      name:
-        typeof service.name === "string" ? service.name : "Service",
-      bookingType:
-        service.bookingType === "APPOINTMENT"
-          ? "APPOINTMENT"
-          : "REQUEST",
-      fulfillmentType: nullableString(service.fulfillmentType),
-      imageUrl: nullableString(service.imageUrl),
-    },
-  };
-}
-
-function normalizeBookingSummary(value: unknown): BookingSummary {
-  if (!isRecord(value)) return EMPTY_BOOKING_SUMMARY;
-
-  const count = (key: keyof BookingSummary) =>
-    typeof value[key] === "number" &&
-    Number.isSafeInteger(value[key])
-      ? Math.max(0, value[key] as number)
-      : 0;
-
-  return {
-    total: count("total"),
-    PENDING: count("PENDING"),
-    AWAITING_BUYER: count("AWAITING_BUYER"),
-    ACCEPTED: count("ACCEPTED"),
-    IN_PROGRESS: count("IN_PROGRESS"),
-    DECLINED: count("DECLINED"),
-    CANCELLED: count("CANCELLED"),
-    COMPLETED: count("COMPLETED"),
-  };
 }
 
 /* -------------------------------------------------------------------------- */
-/* SELLER BOOKING INBOX                                                       */
+/* SELLER COMMERCE OVERVIEW                                                   */
 /* -------------------------------------------------------------------------- */
 
-function SellerBookingInbox() {
-  const [bookings, setBookings] = useState<SellerBooking[]>([]);
-  const [summary, setSummary] = useState<BookingSummary>(
-    EMPTY_BOOKING_SUMMARY,
-  );
+function SellerCommerceOverview() {
+  const [dashboard, setDashboard] =
+    useState<SellerDashboardData | null>(null);
+
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [loadError, setLoadError] = useState("");
   const [actionError, setActionError] = useState("");
   const [actionMessage, setActionMessage] = useState("");
-  const [filter, setFilter] = useState<BookingFilter>("PENDING");
-  const [page, setPage] = useState(1);
-  const [totalPages, setTotalPages] = useState(1);
-  const [totalBookings, setTotalBookings] = useState(0);
-  const [updatingId, setUpdatingId] = useState("");
-  const [appointmentDates, setAppointmentDates] = useState<
-    Record<string, string>
-  >({});
+  const [updatingOrderId, setUpdatingOrderId] = useState("");
 
-  const loadBookings = useCallback(
-    async (showSpinner = true, signal?: AbortSignal) => {
-      if (showSpinner) {
-        setLoading(true);
-      } else {
-        setRefreshing(true);
-      }
+  const loadDashboard = useCallback(async (showLoading = true) => {
+    if (showLoading) {
+      setLoading(true);
+    } else {
+      setRefreshing(true);
+    }
 
-      setLoadError("");
-
-      try {
-        const params = new URLSearchParams({
-          page: String(page),
-          pageSize: String(BOOKING_PAGE_SIZE),
-        });
-
-        if (filter !== "ALL") {
-          params.set("status", filter);
-        }
-
-        const response = await fetch(
-          `/api/seller/service-bookings?${params.toString()}`,
-          {
-            cache: "no-store",
-            signal,
-          },
-        );
-
-        const data: unknown = await response.json().catch(() => null);
-
-        if (signal?.aborted) return;
-
-        if (response.status === 401 || response.status === 403) {
-          throw new Error(
-            "Your seller session has expired. Please sign in again.",
-          );
-        }
-
-        if (response.status === 404) {
-          throw new Error(
-            "The seller booking inbox API has not been added yet.",
-          );
-        }
-
-        if (!response.ok) {
-          throw new Error(
-            getResponseError(data, "Unable to load booking requests."),
-          );
-        }
-
-        if (!isRecord(data) || !Array.isArray(data.bookings)) {
-          throw new Error("The booking response was invalid.");
-        }
-
-        const normalized = data.bookings
-          .map(normalizeSellerBooking)
-          .filter(
-            (booking): booking is SellerBooking => booking !== null,
-          );
-
-        setBookings(normalized);
-        setSummary(normalizeBookingSummary(data.summary));
-        setTotalBookings(
-          typeof data.total === "number" && Number.isFinite(data.total)
-            ? data.total
-            : normalized.length,
-        );
-        setTotalPages(
-          typeof data.totalPages === "number" &&
-          Number.isFinite(data.totalPages)
-            ? Math.max(1, data.totalPages)
-            : 1,
-        );
-      } catch (error) {
-        if (signal?.aborted) return;
-
-        setLoadError(
-          error instanceof Error
-            ? error.message
-            : "Unable to load booking requests.",
-        );
-      } finally {
-        if (!signal?.aborted) {
-          setLoading(false);
-          setRefreshing(false);
-        }
-      }
-    },
-    [filter, page],
-  );
-
-  useEffect(() => {
-    const controller = new AbortController();
-    void loadBookings(true, controller.signal);
-    return () => controller.abort();
-  }, [loadBookings]);
-
-  async function performBookingAction(
-    booking: SellerBooking,
-    action:
-      | "ACCEPT"
-      | "DECLINE"
-      | "CONFIRM_APPOINTMENT"
-      | "COMPLETE"
-      | "CANCEL",
-  ) {
-    if (updatingId) return;
-
-    setUpdatingId(booking.id);
-    setActionError("");
-    setActionMessage("");
+    setLoadError("");
 
     try {
-      const body: Record<string, unknown> = { action };
+      const response = await fetch("/api/seller/dashboard", {
+        cache: "no-store",
+      });
 
-      if (action === "CONFIRM_APPOINTMENT") {
-        const selectedDate =
-          appointmentDates[booking.id] ??
-          toDateTimeLocalValue(booking.requestedFor);
-
-        if (!selectedDate) {
-          throw new Error(
-            "Select the appointment date and time first.",
-          );
-        }
-
-        const appointmentDate = new Date(selectedDate);
-
-        if (
-          Number.isNaN(appointmentDate.getTime()) ||
-          appointmentDate.getTime() <= Date.now()
-        ) {
-          throw new Error(
-            "Choose a valid appointment date and time in the future.",
-          );
-        }
-
-        body.scheduledFor = appointmentDate.toISOString();
-      }
-
-      const response = await fetch(
-        `/api/service-bookings/${encodeURIComponent(booking.id)}`,
-        {
-          method: "PATCH",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify(body),
-        },
-      );
-
-      const data: unknown = await response.json().catch(() => null);
+      const payload: unknown = await response
+        .json()
+        .catch(() => null);
 
       if (response.status === 401 || response.status === 403) {
         throw new Error(
@@ -907,81 +722,145 @@ function SellerBookingInbox() {
 
       if (!response.ok) {
         throw new Error(
-          getResponseError(data, "Unable to update this booking."),
+          getResponseError(
+            payload,
+            "Unable to load inventory and orders.",
+          ),
         );
       }
 
-      const successMessages: Record<typeof action, string> = {
-        ACCEPT: "Booking accepted.",
-        DECLINE: "Booking declined.",
-        CONFIRM_APPOINTMENT: "Appointment confirmed.",
-        COMPLETE: "Booking marked as completed.",
-        CANCEL: "Booking cancelled.",
-      };
+      if (!isRecord(payload) || payload.hasBusiness !== true) {
+        throw new Error(
+          "The seller dashboard response was invalid.",
+        );
+      }
 
-      setActionMessage(successMessages[action]);
-      await loadBookings(false);
+      setDashboard(payload as SellerDashboardData);
+    } catch (error) {
+      setLoadError(
+        error instanceof Error
+          ? error.message
+          : "Unable to load inventory and orders.",
+      );
+    } finally {
+      setLoading(false);
+      setRefreshing(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void loadDashboard(true);
+  }, [loadDashboard]);
+
+  async function updateSellerOrder(
+    order: SellerDashboardOrder,
+    nextStatus: string,
+  ) {
+    if (updatingOrderId) return;
+
+    if (
+      nextStatus === "REJECTED" &&
+      !window.confirm(
+        `Reject order ${order.sellerOrderCode}? The reserved tracked stock will be returned to your inventory.`,
+      )
+    ) {
+      return;
+    }
+
+    setUpdatingOrderId(order.id);
+    setActionError("");
+    setActionMessage("");
+
+    try {
+      const response = await fetch(
+        `/api/seller/orders/${encodeURIComponent(order.id)}`,
+        {
+          method: "PATCH",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ status: nextStatus }),
+        },
+      );
+
+      const payload: unknown = await response
+        .json()
+        .catch(() => null);
+
+      if (!response.ok) {
+        throw new Error(
+          getResponseError(
+            payload,
+            "Unable to update this order.",
+          ),
+        );
+      }
+
+      setActionMessage(
+        `${order.sellerOrderCode} updated to ${nextStatus
+          .replace(/_/g, " ")
+          .toLowerCase()}.`,
+      );
+
+      await loadDashboard(false);
     } catch (error) {
       setActionError(
         error instanceof Error
           ? error.message
-          : "Unable to update this booking.",
+          : "Unable to update this order.",
       );
     } finally {
-      setUpdatingId("");
+      setUpdatingOrderId("");
     }
   }
 
-  const filters: { value: BookingFilter; label: string }[] = [
-    { value: "PENDING", label: "Pending" },
-    { value: "ACCEPTED", label: "Accepted" },
-    { value: "COMPLETED", label: "Completed" },
-    { value: "DECLINED", label: "Declined" },
-    { value: "CANCELLED", label: "Cancelled" },
-    { value: "ALL", label: "All" },
-  ];
+  const products = dashboard?.listings?.products ?? {};
+  const inventory = dashboard?.inventory ?? {};
+  const orders = dashboard?.orders ?? {};
 
-  function getFilterCount(value: BookingFilter) {
-    return value === "ALL" ? summary.total : summary[value];
-  }
+  const recentOrders = Array.isArray(dashboard?.recentOrders)
+    ? dashboard.recentOrders
+    : [];
 
-  function selectFilter(value: BookingFilter) {
-    setFilter(value);
-    setPage(1);
-    setActionError("");
-    setActionMessage("");
-  }
+  const activeWork =
+    safeCount(orders.accepted) +
+    safeCount(orders.processing) +
+    safeCount(orders.readyForDispatch);
 
   return (
     <section
-      id="service-bookings"
+      id="orders-section"
       className="mt-5 scroll-mt-24 rounded-[22px] border border-[#E8E4DE] bg-white shadow-sm"
     >
-      <div className="border-b border-[#EAE6DF] px-5 py-5 sm:px-6">
-        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-          <div>
-            <p className="text-xs font-semibold uppercase tracking-[0.12em] text-[#FF5A36]">
-              Service management
-            </p>
+      <div className="flex flex-col gap-3 border-b border-[#EAE6DF] px-5 py-5 sm:flex-row sm:items-center sm:justify-between sm:px-6">
+        <div>
+          <p className="text-xs font-semibold uppercase tracking-[0.12em] text-[#FF5A36]">
+            Product operations
+          </p>
 
-            <div className="mt-1 flex flex-wrap items-center gap-2">
-              <h2 className="text-lg font-bold">Service bookings</h2>
+          <h2 className="mt-1 text-lg font-bold">
+            Inventory and orders
+          </h2>
 
-              {summary.PENDING > 0 && (
-                <span className="rounded-full bg-[#FFF5D9] px-2.5 py-1 text-[10px] font-bold text-[#9A6700]">
-                  {summary.PENDING} pending
-                </span>
-              )}
-            </div>
+          <p className="mt-1 text-xs leading-5 text-gray-500">
+            Monitor your stock and manage orders received from customers.
+          </p>
+        </div>
 
-            <p className="mt-1 text-xs leading-5 text-gray-500">
-              Review customer requests, confirm appointments and update bookings.
-            </p>
-          </div>
+        {/* NEW: Full order management link and refresh action */}
+        <div className="flex flex-wrap items-center gap-2">
+          <Link
+            href="/seller/orders"
+            className={secondaryButtonClass}
+          >
+            <ClipboardCheck className="h-4 w-4" />
+            View all orders
+            <ArrowRight className="h-4 w-4" />
+          </Link>
 
           <button
             type="button"
-            onClick={() => void loadBookings(false)}
+            onClick={() => void loadDashboard(false)}
             disabled={loading || refreshing}
             className={secondaryButtonClass}
           >
@@ -990,62 +869,6 @@ function SellerBookingInbox() {
             />
             Refresh
           </button>
-        </div>
-
-        <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-4">
-          <div className="rounded-xl bg-[#FCFAF6] p-3">
-            <p className="text-[10px] font-semibold uppercase tracking-wide text-gray-400">
-              Total bookings
-            </p>
-            <p className="mt-1 text-xl font-bold text-[#17202A]">
-              {summary.total}
-            </p>
-          </div>
-
-          <div className="rounded-xl bg-[#FFF8E8] p-3">
-            <p className="text-[10px] font-semibold uppercase tracking-wide text-gray-500">
-              Pending
-            </p>
-            <p className="mt-1 text-xl font-bold text-[#986500]">
-              {summary.PENDING}
-            </p>
-          </div>
-
-          <div className="rounded-xl bg-[#EFFBF6] p-3">
-            <p className="text-[10px] font-semibold uppercase tracking-wide text-gray-500">
-              Accepted
-            </p>
-            <p className="mt-1 text-xl font-bold text-[#137A59]">
-              {summary.ACCEPTED}
-            </p>
-          </div>
-
-          <div className="rounded-xl bg-[#F1F5FF] p-3">
-            <p className="text-[10px] font-semibold uppercase tracking-wide text-gray-500">
-              Completed
-            </p>
-            <p className="mt-1 text-xl font-bold text-[#3566B8]">
-              {summary.COMPLETED}
-            </p>
-          </div>
-        </div>
-
-        <div className="mt-4 flex gap-2 overflow-x-auto pb-1">
-          {filters.map((item) => (
-            <button
-              key={item.value}
-              type="button"
-              onClick={() => selectFilter(item.value)}
-              aria-pressed={filter === item.value}
-              className={`shrink-0 rounded-full px-3 py-2 text-[11px] font-bold transition ${
-                filter === item.value
-                  ? "bg-[#FF5A36] text-white"
-                  : "border border-[#E8E4DE] bg-white text-gray-600 hover:bg-[#FFF7ED]"
-              }`}
-            >
-              {item.label} ({getFilterCount(item.value)})
-            </button>
-          ))}
         </div>
       </div>
 
@@ -1069,9 +892,10 @@ function SellerBookingInbox() {
             className="mb-4 rounded-xl border border-[#F1D5D0] bg-[#FFF0EE] px-4 py-3 text-xs leading-5 text-[#C5402D]"
           >
             {loadError}
+
             <button
               type="button"
-              onClick={() => void loadBookings()}
+              onClick={() => void loadDashboard(true)}
               className="ml-2 font-bold underline"
             >
               Try again
@@ -1082,320 +906,250 @@ function SellerBookingInbox() {
         {loading ? (
           <div className="flex items-center justify-center gap-2 py-10 text-sm text-gray-500">
             <LoaderCircle className="h-5 w-5 animate-spin text-[#FF5A36]" />
-            Loading service bookings...
+            Loading inventory and orders...
           </div>
-        ) : bookings.length === 0 ? (
-          <div className="rounded-2xl border border-dashed border-[#D9DEE5] bg-[#FCFAF6] px-5 py-10 text-center">
-            <CalendarDays className="mx-auto h-8 w-8 text-gray-300" />
-
-            <h3 className="mt-3 text-sm font-bold text-gray-800">
-              {filter === "PENDING"
-                ? "No pending booking requests"
-                : "No bookings in this category"}
-            </h3>
-
-            <p className="mt-1 text-xs leading-5 text-gray-500">
-              Customer bookings for your services will appear here.
-            </p>
-          </div>
+        ) : !dashboard ? (
+          <p className="rounded-xl bg-[#FCFAF6] px-4 py-8 text-center text-xs text-gray-500">
+            Inventory and order information is not available right now.
+          </p>
         ) : (
-          <div className="grid gap-3">
-            {bookings.map((booking) => {
-              const isAppointment = booking.bookingType === "APPOINTMENT";
-              const isPending = booking.status === "PENDING";
-              const isUpdating = updatingId === booking.id;
-              const actionDisabled = Boolean(updatingId);
-              const appointmentValue =
-                appointmentDates[booking.id] ??
-                toDateTimeLocalValue(booking.requestedFor);
-              const canComplete =
-                booking.status === "ACCEPTED" ||
-                booking.status === "IN_PROGRESS";
-              const canCancel =
-                booking.status === "ACCEPTED" ||
-                booking.status === "IN_PROGRESS" ||
-                booking.status === "AWAITING_BUYER";
+          <>
+            <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-6">
+              <OverviewCard
+                icon={<Package className="h-4 w-4" />}
+                title="Products"
+                value={`${safeCount(products.active)} / ${safeCount(products.total)}`}
+                detail="Active listings"
+              />
 
-              return (
-                <article
-                  key={booking.id}
-                  className="rounded-2xl border border-[#E8E4DE] bg-white p-4 sm:p-5"
-                >
-                  <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-                    <div className="min-w-0">
-                      <div className="flex flex-wrap items-center gap-2">
-                        <h3 className="break-words text-sm font-bold text-[#17202A]">
-                          {booking.service.name}
-                        </h3>
+              <OverviewCard
+                icon={<ClipboardCheck className="h-4 w-4" />}
+                title="Tracked products"
+                value={String(safeCount(inventory.trackedProducts))}
+                detail={`${safeCount(inventory.untrackedProducts)} not tracking stock`}
+              />
 
-                        <span
-                          className={`rounded-full px-2.5 py-1 text-[10px] font-bold ${getStatusClasses(booking.status)}`}
-                        >
-                          {getBookingStatusLabel(booking.status)}
-                        </span>
+              <OverviewCard
+                icon={<Package className="h-4 w-4" />}
+                title="Units in stock"
+                value={safeCount(inventory.totalTrackedUnits).toLocaleString("en-NG")}
+                detail={`${safeCount(inventory.inStockProducts)} products have stock`}
+              />
 
-                        <span className="rounded-full bg-[#FCFAF6] px-2.5 py-1 text-[10px] font-semibold text-gray-500">
-                          {isAppointment ? "Appointment" : "Request"}
-                        </span>
+              <OverviewCard
+                icon={<AlertCircle className="h-4 w-4" />}
+                title="Out of stock"
+                value={String(safeCount(inventory.outOfStockProducts))}
+                detail="Tracked products with zero units"
+              />
+
+              <OverviewCard
+                icon={<ClipboardCheck className="h-4 w-4" />}
+                title="Total orders"
+                value={String(safeCount(orders.total))}
+                detail={`${safeCount(orders.pendingAcceptance)} awaiting your response`}
+              />
+
+              <OverviewCard
+                icon={<CheckCircle2 className="h-4 w-4" />}
+                title="Completed"
+                value={String(safeCount(orders.completed))}
+                detail={`${activeWork} orders in progress`}
+              />
+            </div>
+
+            <div className="mt-6 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+              <div>
+                <h3 className="text-sm font-bold">
+                  Recent product orders
+                </h3>
+
+                <p className="mt-1 text-[11px] text-gray-500">
+                  Review each order and move it through fulfilment.
+                </p>
+              </div>
+
+              <span className="text-[11px] text-gray-400">
+                Showing the latest {recentOrders.length} orders
+              </span>
+            </div>
+
+            {recentOrders.length === 0 ? (
+              <div className="mt-4 rounded-2xl border border-dashed border-[#D9DEE5] bg-[#FCFAF6] px-5 py-9 text-center">
+                <Package className="mx-auto h-8 w-8 text-gray-300" />
+
+                <h4 className="mt-3 text-sm font-bold text-gray-800">
+                  No product orders yet
+                </h4>
+
+                <p className="mt-1 text-xs leading-5 text-gray-500">
+                  New customer orders will appear here.
+                </p>
+              </div>
+            ) : (
+              <div className="mt-4 grid gap-3">
+                {recentOrders.map((order) => {
+                  const actions = getSellerOrderActions(order.status);
+                  const isUpdating = updatingOrderId === order.id;
+                  const buyerName =
+                    order.order?.buyer?.name ||
+                    order.order?.deliveryRecipient ||
+                    "Customer";
+
+                  const items = Array.isArray(order.items)
+                    ? order.items
+                    : [];
+
+                  return (
+                    <article
+                      key={order.id}
+                      className="rounded-2xl border border-[#E8E4DE] bg-white p-4 sm:p-5"
+                    >
+                      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                        <div className="min-w-0">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <h4 className="break-all text-sm font-bold text-[#17202A]">
+                              {order.sellerOrderCode}
+                            </h4>
+
+                            <span
+                              className={`rounded-full px-2.5 py-1 text-[10px] font-bold ${getStatusClasses(order.status)}`}
+                            >
+                              {order.status.replace(/_/g, " ")}
+                            </span>
+                          </div>
+
+                          <p className="mt-1 text-[11px] text-gray-500">
+                            Parent order: {order.order?.orderCode || "Unavailable"}
+                          </p>
+
+                          <p className="mt-1 text-[11px] text-gray-400">
+                            {formatSellerOrderDate(order.createdAt)}
+                          </p>
+                        </div>
+
+                        <div className="sm:text-right">
+                          <p className="text-sm font-bold text-[#9F2D18]">
+                            {formatNaira(safeCount(order.subtotal))}
+                          </p>
+
+                          <p className="mt-1 text-[10px] text-gray-400">
+                            {items.length}{" "}
+                            {items.length === 1 ? "line item" : "line items"}
+                          </p>
+                        </div>
                       </div>
 
-                      <p className="mt-2 text-xs text-gray-500">
-                        Booking ID:{" "}
-                        <span className="break-all font-medium text-gray-700">
-                          {booking.bookingCode || booking.id}
-                        </span>
-                      </p>
-                    </div>
-
-                    <div className="flex items-center gap-1.5 text-[11px] text-gray-500">
-                      <Clock3 className="h-3.5 w-3.5" />
-                      Received {formatBookingDate(booking.createdAt)}
-                    </div>
-                  </div>
-
-                  <div className="mt-4 grid gap-3 rounded-xl bg-[#FCFAF6] p-3 sm:grid-cols-2">
-                    <div className="flex min-w-0 items-start gap-2">
-                      <UserRound className="mt-0.5 h-4 w-4 shrink-0 text-[#FF5A36]" />
-                      <div className="min-w-0">
-                        <p className="text-[10px] font-semibold uppercase text-gray-400">
-                          Customer
-                        </p>
-                        <p className="mt-1 break-words text-xs font-bold text-gray-800">
-                          {booking.buyer.name || "Customer"}
-                        </p>
-                        {booking.buyer.email && (
-                          <p className="mt-0.5 break-all text-[11px] text-gray-500">
-                            {booking.buyer.email}
+                      <div className="mt-3 grid gap-3 rounded-xl bg-[#FCFAF6] p-3 sm:grid-cols-2">
+                        <div>
+                          <p className="text-[10px] font-semibold uppercase tracking-wide text-gray-400">
+                            Customer
                           </p>
-                        )}
-                        {booking.contactPhone && (
-                          <p className="mt-1 text-[11px] text-gray-500">
-                            Phone: {booking.contactPhone}
-                          </p>
-                        )}
-                      </div>
-                    </div>
 
-                    <div className="flex items-start gap-2">
-                      <Package className="mt-0.5 h-4 w-4 shrink-0 text-[#FF5A36]" />
-                      <div>
-                        <p className="text-[10px] font-semibold uppercase text-gray-400">
-                          Booking details
-                        </p>
-                        <p className="mt-1 text-xs font-bold text-gray-800">
-                          Quantity: {booking.quantity}
-                        </p>
-                        {booking.fulfillmentType && (
-                          <p className="mt-1 text-[11px] text-gray-500">
-                            Fulfilment: {booking.fulfillmentType.replace(/_/g, " ")}
+                          <p className="mt-1 text-xs font-bold text-gray-800">
+                            {buyerName}
                           </p>
-                        )}
-                        {booking.fulfillmentAddress && (
+
                           <p className="mt-1 break-words text-[11px] leading-5 text-gray-500">
-                            Address: {booking.fulfillmentAddress}
+                            {order.order?.deliveryArea || "Delivery area not supplied"}
                           </p>
-                        )}
+                        </div>
+
+                        <div>
+                          <p className="text-[10px] font-semibold uppercase tracking-wide text-gray-400">
+                            Delivery address
+                          </p>
+
+                          <p className="mt-1 break-words text-[11px] leading-5 text-gray-600">
+                            {order.order?.deliveryAddress || "Address not supplied"}
+                          </p>
+
+                          {order.order?.deliveryPhone && (
+                            <p className="mt-1 text-[11px] text-gray-500">
+                              Phone: {order.order.deliveryPhone}
+                            </p>
+                          )}
+                        </div>
                       </div>
-                    </div>
-                  </div>
 
-                  {booking.buyerMessage && (
-                    <div className="mt-3 rounded-xl border border-[#E8E4DE] p-3">
-                      <p className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wide text-gray-400">
-                        <MessageSquare className="h-3.5 w-3.5" />
-                        Customer instructions
-                      </p>
-                      <p className="mt-2 whitespace-pre-wrap break-words text-xs leading-5 text-gray-700">
-                        {booking.buyerMessage}
-                      </p>
-                    </div>
-                  )}
-
-                  {isAppointment && (
-                    <div className="mt-3 rounded-xl border border-[#E8E4DE] p-3">
-                      <p className="text-[10px] font-semibold uppercase tracking-wide text-gray-400">
-                        Appointment
-                      </p>
-
-                      {isPending ? (
-                        <>
-                          <p className="mt-1 text-xs text-gray-600">
-                            Customer's preferred time: {formatBookingDate(booking.requestedFor)}
+                      {items.length > 0 && (
+                        <div className="mt-3">
+                          <p className="text-[10px] font-semibold uppercase tracking-wide text-gray-400">
+                            Ordered products
                           </p>
 
-                          <label
-                            htmlFor={`appointment-${booking.id}`}
-                            className="mt-3 block text-xs font-semibold text-gray-700"
-                          >
-                            Confirm appointment date and time
-                          </label>
+                          <div className="mt-2 grid gap-2 sm:grid-cols-2">
+                            {items.slice(0, 4).map((item) => (
+                              <div
+                                key={item.id}
+                                className="flex min-w-0 items-center justify-between gap-3 rounded-xl border border-[#F0ECE6] px-3 py-2.5"
+                              >
+                                <div className="min-w-0">
+                                  <p className="break-words text-xs font-semibold text-gray-800">
+                                    {item.productName}
+                                  </p>
 
-                          <input
-                            id={`appointment-${booking.id}`}
-                            type="datetime-local"
-                            min={toDateTimeLocalValue(new Date().toISOString())}
-                            value={appointmentValue}
-                            onChange={(event) =>
-                              setAppointmentDates((current) => ({
-                                ...current,
-                                [booking.id]: event.target.value,
-                              }))
-                            }
-                            disabled={isUpdating}
-                            className="mt-2 min-h-11 w-full rounded-xl border border-[#D9DEE5] bg-white px-3 py-2 text-sm outline-none focus:border-[#FF694F] focus:ring-4 focus:ring-[#FF694F]/10 sm:max-w-xs"
-                          />
-                        </>
-                      ) : (
-                        <p className="mt-1 text-xs text-gray-700">
-                          Confirmed time:{" "}
-                          <span className="font-semibold">
-                            {formatBookingDate(booking.scheduledFor)}
-                          </span>
+                                  <p className="mt-0.5 text-[10px] text-gray-400">
+                                    Qty: {item.quantity}
+                                  </p>
+                                </div>
+
+                                <p className="shrink-0 text-xs font-bold text-gray-700">
+                                  {formatNaira(safeCount(item.lineTotal))}
+                                </p>
+                              </div>
+                            ))}
+                          </div>
+
+                          {items.length > 4 && (
+                            <p className="mt-2 text-[10px] text-gray-400">
+                              And {items.length - 4} more product line(s).
+                            </p>
+                          )}
+                        </div>
+                      )}
+
+                      {order.order?.deliveryNotes && (
+                        <p className="mt-3 rounded-xl border border-[#E8E4DE] px-3 py-2 text-[11px] leading-5 text-gray-500">
+                          Delivery note: {order.order.deliveryNotes}
                         </p>
                       )}
-                    </div>
-                  )}
 
-                  {booking.status === "DECLINED" && booking.declineReason && (
-                    <p className="mt-3 text-xs text-[#C5402D]">
-                      Decline reason: {booking.declineReason}
-                    </p>
-                  )}
+                      <div className="mt-4 flex flex-wrap gap-2 border-t border-[#F0ECE6] pt-3">
+                        {actions.length > 0 ? (
+                          actions.map((action) => (
+                            <button
+                              key={action.status}
+                              type="button"
+                              disabled={Boolean(updatingOrderId)}
+                              onClick={() =>
+                                void updateSellerOrder(order, action.status)
+                              }
+                              className={
+                                action.status === "REJECTED"
+                                  ? "inline-flex min-h-10 items-center justify-center rounded-xl border border-[#F1D5D0] px-4 py-2 text-xs font-bold text-[#C5402D] hover:bg-[#FFF0EE] disabled:opacity-50"
+                                  : primaryButtonClass
+                              }
+                            >
+                              {isUpdating && (
+                                <LoaderCircle className="h-4 w-4 animate-spin" />
+                              )}
 
-                  {booking.status === "CANCELLED" && booking.cancellationReason && (
-                    <p className="mt-3 text-xs text-gray-500">
-                      Cancellation reason: {booking.cancellationReason}
-                    </p>
-                  )}
-
-                  <div className="mt-4 flex flex-col gap-2 border-t border-[#F0ECE6] pt-3 sm:flex-row sm:flex-wrap sm:items-center">
-                    <Link
-                      href={`/service-bookings/${encodeURIComponent(booking.id)}/messages`}
-                      className="inline-flex min-h-10 items-center justify-center gap-2 self-start rounded-xl border border-[#F5C7BA] bg-[#FFF7F3] px-4 py-2.5 text-xs font-bold text-[#9F2D18] transition hover:border-[#FF9B82] hover:bg-[#FFF0E9]"
-                    >
-                      <MessageSquare className="h-4 w-4" />
-                      Open conversation
-                    </Link>
-
-                    {isPending && (
-                      <>
-                        <button
-                          type="button"
-                          disabled={actionDisabled || (isAppointment && !appointmentValue)}
-                          onClick={() =>
-                            void performBookingAction(
-                              booking,
-                              isAppointment ? "CONFIRM_APPOINTMENT" : "ACCEPT",
-                            )
-                          }
-                          className={`${primaryButtonClass} min-h-10`}
-                        >
-                          {isUpdating ? (
-                            <LoaderCircle className="h-4 w-4 animate-spin" />
-                          ) : (
-                            <Check className="h-4 w-4" />
-                          )}
-                          {isAppointment ? "Confirm appointment" : "Accept booking"}
-                        </button>
-
-                        <button
-                          type="button"
-                          disabled={actionDisabled}
-                          onClick={() =>
-                            void performBookingAction(booking, "DECLINE")
-                          }
-                          className="inline-flex min-h-10 items-center justify-center gap-2 rounded-xl border border-[#F1D5D0] px-4 py-2.5 text-xs font-bold text-[#C5402D] transition hover:bg-[#FFF0EE] disabled:opacity-50"
-                        >
-                          {isUpdating ? (
-                            <LoaderCircle className="h-4 w-4 animate-spin" />
-                          ) : (
-                            <Ban className="h-4 w-4" />
-                          )}
-                          Decline
-                        </button>
-                      </>
-                    )}
-
-                    {canComplete && (
-                      <button
-                        type="button"
-                        disabled={actionDisabled}
-                        onClick={() =>
-                          void performBookingAction(booking, "COMPLETE")
-                        }
-                        className="inline-flex min-h-10 items-center justify-center gap-2 rounded-xl bg-[#137A59] px-4 py-2.5 text-xs font-bold text-white transition hover:bg-[#0E6549] disabled:opacity-50"
-                      >
-                        {isUpdating ? (
-                          <LoaderCircle className="h-4 w-4 animate-spin" />
+                              {action.label}
+                            </button>
+                          ))
                         ) : (
-                          <CheckCircle2 className="h-4 w-4" />
+                          <p className="text-[11px] text-gray-400">
+                            No further seller actions are available for this order.
+                          </p>
                         )}
-                        Mark as completed
-                      </button>
-                    )}
-
-                    {canCancel && (
-                      <button
-                        type="button"
-                        disabled={actionDisabled}
-                        onClick={() => {
-                          if (
-                            window.confirm(
-                              "Are you sure you want to cancel this booking?",
-                            )
-                          ) {
-                            void performBookingAction(booking, "CANCEL");
-                          }
-                        }}
-                        className="inline-flex min-h-10 items-center justify-center gap-2 rounded-xl border border-[#F1D5D0] px-4 py-2.5 text-xs font-semibold text-[#C5402D] transition hover:bg-[#FFF0EE] disabled:opacity-50"
-                      >
-                        <Ban className="h-4 w-4" />
-                        Cancel booking
-                      </button>
-                    )}
-
-                    {!isPending && !canComplete && !canCancel && (
-                      <p className="text-[11px] text-gray-400">
-                        No further actions are available for this booking.
-                      </p>
-                    )}
-                  </div>
-                </article>
-              );
-            })}
-          </div>
-        )}
-
-        {!loading && totalBookings > 0 && (
-          <div className="mt-5 flex flex-col gap-3 border-t border-[#F0ECE6] pt-4 sm:flex-row sm:items-center sm:justify-between">
-            <p className="text-[11px] text-gray-500">
-              Showing {bookings.length} of {totalBookings} bookings · Page {page} of {totalPages}
-            </p>
-
-            <div className="flex items-center gap-2">
-              <button
-                type="button"
-                disabled={page <= 1 || loading || refreshing}
-                onClick={() => setPage((current) => Math.max(1, current - 1))}
-                className={secondaryButtonClass}
-              >
-                <ChevronLeft className="h-4 w-4" />
-                Previous
-              </button>
-
-              <button
-                type="button"
-                disabled={page >= totalPages || loading || refreshing}
-                onClick={() =>
-                  setPage((current) => Math.min(totalPages, current + 1))
-                }
-                className={secondaryButtonClass}
-              >
-                Next
-                <ChevronRight className="h-4 w-4" />
-              </button>
-            </div>
-          </div>
+                      </div>
+                    </article>
+                  );
+                })}
+              </div>
+            )}
+          </>
         )}
       </div>
     </section>
@@ -1412,11 +1166,12 @@ export default function SellerDashboard() {
 
   const [business, setBusiness] = useState<SellerBusiness | null>(null);
 
-  const [productCapacity, setProductCapacity] = useState<ProductCapacity>({
-    maxActiveProducts: MAX_ACTIVE_PRODUCTS,
-    baseMaxActiveProducts: MAX_ACTIVE_PRODUCTS,
-    referralBonusSlots: 0,
-  });
+  const [productCapacity, setProductCapacity] =
+    useState<ProductCapacity>({
+      maxActiveProducts: MAX_ACTIVE_PRODUCTS,
+      baseMaxActiveProducts: MAX_ACTIVE_PRODUCTS,
+      referralBonusSlots: 0,
+    });
 
   const [categories, setCategories] = useState<SellerCategory[]>([]);
   const [deletionRequest, setDeletionRequest] =
@@ -1457,9 +1212,10 @@ export default function SellerDashboard() {
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
 
   const dashboardProducts = useMemo(
-    () => business?.products?.filter(
-      (product) => !product.deletedAt,
-    ) ?? [],
+    () =>
+      business?.products?.filter(
+        (product) => !product.deletedAt,
+      ) ?? [],
     [business?.products],
   );
 
@@ -1558,11 +1314,6 @@ export default function SellerDashboard() {
     setSuccess("");
   }, []);
 
-  /*
-   * The business editor is rendered after the service manager
-   * and booking inbox. Scroll to it after React mounts the form
-   * so the Edit Business action takes the seller directly there.
-   */
   useEffect(() => {
     if (!editingBusiness) return;
 
@@ -1663,30 +1414,39 @@ export default function SellerDashboard() {
         : null;
 
       let loadedCapacity: ProductCapacity | null = null;
+      let businessWithProducts = loadedBusiness;
 
       if (loadedBusiness) {
         if (!productsResponse?.ok) {
           throw new Error(
-            "Unable to load product capacity. Please try again.",
+            "Unable to load products and inventory. Please try again.",
           );
         }
 
-        loadedCapacity = parseProductCapacity(
+        const productsPayload =
           await readJsonSafely<ApiSellerProductsResponse>(
             productsResponse,
-          ),
-        );
+          );
+
+        loadedCapacity = parseProductCapacity(productsPayload);
 
         if (!loadedCapacity) {
           throw new Error(
             "The seller product-capacity response was invalid.",
           );
         }
+
+        if (Array.isArray(productsPayload?.products)) {
+          businessWithProducts = {
+            ...loadedBusiness,
+            products: productsPayload.products,
+          };
+        }
       }
 
       if (signal.aborted) return;
 
-      setBusiness(loadedBusiness);
+      setBusiness(businessWithProducts);
 
       setProductCapacity(
         loadedCapacity ?? {
@@ -1704,15 +1464,15 @@ export default function SellerDashboard() {
 
       setDeletionRequest(deletionData?.request ?? null);
 
-      if (loadedBusiness) {
+      if (businessWithProducts) {
         setBusinessForm(
-          getInitialBusinessForm(loadedBusiness),
+          getInitialBusinessForm(businessWithProducts),
         );
 
         setSocialValues(
           getSocialValues(
-            loadedBusiness.socialLinks,
-            loadedBusiness.phone,
+            businessWithProducts.socialLinks,
+            businessWithProducts.phone,
           ),
         );
       } else {
@@ -1789,13 +1549,15 @@ export default function SellerDashboard() {
 
   function getBusinessFormPrices() {
     return {
-      priceMin: businessForm.priceMin.trim() === ""
-        ? null
-        : Number(businessForm.priceMin),
+      priceMin:
+        businessForm.priceMin.trim() === ""
+          ? null
+          : Number(businessForm.priceMin),
 
-      priceMax: businessForm.priceMax.trim() === ""
-        ? null
-        : Number(businessForm.priceMax),
+      priceMax:
+        businessForm.priceMax.trim() === ""
+          ? null
+          : Number(businessForm.priceMax),
     };
   }
 
@@ -1959,8 +1721,7 @@ export default function SellerDashboard() {
               : [],
             availability: businessForm.availability,
             ...getBusinessFormPrices(),
-            showContactInfo:
-              businessForm.showContactInfo === true,
+            showContactInfo: businessForm.showContactInfo === true,
           }),
         },
       );
@@ -2052,8 +1813,7 @@ export default function SellerDashboard() {
         socialLinks: buildSocialLinks(socialValues),
         availability: businessForm.availability,
         ...getBusinessFormPrices(),
-        showContactInfo:
-          businessForm.showContactInfo === true,
+        showContactInfo: businessForm.showContactInfo === true,
       };
 
       if (categoryChanged) {
@@ -2344,16 +2104,23 @@ export default function SellerDashboard() {
       name: product.name ?? "",
       description: product.description ?? "",
       categoryId: product.category?.id ?? "",
-      price: product.price != null
-        ? String(product.price)
-        : "",
-      priceMin: product.priceMin != null
-        ? String(product.priceMin)
-        : "",
-      priceMax: product.priceMax != null
-        ? String(product.priceMax)
-        : "",
+      price:
+        product.price != null
+          ? String(product.price)
+          : "",
+      priceMin:
+        product.priceMin != null
+          ? String(product.priceMin)
+          : "",
+      priceMax:
+        product.priceMax != null
+          ? String(product.priceMax)
+          : "",
       availability: product.availability ?? "ASK_SELLER",
+      stockQuantity:
+        product.stockQuantity != null
+          ? String(product.stockQuantity)
+          : "",
       images: product.images?.length
         ? [...product.images]
             .sort((a, b) => a.sortOrder - b.sortOrder)
@@ -2369,17 +2136,20 @@ export default function SellerDashboard() {
 
   function getProductFormPrices() {
     return {
-      price: productForm.price.trim() === ""
-        ? null
-        : Number(productForm.price),
+      price:
+        productForm.price.trim() === ""
+          ? null
+          : Number(productForm.price),
 
-      priceMin: productForm.priceMin.trim() === ""
-        ? null
-        : Number(productForm.priceMin),
+      priceMin:
+        productForm.priceMin.trim() === ""
+          ? null
+          : Number(productForm.priceMin),
 
-      priceMax: productForm.priceMax.trim() === ""
-        ? null
-        : Number(productForm.priceMax),
+      priceMax:
+        productForm.priceMax.trim() === ""
+          ? null
+          : Number(productForm.priceMax),
     };
   }
 
@@ -2404,6 +2174,21 @@ export default function SellerDashboard() {
     if (pricingError) {
       setError(pricingError);
       return false;
+    }
+
+    if (productForm.stockQuantity.trim() !== "") {
+      const stockQuantity = Number(productForm.stockQuantity);
+
+      if (
+        !Number.isSafeInteger(stockQuantity) ||
+        stockQuantity < 0 ||
+        stockQuantity > 2_147_483_647
+      ) {
+        setError(
+          "Stock quantity must be a whole number between 0 and 2,147,483,647, or left empty to disable tracking.",
+        );
+        return false;
+      }
     }
 
     return true;
@@ -2490,10 +2275,13 @@ export default function SellerDashboard() {
       );
     }
 
-    const refreshedCapacity = parseProductCapacity(
+    const productsPayload =
       await readJsonSafely<ApiSellerProductsResponse>(
         productsResponse,
-      ),
+      );
+
+    const refreshedCapacity = parseProductCapacity(
+      productsPayload,
     );
 
     if (!refreshedCapacity) {
@@ -2502,22 +2290,30 @@ export default function SellerDashboard() {
       );
     }
 
-    setBusiness(refreshedBusiness);
+    const refreshedBusinessWithProducts =
+      Array.isArray(productsPayload?.products)
+        ? {
+            ...refreshedBusiness,
+            products: productsPayload.products,
+          }
+        : refreshedBusiness;
+
+    setBusiness(refreshedBusinessWithProducts);
 
     setBusinessForm(
-      getInitialBusinessForm(refreshedBusiness),
+      getInitialBusinessForm(refreshedBusinessWithProducts),
     );
 
     setSocialValues(
       getSocialValues(
-        refreshedBusiness.socialLinks,
-        refreshedBusiness.phone,
+        refreshedBusinessWithProducts.socialLinks,
+        refreshedBusinessWithProducts.phone,
       ),
     );
 
     setProductCapacity(refreshedCapacity);
 
-    return refreshedBusiness;
+    return refreshedBusinessWithProducts;
   }, [router]);
 
   /* ------------------------------------------------------------------------ */
@@ -2557,6 +2353,10 @@ export default function SellerDashboard() {
             categoryId: productForm.categoryId || null,
             ...getProductFormPrices(),
             availability: productForm.availability,
+            stockQuantity:
+              productForm.stockQuantity.trim() === ""
+                ? null
+                : Number(productForm.stockQuantity),
             images: productForm.images,
           }),
         },
@@ -2648,6 +2448,10 @@ export default function SellerDashboard() {
             categoryId: productForm.categoryId || null,
             ...getProductFormPrices(),
             availability: productForm.availability,
+            stockQuantity:
+              productForm.stockQuantity.trim() === ""
+                ? null
+                : Number(productForm.stockQuantity),
             images: productForm.images,
           }),
         },
@@ -3042,27 +2846,29 @@ export default function SellerDashboard() {
           {business && (
             <>
               <a
-                href="#services-section"
-                className="inline-flex items-center gap-2 rounded-xl px-3 py-2.5 text-xs font-semibold text-gray-600 transition hover:bg-[#FFF7ED] hover:text-[#9F2D18]"
-              >
-                <BriefcaseBusiness className="h-4 w-4" />
-                Services
-              </a>
-
-              <a
-                href="#service-bookings"
-                className="inline-flex items-center gap-2 rounded-xl px-3 py-2.5 text-xs font-semibold text-gray-600 transition hover:bg-[#FFF7ED] hover:text-[#9F2D18]"
-              >
-                <CalendarDays className="h-4 w-4" />
-                Bookings
-              </a>
-
-              <a
                 href="#products-section"
                 className="inline-flex items-center gap-2 rounded-xl px-3 py-2.5 text-xs font-semibold text-gray-600 transition hover:bg-[#FFF7ED] hover:text-[#9F2D18]"
               >
                 <Package className="h-4 w-4" />
                 Products
+              </a>
+
+              {/* NEW: Dedicated orders page */}
+              <Link
+                href="/seller/orders"
+                className="inline-flex items-center gap-2 rounded-xl px-3 py-2.5 text-xs font-semibold text-gray-600 transition hover:bg-[#FFF7ED] hover:text-[#9F2D18]"
+              >
+                <ClipboardCheck className="h-4 w-4" />
+                Orders
+              </Link>
+
+              {/* Existing inventory overview remains on the dashboard */}
+              <a
+                href="#orders-section"
+                className="inline-flex items-center gap-2 rounded-xl px-3 py-2.5 text-xs font-semibold text-gray-600 transition hover:bg-[#FFF7ED] hover:text-[#9F2D18]"
+              >
+                <Package className="h-4 w-4" />
+                Inventory overview
               </a>
             </>
           )}
@@ -3129,27 +2935,28 @@ export default function SellerDashboard() {
                 {business && (
                   <>
                     <a
-                      href="#services-section"
-                      className="flex items-center gap-3 rounded-xl px-3 py-2.5 text-xs font-medium text-gray-700 hover:bg-[#FFF7ED] hover:text-[#9F2D18]"
-                    >
-                      <BriefcaseBusiness className="h-4 w-4 text-gray-400" />
-                      Manage services
-                    </a>
-
-                    <a
-                      href="#service-bookings"
-                      className="flex items-center gap-3 rounded-xl px-3 py-2.5 text-xs font-medium text-gray-700 hover:bg-[#FFF7ED] hover:text-[#9F2D18]"
-                    >
-                      <CalendarDays className="h-4 w-4 text-gray-400" />
-                      Service booking requests
-                    </a>
-
-                    <a
                       href="#products-section"
                       className="flex items-center gap-3 rounded-xl px-3 py-2.5 text-xs font-medium text-gray-700 hover:bg-[#FFF7ED] hover:text-[#9F2D18]"
                     >
                       <Package className="h-4 w-4 text-gray-400" />
                       Manage products
+                    </a>
+
+                    {/* NEW: Dedicated order management link */}
+                    <Link
+                      href="/seller/orders"
+                      className="flex items-center gap-3 rounded-xl px-3 py-2.5 text-xs font-medium text-gray-700 hover:bg-[#FFF7ED] hover:text-[#9F2D18]"
+                    >
+                      <ClipboardCheck className="h-4 w-4 text-gray-400" />
+                      Manage orders
+                    </Link>
+
+                    <a
+                      href="#orders-section"
+                      className="flex items-center gap-3 rounded-xl px-3 py-2.5 text-xs font-medium text-gray-700 hover:bg-[#FFF7ED] hover:text-[#9F2D18]"
+                    >
+                      <Package className="h-4 w-4 text-gray-400" />
+                      Inventory overview
                     </a>
                   </>
                 )}
@@ -3170,7 +2977,7 @@ export default function SellerDashboard() {
 
           <button
             type="button"
-            onClick={logout}
+            onClick={() => void logout()}
             className={`${secondaryButtonClass} hidden !px-3 md:inline-flex`}
           >
             <LogOut className="h-4 w-4" />
@@ -3219,26 +3026,27 @@ export default function SellerDashboard() {
               <>
                 <a
                   onClick={() => setMobileNavOpen(false)}
-                  href="#services-section"
-                  className="rounded-xl px-4 py-3 text-sm font-medium text-gray-700 hover:bg-[#FFF7ED]"
-                >
-                  Manage services
-                </a>
-
-                <a
-                  onClick={() => setMobileNavOpen(false)}
-                  href="#service-bookings"
-                  className="rounded-xl px-4 py-3 text-sm font-medium text-gray-700 hover:bg-[#FFF7ED]"
-                >
-                  Booking requests
-                </a>
-
-                <a
-                  onClick={() => setMobileNavOpen(false)}
                   href="#products-section"
                   className="rounded-xl px-4 py-3 text-sm font-medium text-gray-700 hover:bg-[#FFF7ED]"
                 >
                   Manage products
+                </a>
+
+                {/* NEW: Dedicated orders page */}
+                <Link
+                  onClick={() => setMobileNavOpen(false)}
+                  href="/seller/orders"
+                  className="rounded-xl px-4 py-3 text-sm font-medium text-gray-700 hover:bg-[#FFF7ED]"
+                >
+                  Manage orders
+                </Link>
+
+                <a
+                  onClick={() => setMobileNavOpen(false)}
+                  href="#orders-section"
+                  className="rounded-xl px-4 py-3 text-sm font-medium text-gray-700 hover:bg-[#FFF7ED]"
+                >
+                  Inventory overview
                 </a>
               </>
             )}
@@ -3308,7 +3116,7 @@ export default function SellerDashboard() {
             </h1>
 
             <p className="mt-2 max-w-[700px] text-sm leading-6 text-gray-500">
-              Keep your details up to date, add products and services, and help nearby customers discover what you offer.
+              Keep your business details current, manage product inventory and fulfil customer orders.
             </p>
           </div>
 
@@ -4102,10 +3910,7 @@ export default function SellerDashboard() {
                   title="Phone"
                   value={
                     business.phone ||
-                    getSocialValue(
-                      business.socialLinks,
-                      "PHONE",
-                    ) ||
+                    getSocialValue(business.socialLinks, "PHONE") ||
                     "Not set"
                   }
                 />
@@ -4349,11 +4154,8 @@ export default function SellerDashboard() {
               </div>
             </section>
 
-            {/* SERVICE MANAGEMENT */}
-            <SellerServiceManager categories={categories} />
-
-            {/* SERVICE BOOKING INBOX */}
-            <SellerBookingInbox />
+            {/* PRODUCT INVENTORY AND SELLER ORDERS */}
+            <SellerCommerceOverview />
 
             {/* EDIT BUSINESS */}
             {editingBusiness && (
@@ -4781,7 +4583,7 @@ export default function SellerDashboard() {
                     </h2>
 
                     <p className="mt-1 text-xs leading-5 text-gray-500">
-                      Add the items customers can discover through your business page.
+                      Manage your product listings, prices, availability and stock quantities.
                     </p>
                   </div>
 
@@ -5116,6 +4918,42 @@ export default function SellerDashboard() {
                           disabled={creatingProduct || updatingProduct}
                         />
                       </div>
+
+                      <div className="sm:col-span-2">
+                        <label
+                          htmlFor="product-stock-quantity"
+                          className={labelClass}
+                        >
+                          Available stock quantity
+
+                          <span className="ml-1 font-normal text-gray-400">
+                            (optional)
+                          </span>
+                        </label>
+
+                        <input
+                          id="product-stock-quantity"
+                          className={inputClass}
+                          type="number"
+                          min="0"
+                          max="2147483647"
+                          step="1"
+                          inputMode="numeric"
+                          value={productForm.stockQuantity}
+                          onChange={(event) =>
+                            updateProductField(
+                              "stockQuantity",
+                              event.target.value,
+                            )
+                          }
+                          placeholder="Enter available quantity"
+                          disabled={creatingProduct || updatingProduct}
+                        />
+
+                        <p className="mt-1 text-[10px] leading-4 text-gray-400">
+                          Leave empty to disable stock tracking. Enter 0 when the product is out of stock.
+                        </p>
+                      </div>
                     </div>
 
                     <div className="min-w-0 rounded-2xl border border-[#E8E4DE] bg-white p-4">
@@ -5279,6 +5117,24 @@ export default function SellerDashboard() {
                               </span>
                             </div>
 
+                            <div
+                              className={`mt-3 rounded-xl px-3 py-2 text-[10px] font-semibold ${
+                                product.stockQuantity === null ||
+                                product.stockQuantity === undefined
+                                  ? "bg-[#FCFAF6] text-gray-500"
+                                  : product.stockQuantity === 0
+                                    ? "bg-[#FFF0EE] text-[#C5402D]"
+                                    : "bg-[#EFFBF6] text-[#137A59]"
+                              }`}
+                            >
+                              Stock:{" "}
+                              {product.stockQuantity == null
+                                ? "Not tracked"
+                                : product.stockQuantity === 0
+                                  ? "Out of stock"
+                                  : `${product.stockQuantity.toLocaleString("en-NG")} available`}
+                            </div>
+
                             <div className="mt-auto flex gap-2 pt-4">
                               <button
                                 type="button"
@@ -5426,7 +5282,7 @@ function ContactVisibility({
   disabled?: boolean;
 }) {
   return (
-    <div className="sm:col-span-2 mt-2 rounded-xl border border-[#E8E4DE] bg-[#FCFAF6] p-4">
+    <div className="mt-2 rounded-xl border border-[#E8E4DE] bg-[#FCFAF6] p-4 sm:col-span-2">
       <div className="flex items-start gap-3">
         <div
           className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-xl ${

@@ -1,14 +1,13 @@
-import { Prisma } from "@prisma/client";
-import { NextResponse } from "next/server";
-
 import {
+  Prisma,
   NotificationPriority,
   NotificationType,
 } from "@prisma/client";
+import { NextResponse } from "next/server";
 
 import { prisma } from "@/lib/prisma";
 import { validateProductPricing } from "@/lib/product-pricing";
-import { requireSeller } from "@/lib/seller-auth";
+import { requireSellerAccount } from "@/lib/seller-auth";
 import { createNotification } from "@/lib/notifications";
 import {
   getGrantedProductSlotBonus,
@@ -95,7 +94,10 @@ function isPrismaInt(value: number): boolean {
 
 /**
  * Parse an optional non-negative Prisma Int.
- * Blank/null values clear the optional field.
+ *
+ * null or undefined means inventory tracking is disabled
+ * when used for stockQuantity.
+ *
  * Booleans, objects, arrays, decimals, negative values,
  * and values outside the supported Int range are rejected.
  */
@@ -562,10 +564,13 @@ function isRequestBodyTooLarge(request: Request): boolean {
  * GET
  *
  * Returns products owned by the authenticated seller.
+ *
+ * Allows sellers with pending or inactive businesses
+ * to access their product preparation area.
  * -------------------------------------------------- */
 
 export async function GET() {
-  const auth = await requireSeller();
+  const auth = await requireSellerAccount();
 
   if (!auth.authorized) {
     return auth.response;
@@ -579,6 +584,7 @@ export async function GET() {
       select: {
         id: true,
         name: true,
+        ownerId: true,
         deletedAt: true,
       },
     });
@@ -591,6 +597,18 @@ export async function GET() {
         },
         {
           status: 404,
+          headers: jsonHeaders(),
+        }
+      );
+    }
+
+    if (business.ownerId !== auth.user.id) {
+      return NextResponse.json(
+        {
+          error: "You are not allowed to access this business.",
+        },
+        {
+          status: 403,
           headers: jsonHeaders(),
         }
       );
@@ -686,11 +704,19 @@ export async function GET() {
  * POST
  *
  * Creates an active product for the seller's business.
+ *
  * Sellers cannot choose product status themselves.
+ * Product preparation is permitted for pending or
+ * inactive businesses, but not deleted businesses.
+ *
+ * Stock:
+ * - null = inventory tracking disabled.
+ * - 0 = out of stock.
+ * - positive integer = tracked quantity.
  * -------------------------------------------------- */
 
 export async function POST(request: Request) {
-  const auth = await requireSeller();
+  const auth = await requireSellerAccount();
 
   if (!auth.authorized) {
     return auth.response;
@@ -822,6 +848,12 @@ export async function POST(request: Request) {
     const priceResult = parseOptionalInteger(body.price);
     const priceMinResult = parseOptionalInteger(body.priceMin);
     const priceMaxResult = parseOptionalInteger(body.priceMax);
+
+    // NEW: validate initial stock quantity.
+    const stockQuantityResult = parseOptionalInteger(
+      body.stockQuantity
+    );
+
     const imagesResult = parseProductImages(body.images);
 
     const legacyImageUrlProvided = hasOwn(body, "imageUrl");
@@ -959,10 +991,29 @@ export async function POST(request: Request) {
       );
     }
 
+    // NEW: reject invalid stock quantities.
+    if (!stockQuantityResult.valid) {
+      return NextResponse.json(
+        {
+          error:
+            `Stock quantity must be null or a whole number between 0 and ${MAX_PRISMA_INT}.`,
+        },
+        {
+          status: 400,
+          headers: jsonHeaders(),
+        }
+      );
+    }
+
     const price = priceResult.value;
     const priceMin = priceMinResult.value;
     const priceMax = priceMaxResult.value;
-    const pricingError = validateProductPricing(price, priceMin, priceMax);
+
+    const pricingError = validateProductPricing(
+      price,
+      priceMin,
+      priceMax
+    );
 
     if (pricingError) {
       return NextResponse.json(
@@ -1001,6 +1052,7 @@ export async function POST(request: Request) {
       select: {
         id: true,
         name: true,
+        ownerId: true,
         status: true,
         deletedAt: true,
       },
@@ -1019,6 +1071,18 @@ export async function POST(request: Request) {
       );
     }
 
+    if (business.ownerId !== auth.user.id) {
+      return NextResponse.json(
+        {
+          error: "You are not allowed to manage this business.",
+        },
+        {
+          status: 403,
+          headers: jsonHeaders(),
+        }
+      );
+    }
+
     if (business.deletedAt) {
       return NextResponse.json(
         {
@@ -1032,11 +1096,9 @@ export async function POST(request: Request) {
     }
 
     /*
-     * Allow sellers to prepare products while their
-     * business is pending/inactive. Such products are
-     * not publicly discoverable through business queries
-     * that require an ACTIVE business. The referral service
-     * still requires an active business and active product.
+     * Pending or inactive businesses may prepare products.
+     * Public discovery must separately ensure the business
+     * is ACTIVE before displaying its products.
      */
 
     /*
@@ -1113,6 +1175,10 @@ export async function POST(request: Request) {
         priceMin,
         priceMax,
 
+        // NEW: save initial inventory quantity.
+        // Omitted/null means inventory tracking is disabled.
+        stockQuantity: stockQuantityResult.value,
+
         availability: (
           availabilityValue || "ASK_SELLER"
         ) as Availability,
@@ -1141,12 +1207,6 @@ export async function POST(request: Request) {
      * -----------------------------------------
      * QUALIFY SELLER REFERRAL
      * -----------------------------------------
-     *
-     * The current seller's newly-created product may
-     * satisfy the referred-seller qualification rule.
-     * The referral service handles the status check and
-     * idempotency. It awards the referrer, not the newly
-     * referred seller, for seller-to-seller referrals.
      *
      * Qualification failure must not undo product creation.
      */
@@ -1215,8 +1275,7 @@ export async function POST(request: Request) {
 
     /*
      * Return capacity from the same transaction snapshot
-     * as the product creation. Avoid turning a successful
-     * create into a 500 because a later summary query fails.
+     * as the product creation.
      */
 
     return NextResponse.json(

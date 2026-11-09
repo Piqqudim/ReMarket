@@ -1,269 +1,519 @@
-
 import { NextResponse } from "next/server";
-import { getServerSession } from "next-auth";
-import { ServiceBookingStatus } from "@prisma/client";
-import { prisma } from "@/lib/prisma";
-import { authOptions } from "@/lib/auth";
+import { SellerOrderStatus } from "@prisma/client";
 
-function response(data: unknown, status = 200) {
+import { prisma } from "@/lib/prisma";
+import { requireSellerAccount } from "@/lib/seller-auth";
+
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
+export const runtime = "nodejs";
+
+const noStore = {
+  "Cache-Control": "private, no-store, max-age=0, must-revalidate",
+  Pragma: "no-cache",
+  Expires: "0",
+};
+
+function response(
+  data: unknown,
+  status = 200,
+) {
   return NextResponse.json(data, {
     status,
-    headers: {
-      "Cache-Control": "no-store",
-      Pragma: "no-cache",
-    },
+    headers: noStore,
   });
 }
 
+function zeroDashboard() {
+  return {
+    hasBusiness: false,
+
+    message:
+      "Complete your seller onboarding to access your dashboard.",
+
+    business: null,
+
+    listings: {
+      products: {
+        total: 0,
+        active: 0,
+      },
+
+      totalActive: 0,
+    },
+
+    inventory: {
+      trackedProducts: 0,
+      untrackedProducts: 0,
+      inStockProducts: 0,
+      outOfStockProducts: 0,
+      totalTrackedUnits: 0,
+    },
+
+    orders: {
+      total: 0,
+      pendingAcceptance: 0,
+      accepted: 0,
+      processing: 0,
+      readyForDispatch: 0,
+      dispatched: 0,
+      delivered: 0,
+      completed: 0,
+      rejected: 0,
+      cancelled: 0,
+    },
+
+    recentOrders: [],
+  };
+}
+
+/* =========================================================
+   SELLER DASHBOARD
+========================================================= */
+
 export async function GET() {
   try {
-    const session = await getServerSession(authOptions);
+    /*
+     * --------------------------------------------------
+     * 1. SELLER AUTHENTICATION
+     * --------------------------------------------------
+     */
 
-    if (!session?.user?.id) {
-      return response(
-        { error: "You must be logged in to access the seller dashboard." },
-        401
-      );
+    const access = await requireSellerAccount();
+
+    if (!access.authorized) {
+      return access.response;
     }
 
-    const user = await prisma.user.findUnique({
-      where: { id: session.user.id },
+    /*
+     * --------------------------------------------------
+     * 2. FIND SELLER BUSINESS
+     * --------------------------------------------------
+     */
+
+    const business = await prisma.business.findUnique({
+      where: {
+        ownerId: access.user.id,
+      },
+
       select: {
         id: true,
-        role: true,
-        business: {
+        name: true,
+        ownerId: true,
+        description: true,
+        imageUrl: true,
+        status: true,
+        verification: true,
+        availability: true,
+        showContactInfo: true,
+        deletedAt: true,
+
+        location: {
           select: {
-            id: true,
-            name: true,
-            description: true,
-            imageUrl: true,
-            status: true,
-            verification: true,
-            availability: true,
-            showContactInfo: true,
-            location: {
-              select: {
-                area: true,
-                street: true,
-              },
-            },
+            area: true,
+            street: true,
           },
         },
       },
     });
 
-    if (!user) {
+    if (!business) {
+      return response(zeroDashboard());
+    }
+
+    if (business.ownerId !== access.user.id) {
       return response(
-        { error: "Account not found." },
-        404
+        {
+          error:
+            "You are not allowed to access this business dashboard.",
+        },
+        403,
       );
     }
 
-    if (user.role !== "SELLER") {
+    if (business.deletedAt) {
       return response(
-        { error: "A seller account is required to access this dashboard." },
-        403
+        {
+          error: "This business has been deleted.",
+        },
+        410,
       );
     }
 
-    if (!user.business) {
-      return response({
-        hasBusiness: false,
-        message: "Complete your seller onboarding to access your dashboard.",
-        business: null,
-        listings: {
-          products: { total: 0, active: 0 },
-          services: { total: 0, active: 0 },
-        },
-        bookings: {
-          total: 0,
-          pending: 0,
-          accepted: 0,
-          declined: 0,
-          cancelled: 0,
-          completed: 0,
-        },
-        recentBookings: [],
-      });
-    }
+    const businessId = business.id;
+    const sellerId = access.user.id;
 
-    const businessId = user.business.id;
+    /*
+     * --------------------------------------------------
+     * 3. DATABASE FILTERS
+     * --------------------------------------------------
+     */
 
-    const bookingWhere = {
-      service: {
-        is: {
-          businessId,
-        },
-      },
+    const productWhere = {
+      businessId,
+      deletedAt: null,
     };
 
     const activeProductWhere = {
-      businessId,
+      ...productWhere,
       status: "ACTIVE" as const,
-      deletedAt: null,
     };
 
-    const activeServiceWhere = {
+    const sellerOrderWhere = {
       businessId,
-      status: "ACTIVE" as const,
-      deletedAt: null,
+      sellerId,
     };
+
+    /*
+     * --------------------------------------------------
+     * 4. LOAD DASHBOARD STATISTICS
+     * --------------------------------------------------
+     *
+     * Products:
+     * - Total products.
+     * - Active products.
+     *
+     * Inventory:
+     * - Tracked products.
+     * - Untracked products.
+     * - In-stock products.
+     * - Out-of-stock products.
+     * - Total tracked units.
+     *
+     * Orders:
+     * - Counts grouped by seller order status.
+     *
+     * Recent orders:
+     * - Latest ten seller orders.
+     * --------------------------------------------------
+     */
 
     const [
       totalProducts,
       activeProducts,
-      totalServices,
-      activeServices,
-      totalBookings,
-      pendingBookings,
-      acceptedBookings,
-      declinedBookings,
-      cancelledBookings,
-      completedBookings,
-      recentBookings,
+      trackedProducts,
+      untrackedProducts,
+      inStockProducts,
+      outOfStockProducts,
+      inventoryAggregate,
+      groupedOrders,
+      recentOrders,
     ] = await Promise.all([
+      /*
+       * TOTAL PRODUCTS
+       */
+
       prisma.product.count({
-        where: {
-          businessId,
-          deletedAt: null,
-        },
+        where: productWhere,
       }),
+
+      /*
+       * ACTIVE PRODUCTS
+       */
 
       prisma.product.count({
         where: activeProductWhere,
       }),
 
-      prisma.service.count({
+      /*
+       * PRODUCTS WITH INVENTORY TRACKING ENABLED
+       */
+
+      prisma.product.count({
         where: {
-          businessId,
-          deletedAt: null,
+          ...productWhere,
+          stockQuantity: {
+            not: null,
+          },
         },
       }),
 
-      prisma.service.count({
-        where: activeServiceWhere,
-      }),
+      /*
+       * PRODUCTS WITHOUT INVENTORY TRACKING
+       */
 
-      prisma.serviceBooking.count({
-        where: bookingWhere,
-      }),
-
-      prisma.serviceBooking.count({
+      prisma.product.count({
         where: {
-          ...bookingWhere,
-          status: ServiceBookingStatus.PENDING,
+          ...productWhere,
+          stockQuantity: null,
         },
       }),
 
-      prisma.serviceBooking.count({
+      /*
+       * PRODUCTS WITH AVAILABLE STOCK
+       */
+
+      prisma.product.count({
         where: {
-          ...bookingWhere,
-          status: ServiceBookingStatus.ACCEPTED,
+          ...productWhere,
+          stockQuantity: {
+            gt: 0,
+          },
         },
       }),
 
-      prisma.serviceBooking.count({
+      /*
+       * TRACKED PRODUCTS THAT ARE OUT OF STOCK
+       */
+
+      prisma.product.count({
         where: {
-          ...bookingWhere,
-          status: ServiceBookingStatus.DECLINED,
+          ...productWhere,
+          stockQuantity: 0,
         },
       }),
 
-      prisma.serviceBooking.count({
+      /*
+       * TOTAL REMAINING TRACKED UNITS
+       */
+
+      prisma.product.aggregate({
         where: {
-          ...bookingWhere,
-          status: ServiceBookingStatus.CANCELLED,
+          ...productWhere,
+          stockQuantity: {
+            not: null,
+          },
+        },
+
+        _sum: {
+          stockQuantity: true,
         },
       }),
 
-      prisma.serviceBooking.count({
-        where: {
-          ...bookingWhere,
-          status: ServiceBookingStatus.COMPLETED,
+      /*
+       * ORDER COUNTS GROUPED BY STATUS
+       */
+
+      prisma.sellerOrder.groupBy({
+        by: ["status"],
+
+        where: sellerOrderWhere,
+
+        _count: {
+          _all: true,
         },
       }),
 
-      prisma.serviceBooking.findMany({
-        where: bookingWhere,
-        orderBy: {
-          createdAt: "desc",
-        },
+      /*
+       * RECENT SELLER ORDERS
+       */
+
+      prisma.sellerOrder.findMany({
+        where: sellerOrderWhere,
+
+        orderBy: [
+          {
+            createdAt: "desc",
+          },
+          {
+            id: "desc",
+          },
+        ],
+
         take: 10,
+
         select: {
           id: true,
+          sellerOrderCode: true,
           status: true,
-          requestedFor: true,
-          quantity: true,
-          buyerMessage: true,
+          subtotal: true,
+
+          acceptedAt: true,
+          rejectedAt: true,
+          dispatchedAt: true,
+          deliveredAt: true,
+          completedAt: true,
+          cancelledAt: true,
+
           createdAt: true,
           updatedAt: true,
-          service: {
+
+          /*
+           * PARENT ORDER AND DELIVERY DETAILS
+           */
+
+          order: {
             select: {
               id: true,
-              name: true,
-              imageUrl: true,
+              orderCode: true,
+              status: true,
+              createdAt: true,
+
+              deliveryRecipient: true,
+              deliveryPhone: true,
+              deliveryAddress: true,
+              deliveryArea: true,
+              deliveryLandmark: true,
+              deliveryNotes: true,
+
+              buyer: {
+                select: {
+                  id: true,
+                  name: true,
+                },
+              },
             },
           },
-          buyer: {
+
+          /*
+           * ORDERED PRODUCT SNAPSHOTS
+           */
+
+          items: {
+            orderBy: {
+              createdAt: "asc",
+            },
+
             select: {
               id: true,
-              name: true,
-            },
-          },
-          _count: {
-            select: {
-              messages: true,
+              productId: true,
+              productName: true,
+              productImageUrl: true,
+              unitPrice: true,
+              quantity: true,
+              lineTotal: true,
+              createdAt: true,
             },
           },
         },
       }),
     ]);
 
+    /*
+     * --------------------------------------------------
+     * 5. PROCESS ORDER COUNTS
+     * --------------------------------------------------
+     */
+
+    const orderStatusCounts: Partial<
+      Record<SellerOrderStatus, number>
+    > = {};
+
+    for (const row of groupedOrders) {
+      orderStatusCounts[row.status] =
+        row._count._all;
+    }
+
+    function getOrderCount(
+      status: SellerOrderStatus,
+    ): number {
+      return orderStatusCounts[status] ?? 0;
+    }
+
+    const totalOrders = groupedOrders.reduce(
+      (total, row) => total + row._count._all,
+      0,
+    );
+
+    /*
+     * --------------------------------------------------
+     * 6. SUCCESSFUL DASHBOARD RESPONSE
+     * --------------------------------------------------
+     */
+
     return response({
       hasBusiness: true,
 
-      business: user.business,
+      business: {
+        id: business.id,
+        name: business.name,
+        description: business.description,
+        imageUrl: business.imageUrl,
+        status: business.status,
+        verification: business.verification,
+        availability: business.availability,
+        showContactInfo: business.showContactInfo,
+        location: business.location,
+      },
+
+      /*
+       * PRODUCT LISTINGS
+       */
 
       listings: {
         products: {
           total: totalProducts,
           active: activeProducts,
         },
-        services: {
-          total: totalServices,
-          active: activeServices,
-        },
-        totalActive: activeProducts + activeServices,
+
+        totalActive: activeProducts,
       },
 
-      bookings: {
-        total: totalBookings,
-        pending: pendingBookings,
-        accepted: acceptedBookings,
-        declined: declinedBookings,
-        cancelled: cancelledBookings,
-        completed: completedBookings,
+      /*
+       * INVENTORY STATISTICS
+       */
+
+      inventory: {
+        trackedProducts,
+        untrackedProducts,
+        inStockProducts,
+        outOfStockProducts,
+
+        totalTrackedUnits:
+          inventoryAggregate._sum.stockQuantity ?? 0,
       },
 
-      recentBookings: recentBookings.map((booking) => ({
-        id: booking.id,
-        status: booking.status,
-        requestedFor: booking.requestedFor,
-        quantity: booking.quantity,
-        buyerMessage: booking.buyerMessage,
-        createdAt: booking.createdAt,
-        updatedAt: booking.updatedAt,
-        service: booking.service,
-        buyer: booking.buyer,
-        messageCount: booking._count.messages,
-      })),
+      /*
+       * SELLER ORDER STATISTICS
+       */
+
+      orders: {
+        total: totalOrders,
+
+        pendingAcceptance: getOrderCount(
+          SellerOrderStatus.PENDING_ACCEPTANCE,
+        ),
+
+        accepted: getOrderCount(
+          SellerOrderStatus.ACCEPTED,
+        ),
+
+        processing: getOrderCount(
+          SellerOrderStatus.PROCESSING,
+        ),
+
+        readyForDispatch: getOrderCount(
+          SellerOrderStatus.READY_FOR_DISPATCH,
+        ),
+
+        dispatched: getOrderCount(
+          SellerOrderStatus.DISPATCHED,
+        ),
+
+        delivered: getOrderCount(
+          SellerOrderStatus.DELIVERED,
+        ),
+
+        completed: getOrderCount(
+          SellerOrderStatus.COMPLETED,
+        ),
+
+        rejected: getOrderCount(
+          SellerOrderStatus.REJECTED,
+        ),
+
+        cancelled: getOrderCount(
+          SellerOrderStatus.CANCELLED,
+        ),
+      },
+
+      /*
+       * RECENT ORDERS
+       */
+
+      recentOrders,
     });
   } catch (error) {
-    console.error("Seller dashboard GET error:", error);
+    console.error(
+      "Seller dashboard GET error:",
+      error,
+    );
 
     return response(
-      { error: "Unable to load seller dashboard." },
-      500
+      {
+        error: "Unable to load seller dashboard.",
+      },
+      500,
     );
   }
 }

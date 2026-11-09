@@ -66,12 +66,20 @@ type NotificationType =
   | "PREMIUM_EXPIRED"
   | "SECURITY_ALERT"
   | "SYSTEM_ANNOUNCEMENT"
+  // Product order notifications
+  | "ORDER_PLACED"
+  | "ORDER_ACCEPTED"
+  | "ORDER_REJECTED"
+  | "ORDER_STATUS_UPDATED"
+  | "ORDER_CANCELLED"
+  // Service booking notifications
   | "SERVICE_BOOKING_CREATED"
   | "SERVICE_BOOKING_UPDATED"
   | "SERVICE_BOOKING_MESSAGE";
 
 type NotificationData = {
   href?: unknown;
+
   businessId?: unknown;
   productId?: unknown;
   reviewId?: unknown;
@@ -79,6 +87,13 @@ type NotificationData = {
   claimId?: unknown;
   deletionRequestId?: unknown;
   bookingId?: unknown;
+
+  // Product order references
+  orderId?: unknown;
+  orderCode?: unknown;
+  sellerOrderId?: unknown;
+  sellerOrderCode?: unknown;
+  status?: unknown;
 };
 
 type Notification = {
@@ -243,7 +258,59 @@ function getNotificationHref(
   }
 
   /*
-   * 2. Service booking notifications.
+   * 2. Product order notifications.
+   *
+   * Prefer the producer-supplied URL above.
+   * These are fallback destinations.
+   */
+
+  const orderNotificationTypes: NotificationType[] = [
+    "ORDER_PLACED",
+    "ORDER_ACCEPTED",
+    "ORDER_REJECTED",
+    "ORDER_STATUS_UPDATED",
+    "ORDER_CANCELLED",
+  ];
+
+  if (
+    orderNotificationTypes.includes(notification.type)
+  ) {
+    const orderId = data?.orderId;
+    const sellerOrderId = data?.sellerOrderId;
+
+    // A new seller order without a producer URL
+    // should open the seller order dashboard.
+    if (
+      notification.type === "ORDER_PLACED" &&
+      typeof sellerOrderId === "string" &&
+      sellerOrderId.trim()
+    ) {
+      return "/seller/orders";
+    }
+
+    // Buyer order details.
+    if (
+      typeof orderId === "string" &&
+      orderId.trim()
+    ) {
+      return `/orders/${encodeURIComponent(
+        orderId.trim()
+      )}`;
+    }
+
+    // Seller order dashboard fallback.
+    if (
+      notification.type === "ORDER_PLACED"
+    ) {
+      return "/seller/orders";
+    }
+
+    // General buyer orders fallback.
+    return "/orders";
+  }
+
+  /*
+   * 3. Service booking notifications.
    */
 
   if (
@@ -272,7 +339,7 @@ function getNotificationHref(
   }
 
   /*
-   * 3. Claim notifications.
+   * 4. Claim notifications.
    */
 
   if (
@@ -300,7 +367,7 @@ function getNotificationHref(
   }
 
   /*
-   * 4. Business deletion notifications.
+   * 5. Business deletion notifications.
    */
 
   if (
@@ -310,7 +377,7 @@ function getNotificationHref(
   }
 
   /*
-   * 5. Request notifications.
+   * 6. Request notifications.
    */
 
   if (
@@ -331,7 +398,7 @@ function getNotificationHref(
   }
 
   /*
-   * 6. Business notifications.
+   * 7. Business notifications.
    */
 
   if (
@@ -350,7 +417,7 @@ function getNotificationHref(
   }
 
   /*
-   * 7. Product notifications.
+   * 8. Product notifications.
    */
 
   if (
@@ -372,7 +439,7 @@ function getNotificationHref(
   }
 
   /*
-   * 8. Other notifications associated with a business.
+   * 9. Other notifications associated with a business.
    */
 
   const businessId = data?.businessId;
