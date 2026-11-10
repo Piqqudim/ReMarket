@@ -1,3 +1,4 @@
+
 "use client";
 
 import {
@@ -110,10 +111,14 @@ export default function SiteHeader(_props: SiteHeaderProps) {
             typeof rawUser.email === "string" ? rawUser.email : null,
           role: parseAccountRole(rawUser.role),
         });
+
         setSessionError(false);
       } catch (error) {
         console.error("Header session error:", error);
-        if (!cancelled) setSessionError(true);
+
+        if (!cancelled) {
+          setSessionError(true);
+        }
       } finally {
         if (
           !cancelled &&
@@ -129,11 +134,13 @@ export default function SiteHeader(_props: SiteHeaderProps) {
     }
 
     void refreshAccount();
+
     window.addEventListener("focus", handleWindowFocus);
 
     return () => {
       cancelled = true;
       requestVersionRef.current += 1;
+
       window.removeEventListener("focus", handleWindowFocus);
     };
   }, []);
@@ -147,6 +154,7 @@ export default function SiteHeader(_props: SiteHeaderProps) {
 
     function handlePointerDown(event: PointerEvent) {
       const target = event.target;
+
       if (
         target instanceof Node &&
         accountMenuRef.current &&
@@ -157,7 +165,9 @@ export default function SiteHeader(_props: SiteHeaderProps) {
     }
 
     function handleKeyDown(event: KeyboardEvent) {
-      if (event.key === "Escape") setAccountMenuOpen(false);
+      if (event.key === "Escape") {
+        setAccountMenuOpen(false);
+      }
     }
 
     document.addEventListener("pointerdown", handlePointerDown);
@@ -185,7 +195,9 @@ export default function SiteHeader(_props: SiteHeaderProps) {
 
   function handleSearch(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+
     const query = searchQuery.trim();
+
     if (!query) return;
 
     const params = new URLSearchParams({
@@ -194,6 +206,7 @@ export default function SiteHeader(_props: SiteHeaderProps) {
     });
 
     closeAccountMenu();
+
     router.push(`/search?${params.toString()}`);
   }
 
@@ -208,6 +221,7 @@ export default function SiteHeader(_props: SiteHeaderProps) {
           className="ml-3 h-5 w-5 shrink-0 text-[#81766C]"
           aria-hidden="true"
         />
+
         <input
           type="search"
           value={searchQuery}
@@ -218,13 +232,17 @@ export default function SiteHeader(_props: SiteHeaderProps) {
           maxLength={100}
           className="min-w-0 flex-1 bg-transparent px-3 text-sm text-[#17202A] outline-none placeholder:text-[#91877E]"
         />
+
         <button
           type="submit"
           aria-label="Search products"
           disabled={!searchQuery.trim()}
           className="flex h-9 w-10 shrink-0 items-center justify-center rounded-full bg-[#FF5A36] text-white transition hover:bg-[#E94A28] disabled:cursor-not-allowed disabled:opacity-60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#FF5A36] focus-visible:ring-offset-2"
         >
-          <Search className="h-4 w-4" aria-hidden="true" />
+          <Search
+            className="h-4 w-4"
+            aria-hidden="true"
+          />
         </button>
       </form>
     );
@@ -241,14 +259,20 @@ export default function SiteHeader(_props: SiteHeaderProps) {
     setAccountMenuError("");
 
     try {
-      await signOut({ redirect: false, callbackUrl: "/" });
+      await signOut({
+        redirect: false,
+        callbackUrl: "/",
+      });
+
       setAccount(null);
       setSessionError(false);
       setAccountMenuOpen(false);
+
       router.replace("/");
       router.refresh();
     } catch (error) {
       console.error("Logout failed:", error);
+
       setAccountMenuError(
         "We couldn't log you out. Please try again.",
       );
@@ -267,6 +291,10 @@ export default function SiteHeader(_props: SiteHeaderProps) {
     pathname.startsWith("/product/") ||
     pathname === "/search" ||
     pathname.startsWith("/search/");
+
+  // Hide desktop navigation links only on the homepage.
+  // The ReMarket logo remains the link back to the homepage.
+  const showDesktopNavigation = pathname !== "/";
 
   function desktopLinkClass(active: boolean) {
     return `rounded-full px-3 py-2.5 text-sm font-semibold transition ${
@@ -303,11 +331,13 @@ export default function SiteHeader(_props: SiteHeaderProps) {
             <p className="truncate text-sm font-bold text-[#17202A]">
               {account.name || account.email || "My account"}
             </p>
+
             {account.name && account.email && (
               <p className="mt-0.5 truncate text-xs text-[#756B61]">
                 {account.email}
               </p>
             )}
+
             <span className="mt-2 inline-flex rounded-full bg-[#FFE0D6] px-2.5 py-1 text-[10px] font-bold text-[#9F2D18]">
               {account.role === "ADMIN"
                 ? "Administrator"
@@ -317,6 +347,7 @@ export default function SiteHeader(_props: SiteHeaderProps) {
                     ? "Buyer account"
                     : "Account"}
             </span>
+
             {account.role === null && (
               <p className="mt-2 text-[11px] leading-4 text-[#756B61]">
                 Your account role could not be identified.
@@ -349,6 +380,7 @@ export default function SiteHeader(_props: SiteHeaderProps) {
                 />
                 Seller dashboard
               </Link>
+
               <Link
                 href="/seller/profile"
                 onClick={closeAccountMenu}
@@ -400,10 +432,12 @@ export default function SiteHeader(_props: SiteHeaderProps) {
                   <span className="block text-xs font-bold text-[#9F2D18]">
                     Sell on ReMarket
                   </span>
+
                   <span className="mt-1 block text-[11px] text-[#756B61]">
                     Start listing your products.
                   </span>
                 </span>
+
                 <ArrowRight
                   className="h-4 w-4 shrink-0 text-[#9F2D18]"
                   aria-hidden="true"
@@ -425,10 +459,15 @@ export default function SiteHeader(_props: SiteHeaderProps) {
                   aria-hidden="true"
                 />
               ) : (
-                <LogOut className="h-4 w-4" aria-hidden="true" />
+                <LogOut
+                  className="h-4 w-4"
+                  aria-hidden="true"
+                />
               )}
+
               {loggingOut ? "Logging out..." : "Log out"}
             </button>
+
             {accountMenuError && (
               <p
                 role="alert"
@@ -445,9 +484,11 @@ export default function SiteHeader(_props: SiteHeaderProps) {
             <p className="text-sm font-bold text-[#17202A]">
               Welcome to ReMarket
             </p>
+
             <p className="mt-1 text-xs leading-5 text-[#756B61]">
               Sign in to access your account and saved products.
             </p>
+
             {sessionError && (
               <p
                 role="alert"
@@ -479,6 +520,7 @@ export default function SiteHeader(_props: SiteHeaderProps) {
             >
               Create an account
             </Link>
+
             <Link
               href="/seller/signup"
               onClick={closeAccountMenu}
@@ -510,40 +552,47 @@ export default function SiteHeader(_props: SiteHeaderProps) {
           xl:gap-6 xl:px-10
         "
       >
-        {/* LOGO */}
+        {/* LOGO - ALWAYS LINKS BACK TO HOMEPAGE */}
         <Link
           href="/"
           aria-label="ReMarket home"
           className="order-1 flex min-w-0 items-center gap-2.5 lg:w-[170px] lg:shrink-0 xl:w-[190px]"
         >
           <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-[#FF5A36] text-white shadow-sm">
-            <ShoppingBag className="h-5 w-5" aria-hidden="true" />
+            <ShoppingBag
+              className="h-5 w-5"
+              aria-hidden="true"
+            />
           </span>
+
           <span className="truncate text-xl font-extrabold tracking-tight text-[#9F2D18] lg:text-[21px]">
             ReMarket
           </span>
         </Link>
 
-        {/* PRODUCT-FOCUSED DESKTOP NAVIGATION */}
-        <nav
-          aria-label="Main navigation"
-          className="order-2 hidden shrink-0 items-center gap-1 lg:flex"
-        >
-          <Link
-            href="/"
-            aria-current={pathname === "/" ? "page" : undefined}
-            className={desktopLinkClass(pathname === "/")}
+        {/* DESKTOP NAVIGATION - HIDDEN ON HOMEPAGE */}
+        {showDesktopNavigation && (
+          <nav
+            aria-label="Main navigation"
+            className="order-2 hidden shrink-0 items-center gap-1 lg:flex"
           >
-            Home
-          </Link>
-          <Link
-            href="/shop"
-            aria-current={productsActive ? "page" : undefined}
-            className={desktopLinkClass(productsActive)}
-          >
-            Products
-          </Link>
-        </nav>
+            <Link
+              href="/"
+              aria-current={pathname === "/" ? "page" : undefined}
+              className={desktopLinkClass(pathname === "/")}
+            >
+              Home
+            </Link>
+
+            <Link
+              href="/shop"
+              aria-current={productsActive ? "page" : undefined}
+              className={desktopLinkClass(productsActive)}
+            >
+              Products
+            </Link>
+          </nav>
+        )}
 
         {/* PRODUCT SEARCH */}
         <div className="order-3 col-span-2 min-w-0 lg:col-span-1 lg:min-w-[180px] lg:flex-1">
@@ -554,7 +603,10 @@ export default function SiteHeader(_props: SiteHeaderProps) {
         <div className="order-2 flex shrink-0 items-center justify-end gap-1.5 sm:gap-2 lg:order-4">
           <NotificationBell />
 
-          <div ref={accountMenuRef} className="relative shrink-0">
+          <div
+            ref={accountMenuRef}
+            className="relative shrink-0"
+          >
             <button
               type="button"
               onClick={() => {
@@ -571,9 +623,15 @@ export default function SiteHeader(_props: SiteHeaderProps) {
               }`}
             >
               {account?.role === "SELLER" ? (
-                <Store className="h-5 w-5" aria-hidden="true" />
+                <Store
+                  className="h-5 w-5"
+                  aria-hidden="true"
+                />
               ) : (
-                <UserCircle className="h-6 w-6" aria-hidden="true" />
+                <UserCircle
+                  className="h-6 w-6"
+                  aria-hidden="true"
+                />
               )}
             </button>
 

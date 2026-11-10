@@ -16,17 +16,31 @@ const noStore = {
   Expires: "0",
 };
 
+/* =========================================================
+   GET CART
+========================================================= */
+
 /**
  * GET /api/cart
  *
  * Retrieves the authenticated buyer's cart.
- * Checks product availability, fixed selling price and inventory.
  *
  * Pricing:
- * - price is the actual selling price used for checkout calculations.
- * - originalPrice is optional and is only for discount display.
- * - Product priceMin/priceMax are no longer used.
+ * - price is the actual selling price.
+ * - originalPrice is only for discount display.
+ * - priceMin and priceMax are not used.
+ *
+ * Inventory:
+ * - null stockQuantity means inventory tracking is disabled.
+ * - zero means out of stock.
+ * - a positive number represents tracked stock.
+ *
+ * Important:
+ * This endpoint reports cart availability.
+ * The checkout endpoint must independently validate
+ * prices, inventory and seller status before creating orders.
  */
+
 export async function GET() {
   const access = await requireBuyer();
 
@@ -39,6 +53,7 @@ export async function GET() {
       where: {
         buyerId: access.user.id,
       },
+
       include: {
         items: {
           include: {
@@ -47,11 +62,14 @@ export async function GET() {
                 id: true,
                 name: true,
                 description: true,
+
                 price: true,
                 originalPrice: true,
+
                 availability: true,
                 status: true,
                 deletedAt: true,
+
                 stockQuantity: true,
                 imageUrl: true,
 
@@ -66,6 +84,7 @@ export async function GET() {
 
                 images: {
                   take: 1,
+
                   orderBy: [
                     { sortOrder: "asc" },
                     { createdAt: "asc" },
@@ -78,70 +97,99 @@ export async function GET() {
       },
     });
 
+    /* =====================================================
+       NORMALIZE CART ITEMS
+    ===================================================== */
+
     const items = (cart?.items ?? []).map((item) => {
       const product = item.product;
+
+      const business = product?.business ?? null;
+
+      /* QUANTITY */
 
       const validQuantity =
         Number.isSafeInteger(item.quantity) &&
         item.quantity >= 1 &&
         item.quantity <= MAX_QUANTITY_PER_PRODUCT;
 
+      /* PRODUCT AND SELLER AVAILABILITY */
+
       const isAvailable =
         product !== null &&
         product.status === "ACTIVE" &&
         product.deletedAt === null &&
         product.availability === "AVAILABLE" &&
-        product.business.status === "ACTIVE" &&
-        product.business.deletedAt === null;
+        business !== null &&
+        business.status === "ACTIVE" &&
+        business.deletedAt === null;
 
-      /*
-       * A product is fixed-price when it has one positive selling price.
-       * The old priceMin/priceMax fields are intentionally not consulted.
-       */
+      /* FIXED SELLING PRICE */
+
       const hasFixedPrice =
         product !== null &&
         product.price !== null &&
         Number.isSafeInteger(product.price) &&
-        product.price > 0;
+        product.price > 0 &&
+        product.price <= MAX_ORDER_TOTAL;
 
       /*
-       * originalPrice is for display only. It never changes the amount
-       * charged to the buyer. Ignore invalid legacy or inconsistent values.
+       * originalPrice is optional.
+       * It is used only when it is a valid higher price.
+       * It is never used for checkout calculations.
        */
+
       const validOriginalPrice =
         product !== null &&
         hasFixedPrice &&
         product.originalPrice !== null &&
         Number.isSafeInteger(product.originalPrice) &&
-        product.originalPrice > (product.price ?? 0)
+        product.originalPrice > (product.price ?? 0) &&
+        product.originalPrice <= MAX_ORDER_TOTAL
           ? product.originalPrice
           : null;
 
-      // null means inventory tracking is disabled.
-      // Zero means out of stock.
+      /* INVENTORY VALIDATION */
+
       const hasValidStock =
         product !== null &&
-        (product.stockQuantity === null ||
-          (Number.isSafeInteger(product.stockQuantity) &&
-            product.stockQuantity >= 0));
+        (
+          product.stockQuantity === null ||
+          (
+            Number.isSafeInteger(product.stockQuantity) &&
+            product.stockQuantity >= 0
+          )
+        );
+
+      /*
+       * null stockQuantity means inventory tracking
+       * is disabled, not that the product is out of stock.
+       */
 
       const hasEnoughStock =
         product !== null &&
-        (product.stockQuantity === null ||
-          (product.stockQuantity !== null &&
-            validQuantity &&
-            product.stockQuantity >= item.quantity));
+        validQuantity &&
+        hasValidStock &&
+        (
+          product.stockQuantity === null ||
+          (
+            product.stockQuantity !== null &&
+            product.stockQuantity >= item.quantity
+          )
+        );
+
+      /* LINE TOTAL */
 
       let lineTotal: number | null = null;
 
       if (
         validQuantity &&
         hasFixedPrice &&
-        product?.price !== null &&
-        product?.price !== undefined
+        product !== null &&
+        product.price !== null
       ) {
-        // Use the selling price, never the original/discounted display price.
-        const calculatedTotal = product.price * item.quantity;
+        const calculatedTotal =
+          product.price * item.quantity;
 
         if (
           Number.isSafeInteger(calculatedTotal) &&
@@ -152,6 +200,8 @@ export async function GET() {
         }
       }
 
+      /* PURCHASABILITY */
+
       const purchasable =
         validQuantity &&
         isAvailable &&
@@ -160,13 +210,16 @@ export async function GET() {
         hasEnoughStock &&
         lineTotal !== null;
 
+      /* UNAVAILABLE REASON */
+
       let unavailableReason: string | null = null;
 
       if (!validQuantity) {
-        unavailableReason = "Invalid cart quantity.";
+        unavailableReason =
+          `You can purchase up to ${MAX_QUANTITY_PER_PRODUCT} units of one product.`;
       } else if (!product || !isAvailable) {
         unavailableReason =
-          "This product is no longer available.";
+          "This product or its business is no longer available.";
       } else if (!hasFixedPrice) {
         unavailableReason =
           "This product does not have a confirmed fixed selling price.";
@@ -181,19 +234,25 @@ export async function GET() {
           "The product total exceeds the maximum allowed order value.";
       }
 
+      /* NORMALIZED PRODUCT */
+
       return {
         ...item,
 
         product: product
           ? {
               ...product,
-              // Return only a valid original price for discount display.
+
               originalPrice: validOriginalPrice,
-              hasDiscount: validOriginalPrice !== null,
+
+              hasDiscount:
+                validOriginalPrice !== null,
+
               isAvailable,
               hasFixedPrice,
               hasValidStock,
               hasEnoughStock,
+
               purchasable,
               unavailableReason,
             }
@@ -205,9 +264,28 @@ export async function GET() {
       };
     });
 
-    // Calculate the cart subtotal from valid fixed-price line totals.
+    /* =====================================================
+       CART SUBTOTAL
+
+       CRITICAL FIX:
+       Only purchasable products contribute to the
+       payable subtotal.
+
+       Unavailable products can still have a displayed
+       lineTotal, but they must not increase the subtotal.
+    ===================================================== */
+
     const subtotal = items.reduce(
-      (total, item) => total + (item.lineTotal ?? 0),
+      (total, item) => {
+        if (
+          !item.purchasable ||
+          item.lineTotal === null
+        ) {
+          return total;
+        }
+
+        return total + item.lineTotal;
+      },
       0,
     );
 
@@ -228,7 +306,13 @@ export async function GET() {
       );
     }
 
-    // Count only valid quantities.
+    /* =====================================================
+       ITEM COUNT
+
+       This represents the total quantity in the cart,
+       including unavailable items.
+    ===================================================== */
+
     const itemCount = items.reduce(
       (total, item) => {
         if (
@@ -246,7 +330,8 @@ export async function GET() {
     if (!Number.isSafeInteger(itemCount)) {
       return NextResponse.json(
         {
-          error: "Your cart contains an invalid quantity total.",
+          error:
+            "Your cart contains an invalid quantity total.",
         },
         {
           status: 409,
@@ -255,11 +340,16 @@ export async function GET() {
       );
     }
 
+    /* =====================================================
+       CART SUMMARY
+    ===================================================== */
+
     const purchasableItems = items.filter(
       (item) => item.purchasable,
     ).length;
 
-    const unavailableItems = items.length - purchasableItems;
+    const unavailableItems =
+      items.length - purchasableItems;
 
     return NextResponse.json(
       {
@@ -272,8 +362,11 @@ export async function GET() {
           : null,
 
         items,
+
         itemCount,
+
         subtotal,
+
         currency: "NGN",
 
         summary: {
@@ -288,6 +381,7 @@ export async function GET() {
         headers: noStore,
       },
     );
+
   } catch (error) {
     console.error("Get cart error:", error);
 
@@ -303,12 +397,22 @@ export async function GET() {
   }
 }
 
+/* =========================================================
+   CLEAR CART
+========================================================= */
+
 /**
  * DELETE /api/cart
  *
  * Removes all items from the authenticated buyer's cart.
- * Does not delete the cart itself or modify product inventory.
+ *
+ * This does not:
+ * - Delete the cart itself.
+ * - Delete products.
+ * - Modify product inventory.
+ * - Modify seller orders.
  */
+
 export async function DELETE() {
   const access = await requireBuyer();
 
@@ -338,6 +442,7 @@ export async function DELETE() {
         headers: noStore,
       },
     );
+
   } catch (error) {
     console.error("Clear cart error:", error);
 

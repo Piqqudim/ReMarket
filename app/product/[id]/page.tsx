@@ -1,3 +1,4 @@
+
 "use client";
 
 import {
@@ -34,7 +35,6 @@ import {
 
 import SiteHeader from "@/components/layout/SiteHeader";
 import MobileBottomNav from "@/components/layout/MobileBottomNav";
-
 import AddToCartButton from "@/components/cart/AddToCartButton";
 
 /* =========================================================
@@ -64,7 +64,6 @@ type ProductSeller = {
   imageUrl: string | null;
   verification: string | null;
   verified: boolean;
-
   location: {
     area: string | null;
     street: string | null;
@@ -75,22 +74,16 @@ type ProductDetail = {
   id: string;
   name: string;
   description: string | null;
-
   price: number | null;
   originalPrice: number | null;
-
   availability: Availability;
   stockQuantity: number | null;
-
   imageUrl: string | null;
   keywords: string[];
-
   createdAt: string;
   updatedAt: string;
-
   category: ProductCategory;
   images: ProductImage[];
-
   seller: ProductSeller;
 };
 
@@ -98,16 +91,12 @@ type RelatedProduct = {
   id: string;
   name: string;
   description: string | null;
-
   price: number | null;
   originalPrice: number | null;
-
   availability: Availability;
   stockQuantity: number | null;
-
   imageUrl: string | null;
   images: ProductImage[];
-
   category: {
     id?: string;
     name: string;
@@ -791,7 +780,7 @@ function ProductTile({
     `/product/${encodeURIComponent(product.id)}`;
 
   return (
-    <article className="group w-[165px] shrink-0 snap-start overflow-hidden rounded-2xl border border-[#EAE6DF] bg-white transition hover:-translate-y-1 hover:border-[#FFB39F] hover:shadow-lg sm:w-[205px]">
+    <article className="group w-[165px] shrink-0 snap-start overflow-hidden rounded-2xl border border-[#EAE6DF] bg-white transition hover:-translate-y-1 hover:border-[#FFB39F] hover:shadow-lg">
 
       <Link
         href={productHref}
@@ -1631,16 +1620,10 @@ function ProductPageContent({
 
   /* =====================================================
      PAGE DISPLAY DATA
-
-     IMPORTANT:
-     This is deliberately below the loading and error
-     returns. At this point, product cannot be null.
   ===================================================== */
 
   const availability = getAvailability(product);
-
   const listedDate = formatDate(product.createdAt);
-
   const area = product.seller.location?.area;
 
   /* =====================================================
@@ -2043,6 +2026,18 @@ function ProductPageContent({
                       </p>
                     </div>
                   </div>
+
+                  {/* VIEW SELLER */}
+
+                  <Link
+                    href={`/business/${encodeURIComponent(
+                      product.seller.id,
+                    )}`}
+                    className="mt-4 flex min-h-10 w-full items-center justify-center gap-2 rounded-xl border border-[#FFD1C5] bg-white px-4 py-2.5 text-xs font-bold text-[#9F2D18] transition hover:border-[#FF5A36] hover:bg-[#FFF1ED]"
+                  >
+                    View Seller
+                    <ArrowRight className="h-4 w-4" />
+                  </Link>
                 </div>
 
                 {listedDate && (

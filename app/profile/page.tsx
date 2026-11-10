@@ -1,7 +1,7 @@
+
 "use client";
 
 import {
-  useCallback,
   useEffect,
   useState,
   type ReactNode,
@@ -12,24 +12,20 @@ import { signOut, useSession } from "next-auth/react";
 import {
   ArrowRight,
   Bell,
-  CalendarDays,
   CheckCircle2,
-  ClipboardList,
+  ChevronRight,
   Heart,
-  Home,
   Loader2,
-  LogOut,
   Package,
   Search,
   ShoppingBag,
+  ShieldCheck,
   Store,
   UserRound,
 } from "lucide-react";
 
-import {
-  getSavedBusinesses,
-  SAVED_BUSINESSES_CHANGED_EVENT,
-} from "@/lib/saved";
+import SiteHeader from "@/components/layout/SiteHeader";
+import MobileBottomNav from "@/components/layout/MobileBottomNav";
 
 type ProfileSessionUser = {
   id?: string;
@@ -45,12 +41,18 @@ type ApiResponse = {
   alreadySeller?: unknown;
 };
 
-type AccountLinkProps = {
+type AccountActionProps = {
   href: string;
   title: string;
   description: string;
   icon: ReactNode;
+  accent?: "orange" | "green" | "neutral";
   detail?: string;
+};
+
+type AccountDetailProps = {
+  label: string;
+  value: string;
 };
 
 function errorMessage(
@@ -70,86 +72,95 @@ function errorMessage(
   return fallback;
 }
 
-const navItems = [
-  { href: "/", label: "Home", icon: Home },
-  { href: "/shop", label: "Shop", icon: Search },
-  { href: "/my-requests", label: "Requests", icon: ClipboardList },
-  { href: "/saved", label: "Saved", icon: Heart },
-];
+/* -------------------------------------------------------------------------- */
+/* ACCOUNT ACTION CARD                                                       */
+/* -------------------------------------------------------------------------- */
 
-function AccountLink({
+function AccountActionCard({
   href,
   title,
   description,
   icon,
+  accent = "orange",
   detail,
-}: AccountLinkProps) {
+}: AccountActionProps) {
+  const accentClasses = {
+    orange: "bg-[#FFF0E9] text-[#9F2D18]",
+    green: "bg-[#EAF7F0] text-[#137A59]",
+    neutral: "bg-[#F3F0EA] text-[#685E55]",
+  };
+
   return (
     <Link
       href={href}
-      className="group flex min-w-0 items-center gap-3 border-b
-        border-[#F0ECE6] px-4 py-4 last:border-b-0 transition
-        hover:bg-[#FFF7ED] focus-visible:outline-none
-        focus-visible:ring-2 focus-visible:ring-inset
-        focus-visible:ring-[#FF5A36] sm:px-5"
+      className="group flex min-w-0 items-start gap-3
+        rounded-xl border border-[#EAE6DF] bg-white p-4
+        transition duration-200
+        hover:-translate-y-0.5 hover:border-[#FFD0C3]
+        hover:shadow-[0_8px_22px_rgba(23,32,42,0.055)]
+        focus-visible:outline-none focus-visible:ring-2
+        focus-visible:ring-[#FF5A36] sm:p-5"
     >
-      <span className="flex h-10 w-10 shrink-0 items-center
-        justify-center rounded-xl bg-[#FFF0E9] text-[#9F2D18]">
+      <span
+        className={`flex h-10 w-10 shrink-0 items-center
+          justify-center rounded-xl ${accentClasses[accent]}`}
+      >
         {icon}
       </span>
 
       <span className="min-w-0 flex-1">
-        <span className="block text-sm font-semibold text-[#292421]">
+        <span className="block text-sm font-bold text-[#292421]">
           {title}
         </span>
-        <span className="mt-0.5 block text-xs leading-5 text-[#81766D]">
+
+        <span className="mt-1 block text-[11px] leading-5 text-[#81766D] sm:text-xs">
           {description}
         </span>
+
+        {detail && (
+          <span className="mt-2 block text-[10px] font-semibold text-[#9F2D18]">
+            {detail}
+          </span>
+        )}
       </span>
 
-      {detail && (
-        <span className="hidden shrink-0 text-[11px] text-[#9F2D18] sm:block">
-          {detail}
-        </span>
-      )}
-
-      <ArrowRight
-        className="h-4 w-4 shrink-0 text-[#A49A91] transition
-          group-hover:translate-x-0.5 group-hover:text-[#9F2D18]"
+      <ChevronRight
+        className="mt-1 h-4 w-4 shrink-0 text-[#A49A91]
+          transition group-hover:translate-x-0.5
+          group-hover:text-[#9F2D18]"
         aria-hidden="true"
       />
     </Link>
   );
 }
 
-function ComingSoonLink() {
+/* -------------------------------------------------------------------------- */
+/* ACCOUNT DETAIL                                                             */
+/* -------------------------------------------------------------------------- */
+
+function AccountDetail({
+  label,
+  value,
+}: AccountDetailProps) {
   return (
-    <div
-      aria-disabled="true"
-      className="flex min-w-0 items-center gap-3 border-b
-        border-[#F0ECE6] px-4 py-4 last:border-b-0 sm:px-5"
-    >
-      <span className="flex h-10 w-10 shrink-0 items-center
-        justify-center rounded-xl bg-[#F3F0EA] text-[#887D73]">
-        <CalendarDays className="h-5 w-5" aria-hidden="true" />
-      </span>
+    <div className="min-w-0 py-3 first:pt-0 last:pb-0">
+      <dt
+        className="text-[10px] font-bold uppercase
+          tracking-[0.1em] text-[#A49A91]"
+      >
+        {label}
+      </dt>
 
-      <span className="min-w-0 flex-1">
-        <span className="block text-sm font-semibold text-[#514940]">
-          Service bookings
-        </span>
-        <span className="mt-0.5 block text-xs leading-5 text-[#81766D]">
-          Booking and provider conversations are not available yet.
-        </span>
-      </span>
-
-      <span className="shrink-0 rounded-full bg-[#FFF0E9] px-2.5 py-1
-        text-[10px] font-bold text-[#9F2D18]">
-        Coming soon
-      </span>
+      <dd className="mt-1 break-words text-sm font-semibold text-[#514940]">
+        {value}
+      </dd>
     </div>
   );
 }
+
+/* -------------------------------------------------------------------------- */
+/* BUYER PROFILE PAGE                                                         */
+/* -------------------------------------------------------------------------- */
 
 export default function BuyerProfilePage() {
   const router = useRouter();
@@ -158,37 +169,27 @@ export default function BuyerProfilePage() {
   const user = session?.user as ProfileSessionUser | undefined;
   const role = user?.role;
 
-  const displayName = user?.name?.trim() || "ReMarket buyer";
-  const email = user?.email?.trim() || "Email not available";
+  const displayName =
+    user?.name?.trim() || "ReMarket buyer";
 
-  const [savedCount, setSavedCount] = useState(0);
+  const email =
+    user?.email?.trim() || "Email not available";
+
+  const firstName =
+    displayName.split(/\s+/)[0] || "there";
+
   const [showSellerConfirmation, setShowSellerConfirmation] =
     useState(false);
-  const [switchingToSeller, setSwitchingToSeller] = useState(false);
-  const [sellerSwitchError, setSellerSwitchError] = useState("");
-  const [logoutPending, setLogoutPending] = useState(false);
 
-  const refreshSavedCount = useCallback(() => {
-    setSavedCount(getSavedBusinesses().length);
-  }, []);
+  const [switchingToSeller, setSwitchingToSeller] =
+    useState(false);
 
-  useEffect(() => {
-    refreshSavedCount();
+  const [sellerSwitchError, setSellerSwitchError] =
+    useState("");
 
-    window.addEventListener(
-      SAVED_BUSINESSES_CHANGED_EVENT,
-      refreshSavedCount,
-    );
-    window.addEventListener("storage", refreshSavedCount);
-
-    return () => {
-      window.removeEventListener(
-        SAVED_BUSINESSES_CHANGED_EVENT,
-        refreshSavedCount,
-      );
-      window.removeEventListener("storage", refreshSavedCount);
-    };
-  }, [refreshSavedCount]);
+  /* ---------------------------------------------------------------------- */
+  /* ROLE-BASED REDIRECT                                                    */
+  /* ---------------------------------------------------------------------- */
 
   useEffect(() => {
     if (status === "unauthenticated") {
@@ -207,6 +208,10 @@ export default function BuyerProfilePage() {
     }
   }, [role, router, status]);
 
+  /* ---------------------------------------------------------------------- */
+  /* SWITCH BUYER ACCOUNT TO SELLER                                         */
+  /* ---------------------------------------------------------------------- */
+
   async function startSelling() {
     if (switchingToSeller) return;
 
@@ -214,11 +219,16 @@ export default function BuyerProfilePage() {
     setSellerSwitchError("");
 
     try {
-      const response = await fetch("/api/account/become-seller", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        cache: "no-store",
-      });
+      const response = await fetch(
+        "/api/account/become-seller",
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          cache: "no-store",
+        },
+      );
 
       const data = (await response.json().catch(() => null)) as
         | ApiResponse
@@ -235,10 +245,12 @@ export default function BuyerProfilePage() {
       }
 
       await signOut({ redirect: false });
+
       router.replace("/seller/login?account=converted");
       router.refresh();
     } catch (error) {
       console.error("Start selling error:", error);
+
       setSellerSwitchError(
         "Something went wrong. Please try again.",
       );
@@ -247,18 +259,9 @@ export default function BuyerProfilePage() {
     }
   }
 
-  async function logOut() {
-    if (logoutPending) return;
-
-    setLogoutPending(true);
-
-    try {
-      await signOut({ callbackUrl: "/" });
-    } catch (error) {
-      console.error("Profile logout error:", error);
-      setLogoutPending(false);
-    }
-  }
+  /* ---------------------------------------------------------------------- */
+  /* LOADING AND REDIRECT STATES                                            */
+  /* ---------------------------------------------------------------------- */
 
   if (
     status === "loading" ||
@@ -267,357 +270,523 @@ export default function BuyerProfilePage() {
     role === "ADMIN"
   ) {
     return (
-      <main className="flex min-h-dvh items-center justify-center
-        bg-[#FFF7ED] px-4">
-        <div
-          className="flex items-center gap-2 text-sm text-[#756B61]"
-          role="status"
+      <div className="min-h-dvh bg-[#FFFDFC]">
+        <SiteHeader searchMode="PRODUCTS" />
+
+        <main
+          className="flex min-h-[60vh] items-center
+            justify-center px-4"
         >
-          <Loader2
-            className="h-4 w-4 animate-spin text-[#FF5A36]"
-            aria-hidden="true"
-          />
-          Loading your account...
-        </div>
-      </main>
+          <div
+            className="flex items-center gap-2 text-sm text-[#756B61]"
+            role="status"
+          >
+            <Loader2
+              className="h-4 w-4 animate-spin text-[#FF5A36]"
+              aria-hidden="true"
+            />
+            Loading your account...
+          </div>
+        </main>
+
+        <MobileBottomNav />
+      </div>
     );
   }
 
+  /* ---------------------------------------------------------------------- */
+  /* PROFILE PAGE                                                           */
+  /* ---------------------------------------------------------------------- */
+
   return (
-    <main className="min-h-dvh bg-[#FFF7ED] pb-24 text-[#292421] lg:pb-10">
-      {/* RE-MARKET PRIMARY NAVIGATION */}
-      <header className="sticky top-0 z-40 border-b border-[#EAE6DF]
-        bg-white/95 backdrop-blur">
-        <div className="mx-auto flex min-h-[64px] w-full max-w-[1440px]
-          items-center justify-between gap-4 px-4 sm:px-6 lg:px-8">
-          <Link
-            href="/"
-            className="flex shrink-0 items-center gap-2.5"
-            aria-label="ReMarket home"
-          >
-            <span className="flex h-9 w-9 items-center justify-center
-              rounded-xl bg-[#FF5A36] text-white">
-              <Store className="h-5 w-5" aria-hidden="true" />
-            </span>
-            <span className="text-base font-extrabold tracking-tight
-              text-[#292421]">
-              ReMarket
-            </span>
-          </Link>
+    <div className="min-h-dvh bg-[#FCFAF6] text-[#292421]">
+      {/* SHARED REMARKET HEADER */}
+
+      <SiteHeader searchMode="PRODUCTS" />
+
+      <main
+        id="main-content"
+        className="min-h-dvh pb-28 lg:pb-10"
+      >
+        <div
+          className="mx-auto w-full max-w-[1440px]
+            px-3 py-5 sm:px-6 sm:py-7 lg:px-8"
+        >
+          {/* BREADCRUMB */}
 
           <nav
-            className="hidden items-center gap-1 lg:flex"
-            aria-label="Main navigation"
+            aria-label="Breadcrumb"
+            className="mb-5 flex items-center gap-2
+              text-[10px] font-medium text-[#948A81]"
           >
-            {navItems.map(({ href, label }) => (
-              <Link
-                key={href}
-                href={href}
-                className="rounded-xl px-4 py-2.5 text-sm font-medium
-                  text-[#625950] transition hover:bg-[#FFF7ED]
-                  hover:text-[#9F2D18]"
-              >
-                {label}
-              </Link>
-            ))}
+            <Link
+              href="/"
+              className="transition hover:text-[#9F2D18]"
+            >
+              Home
+            </Link>
+
+            <ChevronRight className="h-3 w-3" />
+
+            <span className="font-bold text-[#9F2D18]">
+              My account
+            </span>
           </nav>
 
-          <div className="flex shrink-0 items-center gap-2">
-            <span className="hidden rounded-full bg-[#FFF0E9] px-3 py-1.5
-              text-[11px] font-bold text-[#9F2D18] sm:inline-flex">
-              Buyer account
-            </span>
-            <button
-              type="button"
-              onClick={() => void logOut()}
-              disabled={logoutPending}
-              className="inline-flex min-h-9 items-center gap-2 rounded-xl
-                border border-[#EAE6DF] bg-white px-3 text-xs font-semibold
-                text-[#756B61] transition hover:bg-[#FFF7ED]
-                hover:text-[#9F2D18] disabled:opacity-60"
+          {/* BUYER ACCOUNT INTRODUCTION */}
+
+          <section
+            className="relative overflow-hidden rounded-2xl
+              border border-[#F0DDD4]
+              bg-gradient-to-r from-[#FFF0E9]
+              via-[#FFF7ED] to-[#FCFAF6]
+              p-4 sm:p-6 lg:p-7"
+          >
+            <div
+              aria-hidden="true"
+              className="pointer-events-none absolute
+                -right-16 -top-20 h-52 w-52
+                rounded-full bg-[#FF5A36]/[0.06]"
+            />
+
+            <div
+              aria-hidden="true"
+              className="pointer-events-none absolute
+                -bottom-24 right-[22%] h-40 w-40
+                rounded-full bg-white/60"
+            />
+
+            <div
+              className="relative z-10 flex flex-col
+                gap-5 sm:flex-row sm:items-center
+                sm:justify-between"
             >
-              {logoutPending ? (
-                <Loader2 className="h-4 w-4 animate-spin" />
-              ) : (
-                <LogOut className="h-4 w-4" />
-              )}
-              <span className="hidden sm:inline">
-                {logoutPending ? "Logging out..." : "Log out"}
-              </span>
-            </button>
-          </div>
-        </div>
-      </header>
+              <div className="flex min-w-0 items-center gap-3 sm:gap-4">
+                <div
+                  className="flex h-14 w-14 shrink-0
+                    items-center justify-center
+                    rounded-2xl bg-[#FF5A36]
+                    text-white shadow-sm sm:h-16 sm:w-16"
+                >
+                  <UserRound className="h-7 w-7 sm:h-8 sm:w-8" />
+                </div>
 
-      <div className="mx-auto w-full max-w-[1180px] px-3 py-5
-        sm:px-6 sm:py-7 lg:px-8">
-        {/* COMPACT ACCOUNT IDENTITY */}
-        <section className="rounded-2xl border border-[#EAE6DF]
-          bg-white p-4 shadow-[0_2px_12px_rgba(41,36,33,0.03)]
-          sm:p-5">
-          <div className="flex min-w-0 items-center gap-3 sm:gap-4">
-            <div className="flex h-12 w-12 shrink-0 items-center
-              justify-center rounded-full bg-[#FFF0E9] text-[#9F2D18]
-              sm:h-14 sm:w-14">
-              <UserRound className="h-6 w-6 sm:h-7 sm:w-7" />
-            </div>
+                <div className="min-w-0">
+                  <div
+                    className="inline-flex items-center
+                      gap-1.5 text-[9px] font-bold
+                      uppercase tracking-[0.13em]
+                      text-[#9F2D18]"
+                  >
+                    <ShieldCheck className="h-3.5 w-3.5" />
+                    Buyer account
+                  </div>
 
-            <div className="min-w-0 flex-1">
-              <p className="text-[10px] font-bold uppercase tracking-[0.12em]
-                text-[#9F2D18]">
-                My ReMarket account
-              </p>
-              <h1 className="mt-0.5 break-words text-lg font-bold
-                text-[#292421] sm:text-xl">
-                {displayName}
-              </h1>
-              <p className="mt-0.5 break-all text-xs text-[#81766D]">
-                {email}
-              </p>
-            </div>
+                  <h1
+                    className="mt-1 break-words text-xl
+                      font-extrabold tracking-tight
+                      text-[#401B13] sm:text-2xl"
+                  >
+                    Welcome back, {firstName}
+                  </h1>
 
-            <span className="hidden shrink-0 rounded-full border
-              border-[#F1D4C8] bg-[#FFF7ED] px-3 py-1.5 text-[10px]
-              font-bold text-[#9F2D18] sm:inline-flex">
-              BUYER
-            </span>
-          </div>
-        </section>
-
-        <div className="mt-5 grid items-start gap-5 lg:grid-cols-[minmax(0,1fr)_290px]">
-          {/* ACCOUNT ACTIVITY */}
-          <section className="min-w-0 space-y-5">
-            <div>
-              <div className="mb-3 flex items-end justify-between gap-3">
-                <div>
-                  <h2 className="text-base font-bold text-[#292421]">
-                    Your activity
-                  </h2>
-                  <p className="mt-1 text-xs text-[#81766D]">
-                    Manage the things you save, request and discover.
+                  <p className="mt-1 break-all text-[11px] text-[#756B61] sm:text-xs">
+                    {email}
                   </p>
                 </div>
               </div>
 
-              <div className="overflow-hidden rounded-2xl border
-                border-[#EAE6DF] bg-white">
-                <AccountLink
-                  href="/saved"
-                  title="Saved businesses"
-                  description="Businesses you have bookmarked."
-                  icon={<Heart className="h-5 w-5" />}
-                  detail={`${savedCount} saved`}
-                />
-                <AccountLink
-                  href="/cart"
-                  title="Shopping cart"
-                  description="Review products you have added to your cart."
-                  icon={<ShoppingBag className="h-5 w-5" />}
-                />
-                <AccountLink
-                  href="/orders"
-                  title="My product orders"
-                  description="Review orders placed with local sellers."
-                  icon={<Package className="h-5 w-5" />}
-                />
-                <AccountLink
-                  href="/my-requests"
-                  title="My requests"
-                  description="Check the requests you have submitted."
-                  icon={<ClipboardList className="h-5 w-5" />}
-                />
-                <AccountLink
-                  href="/request"
-                  title="Request an item"
-                  description="Tell nearby businesses what you are looking for."
-                  icon={<Search className="h-5 w-5" />}
-                />
-                <AccountLink
-                  href="/shop"
-                  title="Discover local sellers"
-                  description="Explore products and businesses around you."
-                  icon={<Store className="h-5 w-5" />}
-                />
-                <ComingSoonLink />
-              </div>
-            </div>
-
-            {/* ACCOUNT PREFERENCES */}
-            <div>
-              <h2 className="mb-3 text-base font-bold text-[#292421]">
-                Account preferences
-              </h2>
-              <div className="overflow-hidden rounded-2xl border
-                border-[#EAE6DF] bg-white">
-                <AccountLink
-                  href="/settings/notifications"
-                  title="Notification settings"
-                  description="Choose the ReMarket updates you receive."
-                  icon={<Bell className="h-5 w-5" />}
-                />
-              </div>
+              <Link
+                href="/shop"
+                className="inline-flex min-h-10
+                  shrink-0 items-center justify-center
+                  gap-2 rounded-lg bg-[#FF5A36]
+                  px-4 py-2.5 text-xs font-bold
+                  text-white shadow-sm transition
+                  hover:bg-[#E94A28]"
+              >
+                Start shopping
+                <ArrowRight className="h-4 w-4" />
+              </Link>
             </div>
           </section>
 
-          {/* ACCOUNT DETAILS AND SELLER ENTRY */}
-          <aside className="min-w-0 space-y-5">
-            <section className="rounded-2xl border border-[#EAE6DF]
-              bg-white p-4 sm:p-5">
-              <h2 className="text-sm font-bold text-[#292421]">
-                Account details
-              </h2>
-              <dl className="mt-3 divide-y divide-[#F0ECE6]">
-                <div className="py-3 first:pt-0">
-                  <dt className="text-[10px] font-semibold uppercase
-                    tracking-wide text-[#A49A91]">
-                    Name
-                  </dt>
-                  <dd className="mt-1 break-words text-sm font-medium
-                    text-[#514940]">
-                    {displayName}
-                  </dd>
-                </div>
-                <div className="py-3 last:pb-0">
-                  <dt className="text-[10px] font-semibold uppercase
-                    tracking-wide text-[#A49A91]">
-                    Email address
-                  </dt>
-                  <dd className="mt-1 break-all text-sm font-medium
-                    text-[#514940]">
-                    {email}
-                  </dd>
-                </div>
-              </dl>
-              <p className="mt-3 border-t border-[#F0ECE6] pt-3
-                text-[11px] leading-5 text-[#81766D]">
-                These details are linked to the account you used to sign in.
-              </p>
-            </section>
+          {/* SHOPPING DASHBOARD */}
 
-            {/* SELLER ONBOARDING */}
-            <section className="rounded-2xl border border-[#F1D4C8]
-              bg-[#FFFDFC] p-4 sm:p-5">
-              <div className="flex items-center gap-2">
-                <span className="flex h-9 w-9 items-center
-                  justify-center rounded-xl bg-[#FFF0E9] text-[#9F2D18]">
-                  <Store className="h-5 w-5" />
-                </span>
-                <div>
-                  <h2 className="text-sm font-bold text-[#292421]">
-                    Have a business?
-                  </h2>
-                  <p className="text-[10px] text-[#81766D]">
-                    Start selling on ReMarket.
-                  </p>
-                </div>
+          <section
+            className="mt-7"
+            aria-labelledby="shopping-heading"
+          >
+            <div className="mb-3">
+              <p
+                className="text-[9px] font-bold uppercase
+                  tracking-[0.14em] text-[#9F2D18]"
+              >
+                Your shopping
+              </p>
+
+              <h2
+                id="shopping-heading"
+                className="mt-1 text-lg font-extrabold
+                  tracking-tight text-[#292421] sm:text-xl"
+              >
+                Your account activity
+              </h2>
+
+              <p className="mt-1 text-[11px] text-[#81766D] sm:text-xs">
+                Quickly access your shopping and account activities.
+              </p>
+            </div>
+
+            <div
+              className="grid grid-cols-1 gap-3
+                sm:grid-cols-2 xl:grid-cols-4"
+            >
+              <AccountActionCard
+                href="/orders"
+                title="My orders"
+                description="View your purchases and follow their order updates."
+                icon={<Package className="h-5 w-5" />}
+                accent="orange"
+                detail="View order history"
+              />
+
+              <AccountActionCard
+                href="/cart"
+                title="Shopping cart"
+                description="Review the products you have added to your cart."
+                icon={<ShoppingBag className="h-5 w-5" />}
+                accent="green"
+                detail="Continue to cart"
+              />
+
+              <AccountActionCard
+                href="/saved"
+                title="Saved products"
+                description="Revisit products you have bookmarked for later."
+                icon={<Heart className="h-5 w-5" />}
+                accent="orange"
+                detail="View saved collection"
+              />
+
+              <AccountActionCard
+                href="/shop"
+                title="Discover products"
+                description="Explore products listed by businesses around you."
+                icon={<Search className="h-5 w-5" />}
+                accent="neutral"
+                detail="Explore the catalogue"
+              />
+            </div>
+          </section>
+
+          {/* ACCOUNT MANAGEMENT */}
+
+          <div
+            className="mt-8 grid items-start gap-5
+              lg:grid-cols-[minmax(0,1fr)_340px]"
+          >
+            {/* LEFT: ACCOUNT PREFERENCES */}
+
+            <section
+              className="min-w-0"
+              aria-labelledby="preferences-heading"
+            >
+              <div className="mb-3">
+                <p
+                  className="text-[9px] font-bold uppercase
+                    tracking-[0.14em] text-[#9F2D18]"
+                >
+                  Manage your account
+                </p>
+
+                <h2
+                  id="preferences-heading"
+                  className="mt-1 text-lg font-extrabold
+                    tracking-tight text-[#292421]"
+                >
+                  Account preferences
+                </h2>
               </div>
 
-              <p className="mt-3 text-xs leading-5 text-[#756B61]">
-                Use this account to create a seller profile. Your login
-                details will remain the same.
-              </p>
-
-              {!showSellerConfirmation ? (
-                <button
-                  type="button"
-                  onClick={() => {
-                    setSellerSwitchError("");
-                    setShowSellerConfirmation(true);
-                  }}
-                  className="mt-4 inline-flex min-h-10 w-full
-                    items-center justify-center gap-2 rounded-xl
-                    bg-[#FF5A36] px-4 py-2.5 text-xs font-bold text-white
-                    transition hover:bg-[#E94A28] focus-visible:outline-none
-                    focus-visible:ring-4 focus-visible:ring-[#FF5A36]/20"
+              <div
+                className="overflow-hidden rounded-xl
+                  border border-[#EAE6DF] bg-white"
+              >
+                <Link
+                  href="/settings/notifications"
+                  className="group flex min-w-0 items-center
+                    gap-3 px-4 py-4 transition
+                    hover:bg-[#FFF7ED] sm:px-5"
                 >
-                  Start selling
-                  <ArrowRight className="h-4 w-4" />
-                </button>
-              ) : (
-                <div className="mt-4 rounded-xl border border-[#EAE6DF]
-                  bg-[#FCFAF6] p-3">
-                  <p className="text-xs font-bold text-[#292421]">
-                    Switch this account to Seller?
-                  </p>
-                  <p className="mt-1 text-[11px] leading-5 text-[#81766D]">
-                    ReMarket currently uses one account role at a time.
-                    You will sign in again after the change.
-                  </p>
-                  <div className="mt-3 grid gap-2">
-                    <button
-                      type="button"
-                      disabled={switchingToSeller}
-                      onClick={() => void startSelling()}
-                      className="inline-flex min-h-10 items-center
-                        justify-center gap-2 rounded-xl bg-[#FF5A36]
-                        px-3 py-2 text-xs font-bold text-white
-                        disabled:cursor-not-allowed disabled:opacity-60"
+                  <span
+                    className="flex h-10 w-10 shrink-0
+                      items-center justify-center
+                      rounded-xl bg-[#FFF0E9] text-[#9F2D18]"
+                  >
+                    <Bell className="h-5 w-5" />
+                  </span>
+
+                  <span className="min-w-0 flex-1">
+                    <span className="block text-sm font-bold text-[#292421]">
+                      Notification settings
+                    </span>
+
+                    <span className="mt-1 block text-[10px] leading-5 text-[#81766D] sm:text-xs">
+                      Manage the updates and notifications you receive.
+                    </span>
+                  </span>
+
+                  <ChevronRight
+                    className="h-4 w-4 shrink-0
+                      text-[#A49A91] transition
+                      group-hover:translate-x-0.5
+                      group-hover:text-[#9F2D18]"
+                  />
+                </Link>
+              </div>
+
+              {/* SELLER ONBOARDING */}
+
+              <section
+                className="mt-5 overflow-hidden
+                  rounded-xl border border-[#F1D4C8]
+                  bg-white"
+                aria-labelledby="seller-onboarding-heading"
+              >
+                <div
+                  className="flex items-center gap-3
+                    border-b border-[#F5E7E1]
+                    bg-[#FFF7F2] px-4 py-4 sm:px-5"
+                >
+                  <span
+                    className="flex h-10 w-10 shrink-0
+                      items-center justify-center
+                      rounded-xl bg-[#FFE0D6]
+                      text-[#9F2D18]"
+                  >
+                    <Store className="h-5 w-5" />
+                  </span>
+
+                  <div>
+                    <h2
+                      id="seller-onboarding-heading"
+                      className="text-sm font-extrabold text-[#292421]"
                     >
-                      {switchingToSeller ? (
-                        <Loader2 className="h-4 w-4 animate-spin" />
-                      ) : (
-                        <CheckCircle2 className="h-4 w-4" />
-                      )}
-                      {switchingToSeller
-                        ? "Switching account..."
-                        : "Confirm and continue"}
-                    </button>
-                    <button
-                      type="button"
-                      disabled={switchingToSeller}
-                      onClick={() => setShowSellerConfirmation(false)}
-                      className="min-h-9 rounded-xl border border-[#EAE6DF]
-                        bg-white px-3 py-2 text-xs font-semibold
-                        text-[#756B61] hover:bg-[#FFF7ED]
-                        disabled:opacity-60"
-                    >
-                      Cancel
-                    </button>
+                      Have a business?
+                    </h2>
+
+                    <p className="mt-0.5 text-[10px] text-[#81766D]">
+                      You can also sell on ReMarket.
+                    </p>
                   </div>
                 </div>
-              )}
 
-              {sellerSwitchError && (
-                <p
-                  role="alert"
-                  className="mt-3 rounded-xl border border-[#F1D5D0]
-                    bg-[#FFF0EE] px-3 py-2.5 text-xs leading-5
-                    text-[#9F2D18]"
-                >
-                  {sellerSwitchError}
-                </p>
-              )}
+                <div className="p-4 sm:p-5">
+                  <p className="text-xs leading-5 text-[#756B61]">
+                    Create a seller profile to start listing
+                    your products and help more people discover
+                    your business.
+                  </p>
+
+                  {!showSellerConfirmation ? (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setSellerSwitchError("");
+                        setShowSellerConfirmation(true);
+                      }}
+                      className="mt-4 inline-flex min-h-10
+                        w-full items-center justify-center
+                        gap-2 rounded-lg bg-[#FF5A36]
+                        px-4 py-2.5 text-xs font-bold
+                        text-white transition hover:bg-[#E94A28]
+                        focus-visible:outline-none
+                        focus-visible:ring-2
+                        focus-visible:ring-[#FF5A36]
+                        focus-visible:ring-offset-2"
+                    >
+                      Start selling
+                      <ArrowRight className="h-4 w-4" />
+                    </button>
+                  ) : (
+                    <div
+                      className="mt-4 rounded-xl
+                        border border-[#EAE6DF]
+                        bg-[#FCFAF6] p-3"
+                    >
+                      <p className="text-xs font-bold text-[#292421]">
+                        Switch this account to Seller?
+                      </p>
+
+                      <p className="mt-1 text-[11px] leading-5 text-[#81766D]">
+                        ReMarket currently uses one account
+                        role at a time. You will sign in again
+                        after the change.
+                      </p>
+
+                      <div className="mt-3 grid gap-2">
+                        <button
+                          type="button"
+                          disabled={switchingToSeller}
+                          onClick={() => void startSelling()}
+                          className="inline-flex min-h-10
+                            items-center justify-center gap-2
+                            rounded-lg bg-[#FF5A36] px-3 py-2
+                            text-xs font-bold text-white
+                            disabled:cursor-not-allowed
+                            disabled:opacity-60"
+                        >
+                          {switchingToSeller ? (
+                            <Loader2 className="h-4 w-4 animate-spin" />
+                          ) : (
+                            <CheckCircle2 className="h-4 w-4" />
+                          )}
+
+                          {switchingToSeller
+                            ? "Switching account..."
+                            : "Confirm and continue"}
+                        </button>
+
+                        <button
+                          type="button"
+                          disabled={switchingToSeller}
+                          onClick={() =>
+                            setShowSellerConfirmation(false)
+                          }
+                          className="min-h-9 rounded-lg
+                            border border-[#EAE6DF]
+                            bg-white px-3 py-2
+                            text-xs font-semibold
+                            text-[#756B61] transition
+                            hover:bg-[#FFF7ED]
+                            disabled:opacity-60"
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                    </div>
+                  )}
+
+                  {sellerSwitchError && (
+                    <p
+                      role="alert"
+                      className="mt-3 rounded-lg
+                        border border-[#F1D5D0]
+                        bg-[#FFF0EE] px-3 py-2.5
+                        text-xs leading-5 text-[#9F2D18]"
+                    >
+                      {sellerSwitchError}
+                    </p>
+                  )}
+                </div>
+              </section>
             </section>
-          </aside>
-        </div>
 
-        <footer className="mt-7 border-t border-[#EAE6DF] pt-4">
-          <p className="text-center text-[11px] text-[#A49A91]">
-            ReMarket · Find it nearby.
-          </p>
-        </footer>
-      </div>
+            {/* RIGHT: ACCOUNT INFORMATION */}
 
-      {/* RE-MARKET MOBILE NAVIGATION */}
-      <nav
-        className="fixed inset-x-0 bottom-0 z-50 grid h-[68px]
-          grid-cols-4 border-t border-[#EAE6DF] bg-white/95
-          px-2 pb-[env(safe-area-inset-bottom)] backdrop-blur lg:hidden"
-        aria-label="Mobile navigation"
-      >
-        {navItems.map(({ href, label, icon: Icon }) => (
-          <Link
-            key={href}
-            href={href}
-            className="flex flex-col items-center justify-center
-              gap-1 text-[10px] font-medium text-[#756B61]
-              transition hover:text-[#9F2D18]"
+            <aside className="min-w-0 space-y-4">
+              <section
+                className="rounded-xl border
+                  border-[#EAE6DF] bg-white p-4 sm:p-5"
+              >
+                <div className="flex items-center justify-between gap-3">
+                  <h2 className="text-sm font-extrabold text-[#292421]">
+                    Personal information
+                  </h2>
+
+                  <span
+                    className="rounded-full bg-[#EAF7F0]
+                      px-2.5 py-1 text-[9px]
+                      font-bold text-[#137A59]"
+                  >
+                    Buyer
+                  </span>
+                </div>
+
+                <dl className="mt-4 divide-y divide-[#F0ECE6]">
+                  <AccountDetail
+                    label="Full name"
+                    value={displayName}
+                  />
+
+                  <AccountDetail
+                    label="Email address"
+                    value={email}
+                  />
+                </dl>
+
+                <div
+                  className="mt-3 border-t
+                    border-[#F0ECE6] pt-3"
+                >
+                  <p className="text-[10px] leading-5 text-[#81766D]">
+                    Your information is linked to the ReMarket
+                    account you used to sign in.
+                  </p>
+                </div>
+              </section>
+
+              {/* SHOPPING REMINDER */}
+
+              <section
+                className="rounded-xl border
+                  border-[#EAE6DF] bg-white p-4 sm:p-5"
+              >
+                <div className="flex items-center gap-2">
+                  <span
+                    className="flex h-9 w-9
+                      items-center justify-center
+                      rounded-lg bg-[#FFF0E9]
+                      text-[#9F2D18]"
+                  >
+                    <ShoppingBag className="h-4 w-4" />
+                  </span>
+
+                  <h2 className="text-sm font-extrabold text-[#292421]">
+                    Keep shopping
+                  </h2>
+                </div>
+
+                <p className="mt-3 text-[11px] leading-5 text-[#756B61]">
+                  Find products from businesses around you.
+                  Compare listings and save products you want
+                  to revisit.
+                </p>
+
+                <Link
+                  href="/shop"
+                  className="mt-4 inline-flex min-h-9
+                    w-full items-center justify-center
+                    gap-2 rounded-lg border
+                    border-[#FFD0C3] bg-[#FFF7F2]
+                    px-3 py-2 text-[10px]
+                    font-bold text-[#9F2D18]
+                    transition hover:bg-[#FFE8DF]"
+                >
+                  Browse products
+                  <ArrowRight className="h-3.5 w-3.5" />
+                </Link>
+              </section>
+            </aside>
+          </div>
+
+          {/* FOOTER */}
+
+          <footer
+            className="mt-8 border-t border-[#EAE6DF]
+              pt-4 text-center"
           >
-            <Icon className="h-5 w-5" aria-hidden="true" />
-            {label}
-          </Link>
-        ))}
-      </nav>
-    </main>
+            <p className="text-[10px] text-[#A49A91]">
+              ReMarket · Find it nearby
+            </p>
+          </footer>
+        </div>
+      </main>
+
+      {/* SHARED REMARKET MOBILE NAVIGATION */}
+
+      <MobileBottomNav />
+    </div>
   );
 }

@@ -7,22 +7,35 @@ export const dynamic = "force-dynamic";
 export const revalidate = 0;
 export const runtime = "nodejs";
 
+/* =========================================================
+   CONSTANTS
+========================================================= */
+
 const MAX_QUANTITY_PER_PRODUCT = 50;
 const MAX_ITEM_ID_LENGTH = 100;
 const MAX_ORDER_TOTAL = 2_147_483_647;
 const MAX_TRANSACTION_ATTEMPTS = 3;
 
 const noStore = {
-  "Cache-Control": "private, no-store, max-age=0, must-revalidate",
+  "Cache-Control":
+    "private, no-store, max-age=0, must-revalidate",
   Pragma: "no-cache",
   Expires: "0",
 };
+
+/* =========================================================
+   TYPES
+========================================================= */
 
 type RouteContext = {
   params: Promise<{
     itemId: string;
   }>;
 };
+
+/* =========================================================
+   HELPERS
+========================================================= */
 
 function isRecord(
   value: unknown,
@@ -39,12 +52,19 @@ class CartRouteError extends Error {
 
   constructor(message: string, status: number) {
     super(message);
+
     this.name = "CartRouteError";
     this.status = status;
   }
 }
 
-function isSerializationConflict(error: unknown): boolean {
+/**
+ * Prisma P2034:
+ * Transaction write conflict or deadlock.
+ */
+function isSerializationConflict(
+  error: unknown,
+): boolean {
   return (
     typeof error === "object" &&
     error !== null &&
@@ -53,6 +73,12 @@ function isSerializationConflict(error: unknown): boolean {
   );
 }
 
+/**
+ * Retry transactions when Prisma reports a
+ * serialization conflict.
+ *
+ * The transaction is retried up to three times.
+ */
 async function withSerializableRetry<T>(
   operation: () => Promise<T>,
 ): Promise<T> {
@@ -73,61 +99,127 @@ async function withSerializableRetry<T>(
     }
   }
 
-  throw new Error("Unable to complete cart operation.");
+  throw new Error(
+    "Unable to complete cart operation.",
+  );
 }
 
 /**
- * PATCH /api/cart/items/[itemId]
- *
- * Updates the quantity of an item belonging
- * to the currently authenticated buyer.
- *
- * Product pricing uses one current selling price (price).
- * originalPrice is display-only and is not used to calculate
- * the amount payable. Legacy priceMin/priceMax fields are
- * no longer part of cart validation.
+ * Standard JSON response for cart errors.
  */
+function cartErrorResponse(
+  message: string,
+  status: number,
+) {
+  return NextResponse.json(
+    {
+      error: message,
+    },
+    {
+      status,
+      headers: noStore,
+    },
+  );
+}
+
+/**
+ * Validates a cart item ID from the route.
+ */
+function validateItemId(
+  itemId: unknown,
+): string | null {
+  if (
+    typeof itemId !== "string" ||
+    !itemId.trim() ||
+    itemId.trim().length > MAX_ITEM_ID_LENGTH
+  ) {
+    return null;
+  }
+
+  return itemId.trim();
+}
+
+/* =========================================================
+   PATCH /api/cart/items/[itemId]
+
+   Updates the quantity of one product in the
+   authenticated buyer's cart.
+
+   Validation:
+   - Buyer authentication.
+   - Cart ownership.
+   - Product status.
+   - Seller/business status.
+   - Product availability.
+   - Fixed selling price.
+   - Stock quantity.
+   - Maximum quantity.
+   - Maximum line total.
+
+   Pricing:
+   - price is the current selling price.
+   - originalPrice is display-only.
+   - Legacy priceMin and priceMax are not used.
+
+   Inventory:
+   - null stockQuantity means inventory tracking
+     is disabled.
+   - zero means out of stock.
+   - positive values represent available stock.
+
+   Important:
+   This endpoint updates cart quantities.
+   It does not reserve inventory.
+========================================================= */
+
 export async function PATCH(
   request: Request,
   context: RouteContext,
 ) {
+  /* =====================================================
+     AUTHENTICATION
+  ===================================================== */
+
   const access = await requireBuyer();
 
   if (!access.authorized) {
     return access.response;
   }
 
+  /* =====================================================
+     VALIDATE ITEM ID
+  ===================================================== */
+
   const { itemId } = await context.params;
 
-  if (
-    typeof itemId !== "string" ||
-    !itemId.trim() ||
-    itemId.trim().length > MAX_ITEM_ID_LENGTH
-  ) {
-    return NextResponse.json(
-      { error: "Invalid cart item ID." },
-      {
-        status: 400,
-        headers: noStore,
-      },
+  const validatedItemId =
+    validateItemId(itemId);
+
+  if (!validatedItemId) {
+    return cartErrorResponse(
+      "Invalid cart item ID.",
+      400,
     );
   }
 
-  const validatedItemId = itemId.trim();
+  /* =====================================================
+     READ REQUEST BODY
+  ===================================================== */
 
   let body: unknown;
 
   try {
     body = await request.json();
   } catch {
-    return NextResponse.json(
-      { error: "Invalid JSON request." },
-      {
-        status: 400,
-        headers: noStore,
-      },
+    return cartErrorResponse(
+      "Invalid JSON request.",
+      400,
     );
   }
+
+  /* =====================================================
+     VALIDATE QUANTITY
+  ===================================================== */
 
   if (
     !isRecord(body) ||
@@ -136,191 +228,277 @@ export async function PATCH(
     body.quantity < 1 ||
     body.quantity > MAX_QUANTITY_PER_PRODUCT
   ) {
-    return NextResponse.json(
-      {
-        error: `Quantity must be a whole number between 1 and ${MAX_QUANTITY_PER_PRODUCT}.`,
-      },
-      {
-        status: 400,
-        headers: noStore,
-      },
+    return cartErrorResponse(
+      `Quantity must be a whole number between 1 and ${MAX_QUANTITY_PER_PRODUCT}.`,
+      400,
     );
   }
 
   const quantity = body.quantity;
 
+  /* =====================================================
+     UPDATE CART ITEM
+  ===================================================== */
+
   try {
-    const updatedItem = await withSerializableRetry(() =>
-      prisma.$transaction(
-        async (tx) => {
-          // 1. Find the cart item and confirm ownership.
-          const item = await tx.cartItem.findFirst({
-            where: {
-              id: validatedItemId,
-              cart: {
-                is: {
-                  buyerId: access.user.id,
+    const updatedItem = await withSerializableRetry(
+      () =>
+        prisma.$transaction(
+          async (tx) => {
+            /* =========================================
+               1. FIND CART ITEM AND VERIFY OWNERSHIP
+            ========================================= */
+
+            const item = await tx.cartItem.findFirst({
+              where: {
+                id: validatedItemId,
+
+                cart: {
+                  is: {
+                    buyerId: access.user.id,
+                  },
                 },
               },
-            },
-            select: {
-              id: true,
-              product: {
-                select: {
-                  id: true,
-                  price: true,
-                  status: true,
-                  deletedAt: true,
-                  availability: true,
-                  stockQuantity: true,
-                  business: {
-                    select: {
-                      status: true,
-                      deletedAt: true,
+
+              select: {
+                id: true,
+
+                product: {
+                  select: {
+                    id: true,
+
+                    price: true,
+
+                    status: true,
+                    deletedAt: true,
+                    availability: true,
+
+                    stockQuantity: true,
+
+                    business: {
+                      select: {
+                        status: true,
+                        deletedAt: true,
+                      },
                     },
                   },
                 },
               },
-            },
-          });
+            });
 
-          if (!item) {
-            throw new CartRouteError(
-              "Cart item not found.",
-              404,
-            );
-          }
+            if (!item) {
+              throw new CartRouteError(
+                "Cart item not found.",
+                404,
+              );
+            }
 
-          const product = item.product;
+            /* =========================================
+               2. VERIFY PRODUCT EXISTS
+            ========================================= */
 
-          // 2. Confirm that the product is still available.
-          const isAvailable =
-            product.status === "ACTIVE" &&
-            product.deletedAt === null &&
-            product.availability === "AVAILABLE" &&
-            product.business.status === "ACTIVE" &&
-            product.business.deletedAt === null;
+            const product = item.product;
 
-          if (!isAvailable) {
-            throw new CartRouteError(
-              "This product is no longer available.",
-              409,
-            );
-          }
+            if (!product) {
+              throw new CartRouteError(
+                "This product no longer exists.",
+                409,
+              );
+            }
 
-          // 3. Confirm that the product has one valid fixed selling price.
-          const hasFixedPrice =
-            product.price !== null &&
-            Number.isSafeInteger(product.price) &&
-            product.price > 0;
+            /* =========================================
+               3. VERIFY BUSINESS EXISTS
+            ========================================= */
 
-          if (!hasFixedPrice || product.price === null) {
-            throw new CartRouteError(
-              "This product no longer has a confirmed fixed price.",
-              409,
-            );
-          }
+            const business = product.business;
 
-          // 4. Validate the inventory value.
-          // null means inventory tracking is disabled.
-          // Zero means the product is out of stock.
-          if (
-            product.stockQuantity !== null &&
-            (
-              !Number.isSafeInteger(product.stockQuantity) ||
-              product.stockQuantity < 0
-            )
-          ) {
-            throw new CartRouteError(
-              "The inventory information for this product is invalid.",
-              409,
-            );
-          }
+            if (!business) {
+              throw new CartRouteError(
+                "The seller for this product is unavailable.",
+                409,
+              );
+            }
 
-          // 5. Check the requested quantity against available stock.
-          if (
-            product.stockQuantity !== null &&
-            quantity > product.stockQuantity
-          ) {
-            throw new CartRouteError(
-              "The requested quantity is higher than the available stock.",
-              409,
-            );
-          }
+            /* =========================================
+               4. VERIFY PRODUCT AND BUSINESS STATUS
+            ========================================= */
 
-          // 6. Validate the product line total using the current selling price.
-          const lineTotal = product.price * quantity;
+            const isAvailable =
+              product.status === "ACTIVE" &&
+              product.deletedAt === null &&
+              product.availability === "AVAILABLE" &&
+              business.status === "ACTIVE" &&
+              business.deletedAt === null;
 
-          if (
-            !Number.isSafeInteger(lineTotal) ||
-            lineTotal <= 0 ||
-            lineTotal > MAX_ORDER_TOTAL
-          ) {
-            throw new CartRouteError(
-              "The requested quantity exceeds the maximum allowed order value.",
-              409,
-            );
-          }
+            if (!isAvailable) {
+              throw new CartRouteError(
+                "This product is no longer available.",
+                409,
+              );
+            }
 
-          // 7. Update only the authenticated buyer's cart item.
-          const updated = await tx.cartItem.updateMany({
-            where: {
-              id: validatedItemId,
-              cart: {
-                is: {
-                  buyerId: access.user.id,
+            /* =========================================
+               5. VERIFY FIXED SELLING PRICE
+            ========================================= */
+
+            const hasFixedPrice =
+              product.price !== null &&
+              Number.isSafeInteger(product.price) &&
+              product.price > 0 &&
+              product.price <= MAX_ORDER_TOTAL;
+
+            if (
+              !hasFixedPrice ||
+              product.price === null
+            ) {
+              throw new CartRouteError(
+                "This product no longer has a confirmed fixed selling price.",
+                409,
+              );
+            }
+
+            /*
+             * The current selling price is used.
+             *
+             * originalPrice is not consulted here.
+             * Legacy priceMin and priceMax are not used.
+             */
+
+            /* =========================================
+               6. VERIFY INVENTORY INFORMATION
+            ========================================= */
+
+            /*
+             * null means inventory tracking is disabled.
+             * Zero means out of stock.
+             */
+
+            if (
+              product.stockQuantity !== null &&
+              (
+                !Number.isSafeInteger(
+                  product.stockQuantity,
+                ) ||
+                product.stockQuantity < 0
+              )
+            ) {
+              throw new CartRouteError(
+                "The inventory information for this product is invalid.",
+                409,
+              );
+            }
+
+            /* =========================================
+               7. CHECK REQUESTED QUANTITY AGAINST STOCK
+            ========================================= */
+
+            if (
+              product.stockQuantity !== null &&
+              quantity > product.stockQuantity
+            ) {
+              throw new CartRouteError(
+                "The requested quantity is higher than the available stock.",
+                409,
+              );
+            }
+
+            /* =========================================
+               8. VALIDATE LINE TOTAL
+            ========================================= */
+
+            const lineTotal =
+              product.price * quantity;
+
+            if (
+              !Number.isSafeInteger(lineTotal) ||
+              lineTotal <= 0 ||
+              lineTotal > MAX_ORDER_TOTAL
+            ) {
+              throw new CartRouteError(
+                "The requested quantity exceeds the maximum allowed order value.",
+                409,
+              );
+            }
+
+            /* =========================================
+               9. UPDATE ONLY THE BUYER'S CART ITEM
+            ========================================= */
+
+            const updated =
+              await tx.cartItem.updateMany({
+                where: {
+                  id: validatedItemId,
+
+                  cart: {
+                    is: {
+                      buyerId: access.user.id,
+                    },
+                  },
                 },
-              },
-            },
-            data: {
-              quantity,
-            },
-          });
 
-          if (updated.count !== 1) {
-            throw new CartRouteError(
-              "Cart item not found.",
-              404,
-            );
-          }
-
-          // 8. Return the updated item.
-          const result = await tx.cartItem.findFirst({
-            where: {
-              id: validatedItemId,
-              cart: {
-                is: {
-                  buyerId: access.user.id,
+                data: {
+                  quantity,
                 },
-              },
-            },
-            select: {
-              id: true,
-              productId: true,
-              quantity: true,
-              updatedAt: true,
-            },
-          });
+              });
 
-          if (!result) {
-            throw new CartRouteError(
-              "Cart item could not be retrieved after updating.",
-              404,
-            );
-          }
+            if (updated.count !== 1) {
+              throw new CartRouteError(
+                "Cart item not found.",
+                404,
+              );
+            }
 
-          return result;
-        },
-        {
-          isolationLevel: "Serializable",
-        },
-      ),
+            /* =========================================
+               10. RETRIEVE UPDATED CART ITEM
+            ========================================= */
+
+            const result =
+              await tx.cartItem.findFirst({
+                where: {
+                  id: validatedItemId,
+
+                  cart: {
+                    is: {
+                      buyerId: access.user.id,
+                    },
+                  },
+                },
+
+                select: {
+                  id: true,
+                  productId: true,
+                  quantity: true,
+                  updatedAt: true,
+                },
+              });
+
+            if (!result) {
+              throw new CartRouteError(
+                "Cart item could not be retrieved after updating.",
+                404,
+              );
+            }
+
+            return result;
+          },
+
+          {
+            isolationLevel: "Serializable",
+          },
+        ),
     );
+
+    /* ===================================================
+       SUCCESS RESPONSE
+    =================================================== */
 
     return NextResponse.json(
       {
         success: true,
-        message: "Cart quantity updated successfully.",
+
+        message:
+          "Cart quantity updated successfully.",
+
         item: updatedItem,
       },
       {
@@ -328,71 +506,98 @@ export async function PATCH(
         headers: noStore,
       },
     );
+
   } catch (error) {
+    /* ===================================================
+       APPLICATION ERRORS
+    =================================================== */
+
     if (error instanceof CartRouteError) {
-      return NextResponse.json(
-        {
-          error: error.message,
-        },
-        {
-          status: error.status,
-          headers: noStore,
-        },
+      return cartErrorResponse(
+        error.message,
+        error.status,
       );
     }
 
-    console.error("Update cart item error:", error);
+    /* ===================================================
+       SERIALIZATION CONFLICT
+    =================================================== */
 
-    return NextResponse.json(
-      {
-        error: "Unable to update this cart item.",
-      },
-      {
-        status: 500,
-        headers: noStore,
-      },
+    if (isSerializationConflict(error)) {
+      return cartErrorResponse(
+        "Your cart or product inventory changed while updating. Please refresh your cart and try again.",
+        409,
+      );
+    }
+
+    /* ===================================================
+       UNEXPECTED ERRORS
+    =================================================== */
+
+    console.error(
+      "Update cart item error:",
+      error,
+    );
+
+    return cartErrorResponse(
+      "Unable to update this cart item.",
+      500,
     );
   }
 }
 
-/**
- * DELETE /api/cart/items/[itemId]
- *
- * Removes an item only from the authenticated
- * buyer's own cart.
- */
+/* =========================================================
+   DELETE /api/cart/items/[itemId]
+
+   Removes one product from the authenticated
+   buyer's cart.
+
+   This does not:
+   - Delete the actual product.
+   - Change product inventory.
+   - Delete seller information.
+   - Modify existing orders.
+========================================================= */
+
 export async function DELETE(
   _request: Request,
   context: RouteContext,
 ) {
+  /* =====================================================
+     AUTHENTICATION
+  ===================================================== */
+
   const access = await requireBuyer();
 
   if (!access.authorized) {
     return access.response;
   }
 
+  /* =====================================================
+     VALIDATE ITEM ID
+  ===================================================== */
+
   const { itemId } = await context.params;
 
-  if (
-    typeof itemId !== "string" ||
-    !itemId.trim() ||
-    itemId.trim().length > MAX_ITEM_ID_LENGTH
-  ) {
-    return NextResponse.json(
-      { error: "Invalid cart item ID." },
-      {
-        status: 400,
-        headers: noStore,
-      },
+  const validatedItemId =
+    validateItemId(itemId);
+
+  if (!validatedItemId) {
+    return cartErrorResponse(
+      "Invalid cart item ID.",
+      400,
     );
   }
 
-  const validatedItemId = itemId.trim();
+  /* =====================================================
+     DELETE CART ITEM
+  ===================================================== */
 
   try {
     const deleted = await prisma.cartItem.deleteMany({
       where: {
         id: validatedItemId,
+
         cart: {
           is: {
             buyerId: access.user.id,
@@ -401,39 +606,45 @@ export async function DELETE(
       },
     });
 
+    /* ===================================================
+       ITEM NOT FOUND
+    =================================================== */
+
     if (deleted.count === 0) {
-      return NextResponse.json(
-        {
-          error: "Cart item not found.",
-        },
-        {
-          status: 404,
-          headers: noStore,
-        },
+      return cartErrorResponse(
+        "Cart item not found.",
+        404,
       );
     }
+
+    /* ===================================================
+       SUCCESS RESPONSE
+    =================================================== */
 
     return NextResponse.json(
       {
         success: true,
-        message: "Product removed from your cart.",
+
+        message:
+          "Product removed from your cart.",
+
+        deletedCount: deleted.count,
       },
       {
         status: 200,
         headers: noStore,
       },
     );
-  } catch (error) {
-    console.error("Delete cart item error:", error);
 
-    return NextResponse.json(
-      {
-        error: "Unable to remove this cart item.",
-      },
-      {
-        status: 500,
-        headers: noStore,
-      },
+  } catch (error) {
+    console.error(
+      "Delete cart item error:",
+      error,
+    );
+
+    return cartErrorResponse(
+      "Unable to remove this cart item.",
+      500,
     );
   }
 }

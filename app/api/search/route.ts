@@ -1,3 +1,4 @@
+
 import {
   Availability,
   Prisma,
@@ -57,8 +58,8 @@ const ALLOWED_SORTS = new Set<SortMode>([
 ]);
 
 /*
- * Product search returns product data only.
- * Seller data is limited to verification and broad area context.
+ * Product search returns product data and the seller information
+ * required by the public Shop product cards.
  */
 const productSearchSelect = {
   id: true,
@@ -97,7 +98,12 @@ const productSearchSelect = {
 
   business: {
     select: {
+      // Required by the Shop page's parseProduct() function.
+      id: true,
+      name: true,
+
       verification: true,
+
       location: {
         select: {
           area: true,
@@ -115,12 +121,14 @@ type ParsedPrice = ParsedValue<number>;
 
 function noStoreHeaders(baseHeaders?: HeadersInit): Headers {
   const headers = new Headers(baseHeaders);
+
   headers.set(
     "Cache-Control",
     "no-store, max-age=0, must-revalidate",
   );
   headers.set("Pragma", "no-cache");
   headers.set("Expires", "0");
+
   return headers;
 }
 
@@ -155,7 +163,10 @@ function parseBoundedInteger(
   label: string,
 ): ParsedValue<number> {
   const raw = rawValue?.trim() ?? "";
-  if (!raw) return { value: fallback };
+
+  if (!raw) {
+    return { value: fallback };
+  }
 
   if (!/^\d+$/.test(raw)) {
     return {
@@ -165,6 +176,7 @@ function parseBoundedInteger(
   }
 
   const value = Number(raw);
+
   if (
     !Number.isSafeInteger(value) ||
     value < minimum ||
@@ -184,9 +196,13 @@ function parsePriceParameter(
   label: string,
 ): ParsedPrice {
   const raw = value?.trim() ?? "";
-  if (!raw) return { value: null };
+
+  if (!raw) {
+    return { value: null };
+  }
 
   const normalized = raw.replace(/,/g, "");
+
   if (!/^\d+$/.test(normalized)) {
     return {
       value: null,
@@ -195,6 +211,7 @@ function parsePriceParameter(
   }
 
   const parsed = Number(normalized);
+
   if (
     !Number.isSafeInteger(parsed) ||
     parsed < 0 ||
@@ -216,7 +233,10 @@ function parseMoneyAmount(input: string): number | null {
     .toLowerCase();
 
   const match = normalized.match(/^(\d+(?:\.\d+)?)(k)?$/);
-  if (!match) return null;
+
+  if (!match) {
+    return null;
+  }
 
   const multiplier = match[2] === "k" ? 1000 : 1;
   const amount = Math.round(Number(match[1]) * multiplier);
@@ -234,11 +254,13 @@ function parseMoneyAmount(input: string): number | null {
 
 function parseInlineBudget(rawQuery: string): InlineBudget {
   let query = rawQuery.trim();
+
   let minPrice: number | null = null;
   let maxPrice: number | null = null;
 
   const betweenPattern =
     /\bbetween\s+([\d,]+(?:\.\d+)?\s*k?)\s+and\s+([\d,]+(?:\.\d+)?\s*k?)\b/i;
+
   const betweenMatch = query.match(betweenPattern);
 
   if (betweenMatch) {
@@ -248,22 +270,27 @@ function parseInlineBudget(rawQuery: string): InlineBudget {
     if (lower !== null && upper !== null) {
       minPrice = lower;
       maxPrice = upper;
+
       query = query
         .replace(betweenMatch[0], " ")
         .replace(/\s+/g, " ")
         .trim();
+
       return { query, minPrice, maxPrice };
     }
   }
 
   const maximumPattern =
     /\b(?:under|below|less\s+than|up\s+to|at\s+most|max(?:imum)?)\s+(?:₦\s*)?([\d,]+(?:\.\d+)?\s*k?)\b/i;
+
   const maximumMatch = query.match(maximumPattern);
 
   if (maximumMatch) {
     const amount = parseMoneyAmount(maximumMatch[1]);
+
     if (amount !== null) {
       maxPrice = amount;
+
       query = query
         .replace(maximumMatch[0], " ")
         .replace(/\s+/g, " ")
@@ -272,12 +299,15 @@ function parseInlineBudget(rawQuery: string): InlineBudget {
   } else {
     const minimumPattern =
       /\b(?:over|above|more\s+than|at\s+least|min(?:imum)?)\s+(?:₦\s*)?([\d,]+(?:\.\d+)?\s*k?)\b/i;
+
     const minimumMatch = query.match(minimumPattern);
 
     if (minimumMatch) {
       const amount = parseMoneyAmount(minimumMatch[1]);
+
       if (amount !== null) {
         minPrice = amount;
+
         query = query
           .replace(minimumMatch[0], " ")
           .replace(/\s+/g, " ")
@@ -300,20 +330,26 @@ function normalizeText(value: string): string {
 }
 
 function stemToken(token: string): string {
-  if (token.length < 4) return token;
+  if (token.length < 4) {
+    return token;
+  }
 
   if (token.endsWith("ies") && token.length > 4) {
     return `${token.slice(0, -3)}y`;
   }
+
   if (token.endsWith("ing") && token.length > 5) {
     return token.slice(0, -3);
   }
+
   if (token.endsWith("ed") && token.length > 4) {
     return token.slice(0, -2);
   }
+
   if (token.endsWith("es") && token.length > 4) {
     return token.slice(0, -2);
   }
+
   if (
     token.endsWith("s") &&
     !token.endsWith("ss") &&
@@ -341,7 +377,10 @@ function buildProductPriceConditions(
   filters: SearchFilters,
 ): Prisma.ProductWhereInput[] {
   const { minPrice, maxPrice } = filters;
-  if (minPrice === null && maxPrice === null) return [];
+
+  if (minPrice === null && maxPrice === null) {
+    return [];
+  }
 
   if (minPrice !== null && maxPrice !== null) {
     return [
@@ -355,10 +394,22 @@ function buildProductPriceConditions(
   }
 
   if (minPrice !== null) {
-    return [{ price: { gte: minPrice } }];
+    return [
+      {
+        price: {
+          gte: minPrice,
+        },
+      },
+    ];
   }
 
-  return [{ price: { lte: maxPrice! } }];
+  return [
+    {
+      price: {
+        lte: maxPrice!,
+      },
+    },
+  ];
 }
 
 function productTextConditions(
@@ -439,11 +490,13 @@ function buildProductWhere(
         is: {
           status: "ACTIVE",
           deletedAt: null,
+
           ...(filters.verified
             ? {
                 verification: VerificationStatus.VERIFIED,
               }
             : {}),
+
           ...(filters.location
             ? {
                 location: {
@@ -460,6 +513,11 @@ function buildProductWhere(
     conditions.push(...productTextConditions(terms));
   }
 
+  /*
+   * Category filtering:
+   * The Shop page currently sends the category name.
+   * Match it against the active category name, ignoring case.
+   */
   if (filters.category) {
     conditions.push({
       category: {
@@ -475,11 +533,16 @@ function buildProductWhere(
   }
 
   if (filters.availability) {
-    conditions.push({ availability: filters.availability });
+    conditions.push({
+      availability: filters.availability,
+    });
   }
 
   conditions.push(...buildProductPriceConditions(filters));
-  return { AND: conditions };
+
+  return {
+    AND: conditions,
+  };
 }
 
 function scoreText(
@@ -487,15 +550,22 @@ function scoreText(
   values: Array<string | null | undefined>,
 ): number {
   const normalizedQuery = normalizeText(query);
-  if (!normalizedQuery) return 0;
+
+  if (!normalizedQuery) {
+    return 0;
+  }
 
   let score = 0;
+
   const queryTerms = getSearchTerms(query);
 
   for (const value of values) {
-    if (!value) continue;
+    if (!value) {
+      continue;
+    }
 
     const normalizedValue = normalizeText(value);
+
     if (normalizedValue === normalizedQuery) {
       score = Math.max(score, 120);
       continue;
@@ -539,9 +609,17 @@ function comparePrice(
   const aPrice = a.price;
   const bPrice = b.price;
 
-  if (aPrice == null && bPrice == null) return 0;
-  if (aPrice == null) return 1;
-  if (bPrice == null) return -1;
+  if (aPrice == null && bPrice == null) {
+    return 0;
+  }
+
+  if (aPrice == null) {
+    return 1;
+  }
+
+  if (bPrice == null) {
+    return -1;
+  }
 
   return direction === "asc"
     ? Number(aPrice) - Number(bPrice)
@@ -596,9 +674,11 @@ function formatProduct(
   product: SearchProduct,
   matchScore: number,
 ) {
-  const currentPrice = Number(product.price);
+  const currentPrice =
+    product.price === null ? null : Number(product.price);
+
   const previousPrice =
-    product.originalPrice == null
+    product.originalPrice === null
       ? null
       : Number(product.originalPrice);
 
@@ -607,28 +687,48 @@ function formatProduct(
     type: "PRODUCT" as const,
     name: product.name,
     description: product.description,
+
     price: currentPrice,
+
     originalPrice:
-      previousPrice !== null && previousPrice > currentPrice
+      currentPrice !== null &&
+      previousPrice !== null &&
+      previousPrice > currentPrice
         ? previousPrice
         : null,
+
     stockQuantity: product.stockQuantity,
     availability: product.availability,
     imageUrl: product.imageUrl,
     keywords: product.keywords,
+
     category:
       product.category?.isActive
         ? product.category
         : null,
+
     images: product.images,
+
+    /*
+     * The Shop page's parseProduct() expects seller.id and seller.name.
+     * These fields were missing from the old search API response.
+     */
     seller: {
+      id: product.business.id,
+      name: product.business.name,
+      verification: product.business.verification,
+
       verified:
         product.business.verification ===
         VerificationStatus.VERIFIED,
+
       location: product.business.location
-        ? { area: product.business.location.area }
+        ? {
+            area: product.business.location.area,
+          }
         : null,
     },
+
     matchScore,
   };
 }
@@ -646,11 +746,13 @@ export async function GET(request: NextRequest) {
 
   try {
     const searchParams = request.nextUrl.searchParams;
+
     const rawQuery = clean(searchParams.get("q"));
     const category = clean(searchParams.get("category"));
     const location = clean(searchParams.get("location"));
 
     const rawType = clean(searchParams.get("type")).toLowerCase();
+
     if (
       rawType &&
       rawType !== "all" &&
@@ -664,8 +766,7 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    // Services are paused. The legacy combined route should be
-    // retained separately as route-legacy.ts for future reactivation.
+    // Services are paused.
     if (rawType === "service") {
       return NextResponse.json(
         {
@@ -713,6 +814,7 @@ export async function GET(request: NextRequest) {
       100_000,
       "Page",
     );
+
     if (pageInput.error || pageInput.value === null) {
       return jsonError(
         pageInput.error ?? "Page is invalid.",
@@ -728,7 +830,11 @@ export async function GET(request: NextRequest) {
       MAX_PAGE_SIZE,
       "Page size",
     );
-    if (pageSizeInput.error || pageSizeInput.value === null) {
+
+    if (
+      pageSizeInput.error ||
+      pageSizeInput.value === null
+    ) {
       return jsonError(
         pageSizeInput.error ?? "Page size is invalid.",
         400,
@@ -737,6 +843,7 @@ export async function GET(request: NextRequest) {
     }
 
     const rawSort = clean(searchParams.get("sort")).toLowerCase();
+
     const sort: SortMode = rawSort
       ? (rawSort as SortMode)
       : "relevance";
@@ -753,6 +860,7 @@ export async function GET(request: NextRequest) {
       searchParams.get("minPrice"),
       "Minimum price",
     );
+
     if (minimumPriceInput.error) {
       return jsonError(
         minimumPriceInput.error,
@@ -765,6 +873,7 @@ export async function GET(request: NextRequest) {
       searchParams.get("maxPrice"),
       "Maximum price",
     );
+
     if (maximumPriceInput.error) {
       return jsonError(
         maximumPriceInput.error,
@@ -776,6 +885,7 @@ export async function GET(request: NextRequest) {
     const availabilityRaw = clean(
       searchParams.get("availability"),
     );
+
     if (
       availabilityRaw &&
       !ALLOWED_AVAILABILITY.has(
@@ -789,7 +899,10 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    const verifiedRaw = clean(searchParams.get("verified"));
+    const verifiedRaw = clean(
+      searchParams.get("verified"),
+    );
+
     if (
       verifiedRaw &&
       verifiedRaw !== "true" &&
@@ -803,17 +916,22 @@ export async function GET(request: NextRequest) {
     }
 
     const inlineBudget = parseInlineBudget(rawQuery);
+
     const filters: SearchFilters = {
       query: inlineBudget.query,
       category,
       location,
+
       minPrice:
         minimumPriceInput.value ?? inlineBudget.minPrice,
+
       maxPrice:
         maximumPriceInput.value ?? inlineBudget.maxPrice,
+
       availability: availabilityRaw
         ? (availabilityRaw as Availability)
         : null,
+
       verified: verifiedRaw === "true",
     };
 
@@ -830,22 +948,31 @@ export async function GET(request: NextRequest) {
     }
 
     const terms = getSearchTerms(filters.query);
-    const productWhere = buildProductWhere(filters, terms);
 
-    const [totalProducts, matchedProducts] = await Promise.all([
-      prisma.product.count({ where: productWhere }),
-      prisma.product.findMany({
-        where: productWhere,
-        select: productSearchSelect,
-        orderBy: { updatedAt: "desc" },
-        take: MAX_SEARCH_RESULTS,
-      }),
-    ]);
+    const productWhere = buildProductWhere(
+      filters,
+      terms,
+    );
+
+    const [totalProducts, matchedProducts] =
+      await Promise.all([
+        prisma.product.count({
+          where: productWhere,
+        }),
+
+        prisma.product.findMany({
+          where: productWhere,
+          select: productSearchSelect,
+          orderBy: {
+            updatedAt: "desc",
+          },
+          take: MAX_SEARCH_RESULTS,
+        }),
+      ]);
 
     /*
-     * We score and sort a bounded candidate set, then paginate it.
-     * This keeps response sizes predictable. If more than 120 products
-     * match, resultMeta.truncated makes that cap explicit.
+     * Results are sorted from a bounded candidate set.
+     * The API explicitly reports when more than 120 products match.
      */
     const sortedProducts = sortProducts(
       matchedProducts,
@@ -853,16 +980,20 @@ export async function GET(request: NextRequest) {
       sort,
     );
 
-    const offset = (pageInput.value - 1) * pageSizeInput.value;
+    const offset =
+      (pageInput.value - 1) * pageSizeInput.value;
+
     const pageProducts = sortedProducts.slice(
       offset,
       offset + pageSizeInput.value,
     );
 
-    const products = pageProducts.map(({ product, matchScore }) =>
-      formatProduct(product, matchScore),
+    const products = pageProducts.map(
+      ({ product, matchScore }) =>
+        formatProduct(product, matchScore),
     );
 
+    // Search tracking must never prevent a successful search response.
     try {
       await prisma.searchEvent.create({
         data: {
@@ -885,16 +1016,20 @@ export async function GET(request: NextRequest) {
       totalProducts,
       MAX_SEARCH_RESULTS,
     );
+
     const totalPages = Math.ceil(
       cappedTotal / pageSizeInput.value,
     );
-    const hasMore = offset + products.length < cappedTotal;
+
+    const hasMore =
+      offset + products.length < cappedTotal;
 
     return NextResponse.json(
       {
         products,
         services: [],
         listings: products,
+
         resultMeta: {
           type: "product",
           totalProducts,
@@ -916,6 +1051,7 @@ export async function GET(request: NextRequest) {
     );
   } catch (error) {
     console.error("Product search API error:", error);
+
     return jsonError(
       "Unable to complete search. Please try again.",
       500,

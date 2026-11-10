@@ -1,3 +1,4 @@
+
 import { randomBytes } from "node:crypto";
 import { NextResponse } from "next/server";
 
@@ -18,8 +19,8 @@ export const runtime = "nodejs";
 const MAX_ORDER_TOTAL = 2_147_483_647;
 const MAX_QUANTITY_PER_PRODUCT = 50;
 const MAX_REQUEST_BODY_BYTES = 32 * 1024;
-
 const MAX_CHECKOUT_RETRIES = 3;
+const MAX_IDEMPOTENCY_KEY_LENGTH = 100;
 
 const MAX_RECIPIENT_LENGTH = 100;
 const MAX_PHONE_LENGTH = 30;
@@ -60,6 +61,9 @@ type CheckoutLine = {
   unitPrice: number;
   quantity: number;
   lineTotal: number;
+
+  // True only when tracked stock was reserved.
+  inventoryReserved: boolean;
 };
 
 type SellerGroup = {
@@ -82,10 +86,14 @@ type CheckoutResult = {
     itemsSubtotal: number;
     deliveryFee: number;
     totalAmount: number;
+    deliveryFeeStatus: string;
     status: string;
     createdAt: Date;
   };
   sellerOrders: CreatedSellerOrder[];
+
+  // Internal flag. It is not returned as part of the order.
+  created: boolean;
 };
 
 type JsonBodyResult =
@@ -97,6 +105,103 @@ type JsonBodyResult =
       ok: false;
       reason: "TOO_LARGE" | "INVALID_JSON";
     };
+
+/*
+ * --------------------------------------------------
+ * EXISTING CHECKOUT LOOKUP
+ * --------------------------------------------------
+ *
+ * Used when a buyer retries a request with the same
+ * idempotency key.
+ * --------------------------------------------------
+ */
+
+const existingCheckoutSelect = {
+  id: true,
+  buyerId: true,
+  orderCode: true,
+  itemsSubtotal: true,
+  deliveryFee: true,
+  totalAmount: true,
+  deliveryFeeStatus: true,
+  status: true,
+  createdAt: true,
+
+  deliveryRecipient: true,
+  deliveryPhone: true,
+  deliveryAddress: true,
+  deliveryArea: true,
+  deliveryLandmark: true,
+  deliveryNotes: true,
+
+  sellerOrders: {
+    select: {
+      id: true,
+      sellerOrderCode: true,
+      sellerId: true,
+    },
+  },
+} satisfies Prisma.OrderSelect;
+
+type ExistingCheckoutRecord = Prisma.OrderGetPayload<{
+  select: typeof existingCheckoutSelect;
+}>;
+
+function buildExistingCheckoutResult(
+  existing: ExistingCheckoutRecord,
+  buyerId: string,
+  delivery: DeliveryDetails,
+): CheckoutResult {
+  if (existing.buyerId !== buyerId) {
+    throw new CheckoutError(
+      "This checkout key has already been used.",
+      409,
+    );
+  }
+
+  /*
+   * Prevent the same idempotency key from being reused
+   * with different delivery information.
+   */
+
+  const deliveryMatches =
+    existing.deliveryRecipient === delivery.deliveryRecipient &&
+    existing.deliveryPhone === delivery.deliveryPhone &&
+    existing.deliveryAddress === delivery.deliveryAddress &&
+    existing.deliveryArea === delivery.deliveryArea &&
+    existing.deliveryLandmark === delivery.deliveryLandmark &&
+    existing.deliveryNotes === delivery.deliveryNotes;
+
+  if (!deliveryMatches) {
+    throw new CheckoutError(
+      "This checkout request has already been used with different delivery details. Start a new checkout attempt.",
+      409,
+    );
+  }
+
+  return {
+    order: {
+      id: existing.id,
+      orderCode: existing.orderCode,
+      itemsSubtotal: existing.itemsSubtotal,
+      deliveryFee: existing.deliveryFee,
+      totalAmount: existing.totalAmount,
+      deliveryFeeStatus: existing.deliveryFeeStatus,
+      status: existing.status,
+      createdAt: existing.createdAt,
+    },
+
+    sellerOrders: existing.sellerOrders,
+
+    created: false,
+  };
+}
+
+/*
+ * --------------------------------------------------
+ * GENERAL HELPERS
+ * --------------------------------------------------
+ */
 
 function isRecord(
   value: unknown,
@@ -127,6 +232,44 @@ function isSerializationConflict(error: unknown): boolean {
     error instanceof Prisma.PrismaClientKnownRequestError &&
     error.code === "P2034"
   );
+}
+
+function isUniqueConstraintConflict(error: unknown): boolean {
+  return (
+    error instanceof Prisma.PrismaClientKnownRequestError &&
+    error.code === "P2002"
+  );
+}
+
+/*
+ * --------------------------------------------------
+ * IDEMPOTENCY KEY
+ * --------------------------------------------------
+ *
+ * The checkout page must send this in the request header:
+ *
+ * Idempotency-Key: a-unique-client-generated-key
+ *
+ * The same key must be reused when retrying the same
+ * checkout request.
+ * --------------------------------------------------
+ */
+
+function getIdempotencyKey(
+  request: Request,
+): string | null {
+  const key =
+    request.headers.get("Idempotency-Key")?.trim() ?? "";
+
+  if (
+    key.length < 16 ||
+    key.length > MAX_IDEMPOTENCY_KEY_LENGTH ||
+    !/^[A-Za-z0-9._:-]+$/.test(key)
+  ) {
+    return null;
+  }
+
+  return key;
 }
 
 /*
@@ -370,16 +513,18 @@ function validateDeliveryDetails(
  *
  * Tracked inventory is reserved atomically.
  *
+ * The idempotency key prevents duplicate orders when
+ * the buyer retries the same checkout request.
+ *
  * Serializable isolation protects concurrent checkout
  * attempts and stock updates.
- *
- * If anything fails, the entire transaction rolls back.
  * --------------------------------------------------
  */
 
 async function createCheckout(
   buyerId: string,
   delivery: DeliveryDetails,
+  idempotencyKey: string,
 ): Promise<CheckoutResult> {
   for (
     let attempt = 0;
@@ -389,6 +534,32 @@ async function createCheckout(
     try {
       return await prisma.$transaction(
         async (tx): Promise<CheckoutResult> => {
+          /*
+           * --------------------------------------------------
+           * CHECK FOR AN EXISTING CHECKOUT
+           * --------------------------------------------------
+           *
+           * If this key already created an order, return
+           * that order instead of creating another one.
+           * --------------------------------------------------
+           */
+
+          const existingOrder = await tx.order.findUnique({
+            where: {
+              checkoutIdempotencyKey: idempotencyKey,
+            },
+
+            select: existingCheckoutSelect,
+          });
+
+          if (existingOrder) {
+            return buildExistingCheckoutResult(
+              existingOrder,
+              buyerId,
+              delivery,
+            );
+          }
+
           /*
            * LOAD BUYER CART
            */
@@ -471,10 +642,8 @@ async function createCheckout(
           for (const cartItem of cart.items) {
             const product = cartItem.product;
             const business = product.business;
-
             const quantity = cartItem.quantity;
 
-            // Enforce the same quantity limit as the cart APIs.
             if (
               !Number.isSafeInteger(quantity) ||
               quantity < 1 ||
@@ -507,8 +676,7 @@ async function createCheckout(
              * FIXED SELLING PRICE VALIDATION
              *
              * Product price is the current selling price.
-             * Optional originalPrice is display-only and is
-             * never used to calculate what the buyer pays.
+             * originalPrice is display-only.
              */
 
             const unitPrice = product.price;
@@ -637,6 +805,14 @@ async function createCheckout(
               unitPrice,
               quantity,
               lineTotal,
+
+              /*
+               * This flag is saved on the OrderItem.
+               * It tells us whether stock was reserved.
+               */
+
+              inventoryReserved:
+                product.stockQuantity !== null,
             });
 
             groups.set(business.id, group);
@@ -658,9 +834,6 @@ async function createCheckout(
            *
            * Tracked products are decremented only when
            * enough stock remains in the database.
-           *
-           * updateMany performs the stock condition and
-           * decrement as one atomic database operation.
            *
            * If one reservation fails, all earlier stock
            * changes in this transaction are rolled back.
@@ -720,12 +893,20 @@ async function createCheckout(
 
               buyerId,
 
+              checkoutIdempotencyKey: idempotencyKey,
+
               status: "PLACED",
 
               itemsSubtotal,
 
-              // Delivery fee is not currently calculated.
+              /*
+               * Delivery fee has not been confirmed.
+               * The checkout page must not present this
+               * subtotal as the final delivered amount.
+               */
+
               deliveryFee: 0,
+              deliveryFeeStatus: "UNCONFIRMED",
 
               totalAmount: itemsSubtotal,
 
@@ -756,6 +937,7 @@ async function createCheckout(
               itemsSubtotal: true,
               deliveryFee: true,
               totalAmount: true,
+              deliveryFeeStatus: true,
               status: true,
               createdAt: true,
             },
@@ -796,6 +978,14 @@ async function createCheckout(
                     unitPrice: item.unitPrice,
                     quantity: item.quantity,
                     lineTotal: item.lineTotal,
+
+                    /*
+                     * Used later to restore reserved stock
+                     * when the seller order is rejected or
+                     * cancellation is approved.
+                     */
+
+                    inventoryReserved: item.inventoryReserved,
                   })),
                 },
               },
@@ -829,6 +1019,7 @@ async function createCheckout(
           return {
             order,
             sellerOrders: createdSellerOrders,
+            created: true,
           };
         },
 
@@ -838,6 +1029,38 @@ async function createCheckout(
         },
       );
     } catch (error) {
+      /*
+       * --------------------------------------------------
+       * HANDLE DUPLICATE IDEMPOTENCY KEY
+       * --------------------------------------------------
+       *
+       * Two identical requests can arrive at almost
+       * the same time. If one creates the order first,
+       * the other may encounter a unique constraint error.
+       *
+       * Return the existing order rather than creating
+       * another one.
+       * --------------------------------------------------
+       */
+
+      if (isUniqueConstraintConflict(error)) {
+        const existingOrder = await prisma.order.findUnique({
+          where: {
+            checkoutIdempotencyKey: idempotencyKey,
+          },
+
+          select: existingCheckoutSelect,
+        });
+
+        if (existingOrder) {
+          return buildExistingCheckoutResult(
+            existingOrder,
+            buyerId,
+            delivery,
+          );
+        }
+      }
+
       /*
        * RETRY SERIALIZATION CONFLICTS
        */
@@ -874,6 +1097,25 @@ export async function POST(request: Request) {
 
   if (!access.authorized) {
     return access.response;
+  }
+
+  /*
+   * VALIDATE IDEMPOTENCY KEY
+   */
+
+  const idempotencyKey = getIdempotencyKey(request);
+
+  if (!idempotencyKey) {
+    return NextResponse.json(
+      {
+        error:
+          "A valid checkout request key is required. Refresh checkout and try again.",
+      },
+      {
+        status: 400,
+        headers: noStore,
+      },
+    );
   }
 
   /*
@@ -943,6 +1185,7 @@ export async function POST(request: Request) {
     const result = await createCheckout(
       access.user.id,
       deliveryResult.value,
+      idempotencyKey,
     );
 
     /*
@@ -950,96 +1193,108 @@ export async function POST(request: Request) {
      * NOTIFICATIONS
      * --------------------------------------------------
      *
-     * Notifications happen after the checkout transaction
-     * commits. Notification failure must not undo an order.
+     * Only send notifications when a new order was
+     * created. Replaying an existing checkout must not
+     * send another set of order notifications.
      * --------------------------------------------------
      */
 
-    const notificationJobs = [
-      /*
-       * Notify the buyer.
-       */
+    if (result.created) {
+      const notificationJobs = [
+        /*
+         * Notify the buyer.
+         */
 
-      createNotification({
-        userId: access.user.id,
-
-        type: NotificationType.ORDER_PLACED,
-
-        title: "Your order has been placed",
-
-        message:
-          `Your order (${result.order.orderCode}) has been placed successfully. You can track its progress from your orders.`,
-
-        priority: NotificationPriority.HIGH,
-
-        dedupeKey:
-          `buyer-order-placed:${result.order.id}`,
-
-        data: {
-          orderId: result.order.id,
-          orderCode: result.order.orderCode,
-          href: `/orders/${result.order.id}`,
-        } as Prisma.InputJsonValue,
-      }),
-
-      /*
-       * Notify every seller receiving an order.
-       */
-
-      ...result.sellerOrders.map((sellerOrder) =>
         createNotification({
-          userId: sellerOrder.sellerId,
+          userId: access.user.id,
 
           type: NotificationType.ORDER_PLACED,
 
-          title: "New product order",
+          title: "Your order has been placed",
 
           message:
-            `You have received a new order (${sellerOrder.sellerOrderCode}).`,
+            `Your order (${result.order.orderCode}) has been placed successfully. You can track its progress from your orders.`,
 
           priority: NotificationPriority.HIGH,
 
           dedupeKey:
-            `order-placed:${sellerOrder.id}`,
+            `buyer-order-placed:${result.order.id}`,
 
           data: {
             orderId: result.order.id,
             orderCode: result.order.orderCode,
-            sellerOrderId: sellerOrder.id,
-            sellerOrderCode: sellerOrder.sellerOrderCode,
-            href: "/seller/orders",
+            href: `/orders/${result.order.id}`,
           } as Prisma.InputJsonValue,
         }),
-      ),
-    ];
 
-    const notificationResults = await Promise.allSettled(
-      notificationJobs,
-    );
+        /*
+         * Notify every seller receiving an order.
+         */
 
-    for (const notificationResult of notificationResults) {
-      if (notificationResult.status === "rejected") {
-        console.error(
-          "CHECKOUT_NOTIFICATION_ERROR:",
-          notificationResult.reason,
-        );
+        ...result.sellerOrders.map((sellerOrder) =>
+          createNotification({
+            userId: sellerOrder.sellerId,
+
+            type: NotificationType.ORDER_PLACED,
+
+            title: "New product order",
+
+            message:
+              `You have received a new order (${sellerOrder.sellerOrderCode}).`,
+
+            priority: NotificationPriority.HIGH,
+
+            dedupeKey:
+              `order-placed:${sellerOrder.id}`,
+
+            data: {
+              orderId: result.order.id,
+              orderCode: result.order.orderCode,
+              sellerOrderId: sellerOrder.id,
+              sellerOrderCode: sellerOrder.sellerOrderCode,
+              href: "/seller/orders",
+            } as Prisma.InputJsonValue,
+          }),
+        ),
+      ];
+
+      const notificationResults = await Promise.allSettled(
+        notificationJobs,
+      );
+
+      for (const notificationResult of notificationResults) {
+        if (notificationResult.status === "rejected") {
+          console.error(
+            "CHECKOUT_NOTIFICATION_ERROR:",
+            notificationResult.reason,
+          );
+        }
       }
     }
 
     /*
      * CHECKOUT SUCCESS
      *
-     * The response shape is preserved for the checkout page.
+     * New checkout: 201
+     * Existing checkout replay: 200
+     *
+     * The response continues to include the order and
+     * sellerOrders fields expected by the checkout page.
      */
 
     return NextResponse.json(
       {
-        message: "Your order has been placed successfully.",
+        message: result.created
+          ? "Your order has been placed successfully."
+          : "Your previously placed order has been retrieved.",
+
         order: result.order,
         sellerOrders: result.sellerOrders,
+
+        idempotentReplay: !result.created,
       },
       {
-        status: 201,
+        status: result.created ? 201 : 200,
         headers: noStore,
       },
     );

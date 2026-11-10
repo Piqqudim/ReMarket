@@ -1,3 +1,4 @@
+
 import { NextResponse } from "next/server";
 
 import {
@@ -12,6 +13,10 @@ import { prisma } from "@/lib/prisma";
 import { requireSellerAccount } from "@/lib/seller-auth";
 import { createNotification } from "@/lib/notifications";
 
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
+export const runtime = "nodejs";
+
 const MAX_ORDER_ID_LENGTH = 100;
 const MAX_REQUEST_BODY_BYTES = 8 * 1024;
 const MAX_PRISMA_INT = 2_147_483_647;
@@ -20,7 +25,6 @@ const MAX_TRANSACTION_RETRIES = 3;
 const noStore = {
   "Cache-Control": "no-store, max-age=0, must-revalidate",
   Pragma: "no-cache",
-  Expires: "0",
 };
 
 /* =========================================================
@@ -414,10 +418,6 @@ async function updateSellerOrderStatus(
            * --------------------------------------------------
            * FIND SELLER ORDER
            * --------------------------------------------------
-           *
-           * The order must belong to both the authenticated
-           * seller and their currently linked business.
-           * --------------------------------------------------
            */
 
           const existing = await tx.sellerOrder.findFirst({
@@ -432,6 +432,12 @@ async function updateSellerOrderStatus(
                 select: {
                   productId: true,
                   quantity: true,
+
+                  /*
+                   * Only items that actually reserved tracked
+                   * inventory during checkout should be restored.
+                   */
+                  inventoryReserved: true,
                 },
               },
 
@@ -475,6 +481,21 @@ async function updateSellerOrderStatus(
             };
           }
 
+          /*
+           * A rejected order must not release inventory
+           * a second time.
+           */
+
+          if (
+            input.requestedStatus ===
+              SellerOrderStatus.REJECTED &&
+            existing.inventoryReleasedAt !== null
+          ) {
+            return {
+              kind: "CONFLICT",
+            };
+          }
+
           const now = new Date();
 
           /*
@@ -494,7 +515,18 @@ async function updateSellerOrderStatus(
 
               ...(input.requestedStatus ===
               SellerOrderStatus.REJECTED
-                ? { rejectedAt: now }
+                ? {
+                    rejectedAt: now,
+
+                    /*
+                     * Records that inventory release is
+                     * being performed in this transaction.
+                     *
+                     * If anything later fails, this timestamp
+                     * rolls back with the transaction.
+                     */
+                    inventoryReleasedAt: now,
+                  }
                 : {}),
 
               ...(input.requestedStatus ===
@@ -513,14 +545,11 @@ async function updateSellerOrderStatus(
            * CONDITIONAL STATUS UPDATE
            * --------------------------------------------------
            *
-           * This is the key protection against duplicate
-           * inventory restoration.
+           * Only one request can move this seller order
+           * away from its existing status.
            *
-           * Only one request can successfully move this order
-           * from its existing status to the requested status.
-           *
-           * A repeated rejection cannot update the same row
-           * again, so its stock cannot be restored twice.
+           * For rejection, inventoryReleasedAt must also
+           * still be null.
            * --------------------------------------------------
            */
 
@@ -530,6 +559,13 @@ async function updateSellerOrderStatus(
               sellerId: input.sellerId,
               businessId: input.businessId,
               status: existing.status,
+
+              ...(input.requestedStatus ===
+              SellerOrderStatus.REJECTED
+                ? {
+                    inventoryReleasedAt: null,
+                  }
+                : {}),
             },
 
             data: updateData,
@@ -543,20 +579,21 @@ async function updateSellerOrderStatus(
 
           /*
            * --------------------------------------------------
-           * RESTORE TRACKED INVENTORY ON REJECTION
+           * RESTORE RESERVED INVENTORY ON REJECTION
            * --------------------------------------------------
            *
-           * Checkout deducts tracked stock.
+           * Checkout deducts stock for tracked products.
            *
-           * Rejection restores the ordered quantities.
+           * We restore only items whose inventoryReserved
+           * flag is true.
            *
-           * Null stockQuantity means tracking is disabled.
-           * Such products are not modified.
+           * Null stockQuantity means inventory tracking is
+           * currently disabled, so it is not incremented.
            *
-           * Stock restoration runs in the same transaction
-           * as the status update.
+           * All restoration happens in this same transaction.
            *
-           * If restoration fails, the rejection also rolls back.
+           * If any restoration fails, the seller rejection
+           * and inventoryReleasedAt update both roll back.
            * --------------------------------------------------
            */
 
@@ -565,8 +602,19 @@ async function updateSellerOrderStatus(
             SellerOrderStatus.REJECTED
           ) {
             for (const item of existing.items) {
+              /*
+               * This item did not reserve tracked stock.
+               * Do not modify its inventory.
+               */
+              if (!item.inventoryReserved) {
+                continue;
+              }
+
+              /*
+               * A null productId means the original product
+               * record has been deleted.
+               */
               if (!item.productId) {
-                // Historical item whose product was deleted.
                 continue;
               }
 
@@ -574,8 +622,9 @@ async function updateSellerOrderStatus(
                 !Number.isSafeInteger(item.quantity) ||
                 item.quantity <= 0
               ) {
-                throw new Error(
-                  "INVALID_ORDER_ITEM_QUANTITY",
+                throw new OrderUpdateError(
+                  "An order item has an invalid quantity. Inventory was not released.",
+                  409,
                 );
               }
 
@@ -591,39 +640,47 @@ async function updateSellerOrderStatus(
               });
 
               /*
-               * If the product was hard-deleted, there is
-               * no inventory record left to restore.
+               * A hard-deleted product has no inventory
+               * record left to restore.
                */
-
               if (!inventory) {
                 continue;
               }
 
               /*
-               * Never restore inventory to a different
-               * business, even if the data is inconsistent.
+               * Never restore stock to another business.
                */
-
               if (
                 inventory.businessId !== existing.businessId
               ) {
-                throw new Error(
-                  "ORDER_ITEM_BUSINESS_MISMATCH",
+                throw new OrderUpdateError(
+                  "The product business does not match this seller order. Inventory was not released.",
+                  409,
                 );
               }
 
               /*
-               * Null means inventory tracking is currently off.
+               * Inventory tracking may have been disabled
+               * after the order was submitted.
                */
-
               if (inventory.stockQuantity === null) {
                 continue;
               }
 
-              /*
-               * Protect against exceeding the Prisma Int range.
-               */
+              if (
+                !Number.isSafeInteger(inventory.stockQuantity) ||
+                inventory.stockQuantity < 0
+              ) {
+                throw new OrderUpdateError(
+                  "The current inventory value is invalid. Inventory was not released.",
+                  409,
+                );
+              }
 
+              /*
+               * Prevent the restored inventory from exceeding
+               * the maximum Prisma Int value.
+               */
               if (
                 inventory.stockQuantity >
                 MAX_PRISMA_INT - item.quantity
@@ -638,7 +695,6 @@ async function updateSellerOrderStatus(
                * Conditional update prevents overwriting a
                * concurrent inventory change.
                */
-
               const restored = await tx.product.updateMany({
                 where: {
                   id: item.productId,
@@ -665,13 +721,6 @@ async function updateSellerOrderStatus(
           /*
            * --------------------------------------------------
            * RECALCULATE PARENT ORDER STATUS
-           * --------------------------------------------------
-           *
-           * Read all seller order statuses after the update.
-           *
-           * Serializable isolation protects the aggregation
-           * when different sellers update their seller orders
-           * at the same time.
            * --------------------------------------------------
            */
 
@@ -748,8 +797,8 @@ async function updateSellerOrderStatus(
       }
 
       /*
-       * Concurrent order updates may cause a serialization
-       * conflict. Retry a limited number of times.
+       * Retry serialization conflicts caused by
+       * simultaneous database updates.
        */
 
       if (isSerializationConflict(error)) {
@@ -792,10 +841,9 @@ export async function PATCH(
      * --------------------------------------------------
      *
      * An inactive business owner should still be able
-     * to fulfil orders already received.
+     * to fulfil existing orders.
      *
-     * A deleted business cannot continue managing orders
-     * through this seller route.
+     * A deleted business cannot manage orders.
      * --------------------------------------------------
      */
 
@@ -964,9 +1012,7 @@ export async function PATCH(
      * NOTIFY BUYER
      * --------------------------------------------------
      *
-     * Notifications happen after the transaction commits.
-     *
-     * A notification failure must never undo an order update.
+     * Notification failure must not undo an order update.
      * --------------------------------------------------
      */
 

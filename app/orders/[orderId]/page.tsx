@@ -1,3 +1,4 @@
+
 "use client";
 
 import {
@@ -25,14 +26,26 @@ import {
   Package,
   ShieldCheck,
   Store,
+  Truck,
+  XCircle,
 } from "lucide-react";
 
 import SiteHeader from "@/components/layout/SiteHeader";
 import MobileBottomNav from "@/components/layout/MobileBottomNav";
 
 /* =========================================================
+   CONSTANTS
+========================================================= */
+
+const MAX_ORDER_ID_LENGTH = 100;
+
+/* =========================================================
    TYPES
 ========================================================= */
+
+type DeliveryFeeStatus =
+  | "UNCONFIRMED"
+  | "CONFIRMED";
 
 type OrderItemView = {
   id: string;
@@ -86,6 +99,7 @@ type OrderDetail = {
   itemsSubtotal: number;
   deliveryFee: number;
   totalAmount: number;
+  deliveryFeeStatus: DeliveryFeeStatus;
   currency: string;
 
   deliveryRecipient: string;
@@ -108,8 +122,6 @@ type OrderDetail = {
    HELPERS
 ========================================================= */
 
-const MAX_ORDER_ID_LENGTH = 100;
-
 function isRecord(
   value: unknown,
 ): value is Record<string, unknown> {
@@ -131,7 +143,9 @@ function nullableString(
 function isValidDateString(
   value: string,
 ): boolean {
-  return !Number.isNaN(new Date(value).getTime());
+  return !Number.isNaN(
+    new Date(value).getTime(),
+  );
 }
 
 function getSafeInteger(
@@ -258,6 +272,15 @@ function getStatusClass(
     return "bg-[#DBEAFE] text-[#1D4ED8]";
   }
 
+  if (
+    [
+      "COMPLETED",
+      "CONFIRMED",
+    ].includes(status)
+  ) {
+    return "bg-[#DCFCE7] text-[#166534]";
+  }
+
   return "bg-[#FFF1ED] text-[#9F2D18]";
 }
 
@@ -376,7 +399,9 @@ function parseSellerOrders(
         return [];
       }
 
-      const business = parseBusiness(item.business);
+      const business = parseBusiness(
+        item.business,
+      );
 
       const subtotal = getSafeInteger(
         item.subtotal,
@@ -513,6 +538,17 @@ function parseOrderDetail(
   const deliveryAddress = raw.deliveryAddress;
   const deliveryArea = raw.deliveryArea;
 
+  /*
+   * Missing or unknown delivery-fee status is treated
+   * as UNCONFIRMED to avoid presenting an unfinished
+   * order amount as a final payable amount.
+   */
+
+  const deliveryFeeStatus: DeliveryFeeStatus =
+    raw.deliveryFeeStatus === "CONFIRMED"
+      ? "CONFIRMED"
+      : "UNCONFIRMED";
+
   if (
     typeof orderId !== "string" ||
     typeof orderCode !== "string" ||
@@ -530,8 +566,12 @@ function parseOrderDetail(
     return null;
   }
 
-  // The order total must agree with its stored components.
+  /*
+   * Validate the stored totals.
+   */
+
   if (
+    !Number.isSafeInteger(itemsSubtotal + deliveryFee) ||
     totalAmount !== itemsSubtotal + deliveryFee
   ) {
     return null;
@@ -551,6 +591,7 @@ function parseOrderDetail(
     itemsSubtotal,
     deliveryFee,
     totalAmount,
+    deliveryFeeStatus,
 
     currency:
       typeof raw.currency === "string"
@@ -655,7 +696,7 @@ function SellerOrderCard({
   );
 
   return (
-    <section className="overflow-hidden rounded-2xl border border-[#EAE6DF] bg-white">
+    <section className="overflow-hidden rounded-2xl border border-[#EAE6DF] bg-white shadow-[0_4px_18px_rgba(41,37,34,0.025)]">
 
       {/* SELLER HEADING */}
 
@@ -696,9 +737,18 @@ function SellerOrderCard({
         {/* FULFILMENT PROGRESS */}
 
         <div>
-          <h3 className="text-xs font-extrabold text-[#401B13]">
-            Fulfilment progress
-          </h3>
+          <div className="flex items-center justify-between gap-3">
+            <h3 className="text-xs font-extrabold text-[#401B13]">
+              Fulfilment progress
+            </h3>
+
+            {!terminated && (
+              <span className="text-[9px] font-semibold text-[#91877E]">
+                {Math.max(0, progressIndex + 1)} of{" "}
+                {fulfilmentSteps.length} stages
+              </span>
+            )}
+          </div>
 
           {terminated ? (
             <div className="mt-3 rounded-xl border border-red-200 bg-red-50 p-3">
@@ -762,6 +812,12 @@ function SellerOrderCard({
                         </p>
                       )}
                     </div>
+
+                    {current && (
+                      <span className="rounded-full bg-[#FFF1ED] px-2 py-1 text-[8px] font-extrabold text-[#9F2D18]">
+                        NOW
+                      </span>
+                    )}
                   </div>
                 );
               })}
@@ -826,17 +882,26 @@ function SellerOrderCard({
         {/* PRODUCTS */}
 
         <div className="mt-5 border-t border-[#F0ECE7] pt-4">
-          <h3 className="text-xs font-extrabold text-[#401B13]">
-            Products from this seller
-          </h3>
+          <div className="flex items-center justify-between gap-3">
+            <h3 className="text-xs font-extrabold text-[#401B13]">
+              Products from this seller
+            </h3>
+
+            <span className="text-[9px] font-semibold text-[#91877E]">
+              {sellerOrder.items.length}{" "}
+              {sellerOrder.items.length === 1
+                ? "product"
+                : "products"}
+            </span>
+          </div>
 
           <div className="mt-3 space-y-3">
             {sellerOrder.items.map((item) => (
               <div
                 key={item.id}
-                className="flex items-center gap-3"
+                className="flex items-center gap-3 rounded-xl bg-[#FCFAF6] p-3"
               >
-                <div className="flex h-14 w-14 shrink-0 items-center justify-center overflow-hidden rounded-xl border border-[#EAE6DF] bg-[#FCFAF6]">
+                <div className="flex h-14 w-14 shrink-0 items-center justify-center overflow-hidden rounded-xl border border-[#EAE6DF] bg-white">
                   {item.productImageUrl ? (
                     <img
                       src={item.productImageUrl}
@@ -910,10 +975,19 @@ function OrderDetailContent({
   const [confirmingSellerOrderId, setConfirmingSellerOrderId] =
     useState<string | null>(null);
 
+  const [cancellingOrder, setCancellingOrder] =
+    useState(false);
+
   const [deliveryMessage, setDeliveryMessage] =
     useState("");
 
   const [deliveryError, setDeliveryError] =
+    useState("");
+
+  const [cancellationMessage, setCancellationMessage] =
+    useState("");
+
+  const [cancellationError, setCancellationError] =
     useState("");
 
   /* =====================================================
@@ -934,6 +1008,35 @@ function OrderDetailContent({
       ) ?? 0,
     [order],
   );
+
+  /*
+   * The buyer can cancel the parent order only while:
+   *
+   * - The parent order is PLACED.
+   * - At least one seller order exists.
+   * - Every seller order is PENDING_ACCEPTANCE.
+   *
+   * The server enforces these conditions again.
+   */
+
+  const canCancelOrder =
+    order !== null &&
+    order.status === "PLACED" &&
+    order.sellerOrders.length > 0 &&
+    order.sellerOrders.every(
+      (sellerOrder) =>
+        sellerOrder.status === "PENDING_ACCEPTANCE",
+    );
+
+  const allSellerOrdersFinished =
+    order !== null &&
+    order.sellerOrders.length > 0 &&
+    order.sellerOrders.every(
+      (sellerOrder) =>
+        sellerOrder.status === "COMPLETED" ||
+        sellerOrder.status === "CANCELLED" ||
+        sellerOrder.status === "REJECTED",
+    );
 
   /* =====================================================
      LOAD ORDER
@@ -1041,7 +1144,7 @@ function OrderDetailContent({
   async function confirmDelivery(
     sellerOrderId: string,
   ) {
-    if (confirmingSellerOrderId) {
+    if (confirmingSellerOrderId || cancellingOrder) {
       return;
     }
 
@@ -1070,6 +1173,7 @@ function OrderDetailContent({
     setConfirmingSellerOrderId(sellerOrderId);
     setDeliveryError("");
     setDeliveryMessage("");
+    setCancellationError("");
 
     try {
       const response = await fetch(
@@ -1194,6 +1298,129 @@ function OrderDetailContent({
   }
 
   /* =====================================================
+     BUYER CANCELS ENTIRE ORDER
+  ===================================================== */
+
+  async function cancelOrder() {
+    if (
+      !order ||
+      !canCancelOrder ||
+      cancellingOrder ||
+      confirmingSellerOrderId
+    ) {
+      return;
+    }
+
+    const confirmed = window.confirm(
+      "Are you sure you want to cancel this entire order? All seller orders will be cancelled. You cannot undo this action.",
+    );
+
+    if (!confirmed) {
+      return;
+    }
+
+    setCancellingOrder(true);
+    setCancellationError("");
+    setCancellationMessage("");
+    setDeliveryError("");
+    setDeliveryMessage("");
+
+    try {
+      const response = await fetch(
+        `/api/orders/${encodeURIComponent(orderId)}`,
+        {
+          method: "DELETE",
+          credentials: "same-origin",
+          cache: "no-store",
+          headers: {
+            Accept: "application/json",
+          },
+        },
+      );
+
+      if (
+        response.status === 401 ||
+        response.status === 403
+      ) {
+        router.replace("/buyer/login");
+        return;
+      }
+
+      const payload: unknown =
+        await response.json().catch(() => null);
+
+      if (!response.ok) {
+        throw new Error(
+          isRecord(payload) &&
+          typeof payload.error === "string"
+            ? payload.error
+            : "Unable to cancel this order.",
+        );
+      }
+
+      if (
+        !isRecord(payload) ||
+        payload.success !== true ||
+        !isRecord(payload.order) ||
+        payload.order.status !== "CANCELLED"
+      ) {
+        throw new Error(
+          "The cancellation response could not be verified. Refresh your order details to check its current status.",
+        );
+      }
+
+      /*
+       * The server has cancelled the parent order
+       * and its seller orders.
+       *
+       * Update the current page without requiring
+       * the buyer to reload it.
+       */
+
+      const cancelledAt = new Date().toISOString();
+
+      setOrder((current) => {
+        if (!current) {
+          return current;
+        }
+
+        return {
+          ...current,
+
+          status: "CANCELLED",
+          cancelledAt,
+
+          sellerOrders: current.sellerOrders.map(
+            (sellerOrder) => ({
+              ...sellerOrder,
+              status: "CANCELLED",
+              cancelledAt:
+                sellerOrder.cancelledAt ?? cancelledAt,
+            }),
+          ),
+        };
+      });
+
+      setCancellationMessage(
+        "Your order has been cancelled successfully. Reserved tracked inventory has been released.",
+      );
+    } catch (cancelError) {
+      console.error(
+        "Buyer order cancellation error:",
+        cancelError,
+      );
+
+      setCancellationError(
+        cancelError instanceof Error
+          ? cancelError.message
+          : "Unable to cancel this order. Please try again.",
+      );
+    } finally {
+      setCancellingOrder(false);
+    }
+  }
+
+  /* =====================================================
      LOADING
   ===================================================== */
 
@@ -1255,21 +1482,19 @@ function OrderDetailContent({
   }
 
   /* =====================================================
-     DERIVED ORDER STATE
-  ===================================================== */
-
-  const allSellerOrdersFinished =
-    order.sellerOrders.length > 0 &&
-    order.sellerOrders.every(
-      (sellerOrder) =>
-        sellerOrder.status === "COMPLETED" ||
-        sellerOrder.status === "CANCELLED" ||
-        sellerOrder.status === "REJECTED",
-    );
-
-  /* =====================================================
      MAIN DISPLAY
   ===================================================== */
+
+  const isDeliveryFeeConfirmed =
+    order.deliveryFeeStatus === "CONFIRMED";
+
+  const displayAmount = isDeliveryFeeConfirmed
+    ? order.totalAmount
+    : order.itemsSubtotal;
+
+  const displayAmountLabel = isDeliveryFeeConfirmed
+    ? "Confirmed order total"
+    : "Products subtotal";
 
   return (
     <>
@@ -1281,16 +1506,24 @@ function OrderDetailContent({
       >
         <div className="mx-auto max-w-[1100px] px-4 pb-10 pt-5 sm:px-6 lg:px-8 lg:pt-8">
 
-          {/* BREADCRUMB */}
+          {/* =====================================
+              BREADCRUMB
+          ===================================== */}
 
           <div className="mb-5 flex flex-wrap items-center gap-2 text-[11px] text-[#756B61]">
-            <Link href="/" className="hover:text-[#9F2D18]">
+            <Link
+              href="/"
+              className="hover:text-[#9F2D18]"
+            >
               Home
             </Link>
 
             <ChevronRight className="h-3 w-3" />
 
-            <Link href="/orders" className="hover:text-[#9F2D18]">
+            <Link
+              href="/orders"
+              className="hover:text-[#9F2D18]"
+            >
               My orders
             </Link>
 
@@ -1301,7 +1534,9 @@ function OrderDetailContent({
             </span>
           </div>
 
-          {/* ORDER HEADING */}
+          {/* =====================================
+              ORDER HEADING
+          ===================================== */}
 
           <div className="mb-6 flex flex-wrap items-start justify-between gap-4">
             <div>
@@ -1320,6 +1555,10 @@ function OrderDetailContent({
               <p className="mt-2 break-all text-xs font-bold text-[#9F2D18]">
                 {order.orderCode}
               </p>
+
+              <p className="mt-2 text-[10px] text-[#91877E]">
+                Placed {formatDateTime(order.createdAt)}
+              </p>
             </div>
 
             <span
@@ -1329,9 +1568,11 @@ function OrderDetailContent({
             </span>
           </div>
 
-          {/* ORDER OVERVIEW */}
+          {/* =====================================
+              ORDER OVERVIEW
+          ===================================== */}
 
-          <section className="mb-6 rounded-2xl border border-[#EAE6DF] bg-white p-5 sm:p-6">
+          <section className="mb-6 rounded-2xl border border-[#EAE6DF] bg-white p-5 shadow-[0_4px_18px_rgba(41,37,34,0.025)] sm:p-6">
             <div className="grid grid-cols-2 gap-5 sm:grid-cols-4">
               <div>
                 <p className="text-[9px] font-bold uppercase tracking-wide text-[#91877E]">
@@ -1366,28 +1607,108 @@ function OrderDetailContent({
 
               <div>
                 <p className="text-[9px] font-bold uppercase tracking-wide text-[#91877E]">
-                  Order total
+                  {displayAmountLabel}
                 </p>
 
                 <p className="mt-2 text-sm font-black text-[#9F2D18]">
-                  {formatNaira(order.totalAmount)}
+                  {formatNaira(displayAmount)}
                 </p>
               </div>
             </div>
           </section>
 
-          {/* SELLER ORDER TRACKING */}
+          {/* =====================================
+              ORDER ACTIONS
+          ===================================== */}
+
+          {(canCancelOrder ||
+            cancellationMessage ||
+            cancellationError) && (
+            <section className="mb-6 rounded-2xl border border-[#EAE6DF] bg-white p-4 sm:p-5">
+
+              <div className="flex flex-wrap items-center justify-between gap-4">
+                <div className="min-w-0 flex-1">
+                  <h2 className="text-xs font-extrabold text-[#401B13]">
+                    Order actions
+                  </h2>
+
+                  <p className="mt-1 text-[10px] leading-5 text-[#91877E]">
+                    {canCancelOrder
+                      ? "Your order has not yet been accepted by any seller. You can cancel the entire order."
+                      : order.status === "CANCELLED"
+                        ? "This order has been cancelled."
+                        : "Cancellation is unavailable after a seller has accepted or started processing an order."}
+                  </p>
+                </div>
+
+                {canCancelOrder && (
+                  <button
+                    type="button"
+                    onClick={cancelOrder}
+                    disabled={
+                      cancellingOrder ||
+                      confirmingSellerOrderId !== null
+                    }
+                    className="inline-flex min-h-10 shrink-0 items-center justify-center gap-2 rounded-xl border border-red-200 bg-white px-4 py-2.5 text-xs font-extrabold text-red-600 transition hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    {cancellingOrder ? (
+                      <LoaderCircle className="h-4 w-4 animate-spin" />
+                    ) : (
+                      <XCircle className="h-4 w-4" />
+                    )}
+
+                    {cancellingOrder
+                      ? "Cancelling..."
+                      : "Cancel order"}
+                  </button>
+                )}
+              </div>
+
+              {cancellationError && (
+                <div
+                  role="alert"
+                  className="mt-4 rounded-xl border border-red-200 bg-red-50 p-3 text-[10px] leading-5 text-red-700"
+                >
+                  {cancellationError}
+                </div>
+              )}
+
+              {cancellationMessage && (
+                <div
+                  role="status"
+                  className="mt-4 rounded-xl border border-[#B8E5D2] bg-[#F0FBF5] p-3 text-[10px] leading-5 text-[#137A59]"
+                >
+                  {cancellationMessage}
+                </div>
+              )}
+            </section>
+          )}
+
+          {/* =====================================
+              SELLER ORDER TRACKING
+          ===================================== */}
 
           <section className="mb-7">
             <div className="mb-4">
-              <h2 className="text-base font-extrabold text-[#401B13]">
-                Seller fulfilment
-              </h2>
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div>
+                  <h2 className="text-base font-extrabold text-[#401B13]">
+                    Seller fulfilment
+                  </h2>
 
-              <p className="mt-1 text-[11px] leading-5 text-[#756B61]">
-                Each seller handles their own part of your order.
-                Follow their individual progress below.
-              </p>
+                  <p className="mt-1 text-[11px] leading-5 text-[#756B61]">
+                    Each seller handles their own part of your order.
+                    Follow their individual progress below.
+                  </p>
+                </div>
+
+                <span className="rounded-full bg-[#FFF1ED] px-3 py-1.5 text-[9px] font-extrabold text-[#9F2D18]">
+                  {order.sellerOrders.length}{" "}
+                  {order.sellerOrders.length === 1
+                    ? "seller"
+                    : "sellers"}
+                </span>
+              </div>
             </div>
 
             {deliveryError && (
@@ -1428,9 +1749,11 @@ function OrderDetailContent({
             )}
           </section>
 
-          {/* DELIVERY DETAILS */}
+          {/* =====================================
+              DELIVERY DETAILS
+          ===================================== */}
 
-          <section className="mb-6 rounded-2xl border border-[#EAE6DF] bg-white p-5 sm:p-6">
+          <section className="mb-6 rounded-2xl border border-[#EAE6DF] bg-white p-5 shadow-[0_4px_18px_rgba(41,37,34,0.025)] sm:p-6">
             <div className="flex items-center gap-3">
               <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-[#FFF1ED] text-[#9F2D18]">
                 <MapPin className="h-5 w-5" />
@@ -1514,9 +1837,11 @@ function OrderDetailContent({
             </div>
           </section>
 
-          {/* ORDER PAYMENT SUMMARY */}
+          {/* =====================================
+              ORDER SUMMARY
+          ===================================== */}
 
-          <section className="mb-6 rounded-2xl border border-[#EAE6DF] bg-white p-5 sm:p-6">
+          <section className="mb-6 rounded-2xl border border-[#EAE6DF] bg-white p-5 shadow-[0_4px_18px_rgba(41,37,34,0.025)] sm:p-6">
             <h2 className="text-sm font-extrabold text-[#401B13]">
               Order summary
             </h2>
@@ -1538,23 +1863,39 @@ function OrderDetailContent({
                 </span>
 
                 <span className="font-semibold text-[#756B61]">
-                  {formatNaira(order.deliveryFee)}
+                  {isDeliveryFeeConfirmed
+                    ? formatNaira(order.deliveryFee)
+                    : "To be confirmed"}
                 </span>
               </div>
 
               <div className="flex justify-between gap-3 border-t border-[#EAE6DF] pt-4">
                 <span className="text-sm font-extrabold text-[#292522]">
-                  Order total
+                  {isDeliveryFeeConfirmed
+                    ? "Confirmed order total"
+                    : "Products subtotal"}
                 </span>
 
                 <span className="text-lg font-black text-[#9F2D18]">
-                  {formatNaira(order.totalAmount)}
+                  {formatNaira(displayAmount)}
                 </span>
               </div>
             </div>
+
+            {!isDeliveryFeeConfirmed && (
+              <div className="mt-4 rounded-xl border border-[#F0D7B3] bg-[#FFF8EC] p-3">
+                <p className="text-[10px] leading-5 text-[#796B5C]">
+                  Delivery charges have not been confirmed yet.
+                  The displayed amount covers products only and
+                  is not the final delivered order amount.
+                </p>
+              </div>
+            )}
           </section>
 
-          {/* PAYMENT INFORMATION */}
+          {/* =====================================
+              PAYMENT INFORMATION
+          ===================================== */}
 
           <section className="mb-6 rounded-2xl border border-[#F0D7B3] bg-[#FFF8EC] p-5 sm:p-6">
             <div className="flex items-start gap-3">
@@ -1619,7 +1960,9 @@ function OrderDetailContent({
             </div>
           </section>
 
-          {/* ORDER COMPLETION NOTICE */}
+          {/* =====================================
+              ORDER COMPLETION NOTICE
+          ===================================== */}
 
           {allSellerOrdersFinished && (
             <div className="mb-6 rounded-2xl border border-[#B8E5D2] bg-[#F0FBF5] p-4">
@@ -1633,7 +1976,9 @@ function OrderDetailContent({
             </div>
           )}
 
-          {/* ORDER DATES */}
+          {/* =====================================
+              ORDER DATES
+          ===================================== */}
 
           <section className="mb-6 rounded-2xl border border-[#EAE6DF] bg-white p-5">
             <div className="flex flex-wrap items-center gap-3 text-[10px] text-[#756B61]">
@@ -1665,7 +2010,9 @@ function OrderDetailContent({
             )}
           </section>
 
-          {/* FOOTER ACTIONS */}
+          {/* =====================================
+              FOOTER ACTIONS
+          ===================================== */}
 
           <div className="flex flex-wrap items-center justify-between gap-3">
             <Link
@@ -1684,6 +2031,8 @@ function OrderDetailContent({
               <ArrowRight className="h-4 w-4" />
             </Link>
           </div>
+
+          {/* FOOTER */}
 
           <footer className="mt-10 flex items-center justify-center gap-3 pb-4 text-[10px] text-[#9B9188]">
             <span className="h-px w-12 bg-[#EAE6DF]" />

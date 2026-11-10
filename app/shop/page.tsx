@@ -1,3 +1,4 @@
+
 "use client";
 
 import {
@@ -7,11 +8,18 @@ import {
   useState,
   type FormEvent,
 } from "react";
+
 import Link from "next/link";
-import { useRouter, useSearchParams } from "next/navigation";
+
+import {
+  useRouter,
+  useSearchParams,
+} from "next/navigation";
+
 import {
   ArrowRight,
   BadgeCheck,
+  Check,
   ChevronLeft,
   ChevronRight,
   Filter,
@@ -21,6 +29,7 @@ import {
   Package,
   RotateCcw,
   Search,
+  ShoppingCart,
   SlidersHorizontal,
   X,
   ShoppingBag,
@@ -29,6 +38,7 @@ import {
 
 import SiteHeader from "@/components/layout/SiteHeader";
 import MobileBottomNav from "@/components/layout/MobileBottomNav";
+
 import {
   mergeCategories,
   type ApiCategory,
@@ -39,8 +49,16 @@ import {
    TYPES
 ========================================================= */
 
-type Availability = "AVAILABLE" | "ASK_SELLER" | "UNAVAILABLE";
-type SortOption = "NEWEST" | "PRICE_LOW" | "PRICE_HIGH" | "NAME";
+type Availability =
+  | "AVAILABLE"
+  | "ASK_SELLER"
+  | "UNAVAILABLE";
+
+type SortOption =
+  | "NEWEST"
+  | "PRICE_LOW"
+  | "PRICE_HIGH"
+  | "NAME";
 
 type ProductImage = {
   id?: string;
@@ -55,19 +73,23 @@ type Product = {
   price: number | null;
   priceMin: number | null;
   priceMax: number | null;
+  stockQuantity: number | null;
   availability: Availability;
   imageUrl: string | null;
   images: ProductImage[];
   createdAt: string | null;
+
   category: {
     id: string;
     name: string;
   } | null;
+
   seller: {
     id: string;
     name: string;
     verification: string | null;
     verified: boolean;
+
     location: {
       area: string;
       street: string | null;
@@ -88,6 +110,12 @@ type ShopPageViewProps = {
 
 type SavedProductMap = Record<string, string>;
 
+type CartFeedback = {
+  productId: string;
+  kind: "success" | "error";
+  message: string;
+} | null;
+
 const PAGE_SIZE = 12;
 const MAX_CLIENT_RESULTS = 50;
 
@@ -96,34 +124,62 @@ const MAX_CLIENT_RESULTS = 50;
 ========================================================= */
 
 function StoreIcon() {
-  return <Store className="h-3.5 w-3.5" aria-hidden="true" />;
+  return (
+    <Store
+      className="h-3 w-3"
+      aria-hidden="true"
+    />
+  );
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
+function isRecord(
+  value: unknown,
+): value is Record<string, unknown> {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    !Array.isArray(value)
+  );
 }
 
-function cleanString(value: unknown): string | null {
+function cleanString(
+  value: unknown,
+): string | null {
   if (typeof value !== "string") return null;
+
   const cleaned = value.trim();
-  return cleaned.length > 0 ? cleaned : null;
+
+  return cleaned.length > 0
+    ? cleaned
+    : null;
 }
 
-function parseOptionalNumber(value: unknown): number | null {
+function parseOptionalNumber(
+  value: unknown,
+): number | null {
   if (typeof value === "number") {
-    return Number.isFinite(value) ? value : null;
+    return Number.isFinite(value)
+      ? value
+      : null;
   }
 
-  // Prisma Decimal values may arrive through JSON as numeric strings.
-  if (typeof value === "string" && value.trim()) {
+  if (
+    typeof value === "string" &&
+    value.trim()
+  ) {
     const parsed = Number(value.trim());
-    return Number.isFinite(parsed) ? parsed : null;
+
+    return Number.isFinite(parsed)
+      ? parsed
+      : null;
   }
 
   return null;
 }
 
-function parseApiCategories(value: unknown): ApiCategory[] {
+function parseApiCategories(
+  value: unknown,
+): ApiCategory[] {
   if (!Array.isArray(value)) return [];
 
   return value
@@ -133,16 +189,23 @@ function parseApiCategories(value: unknown): ApiCategory[] {
       name: cleanString(item.name) ?? "",
       iconKey: cleanString(item.iconKey),
       isActive: item.isActive !== false,
+
       sortOrder:
         typeof item.sortOrder === "number" &&
         Number.isFinite(item.sortOrder)
           ? item.sortOrder
           : undefined,
     }))
-    .filter((item) => item.id.length > 0 && item.name.length > 0);
+    .filter(
+      (item) =>
+        item.id.length > 0 &&
+        item.name.length > 0,
+    );
 }
 
-function parseAvailability(value: unknown): Availability {
+function parseAvailability(
+  value: unknown,
+): Availability {
   if (
     value === "AVAILABLE" ||
     value === "UNAVAILABLE" ||
@@ -150,24 +213,34 @@ function parseAvailability(value: unknown): Availability {
   ) {
     return value;
   }
+
   return "ASK_SELLER";
 }
 
-function parseCategory(value: unknown): Product["category"] {
+function parseCategory(
+  value: unknown,
+): Product["category"] {
   if (!isRecord(value)) return null;
-  if (typeof value.id !== "string" || typeof value.name !== "string") {
+
+  if (
+    typeof value.id !== "string" ||
+    typeof value.name !== "string"
+  ) {
     return null;
   }
-  return { id: value.id, name: value.name };
+
+  return {
+    id: value.id,
+    name: value.name,
+  };
 }
 
 /*
- * Both /api/search and /api/recent-products currently return the
- * seller profile under `seller`. Some older endpoints may return
- * the internal owner relation under `business`, so accept either shape
- * while keeping the public Shop experience focused on products.
+ * Supports both /api/search and /api/recent-products.
  */
-function parseProduct(value: unknown): Product | null {
+function parseProduct(
+  value: unknown,
+): Product | null {
   if (!isRecord(value)) return null;
 
   const rawSeller = isRecord(value.seller)
@@ -193,42 +266,87 @@ function parseProduct(value: unknown): Product | null {
     return null;
   }
 
-  const rawImages = Array.isArray(value.images) ? value.images : [];
+  const rawImages = Array.isArray(value.images)
+    ? value.images
+    : [];
+
   const images: ProductImage[] = rawImages
     .filter(isRecord)
     .map((image) => ({
-      id: typeof image.id === "string" ? image.id : undefined,
-      url: typeof image.url === "string" ? image.url : "",
-      sortOrder: typeof image.sortOrder === "number" ? image.sortOrder : 0,
-    }))
-    .filter((image) => image.url.length > 0);
+      id:
+        typeof image.id === "string"
+          ? image.id
+          : undefined,
 
-  const location = isRecord(seller.location) ? seller.location : null;
+      url:
+        typeof image.url === "string"
+          ? image.url
+          : "",
+
+      sortOrder:
+        typeof image.sortOrder === "number"
+          ? image.sortOrder
+          : 0,
+    }))
+    .filter(
+      (image) => image.url.length > 0,
+    );
+
+  const location = isRecord(seller.location)
+    ? seller.location
+    : null;
+
   const verification =
-    typeof seller.verification === "string" ? seller.verification : null;
+    typeof seller.verification === "string"
+      ? seller.verification
+      : null;
 
   return {
     id: value.id,
     name: value.name,
+
     description: cleanString(value.description),
+
     price: parseOptionalNumber(value.price),
     priceMin: parseOptionalNumber(value.priceMin),
     priceMax: parseOptionalNumber(value.priceMax),
-    availability: parseAvailability(value.availability),
-    imageUrl: cleanString(value.imageUrl) ?? images[0]?.url ?? null,
+
+    stockQuantity: parseOptionalNumber(
+      value.stockQuantity,
+    ),
+
+    availability: parseAvailability(
+      value.availability,
+    ),
+
+    imageUrl:
+      cleanString(value.imageUrl) ??
+      images[0]?.url ??
+      null,
+
     images,
+
     createdAt:
-      cleanString(value.createdAt) ?? cleanString(value.updatedAt),
+      cleanString(value.createdAt) ??
+      cleanString(value.updatedAt),
+
     category: parseCategory(value.category),
+
     seller: {
       id: seller.id,
       name: seller.name,
       verification,
+
       verified:
-        seller.verified === true || verification === "VERIFIED",
+        seller.verified === true ||
+        verification === "VERIFIED",
+
       location: location
         ? {
-            area: cleanString(location.area) ?? "Local",
+            area:
+              cleanString(location.area) ??
+              "Local",
+
             street: cleanString(location.street),
           }
         : null,
@@ -236,14 +354,27 @@ function parseProduct(value: unknown): Product | null {
   };
 }
 
-function formatNaira(value: number): string {
+/* =========================================================
+   PRICE HELPERS
+========================================================= */
+
+function formatNaira(
+  value: number,
+): string {
   return `₦${value.toLocaleString("en-NG")}`;
 }
 
-function formatPrice(product: Product): string {
-  if (product.price !== null) return formatNaira(product.price);
+function formatPrice(
+  product: Product,
+): string {
+  if (product.price !== null) {
+    return formatNaira(product.price);
+  }
 
-  if (product.priceMin !== null && product.priceMax !== null) {
+  if (
+    product.priceMin !== null &&
+    product.priceMax !== null
+  ) {
     if (product.priceMin === product.priceMax) {
       return formatNaira(product.priceMin);
     }
@@ -262,7 +393,9 @@ function formatPrice(product: Product): string {
   return "Ask seller";
 }
 
-function getSortablePrice(product: Product): number {
+function getSortablePrice(
+  product: Product,
+): number {
   return (
     product.price ??
     product.priceMin ??
@@ -271,36 +404,95 @@ function getSortablePrice(product: Product): number {
   );
 }
 
-function getAvailabilityLabel(availability: Availability): string {
+/* =========================================================
+   AVAILABILITY HELPERS
+========================================================= */
+
+function getAvailabilityLabel(
+  availability: Availability,
+): string {
   switch (availability) {
     case "AVAILABLE":
       return "Available";
+
     case "UNAVAILABLE":
       return "Unavailable";
+
     default:
       return "Ask seller";
   }
 }
 
-function getAvailabilityStyle(availability: Availability): string {
+function getAvailabilityStyle(
+  availability: Availability,
+): string {
   switch (availability) {
     case "AVAILABLE":
       return "bg-[#DCFCE7] text-[#166534]";
+
     case "UNAVAILABLE":
       return "bg-[#FEE2E2] text-[#B42318]";
+
     default:
       return "bg-[#FEF3C7] text-[#92400E]";
   }
 }
 
-function parsePage(value: string | null): number {
+function canAddProductToCart(
+  product: Pick<
+    Product,
+    "price" | "availability" | "stockQuantity"
+  >,
+): boolean {
+  return (
+    product.availability === "AVAILABLE" &&
+    product.price !== null &&
+    product.price > 0 &&
+    product.stockQuantity !== 0
+  );
+}
+
+function getCartDisabledReason(
+  product: Product,
+): string {
+  if (product.availability !== "AVAILABLE") {
+    return "This product is not currently available.";
+  }
+
+  if (
+    product.price === null ||
+    product.price <= 0
+  ) {
+    return "A fixed product price is required.";
+  }
+
+  if (product.stockQuantity === 0) {
+    return "This product is out of stock.";
+  }
+
+  return "Add to cart";
+}
+
+function parsePage(
+  value: string | null,
+): number {
   if (!value) return 1;
+
   const parsed = Number(value);
-  if (!Number.isSafeInteger(parsed) || parsed < 1) return 1;
+
+  if (
+    !Number.isSafeInteger(parsed) ||
+    parsed < 1
+  ) {
+    return 1;
+  }
+
   return parsed;
 }
 
-function parseAvailabilityFilter(value: string): Availability | "" {
+function parseAvailabilityFilter(
+  value: string,
+): Availability | "" {
   if (
     value === "AVAILABLE" ||
     value === "ASK_SELLER" ||
@@ -308,6 +500,7 @@ function parseAvailabilityFilter(value: string): Availability | "" {
   ) {
     return value;
   }
+
   return "";
 }
 
@@ -325,43 +518,62 @@ type ShopFilters = {
   verified: boolean;
 };
 
-function buildShopUrl(filters: ShopFilters, page: number): string {
+function buildShopUrl(
+  filters: ShopFilters,
+  page: number,
+): string {
   const params = new URLSearchParams();
+
   const query = filters.query.trim();
   const category = filters.category.trim();
   const location = filters.location.trim();
 
-  if (query) params.set("q", query);
-  if (category) params.set("category", category);
-  if (location) params.set("location", location);
+  if (query) {
+    params.set("q", query);
+  }
+
+  if (category) {
+    params.set("category", category);
+  }
+
+  if (location) {
+    params.set("location", location);
+  }
+
   if (filters.minPrice.trim()) {
     params.set("minPrice", filters.minPrice.trim());
   }
+
   if (filters.maxPrice.trim()) {
     params.set("maxPrice", filters.maxPrice.trim());
   }
+
   if (filters.availability) {
     params.set("availability", filters.availability);
   }
-  if (filters.verified) params.set("verified", "true");
-  if (page > 1) params.set("page", String(page));
+
+  if (filters.verified) {
+    params.set("verified", "true");
+  }
+
+  if (page > 1) {
+    params.set("page", String(page));
+  }
 
   const queryString = params.toString();
-  return queryString ? `/shop?${queryString}` : "/shop";
+
+  return queryString
+    ? `/shop?${queryString}`
+    : "/shop";
 }
 
 /* =========================================================
    SAVED PRODUCT RESPONSE HELPERS
 ========================================================= */
 
-/*
- * Reads the current /api/saved response:
- * { items: [{ id, type: "PRODUCT", listing: { id } }] }
- *
- * Legacy response shapes are also accepted for compatibility.
- * The returned value is always the SavedListing ID required by DELETE.
- */
-function parseSavedProductMap(value: unknown): SavedProductMap {
+function parseSavedProductMap(
+  value: unknown,
+): SavedProductMap {
   if (!isRecord(value)) return {};
 
   const possibleArrays = [
@@ -380,10 +592,18 @@ function parseSavedProductMap(value: unknown): SavedProductMap {
     for (const item of collection) {
       if (!isRecord(item)) continue;
 
-      // Current API response shape.
-      if (item.type === "PRODUCT" && isRecord(item.listing)) {
-        const productId = cleanString(item.listing.id);
-        const savedListingId = cleanString(item.id);
+      // Current API response.
+      if (
+        item.type === "PRODUCT" &&
+        isRecord(item.listing)
+      ) {
+        const productId = cleanString(
+          item.listing.id,
+        );
+
+        const savedListingId = cleanString(
+          item.id,
+        );
 
         if (productId && savedListingId) {
           result[productId] = savedListingId;
@@ -392,18 +612,24 @@ function parseSavedProductMap(value: unknown): SavedProductMap {
         continue;
       }
 
-      // Older response shapes retained for migration compatibility.
-      const nestedProduct = isRecord(item.product) ? item.product : null;
+      // Legacy response formats.
+      const nestedProduct = isRecord(item.product)
+        ? item.product
+        : null;
 
       const productId =
         cleanString(item.productId) ??
         cleanString(item.listingId) ??
-        (nestedProduct ? cleanString(nestedProduct.id) : null);
+        (nestedProduct
+          ? cleanString(nestedProduct.id)
+          : null);
 
       const savedListingId =
         cleanString(item.savedListingId) ??
         cleanString(item.savedId) ??
-        (productId ? cleanString(item.id) : null);
+        (productId
+          ? cleanString(item.id)
+          : null);
 
       if (productId && savedListingId) {
         result[productId] = savedListingId;
@@ -414,12 +640,14 @@ function parseSavedProductMap(value: unknown): SavedProductMap {
   return result;
 }
 
-function getSavedRecordId(value: unknown): string | null {
+function getSavedRecordId(
+  value: unknown,
+): string | null {
   if (!isRecord(value)) return null;
 
-  // Current POST response: { item: { id, productId, serviceId } }.
   if (isRecord(value.item)) {
     const id = cleanString(value.item.id);
+
     if (id) return id;
   }
 
@@ -431,7 +659,10 @@ function getSavedRecordId(value: unknown): string | null {
     return cleanString(value.saved.id);
   }
 
-  return cleanString(value.savedListingId) ?? cleanString(value.savedId);
+  return (
+    cleanString(value.savedListingId) ??
+    cleanString(value.savedId)
+  );
 }
 
 /* =========================================================
@@ -441,18 +672,32 @@ function getSavedRecordId(value: unknown): string | null {
 function ShopPageContent() {
   const searchParams = useSearchParams();
 
-  const initialQuery = searchParams.get("q") ?? "";
-  const initialCategory = searchParams.get("category") ?? "";
-  const initialLocation = searchParams.get("location") ?? "";
-  const initialMinPrice = searchParams.get("minPrice") ?? "";
-  const initialMaxPrice = searchParams.get("maxPrice") ?? "";
+  const initialQuery =
+    searchParams.get("q") ?? "";
 
-  const initialAvailability = parseAvailabilityFilter(
-    searchParams.get("availability") ?? "",
+  const initialCategory =
+    searchParams.get("category") ?? "";
+
+  const initialLocation =
+    searchParams.get("location") ?? "";
+
+  const initialMinPrice =
+    searchParams.get("minPrice") ?? "";
+
+  const initialMaxPrice =
+    searchParams.get("maxPrice") ?? "";
+
+  const initialAvailability =
+    parseAvailabilityFilter(
+      searchParams.get("availability") ?? "",
+    );
+
+  const initialVerified =
+    searchParams.get("verified") === "true";
+
+  const initialPage = parsePage(
+    searchParams.get("page"),
   );
-
-  const initialVerified = searchParams.get("verified") === "true";
-  const initialPage = parsePage(searchParams.get("page"));
 
   const pageKey = [
     initialQuery,
@@ -497,64 +742,125 @@ function ShopPageView({
   const router = useRouter();
 
   /* FILTER STATE */
-  const [query, setQuery] = useState(initialQuery);
-  const [category, setCategory] = useState(initialCategory);
-  const [location, setLocation] = useState(initialLocation);
-  const [minPrice, setMinPrice] = useState(initialMinPrice);
-  const [maxPrice, setMaxPrice] = useState(initialMaxPrice);
-  const [availability, setAvailability] = useState(initialAvailability);
-  const [verified, setVerified] = useState(initialVerified);
-  const [sortBy, setSortBy] = useState<SortOption>("NEWEST");
-  const [showMobileFilters, setShowMobileFilters] = useState(false);
+
+  const [query, setQuery] =
+    useState(initialQuery);
+
+  const [category, setCategory] =
+    useState(initialCategory);
+
+  const [location, setLocation] =
+    useState(initialLocation);
+
+  const [minPrice, setMinPrice] =
+    useState(initialMinPrice);
+
+  const [maxPrice, setMaxPrice] =
+    useState(initialMaxPrice);
+
+  const [availability, setAvailability] =
+    useState(initialAvailability);
+
+  const [verified, setVerified] =
+    useState(initialVerified);
+
+  const [sortBy, setSortBy] =
+    useState<SortOption>("NEWEST");
+
+  const [showMobileFilters, setShowMobileFilters] =
+    useState(false);
 
   /* DATA STATE */
-  // Start empty so service-only/default categories are never shown in Shop.
-  // The product categories are loaded from the product-filtered API below.
-  const [categories, setCategories] = useState<ReMarketCategory[]>([]);
-  const [products, setProducts] = useState<Product[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState("");
-  const [totalProducts, setTotalProducts] = useState(0);
-  const [resultsTruncated, setResultsTruncated] = useState(false);
-  const [serverPagination, setServerPagination] = useState(false);
-  const [serverTotalPages, setServerTotalPages] = useState(1);
+
+  const [categories, setCategories] =
+    useState<ReMarketCategory[]>([]);
+
+  const [products, setProducts] =
+    useState<Product[]>([]);
+
+  const [loading, setLoading] =
+    useState(true);
+
+  const [error, setError] =
+    useState("");
+
+  const [totalProducts, setTotalProducts] =
+    useState(0);
+
+  const [resultsTruncated, setResultsTruncated] =
+    useState(false);
+
+  const [serverPagination, setServerPagination] =
+    useState(false);
+
+  const [serverTotalPages, setServerTotalPages] =
+    useState(1);
 
   /* SAVED PRODUCT STATE */
-  const [savedProducts, setSavedProducts] = useState<SavedProductMap>({});
-  const [savingProductIds, setSavingProductIds] = useState<
-    Record<string, boolean>
-  >({});
-  const [saveFeedback, setSaveFeedback] = useState("");
-  const [saveFeedbackError, setSaveFeedbackError] = useState(false);
 
-  /* LOAD CATEGORIES */
+  const [savedProducts, setSavedProducts] =
+    useState<SavedProductMap>({});
+
+  const [savingProductIds, setSavingProductIds] =
+    useState<Record<string, boolean>>({});
+
+  const [saveFeedback, setSaveFeedback] =
+    useState("");
+
+  const [saveFeedbackError, setSaveFeedbackError] =
+    useState(false);
+
+  /* CART STATE */
+
+  const [addingToCartProductIds, setAddingToCartProductIds] =
+    useState<Record<string, boolean>>({});
+
+  const [cartFeedback, setCartFeedback] =
+    useState<CartFeedback>(null);
+
+  /* =====================================================
+     LOAD CATEGORIES
+  ===================================================== */
+
   useEffect(() => {
     const controller = new AbortController();
 
     async function loadCategories() {
       try {
-        const response = await fetch("/api/categories?type=product", {
-          method: "GET",
-          cache: "no-store",
-          headers: { Accept: "application/json" },
-          signal: controller.signal,
-        });
+        const response = await fetch(
+          "/api/categories?type=product",
+          {
+            method: "GET",
+            cache: "no-store",
+            headers: {
+              Accept: "application/json",
+            },
+            signal: controller.signal,
+          },
+        );
 
         if (!response.ok) {
-          throw new Error("Unable to load product categories.");
+          throw new Error(
+            "Unable to load product categories.",
+          );
         }
 
-        const data: unknown = await response.json();
+        const data: unknown =
+          await response.json();
 
         if (!isRecord(data)) {
-          throw new Error("Invalid category response.");
+          throw new Error(
+            "Invalid category response.",
+          );
         }
 
-        const backendCategories = parseApiCategories(data.categories);
-        const merged = mergeCategories(backendCategories);
+        const backendCategories =
+          parseApiCategories(data.categories);
 
-        // Replace the list even when it is empty. Keeping default categories
-        // here could expose categories that have no matching products.
+        const merged = mergeCategories(
+          backendCategories,
+        );
+
         if (!controller.signal.aborted) {
           setCategories(merged);
         }
@@ -566,7 +872,10 @@ function ShopPageView({
           return;
         }
 
-        console.error("Shop product-category loading error:", loadError);
+        console.error(
+          "Shop product-category loading error:",
+          loadError,
+        );
 
         if (!controller.signal.aborted) {
           setCategories([]);
@@ -579,7 +888,10 @@ function ShopPageView({
     return () => controller.abort();
   }, []);
 
-  /* LOAD ALL SAVED PRODUCTS FROM THE DATABASE */
+  /* =====================================================
+     LOAD SAVED PRODUCTS
+  ===================================================== */
+
   async function loadSavedProducts(
     signal?: AbortSignal,
   ): Promise<SavedProductMap> {
@@ -591,28 +903,41 @@ function ShopPageView({
         {
           method: "GET",
           cache: "no-store",
-          headers: { Accept: "application/json" },
+          headers: {
+            Accept: "application/json",
+          },
           signal,
         },
       );
 
-      if (firstResponse.status === 401 || firstResponse.status === 403) {
+      if (
+        firstResponse.status === 401 ||
+        firstResponse.status === 403
+      ) {
         if (!signal?.aborted) {
           setSavedProducts({});
         }
+
         return {};
       }
 
       if (!firstResponse.ok) {
-        throw new Error("Unable to load saved products.");
+        throw new Error(
+          "Unable to load saved products.",
+        );
       }
 
-      const firstData: unknown = await firstResponse.json();
+      const firstData: unknown =
+        await firstResponse.json();
 
-      Object.assign(combined, parseSavedProductMap(firstData));
+      Object.assign(
+        combined,
+        parseSavedProductMap(firstData),
+      );
 
       const pagination =
-        isRecord(firstData) && isRecord(firstData.pagination)
+        isRecord(firstData) &&
+        isRecord(firstData.pagination)
           ? firstData.pagination
           : null;
 
@@ -624,16 +949,23 @@ function ShopPageView({
           ? Math.min(pagination.totalPages, 1000)
           : 1;
 
-      // Fetch additional pages in small batches. The API caps page size at 50.
+      // Fetch additional pages in batches of four.
       for (
         let firstPage = 2;
         firstPage <= totalPages;
         firstPage += 4
       ) {
-        if (signal?.aborted) return combined;
+        if (signal?.aborted) {
+          return combined;
+        }
 
         const pages = Array.from(
-          { length: Math.min(4, totalPages - firstPage + 1) },
+          {
+            length: Math.min(
+              4,
+              totalPages - firstPage + 1,
+            ),
+          },
           (_, index) => firstPage + index,
         );
 
@@ -644,16 +976,22 @@ function ShopPageView({
               {
                 method: "GET",
                 cache: "no-store",
-                headers: { Accept: "application/json" },
+                headers: {
+                  Accept: "application/json",
+                },
                 signal,
               },
             );
 
             if (!response.ok) {
-              throw new Error("Unable to load all saved products.");
+              throw new Error(
+                "Unable to load all saved products.",
+              );
             }
 
-            const data: unknown = await response.json();
+            const data: unknown =
+              await response.json();
+
             return parseSavedProductMap(data);
           }),
         );
@@ -676,9 +1014,15 @@ function ShopPageView({
         return combined;
       }
 
-      console.error("Saved products loading error:", loadError);
+      console.error(
+        "Saved products loading error:",
+        loadError,
+      );
 
-      if (!signal?.aborted && Object.keys(combined).length > 0) {
+      if (
+        !signal?.aborted &&
+        Object.keys(combined).length > 0
+      ) {
         setSavedProducts(combined);
       }
 
@@ -694,7 +1038,10 @@ function ShopPageView({
     return () => controller.abort();
   }, []);
 
-  /* LOAD PRODUCTS */
+  /* =====================================================
+     LOAD PRODUCTS
+  ===================================================== */
+
   useEffect(() => {
     const controller = new AbortController();
 
@@ -713,7 +1060,10 @@ function ShopPageView({
       );
 
       const useSearchApi = hasFilters;
-      const useServerPagination = !useSearchApi && sortBy === "NEWEST";
+
+      const useServerPagination =
+        !useSearchApi &&
+        sortBy === "NEWEST";
 
       setServerPagination(useServerPagination);
 
@@ -723,66 +1073,101 @@ function ShopPageView({
         if (useSearchApi) {
           const params = new URLSearchParams();
 
-          // Shop displays products only. Asking the search API
-          // for product results avoids running an unnecessary
-          // service search for every Shop filter request.
           params.set("type", "product");
 
           if (initialQuery.trim()) {
-            params.set("q", initialQuery.trim());
+            params.set(
+              "q",
+              initialQuery.trim(),
+            );
           }
 
           if (initialCategory.trim()) {
-            // The search API filters by the active category name.
-            params.set("category", initialCategory.trim());
+            params.set(
+              "category",
+              initialCategory.trim(),
+            );
           }
 
           if (initialLocation.trim()) {
-            params.set("location", initialLocation.trim());
+            params.set(
+              "location",
+              initialLocation.trim(),
+            );
           }
 
           if (initialMinPrice.trim()) {
-            params.set("minPrice", initialMinPrice.trim());
+            params.set(
+              "minPrice",
+              initialMinPrice.trim(),
+            );
           }
 
           if (initialMaxPrice.trim()) {
-            params.set("maxPrice", initialMaxPrice.trim());
+            params.set(
+              "maxPrice",
+              initialMaxPrice.trim(),
+            );
           }
 
           if (initialAvailability) {
-            params.set("availability", initialAvailability);
+            params.set(
+              "availability",
+              initialAvailability,
+            );
           }
 
           if (initialVerified) {
             params.set("verified", "true");
           }
 
+          // Request up to 48 results for client-side sorting
+          // and compact 12-item pages.
+          params.set("page", "1");
+          params.set("pageSize", "48");
+
           endpoint = `/api/search?${params.toString()}`;
         } else {
           const params = new URLSearchParams();
 
           if (useServerPagination) {
-            params.set("page", String(initialPage));
-            params.set("pageSize", String(PAGE_SIZE));
+            params.set(
+              "page",
+              String(initialPage),
+            );
+
+            params.set(
+              "pageSize",
+              String(PAGE_SIZE),
+            );
           } else {
             params.set("page", "1");
-            params.set("pageSize", String(MAX_CLIENT_RESULTS));
+
+            params.set(
+              "pageSize",
+              String(MAX_CLIENT_RESULTS),
+            );
           }
 
           endpoint = `/api/recent-products?${params.toString()}`;
         }
 
-        const response = await fetch(endpoint, {
-          method: "GET",
-          cache: "no-store",
-          signal: controller.signal,
-        });
+        const response = await fetch(
+          endpoint,
+          {
+            method: "GET",
+            cache: "no-store",
+            signal: controller.signal,
+          },
+        );
 
-        const data: unknown = await response.json();
+        const data: unknown =
+          await response.json();
 
         if (!response.ok) {
           const message =
-            isRecord(data) && typeof data.error === "string"
+            isRecord(data) &&
+            typeof data.error === "string"
               ? data.error
               : "Unable to load products.";
 
@@ -790,16 +1175,25 @@ function ShopPageView({
         }
 
         if (!isRecord(data)) {
-          throw new Error("The products API returned an invalid response.");
+          throw new Error(
+            "The products API returned an invalid response.",
+          );
         }
 
-        const rawProducts = Array.isArray(data.products) ? data.products : [];
+        const rawProducts = Array.isArray(data.products)
+          ? data.products
+          : [];
 
         const parsedProducts = rawProducts
           .map(parseProduct)
-          .filter((item): item is Product => item !== null);
+          .filter(
+            (item): item is Product =>
+              item !== null,
+          );
 
-        if (controller.signal.aborted) return;
+        if (controller.signal.aborted) {
+          return;
+        }
 
         setProducts(parsedProducts);
 
@@ -809,7 +1203,8 @@ function ShopPageView({
             : null;
 
           const reportedTotal =
-            resultMeta && typeof resultMeta.totalProducts === "number"
+            resultMeta &&
+            typeof resultMeta.totalProducts === "number"
               ? resultMeta.totalProducts
               : parsedProducts.length;
 
@@ -819,11 +1214,14 @@ function ShopPageView({
               : parsedProducts.length,
           );
 
-          setResultsTruncated(resultMeta?.truncated === true);
-
-          setServerTotalPages(
-            Math.max(1, Math.ceil(parsedProducts.length / PAGE_SIZE)),
+          setResultsTruncated(
+            resultMeta?.truncated === true ||
+              reportedTotal > parsedProducts.length,
           );
+
+          // Search API results are paginated locally after
+          // retrieving the first 48 matching products.
+          setServerTotalPages(1);
         } else {
           const reportedTotal =
             typeof data.total === "number"
@@ -833,7 +1231,12 @@ function ShopPageView({
           const reportedPages =
             typeof data.totalPages === "number"
               ? data.totalPages
-              : Math.max(1, Math.ceil(reportedTotal / PAGE_SIZE));
+              : Math.max(
+                  1,
+                  Math.ceil(
+                    reportedTotal / PAGE_SIZE,
+                  ),
+                );
 
           setTotalProducts(
             Number.isFinite(reportedTotal)
@@ -841,10 +1244,13 @@ function ShopPageView({
               : parsedProducts.length,
           );
 
-          setServerTotalPages(Math.max(1, reportedPages));
+          setServerTotalPages(
+            Math.max(1, reportedPages),
+          );
 
           setResultsTruncated(
-            !useServerPagination && reportedTotal > parsedProducts.length,
+            !useServerPagination &&
+              reportedTotal > parsedProducts.length,
           );
         }
       } catch (loadError) {
@@ -855,7 +1261,10 @@ function ShopPageView({
           return;
         }
 
-        console.error("Products loading error:", loadError);
+        console.error(
+          "Products loading error:",
+          loadError,
+        );
 
         setProducts([]);
         setTotalProducts(0);
@@ -889,21 +1298,35 @@ function ShopPageView({
     sortBy,
   ]);
 
-  /* SORT PRODUCTS */
+  /* =====================================================
+     SORT PRODUCTS
+  ===================================================== */
+
   const sortedProducts = useMemo(() => {
     const result = [...products];
 
     switch (sortBy) {
       case "PRICE_LOW":
-        result.sort((a, b) => getSortablePrice(a) - getSortablePrice(b));
+        result.sort(
+          (a, b) =>
+            getSortablePrice(a) -
+            getSortablePrice(b),
+        );
         break;
 
       case "PRICE_HIGH":
-        result.sort((a, b) => getSortablePrice(b) - getSortablePrice(a));
+        result.sort(
+          (a, b) =>
+            getSortablePrice(b) -
+            getSortablePrice(a),
+        );
         break;
 
       case "NAME":
-        result.sort((a, b) => a.name.localeCompare(b.name));
+        result.sort(
+          (a, b) =>
+            a.name.localeCompare(b.name),
+        );
         break;
 
       case "NEWEST":
@@ -914,12 +1337,23 @@ function ShopPageView({
     return result;
   }, [products, sortBy]);
 
-  /* PAGINATION */
+  /* =====================================================
+     PAGINATION
+  ===================================================== */
+
   const totalPages = serverPagination
     ? serverTotalPages
-    : Math.max(1, Math.ceil(sortedProducts.length / PAGE_SIZE));
+    : Math.max(
+        1,
+        Math.ceil(
+          sortedProducts.length / PAGE_SIZE,
+        ),
+      );
 
-  const currentPage = Math.min(Math.max(1, initialPage), totalPages);
+  const currentPage = Math.min(
+    Math.max(1, initialPage),
+    totalPages,
+  );
 
   const visibleProducts = serverPagination
     ? sortedProducts
@@ -938,7 +1372,10 @@ function ShopPageView({
       ? resultStart + visibleProducts.length - 1
       : 0;
 
-  /* FILTER URL ACTIONS */
+  /* =====================================================
+     FILTER URL ACTIONS
+  ===================================================== */
+
   function getCurrentFilters(): ShopFilters {
     return {
       query,
@@ -951,22 +1388,41 @@ function ShopPageView({
     };
   }
 
-  function submitSearch(event: FormEvent<HTMLFormElement>) {
+  function submitSearch(
+    event: FormEvent<HTMLFormElement>,
+  ) {
     event.preventDefault();
-    router.push(buildShopUrl(getCurrentFilters(), 1));
+
+    router.push(
+      buildShopUrl(
+        getCurrentFilters(),
+        1,
+      ),
+    );
   }
 
   function applyFilters() {
-    router.push(buildShopUrl(getCurrentFilters(), 1));
+    router.push(
+      buildShopUrl(
+        getCurrentFilters(),
+        1,
+      ),
+    );
+
     setShowMobileFilters(false);
   }
 
-  function selectCategory(nextCategory: string) {
+  function selectCategory(
+    nextCategory: string,
+  ) {
     setCategory(nextCategory);
 
     router.push(
       buildShopUrl(
-        { ...getCurrentFilters(), category: nextCategory },
+        {
+          ...getCurrentFilters(),
+          category: nextCategory,
+        },
         1,
       ),
     );
@@ -987,15 +1443,37 @@ function ShopPageView({
   }
 
   function goToPage(page: number) {
-    if (page < 1 || page > totalPages || page === currentPage) return;
+    if (
+      page < 1 ||
+      page > totalPages ||
+      page === currentPage
+    ) {
+      return;
+    }
 
-    router.push(buildShopUrl(getCurrentFilters(), page));
-    window.scrollTo({ top: 0, behavior: "smooth" });
+    router.push(
+      buildShopUrl(
+        getCurrentFilters(),
+        page,
+      ),
+    );
+
+    window.scrollTo({
+      top: 0,
+      behavior: "smooth",
+    });
   }
 
-  /* SAVE / UNSAVE PRODUCT */
-  async function toggleSavedProduct(product: Product) {
-    if (savingProductIds[product.id]) return;
+  /* =====================================================
+     SAVE / UNSAVE PRODUCT
+  ===================================================== */
+
+  async function toggleSavedProduct(
+    product: Product,
+  ) {
+    if (savingProductIds[product.id]) {
+      return;
+    }
 
     setSaveFeedback("");
     setSaveFeedbackError(false);
@@ -1006,7 +1484,8 @@ function ShopPageView({
     }));
 
     try {
-      const savedRecordId = savedProducts[product.id];
+      const savedRecordId =
+        savedProducts[product.id];
 
       if (savedRecordId) {
         const response = await fetch(
@@ -1014,15 +1493,19 @@ function ShopPageView({
           {
             method: "DELETE",
             cache: "no-store",
-            headers: { Accept: "application/json" },
+            headers: {
+              Accept: "application/json",
+            },
           },
         );
 
-        const data: unknown = await response.json().catch(() => null);
+        const data: unknown =
+          await response.json().catch(() => null);
 
         if (!response.ok) {
           const message =
-            isRecord(data) && typeof data.error === "string"
+            isRecord(data) &&
+            typeof data.error === "string"
               ? data.error
               : "Unable to remove this saved product.";
 
@@ -1031,40 +1514,55 @@ function ShopPageView({
 
         setSavedProducts((current) => {
           const next = { ...current };
+
           delete next[product.id];
+
           return next;
         });
 
-        setSaveFeedback("Product removed from Saved.");
+        setSaveFeedback(
+          "Product removed from Saved.",
+        );
       } else {
-        const response = await fetch("/api/saved", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            Accept: "application/json",
+        const response = await fetch(
+          "/api/saved",
+          {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              Accept: "application/json",
+            },
+            body: JSON.stringify({
+              type: "PRODUCT",
+              listingId: product.id,
+            }),
           },
-          body: JSON.stringify({
-            type: "PRODUCT",
-            listingId: product.id,
-          }),
-        });
+        );
 
-        const data: unknown = await response.json().catch(() => null);
+        const data: unknown =
+          await response.json().catch(() => null);
 
-        if (response.status === 401 || response.status === 403) {
-          throw new Error("Sign in to save products.");
+        if (
+          response.status === 401 ||
+          response.status === 403
+        ) {
+          throw new Error(
+            "Sign in to save products.",
+          );
         }
 
         if (!response.ok) {
           const message =
-            isRecord(data) && typeof data.error === "string"
+            isRecord(data) &&
+            typeof data.error === "string"
               ? data.error
               : "Unable to save this product.";
 
           throw new Error(message);
         }
 
-        const createdRecordId = getSavedRecordId(data);
+        const createdRecordId =
+          getSavedRecordId(data);
 
         if (createdRecordId) {
           setSavedProducts((current) => ({
@@ -1076,7 +1574,8 @@ function ShopPageView({
         }
 
         const alreadySaved =
-          isRecord(data) && data.alreadySaved === true;
+          isRecord(data) &&
+          data.alreadySaved === true;
 
         setSaveFeedback(
           alreadySaved
@@ -1085,7 +1584,10 @@ function ShopPageView({
         );
       }
     } catch (saveError) {
-      console.error("Save product action error:", saveError);
+      console.error(
+        "Save product action error:",
+        saveError,
+      );
 
       setSaveFeedbackError(true);
 
@@ -1097,13 +1599,121 @@ function ShopPageView({
     } finally {
       setSavingProductIds((current) => {
         const next = { ...current };
+
         delete next[product.id];
+
         return next;
       });
     }
   }
 
-  /* FILTER CONTROLS */
+  /* =====================================================
+     ADD PRODUCT TO CART
+  ===================================================== */
+
+  async function addProductToCart(
+    product: Product,
+  ) {
+    if (
+      addingToCartProductIds[product.id] ||
+      !canAddProductToCart(product)
+    ) {
+      return;
+    }
+
+    setCartFeedback(null);
+
+    setAddingToCartProductIds((current) => ({
+      ...current,
+      [product.id]: true,
+    }));
+
+    try {
+      const response = await fetch(
+        "/api/cart/items",
+        {
+          method: "POST",
+          credentials: "same-origin",
+          headers: {
+            "Content-Type": "application/json",
+            Accept: "application/json",
+          },
+          body: JSON.stringify({
+            productId: product.id,
+            quantity: 1,
+          }),
+        },
+      );
+
+      const data: unknown =
+        await response.json().catch(() => null);
+
+      if (
+        response.status === 401 ||
+        response.status === 403
+      ) {
+        const callbackUrl =
+          `${window.location.pathname}${window.location.search}`;
+
+        router.push(
+          `/buyer/login?callbackUrl=${encodeURIComponent(callbackUrl)}`,
+        );
+
+        return;
+      }
+
+      if (!response.ok) {
+        const serverMessage =
+          isRecord(data)
+            ? cleanString(data.error) ??
+              cleanString(data.message)
+            : null;
+
+        throw new Error(
+          serverMessage ??
+            "Unable to add this product to your cart.",
+        );
+      }
+
+      setCartFeedback({
+        productId: product.id,
+        kind: "success",
+        message: "Added to cart successfully.",
+      });
+
+      // Refresh cart counters in components listening for this event.
+      window.dispatchEvent(
+        new Event("remarket-cart-changed"),
+      );
+    } catch (cartError) {
+      console.error(
+        "Add to cart error:",
+        cartError,
+      );
+
+      setCartFeedback({
+        productId: product.id,
+        kind: "error",
+        message:
+          cartError instanceof Error
+            ? cartError.message
+            : "Unable to add this product to your cart.",
+      });
+    } finally {
+      setAddingToCartProductIds((current) => {
+        const next = { ...current };
+
+        delete next[product.id];
+
+        return next;
+      });
+    }
+  }
+
+  /* =====================================================
+     FILTER CONTROLS
+  ===================================================== */
+
   function renderFilterControls() {
     return (
       <div className="space-y-5">
@@ -1118,13 +1728,20 @@ function ShopPageView({
           <select
             id="shop-category"
             value={category}
-            onChange={(event) => setCategory(event.target.value)}
+            onChange={(event) =>
+              setCategory(event.target.value)
+            }
             className="h-11 w-full rounded-xl border border-[#EAE6DF] bg-white px-3 text-sm text-[#17202A] outline-none transition focus:border-[#FF9A81] focus:ring-2 focus:ring-[#FF5A36]/10"
           >
-            <option value="">All categories</option>
+            <option value="">
+              All categories
+            </option>
 
             {categories.map((item) => (
-              <option key={item.id} value={item.name}>
+              <option
+                key={item.id}
+                value={item.name}
+              >
                 {item.name}
               </option>
             ))}
@@ -1149,7 +1766,9 @@ function ShopPageView({
               id="shop-location"
               type="text"
               value={location}
-              onChange={(event) => setLocation(event.target.value)}
+              onChange={(event) =>
+                setLocation(event.target.value)
+              }
               placeholder="e.g. Ogba, Ikeja"
               maxLength={100}
               className="h-11 w-full rounded-xl border border-[#EAE6DF] bg-white pl-9 pr-3 text-sm text-[#17202A] outline-none transition focus:border-[#FF9A81] focus:ring-2 focus:ring-[#FF5A36]/10"
@@ -1178,7 +1797,9 @@ function ShopPageView({
                 step="1"
                 inputMode="numeric"
                 value={minPrice}
-                onChange={(event) => setMinPrice(event.target.value)}
+                onChange={(event) =>
+                  setMinPrice(event.target.value)
+                }
                 placeholder="₦ Min"
                 className="h-11 w-full min-w-0 rounded-xl border border-[#EAE6DF] bg-white px-2.5 text-sm text-[#17202A] outline-none focus:border-[#FF9A81] focus:ring-2 focus:ring-[#FF5A36]/10"
               />
@@ -1199,7 +1820,9 @@ function ShopPageView({
                 step="1"
                 inputMode="numeric"
                 value={maxPrice}
-                onChange={(event) => setMaxPrice(event.target.value)}
+                onChange={(event) =>
+                  setMaxPrice(event.target.value)
+                }
                 placeholder="₦ Max"
                 className="h-11 w-full min-w-0 rounded-xl border border-[#EAE6DF] bg-white px-2.5 text-sm text-[#17202A] outline-none focus:border-[#FF9A81] focus:ring-2 focus:ring-[#FF5A36]/10"
               />
@@ -1220,15 +1843,28 @@ function ShopPageView({
             value={availability}
             onChange={(event) =>
               setAvailability(
-                parseAvailabilityFilter(event.target.value),
+                parseAvailabilityFilter(
+                  event.target.value,
+                ),
               )
             }
             className="h-11 w-full rounded-xl border border-[#EAE6DF] bg-white px-3 text-sm text-[#17202A] outline-none focus:border-[#FF9A81] focus:ring-2 focus:ring-[#FF5A36]/10"
           >
-            <option value="">Any availability</option>
-            <option value="AVAILABLE">Available</option>
-            <option value="ASK_SELLER">Ask seller</option>
-            <option value="UNAVAILABLE">Unavailable</option>
+            <option value="">
+              Any availability
+            </option>
+
+            <option value="AVAILABLE">
+              Available
+            </option>
+
+            <option value="ASK_SELLER">
+              Ask seller
+            </option>
+
+            <option value="UNAVAILABLE">
+              Unavailable
+            </option>
           </select>
         </div>
 
@@ -1236,7 +1872,9 @@ function ShopPageView({
           <input
             type="checkbox"
             checked={verified}
-            onChange={(event) => setVerified(event.target.checked)}
+            onChange={(event) =>
+              setVerified(event.target.checked)
+            }
             className="h-4 w-4 accent-[#FF5A36]"
           />
 
@@ -1283,7 +1921,10 @@ function ShopPageView({
     verified ? "VERIFIED" : "",
   ].filter(Boolean).length;
 
-  /* RENDER */
+  /* =====================================================
+     RENDER
+  ===================================================== */
+
   return (
     <>
       <SiteHeader />
@@ -1293,7 +1934,9 @@ function ShopPageView({
         className="min-h-dvh overflow-x-clip bg-[#FFFDFC] pb-28 text-[#17202A] lg:pb-10"
       >
         <div className="mx-auto max-w-[1600px] px-4 pb-8 pt-5 sm:px-6 lg:px-8 lg:pt-8 xl:px-10">
+
           {/* PAGE INTRODUCTION */}
+
           <section className="relative overflow-hidden rounded-[24px] border border-[#FFE0D5] bg-gradient-to-r from-[#FFF0E7] via-[#FFF5EE] to-[#FFE4D9] px-5 py-6 sm:px-8 sm:py-8">
             <div
               aria-hidden="true"
@@ -1314,8 +1957,8 @@ function ShopPageView({
               </h1>
 
               <p className="mt-2 max-w-[570px] text-sm leading-6 text-[#66564C] sm:text-base">
-                Discover products from sellers near you. Compare prices and
-                find what you need on ReMarket.
+                Discover products from sellers near you.
+                Compare prices and find what you need on ReMarket.
               </p>
 
               <div className="mt-4 flex flex-wrap items-center gap-x-5 gap-y-2 text-[11px] font-medium text-[#7A6255]">
@@ -1338,6 +1981,7 @@ function ShopPageView({
           </section>
 
           {/* SEARCH AND FILTER TOOLBAR */}
+
           <section className="mt-6">
             <form
               onSubmit={submitSearch}
@@ -1351,7 +1995,9 @@ function ShopPageView({
 
               <input
                 value={query}
-                onChange={(event) => setQuery(event.target.value)}
+                onChange={(event) =>
+                  setQuery(event.target.value)
+                }
                 placeholder="What product are you looking for?"
                 aria-label="Search products"
                 className="min-w-0 flex-1 bg-transparent px-3 text-sm text-[#17202A] outline-none placeholder:text-[#91877E]"
@@ -1363,17 +2009,23 @@ function ShopPageView({
                 className="flex h-10 shrink-0 items-center justify-center gap-2 rounded-xl bg-[#FF5A36] px-4 text-xs font-bold text-white transition hover:bg-[#E94A28] disabled:cursor-not-allowed disabled:opacity-50 sm:px-6"
               >
                 <Search className="h-4 w-4" />
-                <span className="hidden sm:inline">Search</span>
+
+                <span className="hidden sm:inline">
+                  Search
+                </span>
               </button>
             </form>
 
             <div className="mt-3 flex flex-wrap items-center justify-between gap-3">
               <button
                 type="button"
-                onClick={() => setShowMobileFilters(true)}
+                onClick={() =>
+                  setShowMobileFilters(true)
+                }
                 className="inline-flex min-h-10 items-center gap-2 rounded-xl border border-[#EAE6DF] bg-white px-3.5 py-2 text-xs font-bold text-[#514840] transition hover:border-[#FF9A81] hover:text-[#9F2D18] lg:hidden"
               >
                 <SlidersHorizontal className="h-4 w-4" />
+
                 Filters
 
                 {activeFilterCount > 0 && (
@@ -1395,25 +2047,47 @@ function ShopPageView({
                   id="product-sort"
                   value={sortBy}
                   onChange={(event) => {
-                    setSortBy(event.target.value as SortOption);
+                    setSortBy(
+                      event.target.value as SortOption,
+                    );
 
                     if (initialPage !== 1) {
-                      router.push(buildShopUrl(getCurrentFilters(), 1));
+                      router.push(
+                        buildShopUrl(
+                          getCurrentFilters(),
+                          1,
+                        ),
+                      );
                     }
                   }}
                   className="h-10 max-w-[175px] rounded-xl border border-[#EAE6DF] bg-white px-3 text-xs font-semibold text-[#17202A] outline-none focus:border-[#FF9A81]"
                 >
-                  <option value="NEWEST">Recently added</option>
-                  <option value="PRICE_LOW">Price: Low to High</option>
-                  <option value="PRICE_HIGH">Price: High to Low</option>
-                  <option value="NAME">Product name</option>
+                  <option value="NEWEST">
+                    Recently added
+                  </option>
+
+                  <option value="PRICE_LOW">
+                    Price: Low to High
+                  </option>
+
+                  <option value="PRICE_HIGH">
+                    Price: High to Low
+                  </option>
+
+                  <option value="NAME">
+                    Product name
+                  </option>
                 </select>
               </div>
             </div>
           </section>
 
           {/* CATEGORY CHIPS */}
-          <section aria-label="Product categories" className="mt-5">
+
+          <section
+            aria-label="Product categories"
+            className="mt-5"
+          >
             <div className="mb-2 flex items-center justify-between">
               <h2 className="text-xs font-bold text-[#514840]">
                 Browse categories
@@ -1434,7 +2108,9 @@ function ShopPageView({
               <button
                 type="button"
                 aria-pressed={!category}
-                onClick={() => selectCategory("")}
+                onClick={() =>
+                  selectCategory("")
+                }
                 className={`flex min-h-10 shrink-0 items-center rounded-full border px-4 py-2 text-xs font-bold transition ${
                   !category
                     ? "border-[#FF5A36] bg-[#FF5A36] text-white"
@@ -1455,7 +2131,9 @@ function ShopPageView({
                     type="button"
                     aria-pressed={active}
                     onClick={() =>
-                      selectCategory(active ? "" : item.name)
+                      selectCategory(
+                        active ? "" : item.name,
+                      )
                     }
                     className={`flex min-h-10 shrink-0 items-center rounded-full border px-4 py-2 text-xs font-semibold transition ${
                       active
@@ -1471,7 +2149,11 @@ function ShopPageView({
           </section>
 
           {/* MAIN CONTENT AND SIDEBAR */}
+
           <div className="mt-6 grid grid-cols-1 gap-6 lg:grid-cols-[230px_minmax(0,1fr)] xl:grid-cols-[250px_minmax(0,1fr)]">
+
+            {/* DESKTOP FILTERS */}
+
             <aside className="hidden lg:block">
               <div className="sticky top-[105px] rounded-2xl border border-[#EAE6DF] bg-[#FCFAF6] p-4">
                 <div className="mb-4 flex items-center justify-between">
@@ -1480,6 +2162,7 @@ function ShopPageView({
                       className="h-4 w-4 text-[#FF5A36]"
                       aria-hidden="true"
                     />
+
                     <h2 className="text-sm font-bold text-[#17202A]">
                       Filters
                     </h2>
@@ -1499,6 +2182,7 @@ function ShopPageView({
             </aside>
 
             {/* PRODUCT RESULTS */}
+
             <section className="min-w-0">
               <div className="mb-4 flex flex-wrap items-end justify-between gap-3">
                 <div>
@@ -1512,7 +2196,9 @@ function ShopPageView({
                       : error
                         ? "Products could not be loaded."
                         : `${totalProducts.toLocaleString("en-NG")} ${
-                            totalProducts === 1 ? "product" : "products"
+                            totalProducts === 1
+                              ? "product"
+                              : "products"
                           } found`}
                   </p>
                 </div>
@@ -1523,6 +2209,8 @@ function ShopPageView({
                   </span>
                 )}
               </div>
+
+              {/* SAVED FEEDBACK */}
 
               {saveFeedback && (
                 <div
@@ -1545,25 +2233,33 @@ function ShopPageView({
                 </div>
               )}
 
-              {loading && (
-                <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-4">
-                  {Array.from({ length: 8 }).map((_, index) => (
-                    <div
-                      key={`product-loading-${index}`}
-                      className="overflow-hidden rounded-2xl border border-[#EAE6DF] bg-white"
-                      aria-hidden="true"
-                    >
-                      <div className="aspect-square animate-pulse bg-[#F0ECE7]" />
+              {/* LOADING SKELETONS */}
 
-                      <div className="space-y-2 p-3">
-                        <div className="h-3 w-4/5 animate-pulse rounded bg-[#F0ECE7]" />
-                        <div className="h-3 w-2/5 animate-pulse rounded bg-[#F0ECE7]" />
-                        <div className="h-2.5 w-3/5 animate-pulse rounded bg-[#F0ECE7]" />
+              {loading && (
+                <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-4 2xl:grid-cols-5">
+                  {Array.from({ length: 10 }).map(
+                    (_, index) => (
+                      <div
+                        key={`product-loading-${index}`}
+                        className="overflow-hidden rounded-xl border border-[#EAE6DF] bg-white"
+                        aria-hidden="true"
+                      >
+                        <div className="aspect-[4/3] animate-pulse bg-[#F0ECE7]" />
+
+                        <div className="space-y-2 p-2.5">
+                          <div className="h-3 w-4/5 animate-pulse rounded bg-[#F0ECE7]" />
+
+                          <div className="h-3 w-2/5 animate-pulse rounded bg-[#F0ECE7]" />
+
+                          <div className="h-2.5 w-3/5 animate-pulse rounded bg-[#F0ECE7]" />
+                        </div>
                       </div>
-                    </div>
-                  ))}
+                    ),
+                  )}
                 </div>
               )}
+
+              {/* ERROR */}
 
               {!loading && error && (
                 <div className="rounded-2xl border border-red-200 bg-red-50 px-5 py-10 text-center">
@@ -1587,220 +2283,341 @@ function ShopPageView({
                 </div>
               )}
 
-              {!loading && !error && visibleProducts.length === 0 && (
-                <div className="rounded-2xl border border-dashed border-[#E8E4DE] bg-[#FCFAF6] px-5 py-12 text-center">
-                  <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-white text-[#FF5A36] shadow-sm">
-                    <Search className="h-7 w-7" />
+              {/* EMPTY RESULTS */}
+
+              {!loading &&
+                !error &&
+                visibleProducts.length === 0 && (
+                  <div className="rounded-2xl border border-dashed border-[#E8E4DE] bg-[#FCFAF6] px-5 py-12 text-center">
+                    <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-white text-[#FF5A36] shadow-sm">
+                      <Search className="h-7 w-7" />
+                    </div>
+
+                    <h3 className="mt-4 text-sm font-bold text-[#17202A]">
+                      No products found
+                    </h3>
+
+                    <p className="mx-auto mt-2 max-w-sm text-xs leading-5 text-[#756B61]">
+                      Try another search, choose a different
+                      category or remove some filters.
+                    </p>
+
+                    <button
+                      type="button"
+                      onClick={clearFilters}
+                      className="mt-5 inline-flex min-h-10 items-center gap-2 rounded-xl bg-[#FF5A36] px-5 py-2.5 text-xs font-bold text-white transition hover:bg-[#E94A28]"
+                    >
+                      Clear filters
+                      <RotateCcw className="h-3.5 w-3.5" />
+                    </button>
                   </div>
+                )}
 
-                  <h3 className="mt-4 text-sm font-bold text-[#17202A]">
-                    No products found
-                  </h3>
+              {/* PRODUCT GRID */}
 
-                  <p className="mx-auto mt-2 max-w-sm text-xs leading-5 text-[#756B61]">
-                    Try another search, choose a different category or remove
-                    some filters.
-                  </p>
+              {!loading &&
+                !error &&
+                visibleProducts.length > 0 && (
+                  <>
+                    <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-4 2xl:grid-cols-5">
+                      {visibleProducts.map((product) => {
+                        const isSaved = Boolean(
+                          savedProducts[product.id],
+                        );
 
-                  <button
-                    type="button"
-                    onClick={clearFilters}
-                    className="mt-5 inline-flex min-h-10 items-center gap-2 rounded-xl bg-[#FF5A36] px-5 py-2.5 text-xs font-bold text-white transition hover:bg-[#E94A28]"
-                  >
-                    Clear filters
-                    <RotateCcw className="h-3.5 w-3.5" />
-                  </button>
-                </div>
-              )}
+                        const isSaving = Boolean(
+                          savingProductIds[product.id],
+                        );
 
-              {!loading && !error && visibleProducts.length > 0 && (
-                <>
-                  <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-4">
-                    {visibleProducts.map((product) => {
-                      const isSaved = Boolean(savedProducts[product.id]);
-                      const isSaving = Boolean(savingProductIds[product.id]);
-                      const imageUrl =
-                        product.imageUrl ?? product.images[0]?.url ?? null;
-                      const area =
-                        product.seller.location?.area ?? "Local";
+                        const isAddingToCart = Boolean(
+                          addingToCartProductIds[product.id],
+                        );
 
-                      return (
-                        <article
-                          key={product.id}
-                          className="group flex min-w-0 flex-col overflow-hidden rounded-2xl border border-[#EAE6DF] bg-white shadow-[0_4px_16px_rgba(23,32,42,0.035)] transition duration-200 hover:-translate-y-1 hover:border-[#FFD0C3] hover:shadow-[0_12px_28px_rgba(23,32,42,0.09)]"
-                        >
-                          <div className="relative aspect-square overflow-hidden bg-[#FCFAF6]">
-                            <Link
-                              href={`/product/${encodeURIComponent(product.id)}`}
-                              aria-label={`View ${product.name}`}
-                              className="absolute inset-0"
-                            >
-                              {imageUrl ? (
-                                <img
-                                  src={imageUrl}
-                                  alt={product.name}
-                                  loading="lazy"
-                                  className="h-full w-full object-cover transition-transform duration-300 group-hover:scale-[1.04]"
-                                />
-                              ) : (
-                                <div className="flex h-full w-full items-center justify-center text-[#C3B9AE]">
-                                  <Package className="h-12 w-12" />
-                                </div>
-                              )}
-                            </Link>
+                        const canAdd =
+                          canAddProductToCart(product);
 
-                            <button
-                              type="button"
-                              aria-label={
-                                isSaved
-                                  ? `Remove ${product.name} from Saved`
-                                  : `Save ${product.name}`
-                              }
-                              aria-pressed={isSaved}
-                              disabled={isSaving}
-                              onClick={() => {
-                                void toggleSavedProduct(product);
-                              }}
-                              className={`absolute right-2.5 top-2.5 z-10 flex h-9 w-9 items-center justify-center rounded-full border border-white/80 bg-white/95 shadow-sm transition hover:scale-105 disabled:cursor-not-allowed disabled:opacity-60 ${
-                                isSaved
-                                  ? "text-[#FF5A36]"
-                                  : "text-[#756B61] hover:text-[#FF5A36]"
-                              }`}
-                            >
-                              {isSaving ? (
-                                <Loader2 className="h-4 w-4 animate-spin" />
-                              ) : (
-                                <Heart
-                                  className="h-[18px] w-[18px]"
-                                  fill={isSaved ? "currentColor" : "none"}
-                                />
-                              )}
-                            </button>
+                        const imageUrl =
+                          product.imageUrl ??
+                          product.images[0]?.url ??
+                          null;
 
-                            <span
-                              className={`absolute bottom-2.5 left-2.5 rounded-full px-2.5 py-1 text-[9px] font-bold shadow-sm ${getAvailabilityStyle(
-                                product.availability,
-                              )}`}
-                            >
-                              {getAvailabilityLabel(product.availability)}
-                            </span>
-                          </div>
+                        const area =
+                          product.seller.location?.area ??
+                          "Local";
 
-                          <div className="flex flex-1 flex-col p-3 sm:p-3.5">
-                            {product.category && (
-                              <p className="mb-1 truncate text-[9px] font-bold uppercase tracking-[0.1em] text-[#9F2D18]">
-                                {product.category.name}
-                              </p>
-                            )}
+                        const feedback =
+                          cartFeedback?.productId === product.id
+                            ? cartFeedback
+                            : null;
 
-                            <Link
-                              href={`/product/${encodeURIComponent(product.id)}`}
-                              className="line-clamp-2 min-h-10 text-xs font-bold leading-5 text-[#17202A] transition hover:text-[#9F2D18] sm:text-sm"
-                            >
-                              {product.name}
-                            </Link>
+                        const addedSuccessfully =
+                          feedback?.kind === "success";
 
-                            <p className="mt-2 text-sm font-extrabold text-[#9F2D18] sm:text-base">
-                              {formatPrice(product)}
-                            </p>
+                        return (
+                          <article
+                            key={product.id}
+                            className="group flex min-w-0 flex-col overflow-hidden rounded-xl border border-[#EAE6DF] bg-white shadow-[0_3px_12px_rgba(23,32,42,0.035)] transition duration-200 hover:-translate-y-0.5 hover:border-[#FFD0C3] hover:shadow-[0_8px_20px_rgba(23,32,42,0.08)]"
+                          >
+                            {/* PRODUCT IMAGE */}
 
-                            <div className="mt-3 flex min-w-0 items-center gap-1.5 border-t border-[#F0ECE7] pt-3">
-                              <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-[#FFF0EB] text-[#9F2D18]">
-                                <StoreIcon />
-                              </div>
+                            <div className="relative aspect-[4/3] overflow-hidden bg-[#FCFAF6]">
+                              <Link
+                                href={`/product/${encodeURIComponent(product.id)}`}
+                                aria-label={`View ${product.name}`}
+                                className="absolute inset-0"
+                              >
+                                {imageUrl ? (
+                                  <img
+                                    src={imageUrl}
+                                    alt={product.name}
+                                    loading="lazy"
+                                    className="h-full w-full object-cover transition-transform duration-300 group-hover:scale-[1.04]"
+                                  />
+                                ) : (
+                                  <div className="flex h-full w-full items-center justify-center text-[#C3B9AE]">
+                                    <Package className="h-9 w-9" />
+                                  </div>
+                                )}
+                              </Link>
 
-                              <div className="min-w-0 flex-1">
-                                <div className="flex min-w-0 items-center gap-1 text-[10px] font-semibold text-[#514840] sm:text-[11px]">
-                                  <span className="truncate">
-                                    {product.seller.name}
-                                  </span>
+                              {/* SAVE BUTTON */}
 
-                                  {product.seller.verified && (
-                                    <BadgeCheck
-                                      className="h-3.5 w-3.5 shrink-0 text-[#2196C5]"
-                                      aria-label="Verified seller"
-                                    />
-                                  )}
-                                </div>
+                              <button
+                                type="button"
+                                aria-label={
+                                  isSaved
+                                    ? `Remove ${product.name} from Saved`
+                                    : `Save ${product.name}`
+                                }
+                                aria-pressed={isSaved}
+                                disabled={isSaving}
+                                onClick={() => {
+                                  void toggleSavedProduct(product);
+                                }}
+                                className={`absolute right-2 top-2 z-10 flex h-8 w-8 items-center justify-center rounded-full border border-white/80 bg-white/95 shadow-sm transition hover:scale-105 disabled:cursor-not-allowed disabled:opacity-60 ${
+                                  isSaved
+                                    ? "text-[#FF5A36]"
+                                    : "text-[#756B61] hover:text-[#FF5A36]"
+                                }`}
+                              >
+                                {isSaving ? (
+                                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                                ) : (
+                                  <Heart
+                                    className="h-4 w-4"
+                                    fill={
+                                      isSaved
+                                        ? "currentColor"
+                                        : "none"
+                                    }
+                                  />
+                                )}
+                              </button>
 
-                                <p className="mt-0.5 flex items-center gap-1 truncate text-[9px] text-[#91877E]">
-                                  <MapPin className="h-3 w-3 shrink-0" />
-                                  {area}
-                                </p>
-                              </div>
+                              {/* AVAILABILITY */}
+
+                              <span
+                                className={`absolute bottom-2 left-2 rounded-full px-2 py-1 text-[8px] font-bold shadow-sm ${getAvailabilityStyle(
+                                  product.availability,
+                                )}`}
+                              >
+                                {getAvailabilityLabel(
+                                  product.availability,
+                                )}
+                              </span>
                             </div>
 
-                            <Link
-                              href={`/product/${encodeURIComponent(product.id)}`}
-                              className="mt-3 flex min-h-9 items-center justify-center gap-1.5 rounded-xl bg-[#FFF1ED] px-3 py-2 text-[10px] font-bold text-[#9F2D18] transition hover:bg-[#FFE0D6] sm:text-xs"
-                            >
-                              View product
-                              <ArrowRight className="h-3.5 w-3.5" />
-                            </Link>
-                          </div>
-                        </article>
-                      );
-                    })}
-                  </div>
+                            {/* PRODUCT INFORMATION */}
 
-                  {resultsTruncated && (
-                    <div className="mt-5 rounded-xl border border-[#F2E3C9] bg-[#FFFAF0] px-4 py-3 text-xs leading-5 text-[#785B25]">
-                      {serverPagination
-                        ? `Only the first ${products.length} products are loaded for this sorting view. Use search or filters to narrow the results.`
-                        : "Your search has more matches than the current results limit. Narrow your search or apply additional filters to find more specific results."}
+                            <div className="flex flex-1 flex-col p-2.5 sm:p-3">
+                              {product.category && (
+                                <p className="mb-1 truncate text-[8px] font-bold uppercase tracking-[0.1em] text-[#9F2D18] sm:text-[9px]">
+                                  {product.category.name}
+                                </p>
+                              )}
+
+                              <Link
+                                href={`/product/${encodeURIComponent(product.id)}`}
+                                className="line-clamp-2 min-h-9 text-[11px] font-bold leading-4 text-[#17202A] transition hover:text-[#9F2D18] sm:text-xs"
+                              >
+                                {product.name}
+                              </Link>
+
+                              {/* PRICE */}
+
+                              <p className="mt-1.5 text-xs font-extrabold text-[#9F2D18] sm:text-sm">
+                                {formatPrice(product)}
+                              </p>
+
+                              {/* SELLER */}
+
+                              <div className="mt-2.5 flex min-w-0 items-center gap-1.5 border-t border-[#F0ECE7] pt-2.5">
+                                <div className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-[#FFF0EB] text-[#9F2D18]">
+                                  <StoreIcon />
+                                </div>
+
+                                <div className="min-w-0 flex-1">
+                                  <div className="flex min-w-0 items-center gap-1 text-[9px] font-semibold text-[#514840] sm:text-[10px]">
+                                    <span className="truncate">
+                                      {product.seller.name}
+                                    </span>
+
+                                    {product.seller.verified && (
+                                      <BadgeCheck
+                                        className="h-3 w-3 shrink-0 text-[#2196C5]"
+                                        aria-label="Verified seller"
+                                      />
+                                    )}
+                                  </div>
+
+                                  <p className="mt-0.5 flex items-center gap-1 truncate text-[8px] text-[#91877E] sm:text-[9px]">
+                                    <MapPin className="h-2.5 w-2.5 shrink-0" />
+                                    {area}
+                                  </p>
+                                </div>
+                              </div>
+
+                              {/* VIEW PRODUCT + ADD TO CART */}
+
+                              <div className="mt-2.5 flex items-center gap-1.5 border-t border-[#F0ECE7] pt-2.5">
+                                <Link
+                                  href={`/product/${encodeURIComponent(product.id)}`}
+                                  className="flex min-h-9 min-w-0 flex-1 items-center justify-center gap-1 rounded-lg bg-[#FFF1ED] px-1.5 py-2 text-[9px] font-bold text-[#9F2D18] transition hover:bg-[#FFE0D6] sm:text-[10px]"
+                                >
+                                  View product
+
+                                  <ArrowRight className="h-3 w-3 shrink-0" />
+                                </Link>
+
+                                <button
+                                  type="button"
+                                  disabled={
+                                    !canAdd ||
+                                    isAddingToCart
+                                  }
+                                  onClick={() => {
+                                    void addProductToCart(product);
+                                  }}
+                                  title={getCartDisabledReason(product)}
+                                  aria-label={`Add ${product.name} to cart`}
+                                  className={`flex h-9 w-10 shrink-0 items-center justify-center rounded-lg transition disabled:cursor-not-allowed disabled:opacity-40 ${
+                                    addedSuccessfully
+                                      ? "bg-[#DCFCE7] text-[#166534]"
+                                      : canAdd
+                                        ? "bg-[#FF5A36] text-white hover:bg-[#E94A28]"
+                                        : "bg-[#EEEAE6] text-[#A69B91]"
+                                  }`}
+                                >
+                                  {isAddingToCart ? (
+                                    <Loader2 className="h-4 w-4 animate-spin" />
+                                  ) : addedSuccessfully ? (
+                                    <Check className="h-4 w-4" />
+                                  ) : (
+                                    <ShoppingCart className="h-4 w-4" />
+                                  )}
+                                </button>
+                              </div>
+
+                              {/* CART FEEDBACK */}
+
+                              {feedback && (
+                                <p
+                                  role={
+                                    feedback.kind === "error"
+                                      ? "alert"
+                                      : "status"
+                                  }
+                                  className={`mt-1.5 text-[9px] leading-4 ${
+                                    feedback.kind === "success"
+                                      ? "text-[#267344]"
+                                      : "text-[#B42318]"
+                                  }`}
+                                >
+                                  {feedback.message}
+                                </p>
+                              )}
+                            </div>
+                          </article>
+                        );
+                      })}
                     </div>
-                  )}
 
-                  {totalPages > 1 && (
-                    <div className="mt-7 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-[#EAE6DF] bg-white p-3 sm:px-4">
-                      <p className="text-[10px] text-[#756B61] sm:text-xs">
-                        Showing {resultStart}–{resultEnd}
-                        {resultsTruncated
-                          ? " of the loaded results"
-                          : ` of ${totalProducts.toLocaleString("en-NG")}`}
-                      </p>
+                    {/* RESULT LIMIT NOTICE */}
 
-                      <div className="flex items-center gap-2">
-                        <button
-                          type="button"
-                          onClick={() => goToPage(currentPage - 1)}
-                          disabled={currentPage <= 1}
-                          aria-label="Previous page"
-                          className="flex h-9 w-9 items-center justify-center rounded-xl border border-[#EAE6DF] text-[#9F2D18] transition hover:bg-[#FFF1ED] disabled:cursor-not-allowed disabled:opacity-40"
-                        >
-                          <ChevronLeft className="h-4 w-4" />
-                        </button>
-
-                        <span className="min-w-[74px] text-center text-xs font-bold text-[#17202A]">
-                          {currentPage} / {totalPages}
-                        </span>
-
-                        <button
-                          type="button"
-                          onClick={() => goToPage(currentPage + 1)}
-                          disabled={currentPage >= totalPages}
-                          aria-label="Next page"
-                          className="flex h-9 w-9 items-center justify-center rounded-xl border border-[#EAE6DF] text-[#9F2D18] transition hover:bg-[#FFF1ED] disabled:cursor-not-allowed disabled:opacity-40"
-                        >
-                          <ChevronRight className="h-4 w-4" />
-                        </button>
+                    {resultsTruncated && (
+                      <div className="mt-5 rounded-xl border border-[#F2E3C9] bg-[#FFFAF0] px-4 py-3 text-xs leading-5 text-[#785B25]">
+                        Only the first set of matching products
+                        has been loaded. Narrow your search or
+                        apply additional filters to find more
+                        specific results.
                       </div>
-                    </div>
-                  )}
-                </>
-              )}
+                    )}
+
+                    {/* PAGINATION */}
+
+                    {totalPages > 1 && (
+                      <div className="mt-7 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-[#EAE6DF] bg-white p-3 sm:px-4">
+                        <p className="text-[10px] text-[#756B61] sm:text-xs">
+                          Showing {resultStart}–{resultEnd}
+                          {resultsTruncated
+                            ? " of the loaded results"
+                            : ` of ${totalProducts.toLocaleString("en-NG")}`}
+                        </p>
+
+                        <div className="flex items-center gap-2">
+                          <button
+                            type="button"
+                            onClick={() =>
+                              goToPage(currentPage - 1)
+                            }
+                            disabled={currentPage <= 1}
+                            aria-label="Previous page"
+                            className="flex h-9 w-9 items-center justify-center rounded-xl border border-[#EAE6DF] text-[#9F2D18] transition hover:bg-[#FFF1ED] disabled:cursor-not-allowed disabled:opacity-40"
+                          >
+                            <ChevronLeft className="h-4 w-4" />
+                          </button>
+
+                          <span className="min-w-[74px] text-center text-xs font-bold text-[#17202A]">
+                            {currentPage} / {totalPages}
+                          </span>
+
+                          <button
+                            type="button"
+                            onClick={() =>
+                              goToPage(currentPage + 1)
+                            }
+                            disabled={currentPage >= totalPages}
+                            aria-label="Next page"
+                            className="flex h-9 w-9 items-center justify-center rounded-xl border border-[#EAE6DF] text-[#9F2D18] transition hover:bg-[#FFF1ED] disabled:cursor-not-allowed disabled:opacity-40"
+                          >
+                            <ChevronRight className="h-4 w-4" />
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                  </>
+                )}
             </section>
           </div>
 
+          {/* FOOTER */}
+
           <footer className="mt-10 flex items-center justify-center gap-3 pb-3 text-[10px] text-[#9B9188]">
             <span className="h-px w-12 bg-[#EAE6DF]" />
-            <span>ReMarket · Find it nearby</span>
+
+            <span>
+              ReMarket · Find it nearby
+            </span>
+
             <span className="h-px w-12 bg-[#EAE6DF]" />
           </footer>
         </div>
       </main>
 
-      {/* MOBILE FILTER SHEET */}
+      {/* =================================================
+          MOBILE FILTER SHEET
+      ================================================= */}
+
       {showMobileFilters && (
         <div
           className="fixed inset-0 z-[100] flex items-end justify-center bg-black/40 p-0 sm:items-center sm:p-4 lg:hidden"
@@ -1832,7 +2649,9 @@ function ShopPageView({
 
               <button
                 type="button"
-                onClick={() => setShowMobileFilters(false)}
+                onClick={() =>
+                  setShowMobileFilters(false)
+                }
                 aria-label="Close filters"
                 className="flex h-9 w-9 items-center justify-center rounded-full bg-[#FCFAF6] text-[#756B61] hover:bg-[#FFF1ED] hover:text-[#9F2D18]"
               >
@@ -1850,7 +2669,10 @@ function ShopPageView({
   );
 }
 
-/* PAGE ENTRY */
+/* =========================================================
+   PAGE ENTRY
+========================================================= */
+
 export default function ShopPage() {
   return (
     <Suspense
@@ -1862,20 +2684,24 @@ export default function ShopPage() {
             <div className="mx-auto max-w-[1600px]">
               <div className="h-32 animate-pulse rounded-2xl bg-[#F0ECE7]" />
 
-              <div className="mt-6 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
-                {Array.from({ length: 8 }).map((_, index) => (
-                  <div
-                    key={`fallback-${index}`}
-                    className="overflow-hidden rounded-2xl border border-[#EAE6DF] bg-white"
-                  >
-                    <div className="aspect-square animate-pulse bg-[#F0ECE7]" />
+              <div className="mt-6 grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-4 2xl:grid-cols-5">
+                {Array.from(
+                  { length: 10 },
+                  (_, index) => (
+                    <div
+                      key={`fallback-${index}`}
+                      className="overflow-hidden rounded-xl border border-[#EAE6DF] bg-white"
+                    >
+                      <div className="aspect-[4/3] animate-pulse bg-[#F0ECE7]" />
 
-                    <div className="space-y-2 p-3">
-                      <div className="h-3 w-4/5 animate-pulse rounded bg-[#F0ECE7]" />
-                      <div className="h-3 w-2/5 animate-pulse rounded bg-[#F0ECE7]" />
+                      <div className="space-y-2 p-2.5">
+                        <div className="h-3 w-4/5 animate-pulse rounded bg-[#F0ECE7]" />
+
+                        <div className="h-3 w-2/5 animate-pulse rounded bg-[#F0ECE7]" />
+                      </div>
                     </div>
-                  </div>
-                ))}
+                  ),
+                )}
               </div>
             </div>
           </main>

@@ -14,6 +14,11 @@ enum Role {
   SELLER
 }
 
+enum DeliveryFeeStatus {
+  UNCONFIRMED
+  CONFIRMED
+}
+
 enum Availability {
   AVAILABLE
   ASK_SELLER
@@ -1413,6 +1418,8 @@ model Order {
 
   currency String @default("NGN")
 
+  deliveryFeeStatus DeliveryFeeStatus @default(UNCONFIRMED)
+
   /**
    * DELIVERY INFORMATION SNAPSHOT
    * These values are copied into the order at checkout.
@@ -1435,6 +1442,8 @@ model Order {
   sellerOrders SellerOrder[]
 
   payments Payment[]
+
+  checkoutIdempotencyKey String? @unique
 
   completedAt DateTime?
 
@@ -1478,6 +1487,8 @@ model SellerOrder {
   business Business @relation(fields: [businessId], references: [id], onDelete: Restrict)
 
   status SellerOrderStatus @default(PENDING_ACCEPTANCE)
+
+  inventoryReleasedAt DateTime?
 
   // Subtotal for this seller's products only.
   subtotal Int
@@ -1538,6 +1549,8 @@ model OrderItem {
   quantity Int
 
   lineTotal Int
+
+  inventoryReserved Boolean @default(false)
 
   createdAt DateTime @default(now())
 
