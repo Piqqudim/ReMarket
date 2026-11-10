@@ -58,6 +58,8 @@ type ProductCategory = {
 } | null;
 
 type ProductSeller = {
+  // IMPORTANT: This must contain Business.id,
+  // not the seller account's User.id.
   id: string;
   name: string;
   ownerName: string | null;
@@ -212,6 +214,28 @@ function canAddProductToCart(
   );
 }
 
+/* =========================================================
+   SELLER PROFILE ROUTE
+========================================================= */
+
+/**
+ * The public seller profile uses the Business ID.
+ *
+ * Expected route:
+ * app/seller/[id]/page.tsx
+ *
+ * Do not pass Business.ownerId here.
+ */
+function getSellerProfileHref(
+  businessId: string,
+): string {
+  return `/seller/${encodeURIComponent(businessId)}`;
+}
+
+/* =========================================================
+   IMAGE HELPERS
+========================================================= */
+
 function parseImages(
   value: unknown,
 ): ProductImage[] {
@@ -356,29 +380,73 @@ function parseProduct(
   if (
     !isRecord(value) ||
     typeof value.id !== "string" ||
-    typeof value.name !== "string" ||
-    !isRecord(value.seller)
+    typeof value.name !== "string"
   ) {
     return null;
   }
 
-  const rawSeller = value.seller;
+  /*
+   * Support both API structures:
+   *
+   * {
+   *   seller: { ...business fields }
+   * }
+   *
+   * and:
+   *
+   * {
+   *   business: { ...business fields },
+   *   seller: { ...seller fields }
+   * }
+   */
 
-  if (
-    typeof rawSeller.id !== "string" ||
-    typeof rawSeller.name !== "string"
-  ) {
-    return null;
-  }
-
-  const rawLocation = isRecord(
-    rawSeller.location,
-  )
-    ? rawSeller.location
+  const rawBusiness = isRecord(value.business)
+    ? value.business
     : null;
 
+  const rawSeller = isRecord(value.seller)
+    ? value.seller
+    : rawBusiness;
+
+  if (!rawSeller) {
+    return null;
+  }
+
+  /*
+   * Resolve the actual Business ID.
+   *
+   * Priority:
+   * 1. seller.businessId
+   * 2. seller.business.id
+   * 3. product.business.id
+   * 4. seller.id (only when API uses it as Business.id)
+   *
+   * Never substitute ownerId.
+   */
+
+  const nestedBusiness = isRecord(rawSeller.business)
+    ? rawSeller.business
+    : null;
+
+  const sellerId =
+    nullableString(rawSeller.businessId) ??
+    nullableString(nestedBusiness?.id) ??
+    nullableString(rawBusiness?.id) ??
+    nullableString(rawSeller.id);
+
+  if (!sellerId) {
+    return null;
+  }
+
+  const rawLocation = isRecord(rawSeller.location)
+    ? rawSeller.location
+    : rawBusiness && isRecord(rawBusiness.location)
+      ? rawBusiness.location
+      : null;
+
   const verification =
-    nullableString(rawSeller.verification);
+    nullableString(rawSeller.verification) ??
+    nullableString(rawBusiness?.verification);
 
   const price = nullableNumber(value.price);
 
@@ -444,21 +512,26 @@ function parseProduct(
     images: parseImages(value.images),
 
     seller: {
-      id: rawSeller.id,
-      name: rawSeller.name,
+      id: sellerId,
 
-      ownerName: nullableString(
-        rawSeller.ownerName,
-      ),
+      name:
+        nullableString(rawSeller.name) ??
+        nullableString(rawBusiness?.name) ??
+        "Local seller",
 
-      imageUrl: nullableString(
-        rawSeller.imageUrl,
-      ),
+      ownerName:
+        nullableString(rawSeller.ownerName) ??
+        nullableString(rawBusiness?.ownerName),
+
+      imageUrl:
+        nullableString(rawSeller.imageUrl) ??
+        nullableString(rawBusiness?.imageUrl),
 
       verification,
 
       verified:
         rawSeller.verified === true ||
+        rawBusiness?.verification === "VERIFIED" ||
         verification === "VERIFIED",
 
       location: rawLocation
@@ -671,11 +744,6 @@ function extractCreatedSavedId(
 ): string | null {
   if (!isRecord(value)) return null;
 
-  /*
-   * Current POST response:
-   * { item: { id: "saved-listing-id" } }
-   */
-
   if (isRecord(value.item)) {
     const id = nullableString(value.item.id);
     if (id) return id;
@@ -781,14 +849,12 @@ function ProductTile({
 
   return (
     <article className="group w-[165px] shrink-0 snap-start overflow-hidden rounded-2xl border border-[#EAE6DF] bg-white transition hover:-translate-y-1 hover:border-[#FFB39F] hover:shadow-lg">
-
       <Link
         href={productHref}
         aria-label={`View ${product.name}`}
         className="block"
       >
         <div className="relative aspect-square overflow-hidden bg-[#FCFAF6]">
-
           {image ? (
             <img
               src={image}
@@ -817,7 +883,6 @@ function ProductTile({
       </Link>
 
       <div className="p-3">
-
         <Link
           href={productHref}
           className="block min-h-10 text-xs font-semibold leading-5 text-[#292522] hover:text-[#9F2D18]"
@@ -835,7 +900,6 @@ function ProductTile({
         </div>
 
         <div className="mt-3 flex items-center justify-between gap-2 border-t border-[#F0ECE7] pt-2.5">
-
           <Link
             href={productHref}
             className="min-w-0 truncate text-[10px] font-bold text-[#9F2D18] hover:text-[#FF5A36]"
@@ -1626,6 +1690,10 @@ function ProductPageContent({
   const listedDate = formatDate(product.createdAt);
   const area = product.seller.location?.area;
 
+  const sellerProfileHref = getSellerProfileHref(
+    product.seller.id,
+  );
+
   /* =====================================================
      MAIN PAGE
   ===================================================== */
@@ -1640,9 +1708,7 @@ function ProductPageContent({
       >
         <div className="mx-auto max-w-[1500px] px-4 pb-10 pt-4 sm:px-6 lg:px-8 lg:pt-7">
 
-          {/* =====================================
-              BREADCRUMB
-          ===================================== */}
+          {/* BREADCRUMB */}
 
           <nav
             aria-label="Breadcrumb"
@@ -1680,23 +1746,19 @@ function ProductPageContent({
             )}
           </nav>
 
-          {/* =====================================
-              PRODUCT GALLERY + PURCHASE PANEL
-          ===================================== */}
+          {/* PRODUCT GALLERY + PURCHASE PANEL */}
 
           <div className="grid min-w-0 items-start gap-6 lg:grid-cols-[minmax(0,1.08fr)_minmax(380px,0.92fr)] xl:gap-10">
 
             {/* PRODUCT GALLERY */}
 
             <section className="min-w-0">
-
               <div className="flex flex-col gap-3 lg:grid lg:grid-cols-[78px_minmax(0,1fr)]">
 
                 {/* THUMBNAILS */}
 
                 {images.length > 1 && (
                   <div className="order-2 flex gap-2 overflow-x-auto pb-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden lg:order-1 lg:flex-col lg:overflow-y-auto lg:overflow-x-hidden">
-
                     {images.map((image, index) => {
                       const active =
                         activeImageIndex === index;
@@ -1732,9 +1794,7 @@ function ProductPageContent({
 
                 <div className="order-1 min-w-0 lg:order-2">
                   <div className="relative overflow-hidden rounded-[22px] border border-[#EAE6DF] bg-[#FCFAF6]">
-
                     <div className="relative flex aspect-square max-h-[680px] items-center justify-center">
-
                       {images[activeImageIndex] ? (
                         <img
                           src={images[activeImageIndex]}
@@ -1752,8 +1812,6 @@ function ProductPageContent({
                         </div>
                       )}
 
-                      {/* IMAGE VIEWER */}
-
                       {images.length > 0 && (
                         <button
                           type="button"
@@ -1766,8 +1824,6 @@ function ProductPageContent({
                           View images
                         </button>
                       )}
-
-                      {/* IMAGE NAVIGATION */}
 
                       {images.length > 1 && (
                         <>
@@ -1794,7 +1850,6 @@ function ProductPageContent({
                           </span>
                         </>
                       )}
-
                     </div>
                   </div>
 
@@ -1805,18 +1860,14 @@ function ProductPageContent({
               </div>
             </section>
 
-            {/* =====================================
-                PURCHASE PANEL
-            ===================================== */}
+            {/* PURCHASE PANEL */}
 
             <section className="min-w-0 lg:sticky lg:top-[100px] lg:self-start">
-
               <div className="rounded-[22px] border border-[#EAE6DF] bg-white p-5 shadow-[0_5px_24px_rgba(23,32,42,0.045)] sm:p-6">
 
                 {/* CATEGORY */}
 
                 <div className="flex flex-wrap items-center gap-2">
-
                   {product.category && (
                     <Link
                       href={`/shop?category=${encodeURIComponent(
@@ -1855,7 +1906,6 @@ function ProductPageContent({
                 {/* AVAILABILITY */}
 
                 <div className="mt-5 flex flex-wrap items-center gap-2">
-
                   <span
                     className={`rounded-full px-3 py-1.5 text-[10px] font-bold ${availability.className}`}
                   >
@@ -1877,7 +1927,6 @@ function ProductPageContent({
                 {/* SAVE AND SHARE */}
 
                 <div className="mt-5 grid grid-cols-2 gap-2">
-
                   <button
                     type="button"
                     onClick={() =>
@@ -1957,8 +2006,6 @@ function ProductPageContent({
                   </p>
                 )}
 
-                {/* SEPARATOR */}
-
                 <div className="my-6 h-px bg-[#F0ECE7]" />
 
                 {/* ADD TO CART */}
@@ -1979,11 +2026,8 @@ function ProductPageContent({
                 {/* SELLER INFORMATION */}
 
                 <div className="mt-5 rounded-xl border border-[#EAE6DF] bg-[#FCFAF6] p-3.5">
-
                   <div className="flex min-w-0 items-center gap-3">
-
                     <div className="flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-xl border border-[#EAE6DF] bg-white text-[#9F2D18]">
-
                       {product.seller.imageUrl ? (
                         <img
                           src={product.seller.imageUrl}
@@ -1997,13 +2041,11 @@ function ProductPageContent({
                     </div>
 
                     <div className="min-w-0 flex-1">
-
                       <p className="text-[9px] font-medium uppercase tracking-wide text-[#91877E]">
                         Sold by
                       </p>
 
                       <div className="mt-0.5 flex min-w-0 items-center gap-1.5">
-
                         <p className="truncate text-xs font-bold text-[#514840]">
                           {product.seller.name}
                         </p>
@@ -2017,7 +2059,6 @@ function ProductPageContent({
                       </div>
 
                       <p className="mt-1 flex items-center gap-1 text-[10px] text-[#91877E]">
-
                         <MapPin className="h-3 w-3 shrink-0 text-[#FF5A36]" />
 
                         <span className="truncate">
@@ -2027,12 +2068,10 @@ function ProductPageContent({
                     </div>
                   </div>
 
-                  {/* VIEW SELLER */}
+                  {/* CORRECT PUBLIC SELLER PROFILE LINK */}
 
                   <Link
-                    href={`/business/${encodeURIComponent(
-                      product.seller.id,
-                    )}`}
+                    href={sellerProfileHref}
                     className="mt-4 flex min-h-10 w-full items-center justify-center gap-2 rounded-xl border border-[#FFD1C5] bg-white px-4 py-2.5 text-xs font-bold text-[#9F2D18] transition hover:border-[#FF5A36] hover:bg-[#FFF1ED]"
                   >
                     View Seller
@@ -2045,19 +2084,14 @@ function ProductPageContent({
                     Listed on {listedDate}
                   </p>
                 )}
-
               </div>
             </section>
           </div>
 
-          {/* =====================================
-              PRODUCT DESCRIPTION
-          ===================================== */}
+          {/* PRODUCT DESCRIPTION */}
 
           <section className="mt-8 grid min-w-0 gap-5 lg:grid-cols-[minmax(0,1fr)_320px]">
-
             <div className="min-w-0 rounded-[22px] border border-[#EAE6DF] bg-white p-5 sm:p-7">
-
               <div className="border-b border-[#F0ECE7] pb-4">
                 <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-[#9F2D18]">
                   Product information
@@ -2084,17 +2118,13 @@ function ProductPageContent({
                 )}
               </div>
 
-              {/* PRODUCT TAGS */}
-
               {product.keywords.length > 0 && (
                 <div className="mt-6 border-t border-[#F0ECE7] pt-5">
-
                   <h3 className="text-xs font-extrabold text-[#292522]">
                     Product tags
                   </h3>
 
                   <div className="mt-3 flex flex-wrap gap-2">
-
                     {product.keywords.map(
                       (keyword, index) => (
                         <span
@@ -2113,13 +2143,11 @@ function ProductPageContent({
             {/* PRODUCT SUMMARY */}
 
             <aside className="h-fit rounded-[22px] border border-[#EAE6DF] bg-[#FCFAF6] p-5">
-
               <h2 className="text-sm font-extrabold text-[#292522]">
                 Product details
               </h2>
 
               <div className="mt-4 divide-y divide-[#EAE6DF]">
-
                 <div className="flex items-start justify-between gap-3 py-3">
                   <span className="text-[11px] text-[#756B61]">
                     Category
@@ -2169,20 +2197,15 @@ function ProductPageContent({
                       : "Not verified"}
                   </span>
                 </div>
-
               </div>
             </aside>
           </section>
 
-          {/* =====================================
-              SIMILAR PRODUCTS
-          ===================================== */}
+          {/* SIMILAR PRODUCTS */}
 
           {relatedProducts.length > 0 && (
             <section className="mt-10">
-
               <div className="mb-4 flex flex-wrap items-end justify-between gap-3">
-
                 <div>
                   <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-[#9F2D18]">
                     Continue shopping
@@ -2230,12 +2253,9 @@ function ProductPageContent({
             </section>
           )}
 
-          {/* =====================================
-              FOOTER
-          ===================================== */}
+          {/* FOOTER */}
 
           <footer className="mt-10 flex items-center justify-center gap-3 pb-4 text-[10px] text-[#9B9188]">
-
             <span className="h-px w-12 bg-[#EAE6DF]" />
 
             <span>
@@ -2247,13 +2267,10 @@ function ProductPageContent({
         </div>
       </main>
 
-      {/* =====================================
-          FULL-SCREEN IMAGE VIEWER
-      ===================================== */}
+      {/* FULL-SCREEN IMAGE VIEWER */}
 
       {imageViewerOpen && images.length > 0 && (
         <div className="fixed inset-0 z-[150] flex items-center justify-center bg-[#17120F]/95 p-3 sm:p-6">
-
           <button
             type="button"
             aria-label="Close image viewer"
@@ -2264,7 +2281,6 @@ function ProductPageContent({
           </button>
 
           <div className="relative flex h-full w-full max-w-[1200px] items-center justify-center">
-
             <img
               src={images[activeImageIndex]}
               alt={product.name}
