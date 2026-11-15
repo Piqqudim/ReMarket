@@ -1,3 +1,4 @@
+
 "use client";
 
 import { useEffect, useState } from "react";
@@ -26,6 +27,7 @@ type AddToCartButtonProps = {
 };
 
 const MAX_QUANTITY = 50;
+const CART_CHANGED_EVENT = "remarket-cart-changed";
 
 function isRecord(
   value: unknown,
@@ -71,6 +73,7 @@ export default function AddToCartButton({
   const [error, setError] = useState("");
 
   const safeStock = getSafeStockQuantity(stockQuantity);
+
   const hasValidPrice =
     typeof price === "number" &&
     Number.isSafeInteger(price) &&
@@ -95,17 +98,23 @@ export default function AddToCartButton({
     Math.max(1, maxQuantity),
   );
 
-  // Keep the selected quantity valid if stock changes while this page is open.
   useEffect(() => {
     setQuantity((current) =>
-      Math.min(Math.max(1, current), Math.max(1, maxQuantity)),
+      Math.min(
+        Math.max(1, current),
+        Math.max(1, maxQuantity),
+      ),
     );
   }, [maxQuantity]);
 
   function changeQuantity(nextQuantity: number) {
     setQuantity(
-      Math.min(Math.max(1, nextQuantity), maxQuantity),
+      Math.min(
+        Math.max(1, nextQuantity),
+        maxQuantity,
+      ),
     );
+
     setSuccess(false);
     setError("");
   }
@@ -132,7 +141,6 @@ export default function AddToCartButton({
           Accept: "application/json",
         },
         credentials: "same-origin",
-        // The server must look up the current price and stock itself.
         body: JSON.stringify({
           productId,
           quantity: selectedQuantity,
@@ -143,11 +151,17 @@ export default function AddToCartButton({
         .json()
         .catch(() => null);
 
-      if (response.status === 401 || response.status === 403) {
-        const callbackUrl = `/product/${encodeURIComponent(productId)}`;
+      if (
+        response.status === 401 ||
+        response.status === 403
+      ) {
+        const callbackUrl =
+          `/product/${encodeURIComponent(productId)}`;
+
         router.push(
           `/buyer/login?callbackUrl=${encodeURIComponent(callbackUrl)}`,
         );
+
         return;
       }
 
@@ -156,6 +170,13 @@ export default function AddToCartButton({
       }
 
       setSuccess(true);
+
+      // Notify the global header and homepage side cart.
+      window.dispatchEvent(
+        new Event(CART_CHANGED_EVENT),
+      );
+
+      // Refresh server-rendered data where applicable.
       router.refresh();
     } catch (requestError) {
       setError(
@@ -183,7 +204,10 @@ export default function AddToCartButton({
 
     return (
       <div className="rounded-xl border border-[#EAE6DF] bg-[#FCFAF6] px-4 py-3">
-        <p className="text-xs font-bold text-[#514840]">{title}</p>
+        <p className="text-xs font-bold text-[#514840]">
+          {title}
+        </p>
+
         <p className="mt-1 text-[11px] leading-5 text-[#756B61]">
           {message}
         </p>
@@ -205,7 +229,9 @@ export default function AddToCartButton({
           <div className="inline-flex h-10 items-center overflow-hidden rounded-full border border-[#EAE6DF] bg-[#FCFAF6]">
             <button
               type="button"
-              onClick={() => changeQuantity(selectedQuantity - 1)}
+              onClick={() =>
+                changeQuantity(selectedQuantity - 1)
+              }
               disabled={loading || selectedQuantity <= 1}
               aria-label="Decrease quantity"
               className="flex h-full w-9 items-center justify-center text-[#756B61] transition hover:bg-[#FFF1ED] hover:text-[#9F2D18] disabled:cursor-not-allowed disabled:opacity-40"
@@ -223,8 +249,13 @@ export default function AddToCartButton({
 
             <button
               type="button"
-              onClick={() => changeQuantity(selectedQuantity + 1)}
-              disabled={loading || selectedQuantity >= maxQuantity}
+              onClick={() =>
+                changeQuantity(selectedQuantity + 1)
+              }
+              disabled={
+                loading ||
+                selectedQuantity >= maxQuantity
+              }
               aria-label="Increase quantity"
               className="flex h-full w-9 items-center justify-center text-[#756B61] transition hover:bg-[#FFF1ED] hover:text-[#9F2D18] disabled:cursor-not-allowed disabled:opacity-40"
             >
@@ -254,6 +285,7 @@ export default function AddToCartButton({
           ) : (
             <ShoppingCart className="h-4 w-4" />
           )}
+
           {loading ? "Adding..." : "Add to cart"}
         </button>
       </div>
@@ -288,8 +320,9 @@ export default function AddToCartButton({
       )}
 
       <p className="mt-2.5 text-[9px] leading-4 text-[#91877E]">
-        Stock is checked again by the server when your cart is updated and
-        during checkout. Adding a product does not reserve stock.
+        Stock is checked again by the server when your cart is
+        updated and during checkout. Adding a product does not
+        reserve stock.
       </p>
     </section>
   );

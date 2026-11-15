@@ -16,6 +16,7 @@ import {
   LogOut,
   Search,
   ShoppingBag,
+  ShoppingCart,
   Store,
   UserCircle,
 } from "lucide-react";
@@ -53,6 +54,22 @@ function parseAccountRole(value: unknown): AccountRole | null {
   return null;
 }
 
+function parseCartCount(value: unknown): number {
+  if (
+    typeof value !== "object" ||
+    value === null ||
+    Array.isArray(value)
+  ) {
+    return 0;
+  }
+
+  const count = (value as Record<string, unknown>).itemCount;
+
+  return typeof count === "number" && Number.isFinite(count)
+    ? Math.max(0, Math.floor(count))
+    : 0;
+}
+
 export default function SiteHeader(_props: SiteHeaderProps) {
   const router = useRouter();
   const pathname = usePathname();
@@ -64,6 +81,7 @@ export default function SiteHeader(_props: SiteHeaderProps) {
   const [accountMenuOpen, setAccountMenuOpen] = useState(false);
   const [loggingOut, setLoggingOut] = useState(false);
   const [accountMenuError, setAccountMenuError] = useState("");
+  const [cartCount, setCartCount] = useState(0);
 
   const accountMenuRef = useRef<HTMLDivElement | null>(null);
   const requestVersionRef = useRef(0);
@@ -144,6 +162,61 @@ export default function SiteHeader(_props: SiteHeaderProps) {
       window.removeEventListener("focus", handleWindowFocus);
     };
   }, []);
+
+  /* ---------------------------------------------------------------------- */
+  /* BUYER CART COUNT                                                       */
+  /* ---------------------------------------------------------------------- */
+
+  useEffect(() => {
+    if (account?.role !== "BUYER") {
+      setCartCount(0);
+      return;
+    }
+
+    let cancelled = false;
+
+    async function refreshCartCount() {
+      try {
+        const response = await fetch("/api/cart", {
+          method: "GET",
+          credentials: "same-origin",
+          cache: "no-store",
+          headers: { Accept: "application/json" },
+        });
+
+        if (response.status === 401 || response.status === 403) {
+          if (!cancelled) setCartCount(0);
+          return;
+        }
+
+        if (!response.ok) {
+          throw new Error(`Cart request failed (${response.status}).`);
+        }
+
+        const data: unknown = await response.json();
+
+        if (!cancelled) {
+          setCartCount(parseCartCount(data));
+        }
+      } catch (error) {
+        console.error("Header cart count error:", error);
+      }
+    }
+
+    function handleCartChanged() {
+      void refreshCartCount();
+    }
+
+    window.addEventListener("remarket-cart-changed", handleCartChanged);
+    window.addEventListener("focus", handleCartChanged);
+    void refreshCartCount();
+
+    return () => {
+      cancelled = true;
+      window.removeEventListener("remarket-cart-changed", handleCartChanged);
+      window.removeEventListener("focus", handleCartChanged);
+    };
+  }, [account?.role]);
 
   /* ---------------------------------------------------------------------- */
   /* ACCOUNT MENU BEHAVIOUR                                                 */
@@ -599,8 +672,22 @@ export default function SiteHeader(_props: SiteHeaderProps) {
           {renderSearchForm()}
         </div>
 
-        {/* NOTIFICATIONS AND ACCOUNT */}
+        {/* CART, NOTIFICATIONS AND ACCOUNT */}
         <div className="order-2 flex shrink-0 items-center justify-end gap-1.5 sm:gap-2 lg:order-4">
+          <Link
+            href="/cart"
+            aria-label={`Shopping cart, ${cartCount} ${cartCount === 1 ? "item" : "items"}`}
+            title="Shopping cart"
+            className="relative flex h-10 w-10 items-center justify-center rounded-full bg-[#FCFAF6] text-[#5F554D] transition hover:bg-[#FFF0D9] hover:text-[#9F2D18] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#FF5A36] focus-visible:ring-offset-2"
+          >
+            <ShoppingCart className="h-5 w-5" aria-hidden="true" />
+            {cartCount > 0 && (
+              <span className="absolute -right-0.5 -top-0.5 flex h-[18px] min-w-[18px] items-center justify-center rounded-full border-2 border-white bg-[#FF5A36] px-1 text-[9px] font-extrabold leading-none text-white">
+                {cartCount > 99 ? "99+" : cartCount}
+              </span>
+            )}
+          </Link>
+
           <NotificationBell />
 
           <div

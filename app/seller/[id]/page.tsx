@@ -1195,12 +1195,6 @@ function SellerPageContent({ id }: { id: string }) {
                   </div>
                 </div>
               </section>
-
-              {/* FOOTER CTA */}
-              <section className="mt-10 rounded-[24px] border border-[#F0C9BF] bg-[#FFF1ED] px-5 py-6 sm:flex sm:items-center sm:justify-between sm:gap-5 sm:px-7">
-                <div><p className="text-[10px] font-extrabold uppercase tracking-[0.15em] text-[#FF5A36]">Need something else?</p><h2 className="mt-1 text-lg font-black text-[#401B13]">Can&apos;t find what you need?</h2><p className="mt-1 text-[11px] leading-5 text-[#756B61]">Send a request and let ReMarket help you discover it nearby.</p></div>
-                <Link href="/request" className="mt-4 inline-flex min-h-11 shrink-0 items-center justify-center gap-2 rounded-xl bg-[#FF5A36] px-5 py-3 text-[11px] font-extrabold text-white transition hover:bg-[#E94E2C] sm:mt-0">Make a request <ArrowRight size={14} /></Link>
-              </section>
             </div>
           </>
         )}

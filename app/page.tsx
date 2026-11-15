@@ -18,13 +18,22 @@ import {
 
 import SiteHeader from "@/components/layout/SiteHeader";
 import MobileBottomNav from "@/components/layout/MobileBottomNav";
+import HomeCartSidebar from "@/components/cart/HomeCartSideBar";
+
 import {
   mergeCategories,
   type ApiCategory,
   type ReMarketCategory,
 } from "@/lib/categories";
 
-type Availability = "AVAILABLE" | "ASK_SELLER" | "UNAVAILABLE";
+/* =========================================================
+   TYPES
+========================================================= */
+
+type Availability =
+  | "AVAILABLE"
+  | "ASK_SELLER"
+  | "UNAVAILABLE";
 
 type RecentProduct = {
   id: string;
@@ -57,37 +66,69 @@ type CartFeedback = {
 
 type HomeCategory = ReMarketCategory;
 
-const PRODUCT_FEED_URL = "/api/recent-products?page=1&pageSize=12";
+/* =========================================================
+   CONSTANTS
+========================================================= */
+
+const PRODUCT_FEED_URL =
+  "/api/recent-products?page=1&pageSize=12";
+
 const MAX_HOME_PRODUCTS = 12;
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
+const CART_CHANGED_EVENT =
+  "remarket-cart-changed";
+
+/* =========================================================
+   GENERAL HELPERS
+========================================================= */
+
+function isRecord(
+  value: unknown,
+): value is Record<string, unknown> {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    !Array.isArray(value)
+  );
 }
 
-function cleanString(value: unknown): string | null {
+function cleanString(
+  value: unknown,
+): string | null {
   if (typeof value !== "string") return null;
 
   const cleaned = value.trim();
+
   return cleaned || null;
 }
 
-function parseOptionalNumber(value: unknown): number | null {
+function parseOptionalNumber(
+  value: unknown,
+): number | null {
   if (typeof value === "number") {
-    return Number.isFinite(value) && value >= 0 ? value : null;
+    return Number.isFinite(value) && value >= 0
+      ? value
+      : null;
   }
 
   if (typeof value === "string") {
     const cleaned = value.trim().replace(/,/g, "");
+
     if (!cleaned) return null;
 
     const parsed = Number(cleaned);
-    return Number.isFinite(parsed) && parsed >= 0 ? parsed : null;
+
+    return Number.isFinite(parsed) && parsed >= 0
+      ? parsed
+      : null;
   }
 
   return null;
 }
 
-function parseAvailability(value: unknown): Availability {
+function parseAvailability(
+  value: unknown,
+): Availability {
   if (
     value === "AVAILABLE" ||
     value === "UNAVAILABLE" ||
@@ -99,14 +140,45 @@ function parseAvailability(value: unknown): Availability {
   return "ASK_SELLER";
 }
 
-function parseCategoryName(value: unknown): string | null {
-  if (typeof value === "string") return cleanString(value);
-  if (isRecord(value)) return cleanString(value.name);
+function parseCategoryName(
+  value: unknown,
+): string | null {
+  if (typeof value === "string") {
+    return cleanString(value);
+  }
+
+  if (isRecord(value)) {
+    return cleanString(value.name);
+  }
 
   return null;
 }
 
-function parseRecentProduct(value: unknown): RecentProduct | null {
+/* =========================================================
+   PRODUCT AVAILABILITY AND CART VALIDATION
+========================================================= */
+
+function canAddProductToCart(
+  product: Pick<
+    RecentProduct,
+    "availability" | "price" | "stockQuantity"
+  >,
+): boolean {
+  return (
+    product.availability === "AVAILABLE" &&
+    product.price !== null &&
+    product.price > 0 &&
+    product.stockQuantity !== 0
+  );
+}
+
+/* =========================================================
+   PRODUCT PARSER
+========================================================= */
+
+function parseRecentProduct(
+  value: unknown,
+): RecentProduct | null {
   if (!isRecord(value)) return null;
 
   const id = cleanString(value.id);
@@ -115,7 +187,9 @@ function parseRecentProduct(value: unknown): RecentProduct | null {
   if (!id || !name) return null;
 
   const price = parseOptionalNumber(value.price);
-  const candidateOriginalPrice = parseOptionalNumber(value.originalPrice);
+
+  const candidateOriginalPrice =
+    parseOptionalNumber(value.originalPrice);
 
   const originalPrice =
     price !== null &&
@@ -151,68 +225,104 @@ function parseRecentProduct(value: unknown): RecentProduct | null {
   return {
     id,
     name,
+
     description: cleanString(value.description),
+
     price,
     originalPrice,
+
     rating,
+
     reviewCount:
       rawReviewCount === null
         ? 0
         : Math.floor(rawReviewCount),
-    stockQuantity: parseOptionalNumber(value.stockQuantity),
-    availability: parseAvailability(value.availability),
+
+    stockQuantity: parseOptionalNumber(
+      value.stockQuantity,
+    ),
+
+    availability: parseAvailability(
+      value.availability,
+    ),
+
     imageUrl: cleanString(value.imageUrl),
+
     category: parseCategoryName(value.category),
-    area: location ? cleanString(location.area) : null,
+
+    area: location
+      ? cleanString(location.area)
+      : null,
+
     verified:
       seller?.verified === true ||
       seller?.verification === "VERIFIED",
   };
 }
 
-function parseHomeCategories(value: unknown): HomeCategory[] {
+/* =========================================================
+   CATEGORY PARSER
+========================================================= */
+
+function parseHomeCategories(
+  value: unknown,
+): HomeCategory[] {
   if (!Array.isArray(value)) return [];
 
-  const categories: ApiCategory[] = value.flatMap((item) => {
-    if (
-      !isRecord(item) ||
-      typeof item.id !== "string" ||
-      typeof item.name !== "string"
-    ) {
-      return [];
-    }
+  const categories: ApiCategory[] = value.flatMap(
+    (item) => {
+      if (
+        !isRecord(item) ||
+        typeof item.id !== "string" ||
+        typeof item.name !== "string"
+      ) {
+        return [];
+      }
 
-    return [
-      {
-        id: item.id,
-        name: item.name,
-        iconKey: cleanString(item.iconKey),
-        isActive:
-          typeof item.isActive === "boolean"
-            ? item.isActive
-            : true,
-        sortOrder:
-          typeof item.sortOrder === "number"
-            ? item.sortOrder
-            : undefined,
-      },
-    ];
-  });
+      return [
+        {
+          id: item.id,
+          name: item.name,
+          iconKey: cleanString(item.iconKey),
+
+          isActive:
+            typeof item.isActive === "boolean"
+              ? item.isActive
+              : true,
+
+          sortOrder:
+            typeof item.sortOrder === "number"
+              ? item.sortOrder
+              : undefined,
+        },
+      ];
+    },
+  );
 
   return mergeCategories(categories);
 }
+
+/* =========================================================
+   HOMEPAGE PRODUCT FETCH
+========================================================= */
 
 async function fetchHomepageProducts(
   signal: AbortSignal,
 ): Promise<FeedResult> {
   try {
-    const response = await fetch(PRODUCT_FEED_URL, {
-      cache: "no-store",
-      signal,
-    });
+    const response = await fetch(
+      PRODUCT_FEED_URL,
+      {
+        cache: "no-store",
+        signal,
+      },
+    );
 
     if (response.status === 404) {
-      return { data: null, failed: false };
+      return {
+        data: null,
+        failed: false,
+      };
     }
 
     if (!response.ok) {
@@ -220,19 +330,31 @@ async function fetchHomepageProducts(
         `Homepage products returned HTTP ${response.status}.`,
       );
 
-      return { data: null, failed: true };
+      return {
+        data: null,
+        failed: true,
+      };
     }
 
     const data: unknown = await response.json();
 
     if (!isRecord(data)) {
-      return { data: null, failed: true };
+      return {
+        data: null,
+        failed: true,
+      };
     }
 
-    return { data, failed: false };
+    return {
+      data,
+      failed: false,
+    };
   } catch (error) {
     if (!signal.aborted) {
-      console.error("Failed to load homepage products:", error);
+      console.error(
+        "Failed to load homepage products:",
+        error,
+      );
     }
 
     return {
@@ -241,6 +363,10 @@ async function fetchHomepageProducts(
     };
   }
 }
+
+/* =========================================================
+   PRICE HELPERS
+========================================================= */
 
 function formatNaira(amount: number): string {
   return `₦${amount.toLocaleString("en-NG")}`;
@@ -264,7 +390,13 @@ function getDiscountPercentage(
   );
 }
 
-function getStockLabel(product: RecentProduct): {
+/* =========================================================
+   STOCK DISPLAY
+========================================================= */
+
+function getStockLabel(
+  product: RecentProduct,
+): {
   label: string;
   className: string;
 } {
@@ -284,6 +416,7 @@ function getStockLabel(product: RecentProduct): {
         product.stockQuantity !== null
           ? `${product.stockQuantity} available`
           : "Available",
+
       className: "bg-[#DDF5EA] text-[#137A59]",
     };
   }
@@ -293,6 +426,10 @@ function getStockLabel(product: RecentProduct): {
     className: "bg-[#FFF0C7] text-[#8A671D]",
   };
 }
+
+/* =========================================================
+   PRODUCT PRICE
+========================================================= */
 
 function ProductPrice({
   product,
@@ -325,6 +462,10 @@ function ProductPrice({
     </div>
   );
 }
+
+/* =========================================================
+   PRODUCT RATING
+========================================================= */
 
 function ProductRating({
   product,
@@ -360,11 +501,16 @@ function ProductRating({
       </span>
 
       <span className="truncate text-[8px] text-[#756B61]">
-        {product.rating.toFixed(1)} ({product.reviewCount})
+        {product.rating.toFixed(1)} (
+        {product.reviewCount})
       </span>
     </div>
   );
 }
+
+/* =========================================================
+   PRODUCT CARD
+========================================================= */
 
 function ProductCard({
   product,
@@ -377,13 +523,13 @@ function ProductCard({
   feedback: CartFeedback;
   onAddToCart: (product: RecentProduct) => void;
 }) {
-  const unavailable =
-    product.availability === "UNAVAILABLE" ||
-    product.stockQuantity === 0;
+  const canAdd = canAddProductToCart(product);
 
   const stock = getStockLabel(product);
   const discount = getDiscountPercentage(product);
-  const productHref = `/product/${encodeURIComponent(product.id)}`;
+
+  const productHref =
+    `/product/${encodeURIComponent(product.id)}`;
 
   return (
     <article className="group flex min-w-0 flex-col overflow-hidden rounded-lg border border-[#EAE6DF] bg-white shadow-[0_2px_9px_rgba(23,32,42,0.035)] transition hover:-translate-y-0.5 hover:border-[#FFD0C3] hover:shadow-[0_6px_16px_rgba(23,32,42,0.07)]">
@@ -453,6 +599,7 @@ function ProductCard({
           <div className="flex min-w-0 items-center justify-between gap-1.5">
             <p className="flex min-w-0 items-center gap-0.5 text-[8px] text-[#8A8077]">
               <MapPin className="h-2.5 w-2.5 shrink-0" />
+
               <span className="truncate">
                 {product.area ?? "Nearby listing"}
               </span>
@@ -468,17 +615,22 @@ function ProductCard({
 
           <button
             type="button"
-            disabled={unavailable || adding}
+            disabled={!canAdd || adding}
             onClick={() => onAddToCart(product)}
             className={`mt-2 flex min-h-8 w-full items-center justify-center gap-1.5 rounded-md px-2 py-1.5 text-[9px] font-bold transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#FF5A36] focus-visible:ring-offset-2 sm:text-[10px] ${
-              unavailable
+              !canAdd
                 ? "cursor-not-allowed bg-[#EEEAE6] text-[#A69B91]"
                 : "bg-[#FF5A36] text-white hover:bg-[#E94A28] active:scale-[0.99]"
             }`}
             aria-label={
-              unavailable
-                ? `${product.name} is out of stock`
-                : `Add ${product.name} to cart`
+              canAdd
+                ? `Add ${product.name} to cart`
+                : `${product.name} is not available for online checkout`
+            }
+            title={
+              canAdd
+                ? "Add to cart"
+                : "This product requires confirmed availability and a fixed price."
             }
           >
             {adding ? (
@@ -490,7 +642,7 @@ function ProductCard({
               <ShoppingCart className="h-3 w-3" />
             )}
 
-            {unavailable
+            {!canAdd
               ? "Unavailable"
               : adding
                 ? "Adding..."
@@ -522,13 +674,19 @@ function ProductCard({
   );
 }
 
+/* =========================================================
+   CATEGORY TILE
+========================================================= */
+
 function CategoryTile({
   category,
 }: {
   category: HomeCategory;
 }) {
   const Icon = category.icon;
-  const href = `/search?type=product&category=${encodeURIComponent(category.name)}`;
+
+  const href =
+    `/search?type=product&category=${encodeURIComponent(category.name)}`;
 
   return (
     <Link
@@ -537,7 +695,9 @@ function CategoryTile({
     >
       <span
         className="flex h-10 w-10 items-center justify-center rounded-full transition group-hover:scale-105 sm:h-11 sm:w-11"
-        style={{ backgroundColor: category.bg }}
+        style={{
+          backgroundColor: category.bg,
+        }}
       >
         <Icon className="h-4 w-4 text-[#6F5144] sm:h-5 sm:w-5" />
       </span>
@@ -549,16 +709,41 @@ function CategoryTile({
   );
 }
 
+/* =========================================================
+   MAIN HOMEPAGE
+========================================================= */
+
 export default function HomePage() {
-  const [products, setProducts] = useState<RecentProduct[]>([]);
-  const [categories, setCategories] = useState<HomeCategory[]>([]);
-  const [productsLoading, setProductsLoading] = useState(true);
-  const [productsFailed, setProductsFailed] = useState(false);
-  const [categoriesLoading, setCategoriesLoading] = useState(true);
-  const [reloadKey, setReloadKey] = useState(0);
-  const [addingProductId, setAddingProductId] = useState<string | null>(null);
-  const [cartFeedback, setCartFeedback] = useState<CartFeedback>(null);
-  const [shareFeedback, setShareFeedback] = useState("");
+  const [products, setProducts] =
+    useState<RecentProduct[]>([]);
+
+  const [categories, setCategories] =
+    useState<HomeCategory[]>([]);
+
+  const [productsLoading, setProductsLoading] =
+    useState(true);
+
+  const [productsFailed, setProductsFailed] =
+    useState(false);
+
+  const [categoriesLoading, setCategoriesLoading] =
+    useState(true);
+
+  const [reloadKey, setReloadKey] =
+    useState(0);
+
+  const [addingProductId, setAddingProductId] =
+    useState<string | null>(null);
+
+  const [cartFeedback, setCartFeedback] =
+    useState<CartFeedback>(null);
+
+  const [shareFeedback, setShareFeedback] =
+    useState("");
+
+  /* =====================================================
+     LOAD HOMEPAGE PRODUCTS
+  ===================================================== */
 
   useEffect(() => {
     const controller = new AbortController();
@@ -567,18 +752,22 @@ export default function HomePage() {
     setProductsFailed(false);
 
     async function loadHomepageProducts() {
-      const result = await fetchHomepageProducts(controller.signal);
+      const result = await fetchHomepageProducts(
+        controller.signal,
+      );
 
       if (controller.signal.aborted) return;
 
-      const rawProducts = Array.isArray(result.data?.products)
-        ? result.data.products
-        : [];
+      const rawProducts =
+        Array.isArray(result.data?.products)
+          ? result.data.products
+          : [];
 
       const parsedProducts = rawProducts
         .map(parseRecentProduct)
         .filter(
-          (item): item is RecentProduct => item !== null,
+          (item): item is RecentProduct =>
+            item !== null,
         )
         .slice(0, MAX_HOME_PRODUCTS);
 
@@ -591,6 +780,10 @@ export default function HomePage() {
 
     return () => controller.abort();
   }, [reloadKey]);
+
+  /* =====================================================
+     LOAD HOMEPAGE CATEGORIES
+  ===================================================== */
 
   useEffect(() => {
     const controller = new AbortController();
@@ -606,13 +799,18 @@ export default function HomePage() {
         );
 
         if (!response.ok) {
-          throw new Error("Unable to load categories.");
+          throw new Error(
+            "Unable to load categories.",
+          );
         }
 
-        const data: unknown = await response.json();
+        const data: unknown =
+          await response.json();
 
         if (!isRecord(data)) {
-          throw new Error("Invalid categories response.");
+          throw new Error(
+            "Invalid categories response.",
+          );
         }
 
         if (!controller.signal.aborted) {
@@ -626,6 +824,7 @@ export default function HomePage() {
             "Unable to load homepage categories:",
             error,
           );
+
           setCategories([]);
         }
       } finally {
@@ -640,11 +839,16 @@ export default function HomePage() {
     return () => controller.abort();
   }, []);
 
-  async function handleAddToCart(product: RecentProduct) {
+  /* =====================================================
+     ADD PRODUCT TO CART
+  ===================================================== */
+
+  async function handleAddToCart(
+    product: RecentProduct,
+  ) {
     if (
       addingProductId ||
-      product.availability === "UNAVAILABLE" ||
-      product.stockQuantity === 0
+      !canAddProductToCart(product)
     ) {
       return;
     }
@@ -653,34 +857,42 @@ export default function HomePage() {
     setCartFeedback(null);
 
     try {
-      const response = await fetch("/api/cart/items", {
-        method: "POST",
-        credentials: "same-origin",
-        headers: {
-          "Content-Type": "application/json",
+      const response = await fetch(
+        "/api/cart/items",
+        {
+          method: "POST",
+          credentials: "same-origin",
+          headers: {
+            "Content-Type": "application/json",
+            Accept: "application/json",
+          },
+          body: JSON.stringify({
+            productId: product.id,
+            quantity: 1,
+          }),
         },
-        body: JSON.stringify({
-          productId: product.id,
-          quantity: 1,
-        }),
-      });
+      );
 
-      const result: unknown = await response.json().catch(() => null);
+      const result: unknown =
+        await response.json().catch(() => null);
 
       if (!response.ok) {
-        const serverMessage = isRecord(result)
-          ? cleanString(result.error) ??
-            cleanString(result.message)
-          : null;
+        const serverMessage =
+          isRecord(result)
+            ? cleanString(result.error) ??
+              cleanString(result.message)
+            : null;
 
         let message =
           serverMessage ??
           "Unable to add this product to your cart.";
 
         if (response.status === 401) {
-          message = "Sign in to add products to your cart.";
+          message =
+            "Sign in to add products to your cart.";
         } else if (response.status === 403) {
-          message = "Your account cannot add products to the cart.";
+          message =
+            "Your account cannot add products to the cart.";
         } else if (response.status === 409) {
           message =
             serverMessage ??
@@ -695,6 +907,11 @@ export default function HomePage() {
         kind: "success",
         message: "Added to cart",
       });
+
+      // Refresh the header count and desktop homepage sidebar.
+      window.dispatchEvent(
+        new Event(CART_CHANGED_EVENT),
+      );
     } catch (error) {
       setCartFeedback({
         productId: product.id,
@@ -708,6 +925,10 @@ export default function HomePage() {
       setAddingProductId(null);
     }
   }
+
+  /* =====================================================
+     SHARE REMARKET
+  ===================================================== */
 
   async function handleShareReMarket() {
     const shareUrl = "https://remarket.com.ng";
@@ -726,7 +947,11 @@ export default function HomePage() {
     ) {
       try {
         await navigator.share(shareData);
-        setShareFeedback("Thanks for sharing ReMarket.");
+
+        setShareFeedback(
+          "Thanks for sharing ReMarket.",
+        );
+
         return;
       } catch (error) {
         if (
@@ -740,14 +965,21 @@ export default function HomePage() {
 
     try {
       if (navigator.clipboard?.writeText) {
-        await navigator.clipboard.writeText(shareUrl);
+        await navigator.clipboard.writeText(
+          shareUrl,
+        );
+
         setShareFeedback(
           "ReMarket link copied. Share it with someone.",
         );
+
         return;
       }
     } catch (error) {
-      console.error("Unable to copy ReMarket link:", error);
+      console.error(
+        "Unable to copy ReMarket link:",
+        error,
+      );
     }
 
     setShareFeedback(
@@ -755,9 +987,27 @@ export default function HomePage() {
     );
   }
 
+  /* =====================================================
+     RETRY PRODUCT FEED
+  ===================================================== */
+
   function retryProducts() {
     setReloadKey((current) => current + 1);
   }
+
+  /* =====================================================
+     SHARED PRODUCT GRID CLASSES
+  ===================================================== */
+
+  const productGridClass =
+    "grid min-w-0 grid-cols-2 gap-2 sm:grid-cols-3 sm:gap-3 md:grid-cols-4 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5";
+
+  const categoryGridClass =
+    "grid grid-cols-3 gap-2 sm:grid-cols-5 sm:gap-3 lg:grid-cols-5 xl:grid-cols-7 2xl:grid-cols-10";
+
+  /* =====================================================
+     RENDER
+  ===================================================== */
 
   return (
     <div className="remarket-home-page min-h-dvh bg-[#FFF7ED]">
@@ -767,8 +1017,12 @@ export default function HomePage() {
         id="main-content"
         className="min-h-dvh overflow-x-clip bg-[#FFFDFC] pb-28 text-[#17202A] lg:pb-8"
       >
-        <div className="mx-auto max-w-[1600px] px-3 pb-7 pt-4 sm:px-5 sm:pt-5 lg:px-7 lg:pt-6 xl:px-8">
-          {/* CATEGORY DISCOVERY */}
+        <div className="mx-auto max-w-[1600px] px-3 pb-7 pt-4 sm:px-5 sm:pt-5 lg:pl-7 lg:pr-[340px] lg:pt-6 xl:pl-8 xl:pr-[340px]">
+
+          {/* =================================================
+              CATEGORY DISCOVERY
+          ================================================= */}
+
           <section
             className="mt-1"
             aria-labelledby="categories-heading"
@@ -797,16 +1051,18 @@ export default function HomePage() {
             </div>
 
             {categoriesLoading ? (
-              <div className="grid grid-cols-3 gap-2 sm:grid-cols-5 lg:grid-cols-10">
-                {Array.from({ length: 10 }).map((_, index) => (
-                  <div
-                    key={index}
-                    className="h-[88px] animate-pulse rounded-lg border border-[#EAE6DF] bg-white"
-                  />
-                ))}
+              <div className={categoryGridClass}>
+                {Array.from({ length: 10 }).map(
+                  (_, index) => (
+                    <div
+                      key={index}
+                      className="h-[88px] animate-pulse rounded-lg border border-[#EAE6DF] bg-white"
+                    />
+                  ),
+                )}
               </div>
             ) : categories.length > 0 ? (
-              <div className="grid grid-cols-3 gap-2 sm:grid-cols-5 sm:gap-3 lg:grid-cols-10">
+              <div className={categoryGridClass}>
                 {categories.map((category) => (
                   <CategoryTile
                     key={category.id}
@@ -831,7 +1087,10 @@ export default function HomePage() {
             )}
           </section>
 
-          {/* SPECIAL PRICES */}
+          {/* =================================================
+              SPECIAL PRICES
+          ================================================= */}
+
           {products.some(
             (product) =>
               getDiscountPercentage(product) !== null,
@@ -867,7 +1126,7 @@ export default function HomePage() {
                 </Link>
               </div>
 
-              <div className="grid min-w-0 grid-cols-2 gap-2 sm:grid-cols-3 sm:gap-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 2xl:grid-cols-7">
+              <div className={productGridClass}>
                 {products
                   .filter(
                     (product) =>
@@ -878,7 +1137,9 @@ export default function HomePage() {
                     <ProductCard
                       key={`price-highlight-${product.id}`}
                       product={product}
-                      adding={addingProductId === product.id}
+                      adding={
+                        addingProductId === product.id
+                      }
                       feedback={cartFeedback}
                       onAddToCart={handleAddToCart}
                     />
@@ -887,7 +1148,10 @@ export default function HomePage() {
             </section>
           )}
 
-          {/* RECENTLY ADDED PRODUCTS */}
+          {/* =================================================
+              RECENTLY ADDED PRODUCTS
+          ================================================= */}
+
           <section
             id="recent-products"
             className="mt-7 scroll-mt-24 sm:mt-9"
@@ -921,24 +1185,32 @@ export default function HomePage() {
               </Link>
             </div>
 
-            {productsLoading && (
-              <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 sm:gap-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 2xl:grid-cols-7">
-                {Array.from({ length: 12 }).map((_, index) => (
-                  <div
-                    key={`home-product-skeleton-${index}`}
-                    className="overflow-hidden rounded-lg border border-[#EAE6DF] bg-white"
-                  >
-                    <div className="aspect-[4/3] animate-pulse bg-[#F2EEE9]" />
+            {/* LOADING SKELETONS */}
 
-                    <div className="space-y-2 p-2.5">
-                      <div className="h-2.5 w-4/5 animate-pulse rounded bg-[#F2EEE9]" />
-                      <div className="h-3 w-2/5 animate-pulse rounded bg-[#F2EEE9]" />
-                      <div className="h-7 w-full animate-pulse rounded-md bg-[#F2EEE9]" />
+            {productsLoading && (
+              <div className={productGridClass}>
+                {Array.from({ length: 12 }).map(
+                  (_, index) => (
+                    <div
+                      key={`home-product-skeleton-${index}`}
+                      className="overflow-hidden rounded-lg border border-[#EAE6DF] bg-white"
+                    >
+                      <div className="aspect-[4/3] animate-pulse bg-[#F2EEE9]" />
+
+                      <div className="space-y-2 p-2.5">
+                        <div className="h-2.5 w-4/5 animate-pulse rounded bg-[#F2EEE9]" />
+
+                        <div className="h-3 w-2/5 animate-pulse rounded bg-[#F2EEE9]" />
+
+                        <div className="h-7 w-full animate-pulse rounded-md bg-[#F2EEE9]" />
+                      </div>
                     </div>
-                  </div>
-                ))}
+                  ),
+                )}
               </div>
             )}
+
+            {/* PRODUCT LOAD ERROR */}
 
             {!productsLoading && productsFailed && (
               <div className="rounded-2xl border border-[#F2D2C9] bg-[#FFF7F4] px-5 py-8 text-center">
@@ -960,21 +1232,27 @@ export default function HomePage() {
               </div>
             )}
 
+            {/* PRODUCT GRID */}
+
             {!productsLoading &&
               !productsFailed &&
               products.length > 0 && (
-                <div className="grid min-w-0 grid-cols-2 gap-2 sm:grid-cols-3 sm:gap-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 2xl:grid-cols-7">
+                <div className={productGridClass}>
                   {products.map((product) => (
                     <ProductCard
                       key={product.id}
                       product={product}
-                      adding={addingProductId === product.id}
+                      adding={
+                        addingProductId === product.id
+                      }
                       feedback={cartFeedback}
                       onAddToCart={handleAddToCart}
                     />
                   ))}
                 </div>
               )}
+
+            {/* EMPTY PRODUCTS */}
 
             {!productsLoading &&
               !productsFailed &&
@@ -1003,7 +1281,10 @@ export default function HomePage() {
               )}
           </section>
 
-          {/* REMARKET DISCOVERY FEATURES */}
+          {/* =================================================
+              REMARKET DISCOVERY FEATURES
+          ================================================= */}
+
           <section className="mt-7 grid gap-2 sm:mt-9 sm:grid-cols-3 sm:gap-3">
             <div className="flex items-center gap-3 rounded-lg border border-[#EEE8E1] bg-[#FCFAF6] p-3">
               <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-[#FFF0E9] text-[#9F2D18]">
@@ -1014,6 +1295,7 @@ export default function HomePage() {
                 <p className="text-[11px] font-bold text-[#514840]">
                   Search products
                 </p>
+
                 <p className="mt-0.5 text-[9px] leading-4 text-[#81766D]">
                   Find items by name or category.
                 </p>
@@ -1029,6 +1311,7 @@ export default function HomePage() {
                 <p className="text-[11px] font-bold text-[#514840]">
                   Find it nearby
                 </p>
+
                 <p className="mt-0.5 text-[9px] leading-4 text-[#81766D]">
                   Explore products by area.
                 </p>
@@ -1044,6 +1327,7 @@ export default function HomePage() {
                 <p className="text-[11px] font-bold text-[#514840]">
                   Build your cart
                 </p>
+
                 <p className="mt-0.5 text-[9px] leading-4 text-[#81766D]">
                   Keep selected products together.
                 </p>
@@ -1051,7 +1335,10 @@ export default function HomePage() {
             </div>
           </section>
 
-          {/* INVITE / SHARE */}
+          {/* =================================================
+              INVITE / SHARE
+          ================================================= */}
+
           <section className="relative mt-7 overflow-hidden rounded-xl bg-gradient-to-r from-[#FF713F] via-[#FF5A36] to-[#F04B2B] px-4 py-5 text-white shadow-[0_8px_22px_rgba(255,90,54,0.12)] sm:mt-9 sm:px-7 sm:py-6">
             <div
               aria-hidden="true"
@@ -1095,15 +1382,26 @@ export default function HomePage() {
             )}
           </section>
 
+          {/* =================================================
+              FOOTER
+          ================================================= */}
+
           <footer className="mt-7 flex items-center justify-center gap-3 pb-3 text-[9px] text-[#9B9188]">
             <span className="h-px w-10 bg-[#EAE6DF]" />
-            <span>ReMarket · Find it nearby</span>
+
+            <span>
+              ReMarket · Find it nearby
+            </span>
+
             <span className="h-px w-10 bg-[#EAE6DF]" />
           </footer>
         </div>
       </main>
 
       <MobileBottomNav />
+
+      {/* Desktop-only cart sidebar */}
+      <HomeCartSidebar />
     </div>
   );
 }

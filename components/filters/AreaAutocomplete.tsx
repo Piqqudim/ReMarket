@@ -1,0 +1,322 @@
+"use client";
+
+import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
+import { ChevronDown, Loader2, MapPin } from "lucide-react";
+
+type AreaGroup = {
+  lga: string;
+  areas: string[];
+};
+
+type AreaOption = {
+  area: string;
+  lga: string;
+};
+
+type AreaAutocompleteProps = {
+  id: string;
+  value: string;
+  onChange: (value: string) => void;
+  placeholder?: string;
+  disabled?: boolean;
+};
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function parseAreaGroups(value: unknown): AreaGroup[] {
+  if (!Array.isArray(value)) return [];
+
+  return value.flatMap((raw): AreaGroup[] => {
+    if (!isRecord(raw) || typeof raw.lga !== "string" || !Array.isArray(raw.areas)) {
+      return [];
+    }
+
+    const areas = raw.areas.filter(
+      (area): area is string => typeof area === "string" && area.trim().length > 0,
+    );
+
+    if (areas.length === 0) return [];
+
+    return [{ lga: raw.lga.trim(), areas }];
+  });
+}
+
+/**
+ * Reuses ReMarket's cached /api/areas source. The area catalogue is fetched
+ * when the filter page mounts, before the buyer opens the suggestion list.
+ */
+export default function AreaAutocomplete({
+  id,
+  value,
+  onChange,
+  placeholder = "Start typing an area...",
+  disabled = false,
+}: AreaAutocompleteProps) {
+  const [groups, setGroups] = useState<AreaGroup[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState("");
+  const [open, setOpen] = useState(false);
+  const [activeIndex, setActiveIndex] = useState(0);
+
+  const wrapperRef = useRef<HTMLDivElement | null>(null);
+  const inputRef = useRef<HTMLInputElement | null>(null);
+  const optionRefs = useRef<Array<HTMLButtonElement | null>>([]);
+
+  useEffect(() => {
+    const controller = new AbortController();
+
+    async function preloadAreas() {
+      setLoading(true);
+      setLoadError("");
+
+      try {
+        const response = await fetch("/api/areas", {
+          method: "GET",
+          cache: "force-cache",
+          headers: { Accept: "application/json" },
+          signal: controller.signal,
+        });
+
+        if (!response.ok) {
+          throw new Error("Unable to load area suggestions.");
+        }
+
+        const payload: unknown = await response.json();
+        if (!isRecord(payload)) {
+          throw new Error("The area service returned an invalid response.");
+        }
+
+        const parsedGroups = parseAreaGroups(payload.groups);
+        if (parsedGroups.length === 0) {
+          throw new Error("No predefined areas are available right now.");
+        }
+
+        if (!controller.signal.aborted) setGroups(parsedGroups);
+      } catch (error) {
+        if (error instanceof DOMException && error.name === "AbortError") return;
+
+        if (!controller.signal.aborted) {
+          console.error("Shop area prefetch error:", error);
+          setLoadError(
+            error instanceof Error ? error.message : "Unable to load area suggestions.",
+          );
+        }
+      } finally {
+        if (!controller.signal.aborted) setLoading(false);
+      }
+    }
+
+    void preloadAreas();
+    return () => controller.abort();
+  }, []);
+
+  const filteredGroups = useMemo(() => {
+    const query = value.trim().toLocaleLowerCase();
+
+    return groups
+      .map((group) => {
+        const lgaMatches = group.lga.toLocaleLowerCase().includes(query);
+        const areas = group.areas.filter(
+          (area) => !query || lgaMatches || area.toLocaleLowerCase().includes(query),
+        );
+
+        return { ...group, areas };
+      })
+      .filter((group) => group.areas.length > 0);
+  }, [groups, value]);
+
+  const suggestions = useMemo<AreaOption[]>(
+    () => filteredGroups.flatMap((group) =>
+      group.areas.map((area) => ({ area, lga: group.lga })),
+    ),
+    [filteredGroups],
+  );
+
+  useEffect(() => {
+    if (!open) return;
+
+    function handleOutsidePointerDown(event: PointerEvent) {
+      if (
+        wrapperRef.current &&
+        event.target instanceof Node &&
+        !wrapperRef.current.contains(event.target)
+      ) {
+        setOpen(false);
+      }
+    }
+
+    document.addEventListener("pointerdown", handleOutsidePointerDown);
+    return () => document.removeEventListener("pointerdown", handleOutsidePointerDown);
+  }, [open]);
+
+  function selectArea(area: string) {
+    onChange(area);
+    setActiveIndex(0);
+    setOpen(false);
+  }
+
+  function handleKeyDown(event: KeyboardEvent<HTMLInputElement>) {
+    if (event.key === "Escape") {
+      setOpen(false);
+      return;
+    }
+
+    if (event.key === "ArrowDown") {
+      event.preventDefault();
+
+      if (!open) {
+        setOpen(true);
+        setActiveIndex(0);
+        return;
+      }
+
+      setActiveIndex((current) => Math.min(current + 1, Math.max(0, suggestions.length - 1)));
+      return;
+    }
+
+    if (event.key === "ArrowUp") {
+      event.preventDefault();
+      setActiveIndex((current) => Math.max(0, current - 1));
+      return;
+    }
+
+    if (event.key === "Enter" && open && suggestions.length > 0) {
+      event.preventDefault();
+      selectArea(suggestions[activeIndex]?.area ?? suggestions[0].area);
+    }
+  }
+
+  useEffect(() => {
+    if (!open || suggestions.length === 0) return;
+    optionRefs.current[activeIndex]?.scrollIntoView({ block: "nearest" });
+  }, [activeIndex, open, suggestions.length]);
+
+  let optionIndex = 0;
+
+  return (
+    <div ref={wrapperRef} className="relative z-40 min-w-0">
+      <div className="relative">
+        <MapPin
+          className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[#9A9087]"
+          aria-hidden="true"
+        />
+        <input
+          ref={inputRef}
+          id={id}
+          type="text"
+          role="combobox"
+          aria-autocomplete="list"
+          aria-expanded={open}
+          aria-controls={`${id}-options`}
+          aria-activedescendant={
+            open && suggestions.length > 0 ? `${id}-option-${activeIndex}` : undefined
+          }
+          autoComplete="off"
+          value={value}
+          onFocus={() => setOpen(true)}
+          onClick={() => setOpen(true)}
+          onChange={(event) => {
+            onChange(event.target.value);
+            setActiveIndex(0);
+            setOpen(true);
+          }}
+          onKeyDown={handleKeyDown}
+          placeholder={placeholder}
+          maxLength={100}
+          disabled={disabled}
+          className="h-11 w-full rounded-xl border border-[#EAE6DF] bg-white pl-9 pr-10 text-sm text-[#17202A] outline-none transition focus:border-[#FF9A81] focus:ring-2 focus:ring-[#FF5A36]/10 disabled:cursor-not-allowed disabled:bg-[#FCFAF6]"
+        />
+
+        <button
+          type="button"
+          tabIndex={-1}
+          disabled={disabled}
+          aria-label={open ? "Close area suggestions" : "Open area suggestions"}
+          aria-expanded={open}
+          onMouseDown={(event) => event.preventDefault()}
+          onClick={() => {
+            setOpen((current) => !current);
+            inputRef.current?.focus();
+          }}
+          className="absolute right-2 top-1/2 flex h-8 w-8 -translate-y-1/2 items-center justify-center rounded-lg text-[#8A8077] transition hover:bg-[#FFF0E9] hover:text-[#9F2D18] disabled:opacity-40"
+        >
+          {loading ? (
+            <Loader2 className="h-4 w-4 animate-spin" />
+          ) : (
+            <ChevronDown className={`h-4 w-4 transition-transform ${open ? "rotate-180" : ""}`} />
+          )}
+        </button>
+      </div>
+
+      {open && !disabled && (
+        <div
+          id={`${id}-options`}
+          role="listbox"
+          aria-label="Suggested areas grouped by local government area"
+          className="absolute left-0 right-0 top-full z-[70] mt-2 max-h-72 overflow-y-auto overscroll-contain rounded-xl border border-[#EAE6DF] bg-white p-2 shadow-[0_18px_45px_rgba(23,32,42,0.16)]"
+        >
+          <div className="sticky top-0 z-10 mb-1 flex items-center justify-between gap-2 bg-white px-2 py-2">
+            <span className="text-[10px] font-bold uppercase tracking-[0.1em] text-[#91877E]">
+              {value.trim() ? "Matching areas" : "Browse by local government area"}
+            </span>
+            <span className="text-[10px] font-semibold text-[#9F2D18]">
+              {loading ? "Loading..." : `${suggestions.length} options`}
+            </span>
+          </div>
+
+          {loading ? (
+            <div className="flex items-center gap-2 px-3 py-5 text-xs text-[#756B61]">
+              <Loader2 className="h-4 w-4 animate-spin text-[#FF5A36]" />
+              Preparing area suggestions...
+            </div>
+          ) : loadError ? (
+            <p role="status" className="px-3 py-4 text-xs leading-5 text-[#9F2D18]">
+              {loadError} You can still search with the text entered.
+            </p>
+          ) : suggestions.length === 0 ? (
+            <p className="px-3 py-4 text-xs leading-5 text-[#756B61]">
+              No matching predefined area. You can still search with “{value.trim()}”.
+            </p>
+          ) : (
+            filteredGroups.map((group) => (
+              <div key={group.lga} className="mb-2 last:mb-0">
+                <p className="px-2 pb-1 pt-2 text-[9px] font-extrabold uppercase tracking-[0.1em] text-[#9A8E84]">
+                  {group.lga}
+                </p>
+                {group.areas.map((area) => {
+                  const currentIndex = optionIndex++;
+                  const active = activeIndex === currentIndex;
+
+                  return (
+                    <button
+                      key={`${group.lga}-${area}`}
+                      ref={(node) => { optionRefs.current[currentIndex] = node; }}
+                      id={`${id}-option-${currentIndex}`}
+                      type="button"
+                      role="option"
+                      aria-selected={value.trim().toLowerCase() === area.toLowerCase()}
+                      onMouseEnter={() => setActiveIndex(currentIndex)}
+                      onClick={() => selectArea(area)}
+                      className={`flex min-h-9 w-full items-center justify-between rounded-lg px-3 py-2 text-left text-xs transition ${
+                        active
+                          ? "bg-[#FFF1ED] font-semibold text-[#9F2D18]"
+                          : "text-[#514840] hover:bg-[#FCFAF6]"
+                      }`}
+                    >
+                      <span>{area}</span>
+                      {value.trim().toLowerCase() === area.toLowerCase() && (
+                        <span className="text-[9px] font-bold text-[#9F2D18]">Selected</span>
+                      )}
+                    </button>
+                  );
+                })}
+              </div>
+            ))
+          )}
+        </div>
+      )}
+    </div>
+  );
+}

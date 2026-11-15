@@ -1,3 +1,4 @@
+
 import { NextResponse } from "next/server";
 
 import { requireBuyer } from "@/lib/buyer-auth";
@@ -25,6 +26,10 @@ const noStore = {
  *
  * Retrieves the authenticated buyer's cart.
  *
+ * Response supports both:
+ * - Existing nested product information.
+ * - Flattened properties required by the cart sidebar.
+ *
  * Pricing:
  * - price is the actual selling price.
  * - originalPrice is only for discount display.
@@ -37,8 +42,8 @@ const noStore = {
  *
  * Important:
  * This endpoint reports cart availability.
- * The checkout endpoint must independently validate
- * prices, inventory and seller status before creating orders.
+ * Checkout must independently validate prices, inventory
+ * and seller status before creating orders.
  */
 
 export async function GET() {
@@ -234,11 +239,48 @@ export async function GET() {
           "The product total exceeds the maximum allowed order value.";
       }
 
-      /* NORMALIZED PRODUCT */
+      /* ===================================================
+         FLATTENED CART ITEM FIELDS
+
+         These fields are required by HomeCartSidebar:
+
+         id
+         productId
+         name
+         unitPrice
+         quantity
+         lineTotal
+         imageUrl
+         stockQuantity
+         purchasable
+         unavailableReason
+
+         Keep the nested product object for existing
+         components that depend on it.
+      =================================================== */
 
       return {
         ...item,
 
+        // Cart item identity.
+        id: item.id,
+        productId: item.productId,
+        quantity: item.quantity,
+
+        // Flattened product information.
+        name: product?.name ?? "Unavailable product",
+
+        unitPrice: product?.price ?? null,
+
+        imageUrl:
+          product?.imageUrl ??
+          product?.images?.[0]?.url ??
+          null,
+
+        stockQuantity:
+          product?.stockQuantity ?? null,
+
+        // Preserve the existing nested product structure.
         product: product
           ? {
               ...product,
@@ -258,6 +300,7 @@ export async function GET() {
             }
           : null,
 
+        // Cart availability information.
         lineTotal,
         purchasable,
         unavailableReason,
@@ -267,12 +310,10 @@ export async function GET() {
     /* =====================================================
        CART SUBTOTAL
 
-       CRITICAL FIX:
        Only purchasable products contribute to the
        payable subtotal.
 
-       Unavailable products can still have a displayed
-       lineTotal, but they must not increase the subtotal.
+       Unavailable products do not increase the subtotal.
     ===================================================== */
 
     const subtotal = items.reduce(
@@ -309,8 +350,8 @@ export async function GET() {
     /* =====================================================
        ITEM COUNT
 
-       This represents the total quantity in the cart,
-       including unavailable items.
+       This represents total product quantity in the cart,
+       including unavailable products.
     ===================================================== */
 
     const itemCount = items.reduce(
@@ -351,6 +392,10 @@ export async function GET() {
     const unavailableItems =
       items.length - purchasableItems;
 
+    /* =====================================================
+       RESPONSE
+    ===================================================== */
+
     return NextResponse.json(
       {
         success: true,
@@ -381,7 +426,6 @@ export async function GET() {
         headers: noStore,
       },
     );
-
   } catch (error) {
     console.error("Get cart error:", error);
 
@@ -442,7 +486,6 @@ export async function DELETE() {
         headers: noStore,
       },
     );
-
   } catch (error) {
     console.error("Clear cart error:", error);
 
