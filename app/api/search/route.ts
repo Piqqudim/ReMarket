@@ -10,23 +10,23 @@ import { checkPublicRateLimit } from "@/lib/rate-limit";
 
 const MAX_SEARCH_LENGTH = 100;
 const MAX_CATEGORY_LENGTH = 100;
-const MAX_LOCATION_LENGTH = 100;
+const MAX_STATE_LENGTH = 100;
+const MAX_LGA_LENGTH = 100;
+const MAX_AREA_LENGTH = 100;
 const MAX_PRICE_VALUE = 1_000_000_000;
 const MAX_SEARCH_RESULTS = 120;
 const DEFAULT_PAGE_SIZE = 12;
 const MAX_PAGE_SIZE = 48;
 const PRODUCT_IMAGE_LIMIT = 1;
 
-type SortMode =
-  | "relevance"
-  | "newest"
-  | "price-asc"
-  | "price-desc";
+type SortMode = "relevance" | "newest" | "price-asc" | "price-desc";
 
 type SearchFilters = {
   query: string;
   category: string;
-  location: string;
+  state: string;
+  lga: string;
+  area: string;
   minPrice: number | null;
   maxPrice: number | null;
   availability: Availability | null;
@@ -44,6 +44,8 @@ type ParsedValue<T> = {
   error?: string;
 };
 
+type ParsedPrice = ParsedValue<number>;
+
 const ALLOWED_AVAILABILITY = new Set<Availability>([
   Availability.AVAILABLE,
   Availability.ASK_SELLER,
@@ -58,8 +60,8 @@ const ALLOWED_SORTS = new Set<SortMode>([
 ]);
 
 /*
- * Product search returns product data and the seller information
- * required by the public Shop product cards.
+ * Product data selected for the public Shop search page.
+ * State, LGA and area are included in the returned seller location.
  */
 const productSearchSelect = {
   id: true,
@@ -98,15 +100,16 @@ const productSearchSelect = {
 
   business: {
     select: {
-      // Required by the Shop page's parseProduct() function.
       id: true,
       name: true,
-
       verification: true,
 
       location: {
         select: {
           area: true,
+          street: true,
+          lga: true,
+          state: true,
         },
       },
     },
@@ -117,15 +120,10 @@ type SearchProduct = Prisma.ProductGetPayload<{
   select: typeof productSearchSelect;
 }>;
 
-type ParsedPrice = ParsedValue<number>;
-
 function noStoreHeaders(baseHeaders?: HeadersInit): Headers {
   const headers = new Headers(baseHeaders);
 
-  headers.set(
-    "Cache-Control",
-    "no-store, max-age=0, must-revalidate",
-  );
+  headers.set("Cache-Control", "no-store, max-age=0, must-revalidate");
   headers.set("Pragma", "no-cache");
   headers.set("Expires", "0");
 
@@ -238,18 +236,15 @@ function parseMoneyAmount(input: string): number | null {
     return null;
   }
 
-  const multiplier = match[2] === "k" ? 1000 : 1;
-  const amount = Math.round(Number(match[1]) * multiplier);
+  const amount = Math.round(
+    Number(match[1]) * (match[2] === "k" ? 1000 : 1),
+  );
 
-  if (
-    !Number.isSafeInteger(amount) ||
-    amount < 0 ||
-    amount > MAX_PRICE_VALUE
-  ) {
-    return null;
-  }
-
-  return amount;
+  return Number.isSafeInteger(amount) &&
+    amount >= 0 &&
+    amount <= MAX_PRICE_VALUE
+    ? amount
+    : null;
 }
 
 function parseInlineBudget(rawQuery: string): InlineBudget {
@@ -276,7 +271,11 @@ function parseInlineBudget(rawQuery: string): InlineBudget {
         .replace(/\s+/g, " ")
         .trim();
 
-      return { query, minPrice, maxPrice };
+      return {
+        query,
+        minPrice,
+        maxPrice,
+      };
     }
   }
 
@@ -316,7 +315,11 @@ function parseInlineBudget(rawQuery: string): InlineBudget {
     }
   }
 
-  return { query, minPrice, maxPrice };
+  return {
+    query,
+    minPrice,
+    maxPrice,
+  };
 }
 
 function normalizeText(value: string): string {
@@ -330,9 +333,7 @@ function normalizeText(value: string): string {
 }
 
 function stemToken(token: string): string {
-  if (token.length < 4) {
-    return token;
-  }
+  if (token.length < 4) return token;
 
   if (token.endsWith("ies") && token.length > 4) {
     return `${token.slice(0, -3)}y`;
@@ -368,7 +369,10 @@ function getSearchTerms(query: string): string[] {
 
   return Array.from(
     new Set(
-      tokens.flatMap((token) => [token, stemToken(token)]),
+      tokens.flatMap((token) => [
+        token,
+        stemToken(token),
+      ]),
     ),
   );
 }
@@ -449,37 +453,76 @@ function productTextConditions(
   }));
 }
 
+/*
+ * Location filtering:
+ *
+ * State: exact, case-insensitive match.
+ * LGA: exact, case-insensitive match.
+ * Area: partial match against area, street or address.
+ *
+ * When multiple location values are provided, all are applied together.
+ */
 function buildLocationWhere(
-  location: string,
+  filters: Pick<SearchFilters, "state" | "lga" | "area">,
 ): Prisma.LocationWhereInput {
-  return {
-    OR: [
-      {
-        area: {
-          contains: location,
-          mode: "insensitive",
-        },
+  const conditions: Prisma.LocationWhereInput[] = [];
+
+  if (filters.state) {
+    conditions.push({
+      state: {
+        equals: filters.state,
+        mode: "insensitive",
       },
-      {
-        street: {
-          contains: location,
-          mode: "insensitive",
-        },
+    });
+  }
+
+  if (filters.lga) {
+    conditions.push({
+      lga: {
+        equals: filters.lga,
+        mode: "insensitive",
       },
-      {
-        address: {
-          contains: location,
-          mode: "insensitive",
+    });
+  }
+
+  if (filters.area) {
+    conditions.push({
+      OR: [
+        {
+          area: {
+            contains: filters.area,
+            mode: "insensitive",
+          },
         },
-      },
-    ],
-  };
+        {
+          street: {
+            contains: filters.area,
+            mode: "insensitive",
+          },
+        },
+        {
+          address: {
+            contains: filters.area,
+            mode: "insensitive",
+          },
+        },
+      ],
+    });
+  }
+
+  return conditions.length > 0
+    ? { AND: conditions }
+    : {};
 }
 
 function buildProductWhere(
   filters: SearchFilters,
   terms: string[],
 ): Prisma.ProductWhereInput {
+  const locationFilter = Boolean(
+    filters.state || filters.lga || filters.area,
+  );
+
   const conditions: Prisma.ProductWhereInput[] = [
     {
       status: "ACTIVE",
@@ -497,10 +540,10 @@ function buildProductWhere(
               }
             : {}),
 
-          ...(filters.location
+          ...(locationFilter
             ? {
                 location: {
-                  is: buildLocationWhere(filters.location),
+                  is: buildLocationWhere(filters),
                 },
               }
             : {}),
@@ -513,11 +556,6 @@ function buildProductWhere(
     conditions.push(...productTextConditions(terms));
   }
 
-  /*
-   * Category filtering:
-   * The Shop page currently sends the category name.
-   * Match it against the active category name, ignoring case.
-   */
   if (filters.category) {
     conditions.push({
       category: {
@@ -556,13 +594,10 @@ function scoreText(
   }
 
   let score = 0;
-
   const queryTerms = getSearchTerms(query);
 
   for (const value of values) {
-    if (!value) {
-      continue;
-    }
+    if (!value) continue;
 
     const normalizedValue = normalizeText(value);
 
@@ -596,7 +631,9 @@ function scoreProduct(
     scoreText(query, [product.description]) +
     scoreText(query, [
       ...product.keywords,
-      product.category?.isActive ? product.category.name : "",
+      product.category?.isActive
+        ? product.category.name
+        : "",
     ])
   );
 }
@@ -630,7 +667,10 @@ function sortProducts(
   products: SearchProduct[],
   query: string,
   sort: SortMode,
-): Array<{ product: SearchProduct; matchScore: number }> {
+): Array<{
+  product: SearchProduct;
+  matchScore: number;
+}> {
   const scored = products.map((product) => ({
     product,
     matchScore: scoreProduct(query, product),
@@ -675,7 +715,9 @@ function formatProduct(
   matchScore: number,
 ) {
   const currentPrice =
-    product.price === null ? null : Number(product.price);
+    product.price === null
+      ? null
+      : Number(product.price);
 
   const previousPrice =
     product.originalPrice === null
@@ -687,7 +729,6 @@ function formatProduct(
     type: "PRODUCT" as const,
     name: product.name,
     description: product.description,
-
     price: currentPrice,
 
     originalPrice:
@@ -702,17 +743,12 @@ function formatProduct(
     imageUrl: product.imageUrl,
     keywords: product.keywords,
 
-    category:
-      product.category?.isActive
-        ? product.category
-        : null,
+    category: product.category?.isActive
+      ? product.category
+      : null,
 
     images: product.images,
 
-    /*
-     * The Shop page's parseProduct() expects seller.id and seller.name.
-     * These fields were missing from the old search API response.
-     */
     seller: {
       id: product.business.id,
       name: product.business.name,
@@ -725,6 +761,9 @@ function formatProduct(
       location: product.business.location
         ? {
             area: product.business.location.area,
+            street: product.business.location.street,
+            lga: product.business.location.lga,
+            state: product.business.location.state,
           }
         : null,
     },
@@ -749,15 +788,22 @@ export async function GET(request: NextRequest) {
 
     const rawQuery = clean(searchParams.get("q"));
     const category = clean(searchParams.get("category"));
-    const location = clean(searchParams.get("location"));
 
-    const rawType = clean(searchParams.get("type")).toLowerCase();
+    const state = clean(searchParams.get("state"));
+    const lga = clean(searchParams.get("lga"));
+
+    // Backward compatibility: old `location` parameter means `area`.
+    const area =
+      clean(searchParams.get("area")) ||
+      clean(searchParams.get("location"));
+
+    const rawType = clean(
+      searchParams.get("type"),
+    ).toLowerCase();
 
     if (
       rawType &&
-      rawType !== "all" &&
-      rawType !== "product" &&
-      rawType !== "service"
+      !["all", "product", "service"].includes(rawType)
     ) {
       return jsonError(
         "Search type must be all, product or service.",
@@ -766,7 +812,7 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    // Services are paused.
+    // Service search is currently paused.
     if (rawType === "service") {
       return NextResponse.json(
         {
@@ -799,9 +845,25 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    if (location.length > MAX_LOCATION_LENGTH) {
+    if (state.length > MAX_STATE_LENGTH) {
       return jsonError(
-        `Location must not exceed ${MAX_LOCATION_LENGTH} characters.`,
+        `State must not exceed ${MAX_STATE_LENGTH} characters.`,
+        400,
+        rateLimit.headers,
+      );
+    }
+
+    if (lga.length > MAX_LGA_LENGTH) {
+      return jsonError(
+        `LGA must not exceed ${MAX_LGA_LENGTH} characters.`,
+        400,
+        rateLimit.headers,
+      );
+    }
+
+    if (area.length > MAX_AREA_LENGTH) {
+      return jsonError(
+        `Area must not exceed ${MAX_AREA_LENGTH} characters.`,
         400,
         rateLimit.headers,
       );
@@ -815,7 +877,10 @@ export async function GET(request: NextRequest) {
       "Page",
     );
 
-    if (pageInput.error || pageInput.value === null) {
+    if (
+      pageInput.error ||
+      pageInput.value === null
+    ) {
       return jsonError(
         pageInput.error ?? "Page is invalid.",
         400,
@@ -842,7 +907,9 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    const rawSort = clean(searchParams.get("sort")).toLowerCase();
+    const rawSort = clean(
+      searchParams.get("sort"),
+    ).toLowerCase();
 
     const sort: SortMode = rawSort
       ? (rawSort as SortMode)
@@ -920,13 +987,17 @@ export async function GET(request: NextRequest) {
     const filters: SearchFilters = {
       query: inlineBudget.query,
       category,
-      location,
+      state,
+      lga,
+      area,
 
       minPrice:
-        minimumPriceInput.value ?? inlineBudget.minPrice,
+        minimumPriceInput.value ??
+        inlineBudget.minPrice,
 
       maxPrice:
-        maximumPriceInput.value ?? inlineBudget.maxPrice,
+        maximumPriceInput.value ??
+        inlineBudget.maxPrice,
 
       availability: availabilityRaw
         ? (availabilityRaw as Availability)
@@ -970,10 +1041,6 @@ export async function GET(request: NextRequest) {
         }),
       ]);
 
-    /*
-     * Results are sorted from a bounded candidate set.
-     * The API explicitly reports when more than 120 products match.
-     */
     const sortedProducts = sortProducts(
       matchedProducts,
       filters.query,
@@ -981,7 +1048,8 @@ export async function GET(request: NextRequest) {
     );
 
     const offset =
-      (pageInput.value - 1) * pageSizeInput.value;
+      (pageInput.value - 1) *
+      pageSizeInput.value;
 
     const pageProducts = sortedProducts.slice(
       offset,
@@ -993,14 +1061,26 @@ export async function GET(request: NextRequest) {
         formatProduct(product, matchScore),
     );
 
-    // Search tracking must never prevent a successful search response.
+    /*
+     * Search tracking should never prevent a successful
+     * product search response.
+     *
+     * The existing SearchEvent model has one `location`
+     * field, so save the most specific available value.
+     */
     try {
       await prisma.searchEvent.create({
         data: {
           query: rawQuery,
           category: category || null,
           resultCount: totalProducts,
-          location: location || null,
+
+          location:
+            area ||
+            lga ||
+            state ||
+            null,
+
           minPrice: filters.minPrice,
           maxPrice: filters.maxPrice,
         },
@@ -1036,13 +1116,23 @@ export async function GET(request: NextRequest) {
           totalServices: 0,
           totalResults: totalProducts,
           returnedResults: products.length,
+
           page: pageInput.value,
           pageSize: pageSizeInput.value,
           totalPages,
           hasMore,
+
           maxResults: MAX_SEARCH_RESULTS,
-          truncated: totalProducts > MAX_SEARCH_RESULTS,
+          truncated:
+            totalProducts > MAX_SEARCH_RESULTS,
+
           sort,
+
+          filters: {
+            state: state || null,
+            lga: lga || null,
+            area: area || null,
+          },
         },
       },
       {
@@ -1050,7 +1140,10 @@ export async function GET(request: NextRequest) {
       },
     );
   } catch (error) {
-    console.error("Product search API error:", error);
+    console.error(
+      "Product search API error:",
+      error,
+    );
 
     return jsonError(
       "Unable to complete search. Please try again.",

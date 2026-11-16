@@ -8,14 +8,8 @@ import {
   useState,
   type FormEvent,
 } from "react";
-
 import Link from "next/link";
-
-import {
-  useRouter,
-  useSearchParams,
-} from "next/navigation";
-
+import { useRouter, useSearchParams } from "next/navigation";
 import {
   ArrowRight,
   BadgeCheck,
@@ -33,11 +27,14 @@ import {
   SlidersHorizontal,
   X,
   ShoppingBag,
-  Store,
 } from "lucide-react";
 
 import SiteHeader from "@/components/layout/SiteHeader";
 import MobileBottomNav from "@/components/layout/MobileBottomNav";
+
+import AreaAutocomplete, {
+  type AreaSelection,
+} from "@/components/filters/AreaAutocomplete";
 
 import {
   mergeCategories,
@@ -78,34 +75,51 @@ type Product = {
   imageUrl: string | null;
   images: ProductImage[];
   createdAt: string | null;
-
   category: {
     id: string;
     name: string;
   } | null;
-
   seller: {
     id: string;
     name: string;
     verification: string | null;
     verified: boolean;
-
-    location: {
-      area: string;
-      street: string | null;
-    } | null;
   };
+};
+
+type LocationLgaGroup = {
+  lga: string;
+  areas: string[];
+};
+
+type LocationStateGroup = {
+  state: string;
+  groups: LocationLgaGroup[];
 };
 
 type ShopPageViewProps = {
   initialQuery: string;
   initialCategory: string;
-  initialLocation: string;
+  initialState: string;
+  initialLga: string;
+  initialArea: string;
   initialMinPrice: string;
   initialMaxPrice: string;
   initialAvailability: string;
   initialVerified: boolean;
   initialPage: number;
+};
+
+type ShopFilters = {
+  query: string;
+  category: string;
+  state: string;
+  lga: string;
+  area: string;
+  minPrice: string;
+  maxPrice: string;
+  availability: string;
+  verified: boolean;
 };
 
 type SavedProductMap = Record<string, string>;
@@ -123,15 +137,6 @@ const MAX_CLIENT_RESULTS = 50;
    GENERAL HELPERS
 ========================================================= */
 
-function StoreIcon() {
-  return (
-    <Store
-      className="h-3 w-3"
-      aria-hidden="true"
-    />
-  );
-}
-
 function isRecord(
   value: unknown,
 ): value is Record<string, unknown> {
@@ -142,44 +147,31 @@ function isRecord(
   );
 }
 
-function cleanString(
-  value: unknown,
-): string | null {
+function cleanString(value: unknown): string | null {
   if (typeof value !== "string") return null;
 
-  const cleaned = value.trim();
-
-  return cleaned.length > 0
-    ? cleaned
-    : null;
+  return value.trim() || null;
 }
 
-function parseOptionalNumber(
-  value: unknown,
-): number | null {
+function normalizeLocationName(value: string): string {
+  return value.trim().toLocaleLowerCase();
+}
+
+function parseOptionalNumber(value: unknown): number | null {
   if (typeof value === "number") {
-    return Number.isFinite(value)
-      ? value
-      : null;
+    return Number.isFinite(value) ? value : null;
   }
 
-  if (
-    typeof value === "string" &&
-    value.trim()
-  ) {
+  if (typeof value === "string" && value.trim()) {
     const parsed = Number(value.trim());
 
-    return Number.isFinite(parsed)
-      ? parsed
-      : null;
+    return Number.isFinite(parsed) ? parsed : null;
   }
 
   return null;
 }
 
-function parseApiCategories(
-  value: unknown,
-): ApiCategory[] {
+function parseApiCategories(value: unknown): ApiCategory[] {
   if (!Array.isArray(value)) return [];
 
   return value
@@ -189,7 +181,6 @@ function parseApiCategories(
       name: cleanString(item.name) ?? "",
       iconKey: cleanString(item.iconKey),
       isActive: item.isActive !== false,
-
       sortOrder:
         typeof item.sortOrder === "number" &&
         Number.isFinite(item.sortOrder)
@@ -203,26 +194,161 @@ function parseApiCategories(
     );
 }
 
+/* =========================================================
+   LOCATION CATALOGUE PARSER
+========================================================= */
+
+/*
+ * Supports:
+ *
+ * stateGroups: [
+ *   {
+ *     state: "Lagos",
+ *     groups: [
+ *       { lga: "Epe", areas: ["Epe", "Eredo"] }
+ *     ]
+ *   }
+ * ]
+ *
+ * Also supports `lgas` instead of `groups`.
+ */
+
+function parseLocationStateGroups(
+  value: unknown,
+): LocationStateGroup[] {
+  if (!Array.isArray(value)) return [];
+
+  return value.flatMap((raw): LocationStateGroup[] => {
+    if (!isRecord(raw)) return [];
+
+    const state =
+      cleanString(raw.state) ??
+      cleanString(raw.name);
+
+    const rawGroups = Array.isArray(raw.lgas)
+      ? raw.lgas
+      : Array.isArray(raw.groups)
+        ? raw.groups
+        : [];
+
+    if (!state) return [];
+
+    const groups = rawGroups.flatMap(
+      (item): LocationLgaGroup[] => {
+        if (
+          !isRecord(item) ||
+          typeof item.lga !== "string" ||
+          !Array.isArray(item.areas)
+        ) {
+          return [];
+        }
+
+        const lga = item.lga.trim();
+
+        const areas = Array.from(
+          new Set(
+            item.areas.flatMap((area) => {
+              if (typeof area !== "string") return [];
+
+              const cleaned = area.trim();
+
+              return cleaned ? [cleaned] : [];
+            }),
+          ),
+        );
+
+        if (!lga || areas.length === 0) {
+          return [];
+        }
+
+        return [
+          {
+            lga,
+            areas,
+          },
+        ];
+      },
+    );
+
+    return groups.length
+      ? [
+          {
+            state,
+            groups,
+          },
+        ]
+      : [];
+  });
+}
+
+/*
+ * Backward compatibility with the previous Lagos-only API:
+ *
+ * { groups: [{ lga, areas }] }
+ */
+function parseLegacyLagosGroups(
+  value: unknown,
+): LocationStateGroup[] {
+  if (!Array.isArray(value)) return [];
+
+  const groups = value.flatMap(
+    (item): LocationLgaGroup[] => {
+      if (
+        !isRecord(item) ||
+        typeof item.lga !== "string" ||
+        !Array.isArray(item.areas)
+      ) {
+        return [];
+      }
+
+      const lga = item.lga.trim();
+
+      const areas = item.areas.filter(
+        (area): area is string =>
+          typeof area === "string" &&
+          area.trim().length > 0,
+      );
+
+      return lga && areas.length
+        ? [{ lga, areas }]
+        : [];
+    },
+  );
+
+  return groups.length
+    ? [{ state: "Lagos", groups }]
+    : [];
+}
+
 function parseAvailability(
   value: unknown,
 ): Availability {
-  if (
+  return (
     value === "AVAILABLE" ||
     value === "UNAVAILABLE" ||
     value === "ASK_SELLER"
-  ) {
-    return value;
-  }
+  )
+    ? value
+    : "ASK_SELLER";
+}
 
-  return "ASK_SELLER";
+function parseAvailabilityFilter(
+  value: string,
+): Availability | "" {
+  return (
+    value === "AVAILABLE" ||
+    value === "ASK_SELLER" ||
+    value === "UNAVAILABLE"
+  )
+    ? value
+    : "";
 }
 
 function parseCategory(
   value: unknown,
 ): Product["category"] {
-  if (!isRecord(value)) return null;
-
   if (
+    !isRecord(value) ||
     typeof value.id !== "string" ||
     typeof value.name !== "string"
   ) {
@@ -235,15 +361,10 @@ function parseCategory(
   };
 }
 
-/*
- * Supports both /api/search and /api/recent-products.
- */
-function parseProduct(
-  value: unknown,
-): Product | null {
+function parseProduct(value: unknown): Product | null {
   if (!isRecord(value)) return null;
 
-  const rawSeller = isRecord(value.seller)
+  const seller = isRecord(value.seller)
     ? value.seller
     : isRecord(value.business)
       ? value.business
@@ -252,121 +373,83 @@ function parseProduct(
   if (
     typeof value.id !== "string" ||
     typeof value.name !== "string" ||
-    !rawSeller
-  ) {
-    return null;
-  }
-
-  const seller = rawSeller;
-
-  if (
+    !seller ||
     typeof seller.id !== "string" ||
     typeof seller.name !== "string"
   ) {
     return null;
   }
 
-  const rawImages = Array.isArray(value.images)
-    ? value.images
-    : [];
-
-  const images: ProductImage[] = rawImages
+  const images: ProductImage[] = (
+    Array.isArray(value.images)
+      ? value.images
+      : []
+  )
     .filter(isRecord)
     .map((image) => ({
       id:
         typeof image.id === "string"
           ? image.id
           : undefined,
-
       url:
         typeof image.url === "string"
           ? image.url
           : "",
-
       sortOrder:
         typeof image.sortOrder === "number"
           ? image.sortOrder
           : 0,
     }))
-    .filter(
-      (image) => image.url.length > 0,
-    );
+    .filter((image) => image.url.length > 0);
 
-  const location = isRecord(seller.location)
-    ? seller.location
-    : null;
-
-  const verification =
-    typeof seller.verification === "string"
-      ? seller.verification
-      : null;
+  const verification = cleanString(seller.verification);
 
   return {
     id: value.id,
     name: value.name,
-
     description: cleanString(value.description),
-
     price: parseOptionalNumber(value.price),
     priceMin: parseOptionalNumber(value.priceMin),
     priceMax: parseOptionalNumber(value.priceMax),
-
-    stockQuantity: parseOptionalNumber(
-      value.stockQuantity,
-    ),
-
-    availability: parseAvailability(
-      value.availability,
-    ),
-
+    stockQuantity: parseOptionalNumber(value.stockQuantity),
+    availability: parseAvailability(value.availability),
     imageUrl:
       cleanString(value.imageUrl) ??
       images[0]?.url ??
       null,
-
     images,
-
     createdAt:
       cleanString(value.createdAt) ??
       cleanString(value.updatedAt),
-
     category: parseCategory(value.category),
-
     seller: {
       id: seller.id,
       name: seller.name,
       verification,
-
       verified:
         seller.verified === true ||
         verification === "VERIFIED",
-
-      location: location
-        ? {
-            area:
-              cleanString(location.area) ??
-              "Local",
-
-            street: cleanString(location.street),
-          }
-        : null,
     },
   };
 }
 
+function parsePage(value: string | null): number {
+  const parsed = Number(value);
+
+  return Number.isSafeInteger(parsed) && parsed > 0
+    ? parsed
+    : 1;
+}
+
 /* =========================================================
-   PRICE HELPERS
+   PRODUCT HELPERS
 ========================================================= */
 
-function formatNaira(
-  value: number,
-): string {
+function formatNaira(value: number): string {
   return `₦${value.toLocaleString("en-NG")}`;
 }
 
-function formatPrice(
-  product: Product,
-): string {
+function formatPrice(product: Product): string {
   if (product.price !== null) {
     return formatNaira(product.price);
   }
@@ -375,11 +458,9 @@ function formatPrice(
     product.priceMin !== null &&
     product.priceMax !== null
   ) {
-    if (product.priceMin === product.priceMax) {
-      return formatNaira(product.priceMin);
-    }
-
-    return `${formatNaira(product.priceMin)} – ${formatNaira(product.priceMax)}`;
+    return product.priceMin === product.priceMax
+      ? formatNaira(product.priceMin)
+      : `${formatNaira(product.priceMin)} – ${formatNaira(product.priceMax)}`;
   }
 
   if (product.priceMin !== null) {
@@ -393,9 +474,7 @@ function formatPrice(
   return "Ask seller";
 }
 
-function getSortablePrice(
-  product: Product,
-): number {
+function getSortablePrice(product: Product): number {
   return (
     product.price ??
     product.priceMin ??
@@ -404,38 +483,23 @@ function getSortablePrice(
   );
 }
 
-/* =========================================================
-   AVAILABILITY HELPERS
-========================================================= */
+function getAvailabilityLabel(value: Availability): string {
+  if (value === "AVAILABLE") return "Available";
+  if (value === "UNAVAILABLE") return "Unavailable";
 
-function getAvailabilityLabel(
-  availability: Availability,
-): string {
-  switch (availability) {
-    case "AVAILABLE":
-      return "Available";
-
-    case "UNAVAILABLE":
-      return "Unavailable";
-
-    default:
-      return "Ask seller";
-  }
+  return "Ask seller";
 }
 
-function getAvailabilityStyle(
-  availability: Availability,
-): string {
-  switch (availability) {
-    case "AVAILABLE":
-      return "bg-[#DCFCE7] text-[#166534]";
-
-    case "UNAVAILABLE":
-      return "bg-[#FEE2E2] text-[#B42318]";
-
-    default:
-      return "bg-[#FEF3C7] text-[#92400E]";
+function getAvailabilityStyle(value: Availability): string {
+  if (value === "AVAILABLE") {
+    return "bg-[#DCFCE7] text-[#166534]";
   }
+
+  if (value === "UNAVAILABLE") {
+    return "bg-[#FEE2E2] text-[#B42318]";
+  }
+
+  return "bg-[#FEF3C7] text-[#92400E]";
 }
 
 function canAddProductToCart(
@@ -452,17 +516,12 @@ function canAddProductToCart(
   );
 }
 
-function getCartDisabledReason(
-  product: Product,
-): string {
+function getCartDisabledReason(product: Product): string {
   if (product.availability !== "AVAILABLE") {
     return "This product is not currently available.";
   }
 
-  if (
-    product.price === null ||
-    product.price <= 0
-  ) {
+  if (product.price === null || product.price <= 0) {
     return "A fixed product price is required.";
   }
 
@@ -473,50 +532,9 @@ function getCartDisabledReason(
   return "Add to cart";
 }
 
-function parsePage(
-  value: string | null,
-): number {
-  if (!value) return 1;
-
-  const parsed = Number(value);
-
-  if (
-    !Number.isSafeInteger(parsed) ||
-    parsed < 1
-  ) {
-    return 1;
-  }
-
-  return parsed;
-}
-
-function parseAvailabilityFilter(
-  value: string,
-): Availability | "" {
-  if (
-    value === "AVAILABLE" ||
-    value === "ASK_SELLER" ||
-    value === "UNAVAILABLE"
-  ) {
-    return value;
-  }
-
-  return "";
-}
-
 /* =========================================================
    URL HELPERS
 ========================================================= */
-
-type ShopFilters = {
-  query: string;
-  category: string;
-  location: string;
-  minPrice: string;
-  maxPrice: string;
-  availability: string;
-  verified: boolean;
-};
 
 function buildShopUrl(
   filters: ShopFilters,
@@ -524,33 +542,22 @@ function buildShopUrl(
 ): string {
   const params = new URLSearchParams();
 
-  const query = filters.query.trim();
-  const category = filters.category.trim();
-  const location = filters.location.trim();
+  const fields: Array<[string, string]> = [
+    ["q", filters.query],
+    ["category", filters.category],
+    ["state", filters.state],
+    ["lga", filters.lga],
+    ["area", filters.area],
+    ["minPrice", filters.minPrice],
+    ["maxPrice", filters.maxPrice],
+    ["availability", filters.availability],
+  ];
 
-  if (query) {
-    params.set("q", query);
-  }
-
-  if (category) {
-    params.set("category", category);
-  }
-
-  if (location) {
-    params.set("location", location);
-  }
-
-  if (filters.minPrice.trim()) {
-    params.set("minPrice", filters.minPrice.trim());
-  }
-
-  if (filters.maxPrice.trim()) {
-    params.set("maxPrice", filters.maxPrice.trim());
-  }
-
-  if (filters.availability) {
-    params.set("availability", filters.availability);
-  }
+  fields.forEach(([key, value]) => {
+    if (value.trim()) {
+      params.set(key, value.trim());
+    }
+  });
 
   if (filters.verified) {
     params.set("verified", "true");
@@ -568,7 +575,7 @@ function buildShopUrl(
 }
 
 /* =========================================================
-   SAVED PRODUCT RESPONSE HELPERS
+   SAVED PRODUCT HELPERS
 ========================================================= */
 
 function parseSavedProductMap(
@@ -576,7 +583,9 @@ function parseSavedProductMap(
 ): SavedProductMap {
   if (!isRecord(value)) return {};
 
-  const possibleArrays = [
+  const result: SavedProductMap = {};
+
+  const collections = [
     value.items,
     value.savedListings,
     value.savedProducts,
@@ -584,35 +593,26 @@ function parseSavedProductMap(
     value.saved,
   ];
 
-  const result: SavedProductMap = {};
-
-  for (const collection of possibleArrays) {
+  for (const collection of collections) {
     if (!Array.isArray(collection)) continue;
 
     for (const item of collection) {
       if (!isRecord(item)) continue;
 
-      // Current API response.
       if (
         item.type === "PRODUCT" &&
         isRecord(item.listing)
       ) {
-        const productId = cleanString(
-          item.listing.id,
-        );
+        const productId = cleanString(item.listing.id);
+        const savedId = cleanString(item.id);
 
-        const savedListingId = cleanString(
-          item.id,
-        );
-
-        if (productId && savedListingId) {
-          result[productId] = savedListingId;
+        if (productId && savedId) {
+          result[productId] = savedId;
         }
 
         continue;
       }
 
-      // Legacy response formats.
       const nestedProduct = isRecord(item.product)
         ? item.product
         : null;
@@ -624,15 +624,15 @@ function parseSavedProductMap(
           ? cleanString(nestedProduct.id)
           : null);
 
-      const savedListingId =
+      const savedId =
         cleanString(item.savedListingId) ??
         cleanString(item.savedId) ??
         (productId
           ? cleanString(item.id)
           : null);
 
-      if (productId && savedListingId) {
-        result[productId] = savedListingId;
+      if (productId && savedId) {
+        result[productId] = savedId;
       }
     }
   }
@@ -640,23 +640,19 @@ function parseSavedProductMap(
   return result;
 }
 
-function getSavedRecordId(
-  value: unknown,
-): string | null {
+function getSavedRecordId(value: unknown): string | null {
   if (!isRecord(value)) return null;
 
-  if (isRecord(value.item)) {
-    const id = cleanString(value.item.id);
+  for (const key of [
+    "item",
+    "savedListing",
+    "saved",
+  ]) {
+    if (isRecord(value[key])) {
+      const id = cleanString(value[key].id);
 
-    if (id) return id;
-  }
-
-  if (isRecord(value.savedListing)) {
-    return cleanString(value.savedListing.id);
-  }
-
-  if (isRecord(value.saved)) {
-    return cleanString(value.saved.id);
+      if (id) return id;
+    }
   }
 
   return (
@@ -672,25 +668,24 @@ function getSavedRecordId(
 function ShopPageContent() {
   const searchParams = useSearchParams();
 
-  const initialQuery =
-    searchParams.get("q") ?? "";
+  const initialQuery = searchParams.get("q") ?? "";
+  const initialCategory = searchParams.get("category") ?? "";
 
-  const initialCategory =
-    searchParams.get("category") ?? "";
+  const initialState = searchParams.get("state") ?? "";
+  const initialLga = searchParams.get("lga") ?? "";
 
-  const initialLocation =
-    searchParams.get("location") ?? "";
+  // Older links used `location`; continue reading them as `area`.
+  const initialArea =
+    searchParams.get("area") ??
+    searchParams.get("location") ??
+    "";
 
-  const initialMinPrice =
-    searchParams.get("minPrice") ?? "";
+  const initialMinPrice = searchParams.get("minPrice") ?? "";
+  const initialMaxPrice = searchParams.get("maxPrice") ?? "";
 
-  const initialMaxPrice =
-    searchParams.get("maxPrice") ?? "";
-
-  const initialAvailability =
-    parseAvailabilityFilter(
-      searchParams.get("availability") ?? "",
-    );
+  const initialAvailability = parseAvailabilityFilter(
+    searchParams.get("availability") ?? "",
+  );
 
   const initialVerified =
     searchParams.get("verified") === "true";
@@ -702,7 +697,9 @@ function ShopPageContent() {
   const pageKey = [
     initialQuery,
     initialCategory,
-    initialLocation,
+    initialState,
+    initialLga,
+    initialArea,
     initialMinPrice,
     initialMaxPrice,
     initialAvailability,
@@ -715,7 +712,9 @@ function ShopPageContent() {
       key={pageKey}
       initialQuery={initialQuery}
       initialCategory={initialCategory}
-      initialLocation={initialLocation}
+      initialState={initialState}
+      initialLga={initialLga}
+      initialArea={initialArea}
       initialMinPrice={initialMinPrice}
       initialMaxPrice={initialMaxPrice}
       initialAvailability={initialAvailability}
@@ -732,7 +731,9 @@ function ShopPageContent() {
 function ShopPageView({
   initialQuery,
   initialCategory,
-  initialLocation,
+  initialState,
+  initialLga,
+  initialArea,
   initialMinPrice,
   initialMaxPrice,
   initialAvailability,
@@ -743,72 +744,56 @@ function ShopPageView({
 
   /* FILTER STATE */
 
-  const [query, setQuery] =
-    useState(initialQuery);
+  const [query, setQuery] = useState(initialQuery);
+  const [category, setCategory] = useState(initialCategory);
 
-  const [category, setCategory] =
-    useState(initialCategory);
+  const [state, setState] = useState(initialState);
+  const [lga, setLga] = useState(initialLga);
+  const [area, setArea] = useState(initialArea);
 
-  const [location, setLocation] =
-    useState(initialLocation);
+  const [minPrice, setMinPrice] = useState(initialMinPrice);
+  const [maxPrice, setMaxPrice] = useState(initialMaxPrice);
 
-  const [minPrice, setMinPrice] =
-    useState(initialMinPrice);
+  const [availability, setAvailability] = useState(
+    initialAvailability,
+  );
 
-  const [maxPrice, setMaxPrice] =
-    useState(initialMaxPrice);
+  const [verified, setVerified] = useState(initialVerified);
 
-  const [availability, setAvailability] =
-    useState(initialAvailability);
-
-  const [verified, setVerified] =
-    useState(initialVerified);
-
-  const [sortBy, setSortBy] =
-    useState<SortOption>("NEWEST");
-
-  const [showMobileFilters, setShowMobileFilters] =
-    useState(false);
+  const [sortBy, setSortBy] = useState<SortOption>("NEWEST");
+  const [showMobileFilters, setShowMobileFilters] = useState(false);
 
   /* DATA STATE */
 
-  const [categories, setCategories] =
-    useState<ReMarketCategory[]>([]);
+  const [categories, setCategories] = useState<
+    ReMarketCategory[]
+  >([]);
 
-  const [products, setProducts] =
-    useState<Product[]>([]);
+  const [locationGroups, setLocationGroups] = useState<
+    LocationStateGroup[]
+  >([]);
 
-  const [loading, setLoading] =
-    useState(true);
+  const [products, setProducts] = useState<Product[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
 
-  const [error, setError] =
-    useState("");
+  const [totalProducts, setTotalProducts] = useState(0);
+  const [resultsTruncated, setResultsTruncated] = useState(false);
 
-  const [totalProducts, setTotalProducts] =
-    useState(0);
-
-  const [resultsTruncated, setResultsTruncated] =
-    useState(false);
-
-  const [serverPagination, setServerPagination] =
-    useState(false);
-
-  const [serverTotalPages, setServerTotalPages] =
-    useState(1);
+  const [serverPagination, setServerPagination] = useState(false);
+  const [serverTotalPages, setServerTotalPages] = useState(1);
 
   /* SAVED PRODUCT STATE */
 
   const [savedProducts, setSavedProducts] =
     useState<SavedProductMap>({});
 
-  const [savingProductIds, setSavingProductIds] =
-    useState<Record<string, boolean>>({});
+  const [savingProductIds, setSavingProductIds] = useState<
+    Record<string, boolean>
+  >({});
 
-  const [saveFeedback, setSaveFeedback] =
-    useState("");
-
-  const [saveFeedbackError, setSaveFeedbackError] =
-    useState(false);
+  const [saveFeedback, setSaveFeedback] = useState("");
+  const [saveFeedbackError, setSaveFeedbackError] = useState(false);
 
   /* CART STATE */
 
@@ -819,7 +804,7 @@ function ShopPageView({
     useState<CartFeedback>(null);
 
   /* =====================================================
-     LOAD CATEGORIES
+     LOAD CATEGORIES AND LOCATION CATALOGUE
   ===================================================== */
 
   useEffect(() => {
@@ -830,7 +815,6 @@ function ShopPageView({
         const response = await fetch(
           "/api/categories?type=product",
           {
-            method: "GET",
             cache: "no-store",
             headers: {
               Accept: "application/json",
@@ -845,36 +829,30 @@ function ShopPageView({
           );
         }
 
-        const data: unknown =
-          await response.json();
+        const data: unknown = await response.json();
 
         if (!isRecord(data)) {
-          throw new Error(
-            "Invalid category response.",
-          );
+          throw new Error("Invalid category response.");
         }
-
-        const backendCategories =
-          parseApiCategories(data.categories);
-
-        const merged = mergeCategories(
-          backendCategories,
-        );
 
         if (!controller.signal.aborted) {
-          setCategories(merged);
+          setCategories(
+            mergeCategories(
+              parseApiCategories(data.categories),
+            ),
+          );
         }
-      } catch (loadError) {
+      } catch (err) {
         if (
-          loadError instanceof DOMException &&
-          loadError.name === "AbortError"
+          err instanceof DOMException &&
+          err.name === "AbortError"
         ) {
           return;
         }
 
         console.error(
-          "Shop product-category loading error:",
-          loadError,
+          "Shop category loading error:",
+          err,
         );
 
         if (!controller.signal.aborted) {
@@ -883,10 +861,87 @@ function ShopPageView({
       }
     }
 
+    async function loadLocations() {
+      try {
+        const response = await fetch("/api/areas", {
+          cache: "force-cache",
+          headers: {
+            Accept: "application/json",
+          },
+          signal: controller.signal,
+        });
+
+        if (!response.ok) {
+          throw new Error(
+            "Unable to load location suggestions.",
+          );
+        }
+
+        const data: unknown = await response.json();
+
+        if (!isRecord(data)) {
+          throw new Error("Invalid location response.");
+        }
+
+        let parsed = parseLocationStateGroups(
+          data.stateGroups,
+        );
+
+        // Support the old Lagos-only API response.
+        if (parsed.length === 0) {
+          parsed = parseLegacyLagosGroups(data.groups);
+        }
+
+        if (parsed.length === 0) {
+          throw new Error(
+            "No location groups are available.",
+          );
+        }
+
+        if (!controller.signal.aborted) {
+          setLocationGroups(parsed);
+        }
+      } catch (err) {
+        if (
+          err instanceof DOMException &&
+          err.name === "AbortError"
+        ) {
+          return;
+        }
+
+        console.error(
+          "Shop location loading error:",
+          err,
+        );
+
+        if (!controller.signal.aborted) {
+          setLocationGroups([]);
+        }
+      }
+    }
+
     void loadCategories();
+    void loadLocations();
 
     return () => controller.abort();
   }, []);
+
+  /* =====================================================
+     AVAILABLE LGAS
+  ===================================================== */
+
+  const availableLgas = useMemo(() => {
+    const selectedState = normalizeLocationName(state);
+
+    if (!selectedState) return [];
+
+    return (
+      locationGroups.find(
+        (item) =>
+          normalizeLocationName(item.state) === selectedState,
+      )?.groups.map((item) => item.lga) ?? []
+    );
+  }, [locationGroups, state]);
 
   /* =====================================================
      LOAD SAVED PRODUCTS
@@ -901,7 +956,6 @@ function ShopPageView({
       const firstResponse = await fetch(
         "/api/saved?type=PRODUCT&page=1&limit=50",
         {
-          method: "GET",
           cache: "no-store",
           headers: {
             Accept: "application/json",
@@ -927,8 +981,7 @@ function ShopPageView({
         );
       }
 
-      const firstData: unknown =
-        await firstResponse.json();
+      const firstData: unknown = await firstResponse.json();
 
       Object.assign(
         combined,
@@ -949,11 +1002,10 @@ function ShopPageView({
           ? Math.min(pagination.totalPages, 1000)
           : 1;
 
-      // Fetch additional pages in batches of four.
       for (
-        let firstPage = 2;
-        firstPage <= totalPages;
-        firstPage += 4
+        let page = 2;
+        page <= totalPages;
+        page += 4
       ) {
         if (signal?.aborted) {
           return combined;
@@ -963,18 +1015,17 @@ function ShopPageView({
           {
             length: Math.min(
               4,
-              totalPages - firstPage + 1,
+              totalPages - page + 1,
             ),
           },
-          (_, index) => firstPage + index,
+          (_, index) => page + index,
         );
 
-        const pageMaps = await Promise.all(
+        const maps = await Promise.all(
           pages.map(async (pageNumber) => {
             const response = await fetch(
               `/api/saved?type=PRODUCT&page=${pageNumber}&limit=50`,
               {
-                method: "GET",
                 cache: "no-store",
                 headers: {
                   Accept: "application/json",
@@ -989,16 +1040,15 @@ function ShopPageView({
               );
             }
 
-            const data: unknown =
-              await response.json();
-
-            return parseSavedProductMap(data);
+            return parseSavedProductMap(
+              await response.json(),
+            );
           }),
         );
 
-        for (const pageMap of pageMaps) {
-          Object.assign(combined, pageMap);
-        }
+        maps.forEach((item) =>
+          Object.assign(combined, item),
+        );
       }
 
       if (!signal?.aborted) {
@@ -1006,22 +1056,22 @@ function ShopPageView({
       }
 
       return combined;
-    } catch (loadError) {
+    } catch (err) {
       if (
-        loadError instanceof DOMException &&
-        loadError.name === "AbortError"
+        err instanceof DOMException &&
+        err.name === "AbortError"
       ) {
         return combined;
       }
 
       console.error(
         "Saved products loading error:",
-        loadError,
+        err,
       );
 
       if (
         !signal?.aborted &&
-        Object.keys(combined).length > 0
+        Object.keys(combined).length
       ) {
         setSavedProducts(combined);
       }
@@ -1051,132 +1101,98 @@ function ShopPageView({
 
       const hasFilters = Boolean(
         initialQuery.trim() ||
-          initialCategory ||
-          initialLocation ||
-          initialMinPrice ||
-          initialMaxPrice ||
-          initialAvailability ||
-          initialVerified,
+        initialCategory ||
+        initialState ||
+        initialLga ||
+        initialArea ||
+        initialMinPrice ||
+        initialMaxPrice ||
+        initialAvailability ||
+        initialVerified,
       );
 
       const useSearchApi = hasFilters;
 
       const useServerPagination =
-        !useSearchApi &&
-        sortBy === "NEWEST";
+        !useSearchApi && sortBy === "NEWEST";
 
       setServerPagination(useServerPagination);
 
       try {
-        let endpoint = "";
+        const params = new URLSearchParams();
+
+        let endpoint: string;
 
         if (useSearchApi) {
-          const params = new URLSearchParams();
-
           params.set("type", "product");
 
-          if (initialQuery.trim()) {
-            params.set(
-              "q",
-              initialQuery.trim(),
-            );
-          }
+          const fields: Array<[string, string]> = [
+            ["q", initialQuery],
+            ["category", initialCategory],
+            ["state", initialState],
+            ["lga", initialLga],
+            ["area", initialArea],
+            ["minPrice", initialMinPrice],
+            ["maxPrice", initialMaxPrice],
+            ["availability", initialAvailability],
+          ];
 
-          if (initialCategory.trim()) {
-            params.set(
-              "category",
-              initialCategory.trim(),
-            );
-          }
-
-          if (initialLocation.trim()) {
-            params.set(
-              "location",
-              initialLocation.trim(),
-            );
-          }
-
-          if (initialMinPrice.trim()) {
-            params.set(
-              "minPrice",
-              initialMinPrice.trim(),
-            );
-          }
-
-          if (initialMaxPrice.trim()) {
-            params.set(
-              "maxPrice",
-              initialMaxPrice.trim(),
-            );
-          }
-
-          if (initialAvailability) {
-            params.set(
-              "availability",
-              initialAvailability,
-            );
-          }
+          fields.forEach(([key, value]) => {
+            if (value.trim()) {
+              params.set(key, value.trim());
+            }
+          });
 
           if (initialVerified) {
             params.set("verified", "true");
           }
 
-          // Request up to 48 results for client-side sorting
-          // and compact 12-item pages.
           params.set("page", "1");
           params.set("pageSize", "48");
 
           endpoint = `/api/search?${params.toString()}`;
         } else {
-          const params = new URLSearchParams();
+          params.set(
+            "page",
+            String(
+              useServerPagination
+                ? initialPage
+                : 1,
+            ),
+          );
 
-          if (useServerPagination) {
-            params.set(
-              "page",
-              String(initialPage),
-            );
-
-            params.set(
-              "pageSize",
-              String(PAGE_SIZE),
-            );
-          } else {
-            params.set("page", "1");
-
-            params.set(
-              "pageSize",
-              String(MAX_CLIENT_RESULTS),
-            );
-          }
+          params.set(
+            "pageSize",
+            String(
+              useServerPagination
+                ? PAGE_SIZE
+                : MAX_CLIENT_RESULTS,
+            ),
+          );
 
           endpoint = `/api/recent-products?${params.toString()}`;
         }
 
-        const response = await fetch(
-          endpoint,
-          {
-            method: "GET",
-            cache: "no-store",
-            signal: controller.signal,
-          },
-        );
+        const response = await fetch(endpoint, {
+          method: "GET",
+          cache: "no-store",
+          signal: controller.signal,
+        });
 
-        const data: unknown =
-          await response.json();
+        const data: unknown = await response.json();
 
         if (!response.ok) {
-          const message =
+          throw new Error(
             isRecord(data) &&
             typeof data.error === "string"
               ? data.error
-              : "Unable to load products.";
-
-          throw new Error(message);
+              : "Unable to load products.",
+          );
         }
 
         if (!isRecord(data)) {
           throw new Error(
-            "The products API returned an invalid response.",
+            "Invalid products response.",
           );
         }
 
@@ -1191,36 +1207,33 @@ function ShopPageView({
               item !== null,
           );
 
-        if (controller.signal.aborted) {
-          return;
-        }
+        if (controller.signal.aborted) return;
 
         setProducts(parsedProducts);
 
         if (useSearchApi) {
-          const resultMeta = isRecord(data.resultMeta)
+          const meta = isRecord(data.resultMeta)
             ? data.resultMeta
             : null;
 
           const reportedTotal =
-            resultMeta &&
-            typeof resultMeta.totalProducts === "number"
-              ? resultMeta.totalProducts
+            typeof meta?.totalProducts === "number"
+              ? meta.totalProducts
               : parsedProducts.length;
 
           setTotalProducts(
-            Number.isFinite(reportedTotal)
-              ? Math.max(0, reportedTotal)
-              : parsedProducts.length,
+            Math.max(0, reportedTotal),
           );
 
           setResultsTruncated(
-            resultMeta?.truncated === true ||
-              reportedTotal > parsedProducts.length,
+            meta?.truncated === true ||
+            reportedTotal > parsedProducts.length,
           );
 
-          // Search API results are paginated locally after
-          // retrieving the first 48 matching products.
+          /*
+           * Search results are fetched in one batch of up to 48.
+           * Pagination below is client-side for this result set.
+           */
           setServerTotalPages(1);
         } else {
           const reportedTotal =
@@ -1239,9 +1252,7 @@ function ShopPageView({
                 );
 
           setTotalProducts(
-            Number.isFinite(reportedTotal)
-              ? Math.max(0, reportedTotal)
-              : parsedProducts.length,
+            Math.max(0, reportedTotal),
           );
 
           setServerTotalPages(
@@ -1250,20 +1261,20 @@ function ShopPageView({
 
           setResultsTruncated(
             !useServerPagination &&
-              reportedTotal > parsedProducts.length,
+            reportedTotal > parsedProducts.length,
           );
         }
-      } catch (loadError) {
+      } catch (err) {
         if (
-          loadError instanceof DOMException &&
-          loadError.name === "AbortError"
+          err instanceof DOMException &&
+          err.name === "AbortError"
         ) {
           return;
         }
 
         console.error(
           "Products loading error:",
-          loadError,
+          err,
         );
 
         setProducts([]);
@@ -1272,8 +1283,8 @@ function ShopPageView({
         setResultsTruncated(false);
 
         setError(
-          loadError instanceof Error
-            ? loadError.message
+          err instanceof Error
+            ? err.message
             : "Unable to load products. Please try again.",
         );
       } finally {
@@ -1289,7 +1300,9 @@ function ShopPageView({
   }, [
     initialQuery,
     initialCategory,
-    initialLocation,
+    initialState,
+    initialLga,
+    initialArea,
     initialMinPrice,
     initialMaxPrice,
     initialAvailability,
@@ -1299,7 +1312,7 @@ function ShopPageView({
   ]);
 
   /* =====================================================
-     SORT PRODUCTS
+     SORTING AND PAGINATION
   ===================================================== */
 
   const sortedProducts = useMemo(() => {
@@ -1323,13 +1336,11 @@ function ShopPageView({
         break;
 
       case "NAME":
-        result.sort(
-          (a, b) =>
-            a.name.localeCompare(b.name),
+        result.sort((a, b) =>
+          a.name.localeCompare(b.name),
         );
         break;
 
-      case "NEWEST":
       default:
         break;
     }
@@ -1337,17 +1348,11 @@ function ShopPageView({
     return result;
   }, [products, sortBy]);
 
-  /* =====================================================
-     PAGINATION
-  ===================================================== */
-
   const totalPages = serverPagination
     ? serverTotalPages
     : Math.max(
         1,
-        Math.ceil(
-          sortedProducts.length / PAGE_SIZE,
-        ),
+        Math.ceil(sortedProducts.length / PAGE_SIZE),
       );
 
   const currentPage = Math.min(
@@ -1362,25 +1367,25 @@ function ShopPageView({
         currentPage * PAGE_SIZE,
       );
 
-  const resultStart =
-    visibleProducts.length > 0
-      ? (currentPage - 1) * PAGE_SIZE + 1
-      : 0;
+  const resultStart = visibleProducts.length
+    ? (currentPage - 1) * PAGE_SIZE + 1
+    : 0;
 
-  const resultEnd =
-    resultStart > 0
-      ? resultStart + visibleProducts.length - 1
-      : 0;
+  const resultEnd = resultStart
+    ? resultStart + visibleProducts.length - 1
+    : 0;
 
   /* =====================================================
-     FILTER URL ACTIONS
+     FILTER ACTIONS
   ===================================================== */
 
   function getCurrentFilters(): ShopFilters {
     return {
       query,
       category,
-      location,
+      state,
+      lga,
+      area,
       minPrice,
       maxPrice,
       availability,
@@ -1394,27 +1399,19 @@ function ShopPageView({
     event.preventDefault();
 
     router.push(
-      buildShopUrl(
-        getCurrentFilters(),
-        1,
-      ),
+      buildShopUrl(getCurrentFilters(), 1),
     );
   }
 
   function applyFilters() {
     router.push(
-      buildShopUrl(
-        getCurrentFilters(),
-        1,
-      ),
+      buildShopUrl(getCurrentFilters(), 1),
     );
 
     setShowMobileFilters(false);
   }
 
-  function selectCategory(
-    nextCategory: string,
-  ) {
+  function selectCategory(nextCategory: string) {
     setCategory(nextCategory);
 
     router.push(
@@ -1428,14 +1425,31 @@ function ShopPageView({
     );
   }
 
+  function handleAreaChange(value: string) {
+    setArea(value);
+  }
+
+  function handleAreaSelect(
+    selected: AreaSelection,
+  ) {
+    setState(selected.state);
+    setLga(selected.lga);
+    setArea(selected.area);
+  }
+
   function clearFilters() {
     setQuery("");
     setCategory("");
-    setLocation("");
+
+    setState("");
+    setLga("");
+    setArea("");
+
     setMinPrice("");
     setMaxPrice("");
     setAvailability("");
     setVerified(false);
+
     setSortBy("NEWEST");
     setShowMobileFilters(false);
 
@@ -1452,10 +1466,7 @@ function ShopPageView({
     }
 
     router.push(
-      buildShopUrl(
-        getCurrentFilters(),
-        page,
-      ),
+      buildShopUrl(getCurrentFilters(), page),
     );
 
     window.scrollTo({
@@ -1464,16 +1475,21 @@ function ShopPageView({
     });
   }
 
+  const activeFilterCount = [
+    category,
+    state || lga || area ? "LOCATION" : "",
+    minPrice,
+    maxPrice,
+    availability,
+    verified ? "VERIFIED" : "",
+  ].filter(Boolean).length;
+
   /* =====================================================
-     SAVE / UNSAVE PRODUCT
+     SAVE / UNSAVE PRODUCTS
   ===================================================== */
 
-  async function toggleSavedProduct(
-    product: Product,
-  ) {
-    if (savingProductIds[product.id]) {
-      return;
-    }
+  async function toggleSavedProduct(product: Product) {
+    if (savingProductIds[product.id]) return;
 
     setSaveFeedback("");
     setSaveFeedbackError(false);
@@ -1484,12 +1500,11 @@ function ShopPageView({
     }));
 
     try {
-      const savedRecordId =
-        savedProducts[product.id];
+      const savedId = savedProducts[product.id];
 
-      if (savedRecordId) {
+      if (savedId) {
         const response = await fetch(
-          `/api/saved/${encodeURIComponent(savedRecordId)}`,
+          `/api/saved/${encodeURIComponent(savedId)}`,
           {
             method: "DELETE",
             cache: "no-store",
@@ -1499,17 +1514,17 @@ function ShopPageView({
           },
         );
 
-        const data: unknown =
-          await response.json().catch(() => null);
+        const data: unknown = await response
+          .json()
+          .catch(() => null);
 
         if (!response.ok) {
-          const message =
+          throw new Error(
             isRecord(data) &&
             typeof data.error === "string"
               ? data.error
-              : "Unable to remove this saved product.";
-
-          throw new Error(message);
+              : "Unable to remove this saved product.",
+          );
         }
 
         setSavedProducts((current) => {
@@ -1524,23 +1539,21 @@ function ShopPageView({
           "Product removed from Saved.",
         );
       } else {
-        const response = await fetch(
-          "/api/saved",
-          {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-              Accept: "application/json",
-            },
-            body: JSON.stringify({
-              type: "PRODUCT",
-              listingId: product.id,
-            }),
+        const response = await fetch("/api/saved", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Accept: "application/json",
           },
-        );
+          body: JSON.stringify({
+            type: "PRODUCT",
+            listingId: product.id,
+          }),
+        });
 
-        const data: unknown =
-          await response.json().catch(() => null);
+        const data: unknown = await response
+          .json()
+          .catch(() => null);
 
         if (
           response.status === 401 ||
@@ -1552,48 +1565,44 @@ function ShopPageView({
         }
 
         if (!response.ok) {
-          const message =
+          throw new Error(
             isRecord(data) &&
             typeof data.error === "string"
               ? data.error
-              : "Unable to save this product.";
-
-          throw new Error(message);
+              : "Unable to save this product.",
+          );
         }
 
-        const createdRecordId =
-          getSavedRecordId(data);
+        const createdId = getSavedRecordId(data);
 
-        if (createdRecordId) {
+        if (createdId) {
           setSavedProducts((current) => ({
             ...current,
-            [product.id]: createdRecordId,
+            [product.id]: createdId,
           }));
         } else {
           await loadSavedProducts();
         }
 
-        const alreadySaved =
-          isRecord(data) &&
-          data.alreadySaved === true;
-
         setSaveFeedback(
-          alreadySaved
+          isRecord(data) &&
+          data.alreadySaved === true
             ? "This product is already in Saved."
             : "Product added to Saved.",
         );
       }
-    } catch (saveError) {
-      console.error(
-        "Save product action error:",
-        saveError,
+
+      window.dispatchEvent(
+        new Event("remarket-saved-items-changed"),
       );
+    } catch (err) {
+      console.error("Save product error:", err);
 
       setSaveFeedbackError(true);
 
       setSaveFeedback(
-        saveError instanceof Error
-          ? saveError.message
+        err instanceof Error
+          ? err.message
           : "Unable to update your saved products.",
       );
     } finally {
@@ -1608,12 +1617,10 @@ function ShopPageView({
   }
 
   /* =====================================================
-     ADD PRODUCT TO CART
+     ADD TO CART
   ===================================================== */
 
-  async function addProductToCart(
-    product: Product,
-  ) {
+  async function addProductToCart(product: Product) {
     if (
       addingToCartProductIds[product.id] ||
       !canAddProductToCart(product)
@@ -1645,8 +1652,9 @@ function ShopPageView({
         },
       );
 
-      const data: unknown =
-        await response.json().catch(() => null);
+      const data: unknown = await response
+        .json()
+        .catch(() => null);
 
       if (
         response.status === 401 ||
@@ -1663,15 +1671,12 @@ function ShopPageView({
       }
 
       if (!response.ok) {
-        const serverMessage =
+        throw new Error(
           isRecord(data)
             ? cleanString(data.error) ??
-              cleanString(data.message)
-            : null;
-
-        throw new Error(
-          serverMessage ??
-            "Unable to add this product to your cart.",
+                cleanString(data.message) ??
+                "Unable to add this product to your cart."
+            : "Unable to add this product to your cart.",
         );
       }
 
@@ -1681,22 +1686,18 @@ function ShopPageView({
         message: "Added to cart successfully.",
       });
 
-      // Refresh cart counters in components listening for this event.
       window.dispatchEvent(
         new Event("remarket-cart-changed"),
       );
-    } catch (cartError) {
-      console.error(
-        "Add to cart error:",
-        cartError,
-      );
+    } catch (err) {
+      console.error("Add to cart error:", err);
 
       setCartFeedback({
         productId: product.id,
         kind: "error",
         message:
-          cartError instanceof Error
-            ? cartError.message
+          err instanceof Error
+            ? err.message
             : "Unable to add this product to your cart.",
       });
     } finally {
@@ -1717,6 +1718,7 @@ function ShopPageView({
   function renderFilterControls() {
     return (
       <div className="space-y-5">
+        {/* CATEGORY */}
         <div>
           <label
             htmlFor="shop-category"
@@ -1731,11 +1733,9 @@ function ShopPageView({
             onChange={(event) =>
               setCategory(event.target.value)
             }
-            className="h-11 w-full rounded-xl border border-[#EAE6DF] bg-white px-3 text-sm text-[#17202A] outline-none transition focus:border-[#FF9A81] focus:ring-2 focus:ring-[#FF5A36]/10"
+            className="h-11 w-full rounded-xl border border-[#EAE6DF] bg-white px-3 text-sm text-[#17202A] outline-none focus:border-[#FF9A81] focus:ring-2 focus:ring-[#FF5A36]/10"
           >
-            <option value="">
-              All categories
-            </option>
+            <option value="">All categories</option>
 
             {categories.map((item) => (
               <option
@@ -1748,34 +1748,97 @@ function ShopPageView({
           </select>
         </div>
 
+        {/* STATE */}
         <div>
           <label
-            htmlFor="shop-location"
+            htmlFor="shop-state"
+            className="mb-2 block text-xs font-bold text-[#17202A]"
+          >
+            State
+          </label>
+
+          <select
+            id="shop-state"
+            value={state}
+            onChange={(event) => {
+              setState(event.target.value);
+              setLga("");
+              setArea("");
+            }}
+            className="h-11 w-full rounded-xl border border-[#EAE6DF] bg-white px-3 text-sm text-[#17202A] outline-none focus:border-[#FF9A81] focus:ring-2 focus:ring-[#FF5A36]/10"
+          >
+            <option value="">
+              All supported states
+            </option>
+
+            {locationGroups.map((item) => (
+              <option
+                key={item.state}
+                value={item.state}
+              >
+                {item.state}
+              </option>
+            ))}
+          </select>
+        </div>
+
+        {/* LGA */}
+        <div>
+          <label
+            htmlFor="shop-lga"
+            className="mb-2 block text-xs font-bold text-[#17202A]"
+          >
+            Local Government Area
+          </label>
+
+          <select
+            id="shop-lga"
+            value={lga}
+            disabled={!state}
+            onChange={(event) => {
+              setLga(event.target.value);
+              setArea("");
+            }}
+            className="h-11 w-full rounded-xl border border-[#EAE6DF] bg-white px-3 text-sm text-[#17202A] outline-none focus:border-[#FF9A81] focus:ring-2 focus:ring-[#FF5A36]/10 disabled:cursor-not-allowed disabled:bg-[#FCFAF6]"
+          >
+            <option value="">
+              {state
+                ? "All LGAs in selected state"
+                : "Select a state first"}
+            </option>
+
+            {availableLgas.map((item) => (
+              <option
+                key={item}
+                value={item}
+              >
+                {item}
+              </option>
+            ))}
+          </select>
+        </div>
+
+        {/* AREA AUTOCOMPLETE */}
+        <div>
+          <label
+            htmlFor="shop-area"
             className="mb-2 block text-xs font-bold text-[#17202A]"
           >
             Area or neighbourhood
           </label>
 
-          <div className="relative">
-            <MapPin
-              className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[#9A9087]"
-              aria-hidden="true"
-            />
-
-            <input
-              id="shop-location"
-              type="text"
-              value={location}
-              onChange={(event) =>
-                setLocation(event.target.value)
-              }
-              placeholder="e.g. Ogba, Ikeja"
-              maxLength={100}
-              className="h-11 w-full rounded-xl border border-[#EAE6DF] bg-white pl-9 pr-3 text-sm text-[#17202A] outline-none transition focus:border-[#FF9A81] focus:ring-2 focus:ring-[#FF5A36]/10"
-            />
-          </div>
+          <AreaAutocomplete
+            id="shop-area"
+            value={area}
+            state={state || undefined}
+            lga={lga || undefined}
+            onChange={handleAreaChange}
+            onSelect={handleAreaSelect}
+            placeholder="Search an area, e.g. Ogba or Ekpoma"
+          />
         </div>
 
+        {/* PRICE RANGE */}
         <div>
           <p className="mb-2 text-xs font-bold text-[#17202A]">
             Price range
@@ -1801,7 +1864,7 @@ function ShopPageView({
                   setMinPrice(event.target.value)
                 }
                 placeholder="₦ Min"
-                className="h-11 w-full min-w-0 rounded-xl border border-[#EAE6DF] bg-white px-2.5 text-sm text-[#17202A] outline-none focus:border-[#FF9A81] focus:ring-2 focus:ring-[#FF5A36]/10"
+                className="h-11 w-full min-w-0 rounded-xl border border-[#EAE6DF] bg-white px-2.5 text-sm outline-none focus:border-[#FF9A81] focus:ring-2 focus:ring-[#FF5A36]/10"
               />
             </div>
 
@@ -1824,12 +1887,13 @@ function ShopPageView({
                   setMaxPrice(event.target.value)
                 }
                 placeholder="₦ Max"
-                className="h-11 w-full min-w-0 rounded-xl border border-[#EAE6DF] bg-white px-2.5 text-sm text-[#17202A] outline-none focus:border-[#FF9A81] focus:ring-2 focus:ring-[#FF5A36]/10"
+                className="h-11 w-full min-w-0 rounded-xl border border-[#EAE6DF] bg-white px-2.5 text-sm outline-none focus:border-[#FF9A81] focus:ring-2 focus:ring-[#FF5A36]/10"
               />
             </div>
           </div>
         </div>
 
+        {/* AVAILABILITY */}
         <div>
           <label
             htmlFor="shop-availability"
@@ -1843,31 +1907,19 @@ function ShopPageView({
             value={availability}
             onChange={(event) =>
               setAvailability(
-                parseAvailabilityFilter(
-                  event.target.value,
-                ),
+                parseAvailabilityFilter(event.target.value),
               )
             }
-            className="h-11 w-full rounded-xl border border-[#EAE6DF] bg-white px-3 text-sm text-[#17202A] outline-none focus:border-[#FF9A81] focus:ring-2 focus:ring-[#FF5A36]/10"
+            className="h-11 w-full rounded-xl border border-[#EAE6DF] bg-white px-3 text-sm outline-none focus:border-[#FF9A81] focus:ring-2 focus:ring-[#FF5A36]/10"
           >
-            <option value="">
-              Any availability
-            </option>
-
-            <option value="AVAILABLE">
-              Available
-            </option>
-
-            <option value="ASK_SELLER">
-              Ask seller
-            </option>
-
-            <option value="UNAVAILABLE">
-              Unavailable
-            </option>
+            <option value="">Any availability</option>
+            <option value="AVAILABLE">Available</option>
+            <option value="ASK_SELLER">Ask seller</option>
+            <option value="UNAVAILABLE">Unavailable</option>
           </select>
         </div>
 
+        {/* VERIFIED SELLERS */}
         <label className="flex cursor-pointer items-center gap-3 rounded-xl border border-[#EAE6DF] bg-white p-3">
           <input
             type="checkbox"
@@ -1889,6 +1941,7 @@ function ShopPageView({
           </span>
         </label>
 
+        {/* FILTER ACTIONS */}
         <div className="space-y-2 border-t border-[#EAE6DF] pt-4">
           <button
             type="button"
@@ -1912,17 +1965,8 @@ function ShopPageView({
     );
   }
 
-  const activeFilterCount = [
-    category,
-    location,
-    minPrice,
-    maxPrice,
-    availability,
-    verified ? "VERIFIED" : "",
-  ].filter(Boolean).length;
-
   /* =====================================================
-     RENDER
+     PAGE RENDER
   ===================================================== */
 
   return (
@@ -1934,9 +1978,7 @@ function ShopPageView({
         className="min-h-dvh overflow-x-clip bg-[#FFFDFC] pb-28 text-[#17202A] lg:pb-10"
       >
         <div className="mx-auto max-w-[1600px] px-4 pb-8 pt-5 sm:px-6 lg:px-8 lg:pt-8 xl:px-10">
-
-          {/* PAGE INTRODUCTION */}
-
+          {/* INTRODUCTION */}
           <section className="relative overflow-hidden rounded-[24px] border border-[#FFE0D5] bg-gradient-to-r from-[#FFF0E7] via-[#FFF5EE] to-[#FFE4D9] px-5 py-6 sm:px-8 sm:py-8">
             <div
               aria-hidden="true"
@@ -1945,10 +1987,7 @@ function ShopPageView({
 
             <div className="relative z-10">
               <div className="inline-flex items-center gap-2 rounded-full border border-[#FFD1C5] bg-white/75 px-3 py-1.5 text-[10px] font-bold uppercase tracking-[0.12em] text-[#9F2D18]">
-                <Package
-                  className="h-3.5 w-3.5 text-[#FF5A36]"
-                  aria-hidden="true"
-                />
+                <Package className="h-3.5 w-3.5 text-[#FF5A36]" />
                 ReMarket Products
               </div>
 
@@ -1980,18 +2019,14 @@ function ShopPageView({
             </div>
           </section>
 
-          {/* SEARCH AND FILTER TOOLBAR */}
-
+          {/* SEARCH TOOLBAR */}
           <section className="mt-6">
             <form
               onSubmit={submitSearch}
               role="search"
-              className="flex h-[52px] w-full items-center rounded-2xl border border-[#EAE6DF] bg-white p-1.5 shadow-[0_3px_14px_rgba(23,32,42,0.035)] transition focus-within:border-[#FF9A81] focus-within:ring-2 focus-within:ring-[#FF5A36]/10"
+              className="flex h-[52px] w-full items-center rounded-2xl border border-[#EAE6DF] bg-white p-1.5 shadow-[0_3px_14px_rgba(23,32,42,0.035)] focus-within:border-[#FF9A81] focus-within:ring-2 focus-within:ring-[#FF5A36]/10"
             >
-              <Search
-                className="ml-3 h-5 w-5 shrink-0 text-[#81766C]"
-                aria-hidden="true"
-              />
+              <Search className="ml-3 h-5 w-5 shrink-0 text-[#81766C]" />
 
               <input
                 value={query}
@@ -2000,7 +2035,7 @@ function ShopPageView({
                 }
                 placeholder="What product are you looking for?"
                 aria-label="Search products"
-                className="min-w-0 flex-1 bg-transparent px-3 text-sm text-[#17202A] outline-none placeholder:text-[#91877E]"
+                className="min-w-0 flex-1 bg-transparent px-3 text-sm outline-none placeholder:text-[#91877E]"
               />
 
               <button
@@ -2009,7 +2044,6 @@ function ShopPageView({
                 className="flex h-10 shrink-0 items-center justify-center gap-2 rounded-xl bg-[#FF5A36] px-4 text-xs font-bold text-white transition hover:bg-[#E94A28] disabled:cursor-not-allowed disabled:opacity-50 sm:px-6"
               >
                 <Search className="h-4 w-4" />
-
                 <span className="hidden sm:inline">
                   Search
                 </span>
@@ -2019,13 +2053,10 @@ function ShopPageView({
             <div className="mt-3 flex flex-wrap items-center justify-between gap-3">
               <button
                 type="button"
-                onClick={() =>
-                  setShowMobileFilters(true)
-                }
+                onClick={() => setShowMobileFilters(true)}
                 className="inline-flex min-h-10 items-center gap-2 rounded-xl border border-[#EAE6DF] bg-white px-3.5 py-2 text-xs font-bold text-[#514840] transition hover:border-[#FF9A81] hover:text-[#9F2D18] lg:hidden"
               >
                 <SlidersHorizontal className="h-4 w-4" />
-
                 Filters
 
                 {activeFilterCount > 0 && (
@@ -2047,9 +2078,10 @@ function ShopPageView({
                   id="product-sort"
                   value={sortBy}
                   onChange={(event) => {
-                    setSortBy(
-                      event.target.value as SortOption,
-                    );
+                    const nextSort =
+                      event.target.value as SortOption;
+
+                    setSortBy(nextSort);
 
                     if (initialPage !== 1) {
                       router.push(
@@ -2060,20 +2092,17 @@ function ShopPageView({
                       );
                     }
                   }}
-                  className="h-10 max-w-[175px] rounded-xl border border-[#EAE6DF] bg-white px-3 text-xs font-semibold text-[#17202A] outline-none focus:border-[#FF9A81]"
+                  className="h-10 max-w-[175px] rounded-xl border border-[#EAE6DF] bg-white px-3 text-xs font-semibold outline-none focus:border-[#FF9A81]"
                 >
                   <option value="NEWEST">
                     Recently added
                   </option>
-
                   <option value="PRICE_LOW">
                     Price: Low to High
                   </option>
-
                   <option value="PRICE_HIGH">
                     Price: High to Low
                   </option>
-
                   <option value="NAME">
                     Product name
                   </option>
@@ -2083,7 +2112,6 @@ function ShopPageView({
           </section>
 
           {/* CATEGORY CHIPS */}
-
           <section
             aria-label="Product categories"
             className="mt-5"
@@ -2108,9 +2136,7 @@ function ShopPageView({
               <button
                 type="button"
                 aria-pressed={!category}
-                onClick={() =>
-                  selectCategory("")
-                }
+                onClick={() => selectCategory("")}
                 className={`flex min-h-10 shrink-0 items-center rounded-full border px-4 py-2 text-xs font-bold transition ${
                   !category
                     ? "border-[#FF5A36] bg-[#FF5A36] text-white"
@@ -2148,22 +2174,15 @@ function ShopPageView({
             </div>
           </section>
 
-          {/* MAIN CONTENT AND SIDEBAR */}
-
+          {/* FILTER SIDEBAR + RESULTS */}
           <div className="mt-6 grid grid-cols-1 gap-6 lg:grid-cols-[230px_minmax(0,1fr)] xl:grid-cols-[250px_minmax(0,1fr)]">
-
-            {/* DESKTOP FILTERS */}
-
+            {/* DESKTOP FILTER SIDEBAR */}
             <aside className="hidden lg:block">
               <div className="sticky top-[105px] rounded-2xl border border-[#EAE6DF] bg-[#FCFAF6] p-4">
                 <div className="mb-4 flex items-center justify-between">
                   <div className="flex items-center gap-2">
-                    <Filter
-                      className="h-4 w-4 text-[#FF5A36]"
-                      aria-hidden="true"
-                    />
-
-                    <h2 className="text-sm font-bold text-[#17202A]">
+                    <Filter className="h-4 w-4 text-[#FF5A36]" />
+                    <h2 className="text-sm font-bold">
                       Filters
                     </h2>
                   </div>
@@ -2182,7 +2201,6 @@ function ShopPageView({
             </aside>
 
             {/* PRODUCT RESULTS */}
-
             <section className="min-w-0">
               <div className="mb-4 flex flex-wrap items-end justify-between gap-3">
                 <div>
@@ -2211,10 +2229,9 @@ function ShopPageView({
               </div>
 
               {/* SAVED FEEDBACK */}
-
               {saveFeedback && (
                 <div
-                  role="status"
+                  role={saveFeedbackError ? "alert" : "status"}
                   className={`mb-4 flex items-center justify-between gap-3 rounded-xl border px-4 py-3 text-xs ${
                     saveFeedbackError
                       ? "border-red-200 bg-red-50 text-red-700"
@@ -2233,14 +2250,14 @@ function ShopPageView({
                 </div>
               )}
 
-              {/* LOADING SKELETONS */}
-
+              {/* LOADING */}
               {loading && (
                 <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-4 2xl:grid-cols-5">
-                  {Array.from({ length: 10 }).map(
+                  {Array.from(
+                    { length: 10 },
                     (_, index) => (
                       <div
-                        key={`product-loading-${index}`}
+                        key={index}
                         className="overflow-hidden rounded-xl border border-[#EAE6DF] bg-white"
                         aria-hidden="true"
                       >
@@ -2248,9 +2265,7 @@ function ShopPageView({
 
                         <div className="space-y-2 p-2.5">
                           <div className="h-3 w-4/5 animate-pulse rounded bg-[#F0ECE7]" />
-
                           <div className="h-3 w-2/5 animate-pulse rounded bg-[#F0ECE7]" />
-
                           <div className="h-2.5 w-3/5 animate-pulse rounded bg-[#F0ECE7]" />
                         </div>
                       </div>
@@ -2260,7 +2275,6 @@ function ShopPageView({
               )}
 
               {/* ERROR */}
-
               {!loading && error && (
                 <div className="rounded-2xl border border-red-200 bg-red-50 px-5 py-10 text-center">
                   <Package className="mx-auto h-9 w-9 text-red-400" />
@@ -2276,7 +2290,7 @@ function ShopPageView({
                   <button
                     type="button"
                     onClick={() => router.refresh()}
-                    className="mt-5 rounded-xl bg-[#FF5A36] px-5 py-2.5 text-xs font-bold text-white transition hover:bg-[#E94A28]"
+                    className="mt-5 rounded-xl bg-[#FF5A36] px-5 py-2.5 text-xs font-bold text-white hover:bg-[#E94A28]"
                   >
                     Try again
                   </button>
@@ -2284,7 +2298,6 @@ function ShopPageView({
               )}
 
               {/* EMPTY RESULTS */}
-
               {!loading &&
                 !error &&
                 visibleProducts.length === 0 && (
@@ -2293,7 +2306,7 @@ function ShopPageView({
                       <Search className="h-7 w-7" />
                     </div>
 
-                    <h3 className="mt-4 text-sm font-bold text-[#17202A]">
+                    <h3 className="mt-4 text-sm font-bold">
                       No products found
                     </h3>
 
@@ -2305,7 +2318,7 @@ function ShopPageView({
                     <button
                       type="button"
                       onClick={clearFilters}
-                      className="mt-5 inline-flex min-h-10 items-center gap-2 rounded-xl bg-[#FF5A36] px-5 py-2.5 text-xs font-bold text-white transition hover:bg-[#E94A28]"
+                      className="mt-5 inline-flex min-h-10 items-center gap-2 rounded-xl bg-[#FF5A36] px-5 py-2.5 text-xs font-bold text-white hover:bg-[#E94A28]"
                     >
                       Clear filters
                       <RotateCcw className="h-3.5 w-3.5" />
@@ -2314,7 +2327,6 @@ function ShopPageView({
                 )}
 
               {/* PRODUCT GRID */}
-
               {!loading &&
                 !error &&
                 visibleProducts.length > 0 && (
@@ -2329,7 +2341,7 @@ function ShopPageView({
                           savingProductIds[product.id],
                         );
 
-                        const isAddingToCart = Boolean(
+                        const isAdding = Boolean(
                           addingToCartProductIds[product.id],
                         );
 
@@ -2341,16 +2353,12 @@ function ShopPageView({
                           product.images[0]?.url ??
                           null;
 
-                        const area =
-                          product.seller.location?.area ??
-                          "Local";
-
                         const feedback =
                           cartFeedback?.productId === product.id
                             ? cartFeedback
                             : null;
 
-                        const addedSuccessfully =
+                        const added =
                           feedback?.kind === "success";
 
                         return (
@@ -2358,8 +2366,6 @@ function ShopPageView({
                             key={product.id}
                             className="group flex min-w-0 flex-col overflow-hidden rounded-xl border border-[#EAE6DF] bg-white shadow-[0_3px_12px_rgba(23,32,42,0.035)] transition duration-200 hover:-translate-y-0.5 hover:border-[#FFD0C3] hover:shadow-[0_8px_20px_rgba(23,32,42,0.08)]"
                           >
-                            {/* PRODUCT IMAGE */}
-
                             <div className="relative aspect-[4/3] overflow-hidden bg-[#FCFAF6]">
                               <Link
                                 href={`/product/${encodeURIComponent(product.id)}`}
@@ -2380,8 +2386,6 @@ function ShopPageView({
                                 )}
                               </Link>
 
-                              {/* SAVE BUTTON */}
-
                               <button
                                 type="button"
                                 aria-label={
@@ -2391,10 +2395,10 @@ function ShopPageView({
                                 }
                                 aria-pressed={isSaved}
                                 disabled={isSaving}
-                                onClick={() => {
-                                  void toggleSavedProduct(product);
-                                }}
-                                className={`absolute right-2 top-2 z-10 flex h-8 w-8 items-center justify-center rounded-full border border-white/80 bg-white/95 shadow-sm transition hover:scale-105 disabled:cursor-not-allowed disabled:opacity-60 ${
+                                onClick={() =>
+                                  void toggleSavedProduct(product)
+                                }
+                                className={`absolute right-2 top-2 z-10 flex h-8 w-8 items-center justify-center rounded-full border border-white/80 bg-white/95 shadow-sm transition hover:scale-105 disabled:opacity-60 ${
                                   isSaved
                                     ? "text-[#FF5A36]"
                                     : "text-[#756B61] hover:text-[#FF5A36]"
@@ -2414,20 +2418,12 @@ function ShopPageView({
                                 )}
                               </button>
 
-                              {/* AVAILABILITY */}
-
                               <span
-                                className={`absolute bottom-2 left-2 rounded-full px-2 py-1 text-[8px] font-bold shadow-sm ${getAvailabilityStyle(
-                                  product.availability,
-                                )}`}
+                                className={`absolute bottom-2 left-2 rounded-full px-2 py-1 text-[8px] font-bold shadow-sm ${getAvailabilityStyle(product.availability)}`}
                               >
-                                {getAvailabilityLabel(
-                                  product.availability,
-                                )}
+                                {getAvailabilityLabel(product.availability)}
                               </span>
                             </div>
-
-                            {/* PRODUCT INFORMATION */}
 
                             <div className="flex flex-1 flex-col p-2.5 sm:p-3">
                               {product.category && (
@@ -2438,87 +2434,49 @@ function ShopPageView({
 
                               <Link
                                 href={`/product/${encodeURIComponent(product.id)}`}
-                                className="line-clamp-2 min-h-9 text-[11px] font-bold leading-4 text-[#17202A] transition hover:text-[#9F2D18] sm:text-xs"
+                                className="line-clamp-2 min-h-9 text-[11px] font-bold leading-4 text-[#17202A] hover:text-[#9F2D18] sm:text-xs"
                               >
                                 {product.name}
                               </Link>
-
-                              {/* PRICE */}
 
                               <p className="mt-1.5 text-xs font-extrabold text-[#9F2D18] sm:text-sm">
                                 {formatPrice(product)}
                               </p>
 
-                              {/* SELLER */}
-
-                              <div className="mt-2.5 flex min-w-0 items-center gap-1.5 border-t border-[#F0ECE7] pt-2.5">
-                                <div className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-[#FFF0EB] text-[#9F2D18]">
-                                  <StoreIcon />
-                                </div>
-
-                                <div className="min-w-0 flex-1">
-                                  <div className="flex min-w-0 items-center gap-1 text-[9px] font-semibold text-[#514840] sm:text-[10px]">
-                                    <span className="truncate">
-                                      {product.seller.name}
-                                    </span>
-
-                                    {product.seller.verified && (
-                                      <BadgeCheck
-                                        className="h-3 w-3 shrink-0 text-[#2196C5]"
-                                        aria-label="Verified seller"
-                                      />
-                                    )}
-                                  </div>
-
-                                  <p className="mt-0.5 flex items-center gap-1 truncate text-[8px] text-[#91877E] sm:text-[9px]">
-                                    <MapPin className="h-2.5 w-2.5 shrink-0" />
-                                    {area}
-                                  </p>
-                                </div>
-                              </div>
-
-                              {/* VIEW PRODUCT + ADD TO CART */}
-
                               <div className="mt-2.5 flex items-center gap-1.5 border-t border-[#F0ECE7] pt-2.5">
                                 <Link
                                   href={`/product/${encodeURIComponent(product.id)}`}
-                                  className="flex min-h-9 min-w-0 flex-1 items-center justify-center gap-1 rounded-lg bg-[#FFF1ED] px-1.5 py-2 text-[9px] font-bold text-[#9F2D18] transition hover:bg-[#FFE0D6] sm:text-[10px]"
+                                  className="flex min-h-9 min-w-0 flex-1 items-center justify-center gap-1 rounded-lg bg-[#FFF1ED] px-1.5 py-2 text-[9px] font-bold text-[#9F2D18] hover:bg-[#FFE0D6] sm:text-[10px]"
                                 >
                                   View product
-
                                   <ArrowRight className="h-3 w-3 shrink-0" />
                                 </Link>
 
                                 <button
                                   type="button"
-                                  disabled={
-                                    !canAdd ||
-                                    isAddingToCart
+                                  disabled={!canAdd || isAdding}
+                                  onClick={() =>
+                                    void addProductToCart(product)
                                   }
-                                  onClick={() => {
-                                    void addProductToCart(product);
-                                  }}
                                   title={getCartDisabledReason(product)}
                                   aria-label={`Add ${product.name} to cart`}
                                   className={`flex h-9 w-10 shrink-0 items-center justify-center rounded-lg transition disabled:cursor-not-allowed disabled:opacity-40 ${
-                                    addedSuccessfully
+                                    added
                                       ? "bg-[#DCFCE7] text-[#166534]"
                                       : canAdd
                                         ? "bg-[#FF5A36] text-white hover:bg-[#E94A28]"
                                         : "bg-[#EEEAE6] text-[#A69B91]"
                                   }`}
                                 >
-                                  {isAddingToCart ? (
+                                  {isAdding ? (
                                     <Loader2 className="h-4 w-4 animate-spin" />
-                                  ) : addedSuccessfully ? (
+                                  ) : added ? (
                                     <Check className="h-4 w-4" />
                                   ) : (
                                     <ShoppingCart className="h-4 w-4" />
                                   )}
                                 </button>
                               </div>
-
-                              {/* CART FEEDBACK */}
 
                               {feedback && (
                                 <p
@@ -2542,8 +2500,6 @@ function ShopPageView({
                       })}
                     </div>
 
-                    {/* RESULT LIMIT NOTICE */}
-
                     {resultsTruncated && (
                       <div className="mt-5 rounded-xl border border-[#F2E3C9] bg-[#FFFAF0] px-4 py-3 text-xs leading-5 text-[#785B25]">
                         Only the first set of matching products
@@ -2552,8 +2508,6 @@ function ShopPageView({
                         specific results.
                       </div>
                     )}
-
-                    {/* PAGINATION */}
 
                     {totalPages > 1 && (
                       <div className="mt-7 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-[#EAE6DF] bg-white p-3 sm:px-4">
@@ -2572,12 +2526,12 @@ function ShopPageView({
                             }
                             disabled={currentPage <= 1}
                             aria-label="Previous page"
-                            className="flex h-9 w-9 items-center justify-center rounded-xl border border-[#EAE6DF] text-[#9F2D18] transition hover:bg-[#FFF1ED] disabled:cursor-not-allowed disabled:opacity-40"
+                            className="flex h-9 w-9 items-center justify-center rounded-xl border border-[#EAE6DF] text-[#9F2D18] hover:bg-[#FFF1ED] disabled:opacity-40"
                           >
                             <ChevronLeft className="h-4 w-4" />
                           </button>
 
-                          <span className="min-w-[74px] text-center text-xs font-bold text-[#17202A]">
+                          <span className="min-w-[74px] text-center text-xs font-bold">
                             {currentPage} / {totalPages}
                           </span>
 
@@ -2588,7 +2542,7 @@ function ShopPageView({
                             }
                             disabled={currentPage >= totalPages}
                             aria-label="Next page"
-                            className="flex h-9 w-9 items-center justify-center rounded-xl border border-[#EAE6DF] text-[#9F2D18] transition hover:bg-[#FFF1ED] disabled:cursor-not-allowed disabled:opacity-40"
+                            className="flex h-9 w-9 items-center justify-center rounded-xl border border-[#EAE6DF] text-[#9F2D18] hover:bg-[#FFF1ED] disabled:opacity-40"
                           >
                             <ChevronRight className="h-4 w-4" />
                           </button>
@@ -2600,24 +2554,15 @@ function ShopPageView({
             </section>
           </div>
 
-          {/* FOOTER */}
-
           <footer className="mt-10 flex items-center justify-center gap-3 pb-3 text-[10px] text-[#9B9188]">
             <span className="h-px w-12 bg-[#EAE6DF]" />
-
-            <span>
-              ReMarket · Find it nearby
-            </span>
-
+            <span>ReMarket · Find it nearby</span>
             <span className="h-px w-12 bg-[#EAE6DF]" />
           </footer>
         </div>
       </main>
 
-      {/* =================================================
-          MOBILE FILTER SHEET
-      ================================================= */}
-
+      {/* MOBILE FILTER SHEET */}
       {showMobileFilters && (
         <div
           className="fixed inset-0 z-[100] flex items-end justify-center bg-black/40 p-0 sm:items-center sm:p-4 lg:hidden"
@@ -2637,7 +2582,7 @@ function ShopPageView({
               <div>
                 <h2
                   id="mobile-filter-heading"
-                  className="text-lg font-extrabold text-[#17202A]"
+                  className="text-lg font-extrabold"
                 >
                   Filter products
                 </h2>
@@ -2689,14 +2634,13 @@ export default function ShopPage() {
                   { length: 10 },
                   (_, index) => (
                     <div
-                      key={`fallback-${index}`}
+                      key={index}
                       className="overflow-hidden rounded-xl border border-[#EAE6DF] bg-white"
                     >
                       <div className="aspect-[4/3] animate-pulse bg-[#F0ECE7]" />
 
                       <div className="space-y-2 p-2.5">
                         <div className="h-3 w-4/5 animate-pulse rounded bg-[#F0ECE7]" />
-
                         <div className="h-3 w-2/5 animate-pulse rounded bg-[#F0ECE7]" />
                       </div>
                     </div>

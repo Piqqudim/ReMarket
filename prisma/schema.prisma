@@ -487,12 +487,16 @@ model ReferralReward {
 model Location {
   id String @id @default(cuid())
 
-  area String
+  // Geographic hierarchy
+  state String?
+  lga   String?
+  area  String
 
-  street String?
-
+  // More specific address information
+  street  String?
   address String?
 
+  // Coordinates
   lat  Float?
   long Float?
 
@@ -500,6 +504,9 @@ model Location {
 
   businesses Business[]
 
+  @@index([state])
+  @@index([state, lga])
+  @@index([state, lga, area])
   @@index([area])
   @@index([street])
   @@index([lat, long])
