@@ -29,7 +29,6 @@ import {
 } from "lucide-react";
 
 import ProductImageUpload from "@/components/ProductImageUpload";
-import { validateProductPricing } from "@/lib/product-pricing";
 import {
   DEFAULT_CATEGORIES,
   mergeCategories,
@@ -53,8 +52,7 @@ type Product = {
   categoryId: string | null;
   categoryName: string | null;
   price: number | null;
-  priceMin: number | null;
-  priceMax: number | null;
+  originalPrice: number | null;
   availability: Availability;
   keywords: string[];
   imageUrl: string | null;
@@ -123,7 +121,7 @@ function formatPriceInput(value: number | null): string {
 }
 
 function formatNaira(value: number | null): string {
-  if (value === null || !Number.isFinite(value)) return "Price required";
+  if (value === null || !Number.isFinite(value)) return "Price on request";
   return new Intl.NumberFormat("en-NG", {
     style: "currency",
     currency: "NGN",
@@ -190,8 +188,7 @@ function normalizeProduct(value: unknown): Product | null {
     categoryId: getString(value, "categoryId"),
     categoryName: category && typeof category.name === "string" ? category.name : null,
     price: getNumber(value, "price"),
-    priceMin: getNumber(value, "priceMin"),
-    priceMax: getNumber(value, "priceMax"),
+    originalPrice: getNumber(value, "originalPrice"),
     availability: isAvailability(value.availability) ? value.availability : "ASK_SELLER",
     keywords,
     imageUrl,
@@ -199,13 +196,6 @@ function normalizeProduct(value: unknown): Product | null {
     images,
     deletedAt: getString(value, "deletedAt"),
   };
-}
-
-function normalizeBusinessProducts(value: unknown): Product[] {
-  if (!isRecord(value) || !Array.isArray(value.products)) return [];
-  return value.products
-    .map(normalizeProduct)
-    .filter((product): product is Product => product !== null);
 }
 
 function getCategoryList(value: unknown): { categories: ReMarketCategory[]; fallback: boolean } {
@@ -247,8 +237,7 @@ export default function EditProductPage() {
   const [description, setDescription] = useState("");
   const [categoryId, setCategoryId] = useState("");
   const [price, setPrice] = useState("");
-  const [priceMin, setPriceMin] = useState("");
-  const [priceMax, setPriceMax] = useState("");
+  const [originalPrice, setOriginalPrice] = useState("");
   const [availability, setAvailability] = useState<Availability>("ASK_SELLER");
   const [status, setStatus] = useState<BusinessStatus>("ACTIVE");
   const [keywords, setKeywords] = useState("");
@@ -271,8 +260,8 @@ export default function EditProductPage() {
       setError("");
 
       try {
-        const [businessResponse, categoriesResponse] = await Promise.all([
-          fetch(`/api/admin/businesses/${businessId}`, {
+        const [productResponse, categoriesResponse] = await Promise.all([
+          fetch(`/api/admin/products/${encodeURIComponent(productId)}`, {
             cache: "no-store",
             signal: controller.signal,
           }),
@@ -282,41 +271,43 @@ export default function EditProductPage() {
           }),
         ]);
 
-        const [businessData, categoriesData] = await Promise.all([
-          readJson(businessResponse),
+        const [productData, categoriesData] = await Promise.all([
+          readJson(productResponse),
           readJson(categoriesResponse),
         ]);
 
-        if (!businessResponse.ok) {
+        if (!productResponse.ok) {
           throw new Error(
-            isRecord(businessData) && typeof businessData.error === "string"
-              ? businessData.error
-              : "Unable to load business.",
+            isRecord(productData) && typeof productData.error === "string"
+              ? productData.error
+              : "Unable to load product.",
           );
         }
 
-        if (!isRecord(businessData) || !isRecord(businessData.business)) {
-          throw new Error("Unable to load business.");
+        if (!isRecord(productData) || !isRecord(productData.product)) {
+          throw new Error("Unable to load product.");
         }
 
-        const business = businessData.business;
-        const foundProduct = normalizeBusinessProducts(business).find(
-          (item) => item.id === productId,
-        );
-
+        const rawProduct = productData.product;
+        const foundProduct = normalizeProduct(rawProduct);
         if (!foundProduct) throw new Error("Product not found.");
 
-        setBusinessName(typeof business.name === "string" ? business.name : "");
+        const business = isRecord(rawProduct.business) ? rawProduct.business : null;
+        const loadedBusinessId = business && typeof business.id === "string" ? business.id : "";
+        if (loadedBusinessId && loadedBusinessId !== businessId) {
+          throw new Error("This product does not belong to the selected business.");
+        }
+
+        setBusinessName(business && typeof business.name === "string" ? business.name : "");
         setBusinessDeletedAt(
-          typeof business.deletedAt === "string" ? business.deletedAt : null,
+          business && typeof business.deletedAt === "string" ? business.deletedAt : null,
         );
         setProduct(foundProduct);
         setName(foundProduct.name);
         setDescription(foundProduct.description ?? "");
         setCategoryId(foundProduct.categoryId ?? "");
         setPrice(formatPriceInput(foundProduct.price));
-        setPriceMin(formatPriceInput(foundProduct.priceMin));
-        setPriceMax(formatPriceInput(foundProduct.priceMax));
+        setOriginalPrice(formatPriceInput(foundProduct.originalPrice));
         setAvailability(foundProduct.availability);
         setStatus(foundProduct.status);
         setKeywords(foundProduct.keywords.join(", "));
@@ -363,10 +354,10 @@ export default function EditProductPage() {
       { label: "Product description", complete: Boolean(description.trim()) },
       { label: "Product photos", complete: currentImages.length > 0 },
       { label: "Category", complete: Boolean(categoryId || product?.categoryId) },
-      { label: "Price information", complete: Boolean(price.trim() || priceMin.trim()) },
+      { label: "Selling price", complete: Boolean(price.trim()) },
       { label: "Search keywords", complete: Boolean(keywords.trim()) },
     ],
-    [name, description, currentImages.length, categoryId, product?.categoryId, price, priceMin, priceMax, keywords],
+    [name, description, currentImages.length, categoryId, product?.categoryId, price, keywords],
   );
   const completionPercent = Math.round(
     (completionItems.filter((item) => item.complete).length / completionItems.length) * 100,
@@ -399,20 +390,29 @@ export default function EditProductPage() {
     }
 
     let parsedPrice: number | null;
-    let parsedPriceMin: number | null;
-    let parsedPriceMax: number | null;
+    let parsedOriginalPrice: number | null;
     try {
-      parsedPrice = parsePriceField(price, "Exact price");
-      parsedPriceMin = parsePriceField(priceMin, "Minimum price");
-      parsedPriceMax = parsePriceField(priceMax, "Maximum price");
+      parsedPrice = parsePriceField(price, "Selling price");
+      parsedOriginalPrice = parsePriceField(originalPrice, "Original price");
     } catch (priceError) {
       setError(priceError instanceof Error ? priceError.message : "Price values are invalid.");
       return;
     }
 
-    const pricingError = validateProductPricing(parsedPrice, parsedPriceMin, parsedPriceMax);
-    if (pricingError) {
-      setError(pricingError);
+    if (parsedPrice !== null && parsedPrice < 0) {
+      setError("Selling price cannot be negative.");
+      return;
+    }
+    if (parsedOriginalPrice !== null && parsedOriginalPrice <= 0) {
+      setError("Original price must be a positive whole number.");
+      return;
+    }
+    if (parsedOriginalPrice !== null && (parsedPrice === null || parsedPrice <= 0)) {
+      setError("Enter a positive selling price before adding an original price.");
+      return;
+    }
+    if (parsedOriginalPrice !== null && parsedPrice !== null && parsedOriginalPrice <= parsedPrice) {
+      setError("Original price must be greater than the selling price.");
       return;
     }
 
@@ -425,7 +425,7 @@ export default function EditProductPage() {
 
     try {
       const response = await fetch(
-        `/api/admin/businesses/${businessId}/products/${productId}`,
+        `/api/admin/products/${encodeURIComponent(productId)}`,
         {
           method: "PATCH",
           headers: { "Content-Type": "application/json" },
@@ -435,8 +435,7 @@ export default function EditProductPage() {
             // If the category service is down, preserve the current database ID.
             categoryId: categoriesFallback ? product.categoryId : categoryId || null,
             price: parsedPrice,
-            priceMin: parsedPriceMin,
-            priceMax: parsedPriceMax,
+            originalPrice: parsedOriginalPrice,
             availability,
             status,
             keywords: keywordValues,
@@ -469,16 +468,11 @@ export default function EditProductPage() {
 
   async function deleteProduct() {
     if (!product || editingDisabled) return;
-    const confirmed = window.confirm(
-      "Delete this product? The product will be soft-deleted and kept in the admin record.",
-    );
-    if (!confirmed) return;
-
     setDeleting(true);
     setError("");
     try {
       const response = await fetch(
-        `/api/admin/businesses/${businessId}/products/${productId}`,
+        `/api/admin/products/${encodeURIComponent(productId)}`,
         { method: "DELETE" },
       );
       const data = await readJson(response);
@@ -579,7 +573,7 @@ export default function EditProductPage() {
               <div className="min-w-0">
                 <div className="mb-2 flex flex-wrap items-center gap-2 text-xs font-medium text-[#93877C]"><Link href="/admin/businesses" className="hover:text-[#9F2D18]">Businesses</Link><ChevronRight className="h-3 w-3" /><Link href={`/admin/businesses/${businessId}`} className="max-w-[220px] truncate hover:text-[#9F2D18]">{businessName || "Business"}</Link><ChevronRight className="h-3 w-3" /><span className="text-[#9F2D18]">Product editor</span></div>
                 <h1 className="text-2xl font-black tracking-tight sm:text-3xl lg:text-4xl">Give your product <span className="text-[#FF5A36]">a fresh look.</span></h1>
-                <p className="mt-2 max-w-2xl text-sm leading-6 text-[#7D736B]">Edit the details buyers see, sharpen its search keywords, and keep availability up to date.</p>
+                <p className="mt-2 max-w-2xl text-sm leading-6 text-[#7D736B]">Edit the details buyers see, set the current selling price, and show a genuine discount when applicable.</p>
               </div>
               <div className="flex shrink-0 items-center gap-2 rounded-2xl border border-[#E6DCD1] bg-white px-4 py-3 shadow-sm"><div className="grid h-9 w-9 place-items-center rounded-xl bg-[#FFF0E8] text-[#9F2D18]"><Package className="h-4 w-4" /></div><div><p className="text-[10px] font-bold uppercase tracking-wider text-[#A3988D]">Business</p><p className="max-w-[220px] truncate text-sm font-bold text-[#202D37]">{businessName || "Current business"}</p></div></div>
             </div>
@@ -617,12 +611,14 @@ export default function EditProductPage() {
                   <div className="flex items-start gap-3"><div className="grid h-10 w-10 shrink-0 place-items-center rounded-2xl bg-[#E9F8F0] text-[#287A4B]"><BarChart3 className="h-5 w-5" /></div><div><h2 className="text-base font-black">03 · Category & pricing</h2><p className="mt-1 text-xs leading-5 text-[#8B8178]">Help buyers understand what it is and what it costs.</p></div></div>
                   <div className="mt-5 grid gap-4 sm:grid-cols-2">
                     <div><label htmlFor="product-category" className="text-xs font-bold text-[#5E554E]">Category</label>{categoriesFallback ? <div className="mt-2 rounded-xl border border-amber-200 bg-amber-50 px-3.5 py-3 text-sm text-amber-900">{displayCategoryName}<p className="mt-1 text-[11px] leading-5 text-amber-800">Category service is unavailable. The saved category will be preserved when you save.</p></div> : <select id="product-category" value={categoryId} onChange={(event) => setCategoryId(event.target.value)} disabled={editingDisabled || saving || deleting} className="mt-2 h-12 w-full min-w-0 rounded-xl border border-[#E6DDD4] bg-[#FFFCF8] px-3 text-sm outline-none focus:border-[#FF8F73] focus:ring-4 focus:ring-[#FF5A36]/10 disabled:bg-[#F5F1EC]"><option value="">No category</option>{categories.map((category) => <option key={category.id} value={category.id}>{category.name}</option>)}</select>}</div>
-                    <Field label="Exact price (₦) — enter this or a minimum price" value={price} onChange={setPrice} placeholder="Enter fixed price" inputMode="numeric" disabled={editingDisabled || saving || deleting} />
-                    <Field label="Minimum price (₦) — use if no exact price" value={priceMin} onChange={setPriceMin} placeholder="Starting price" inputMode="numeric" disabled={editingDisabled || saving || deleting} />
-                    <Field label="Maximum price (₦)" value={priceMax} onChange={setPriceMax} placeholder="Optional upper limit" inputMode="numeric" disabled={editingDisabled || saving || deleting} />
+                    <Field label="Selling price (₦)" value={price} onChange={setPrice} placeholder="Leave blank for price on request" inputMode="numeric" disabled={editingDisabled || saving || deleting} />
+                    <Field label="Original price (₦) · optional" value={originalPrice} onChange={setOriginalPrice} placeholder="Enter the previous regular price" inputMode="numeric" disabled={editingDisabled || saving || deleting} />
                   </div>
-                  <p className="mt-2 text-[11px] text-[#8B8178]">A fixed price or starting price is required. A maximum price is optional.</p>
-                  {price.trim() && <p className="mt-3 rounded-xl bg-[#F8F4EF] px-3 py-2 text-xs font-semibold text-[#6F675F]">Price preview: <span className="text-[#9F2D18]">{formatNaira(Number(price))}</span></p>}
+                  <div className="mt-3 rounded-xl bg-[#F8F4EF] px-3 py-3 text-xs leading-5 text-[#6F675F]">
+                    <p>The selling price is the current amount a buyer pays. The original price is shown only as a crossed-out reference when it is higher than the selling price.</p>
+                    {price.trim() && <p className="mt-2 font-semibold">Current price preview: <span className="text-[#9F2D18]">{formatNaira(Number(price))}</span></p>}
+                    {price.trim() && originalPrice.trim() && Number(originalPrice) > Number(price) && Number(price) > 0 && <p className="mt-1">Original price: <span className="line-through">{formatNaira(Number(originalPrice))}</span> <span className="ml-1 rounded-md bg-[#FFE7DF] px-2 py-0.5 font-bold text-[#9F2D18]">{Math.round(((Number(originalPrice) - Number(price)) / Number(originalPrice)) * 100)}% off</span></p>}
+                  </div>
                 </section>
 
                 <section className="rounded-[24px] border border-[#E7DDD2] bg-white p-4 shadow-sm sm:p-6">
@@ -638,7 +634,7 @@ export default function EditProductPage() {
               <aside className="order-first min-w-0 space-y-5 xl:sticky xl:top-[88px] xl:order-none xl:self-start">
                 <section className="overflow-hidden rounded-[24px] border border-[#E7DDD2] bg-white shadow-sm">
                   <div className="flex items-center justify-between border-b border-[#EEE6DE] px-4 py-4 sm:px-5"><div><p className="text-[10px] font-bold uppercase tracking-[0.16em] text-[#A3988D]">Buyer preview</p><h2 className="mt-1 text-sm font-black">Your listing card</h2></div><span className="inline-flex items-center gap-1.5 rounded-full bg-[#E8F7EE] px-2.5 py-1 text-[10px] font-bold text-[#287A4B]"><span className="h-1.5 w-1.5 rounded-full bg-[#2E9A5B]" />Live</span></div>
-                  <div className="p-4 sm:p-5"><div className="overflow-hidden rounded-2xl border border-[#ECE4DB] bg-[#FFFCF8]"><div className="relative grid aspect-[4/3] place-items-center overflow-hidden bg-[radial-gradient(circle_at_20%_10%,#FFE4D8,transparent_44%),linear-gradient(135deg,#F9F0E7,#E8E4DE)]">{previewImage ? <img src={previewImage} alt={name || "Product preview"} className="h-full w-full object-contain" /> : <div className="flex flex-col items-center gap-2 text-[#A99A8C]"><Package className="h-12 w-12" /><span className="text-xs font-semibold">Add a photo to preview</span></div>}<span className="absolute left-3 top-3 rounded-full bg-white/90 px-2.5 py-1 text-[10px] font-bold text-[#6D6259] shadow-sm">ReMarket find</span><span className={`absolute right-3 top-3 rounded-full px-2.5 py-1 text-[10px] font-bold shadow-sm ${status === "ACTIVE" ? "bg-emerald-50 text-emerald-700" : status === "PENDING" ? "bg-amber-50 text-amber-800" : "bg-stone-100 text-stone-600"}`}>{status.toLowerCase()}</span></div><div className="p-4"><p className="text-[10px] font-bold uppercase tracking-wide text-[#A3988D]">{displayCategoryName}</p><h3 className="mt-1 break-words text-base font-black text-[#202D37]">{name.trim() || "Your product name"}</h3><p className="mt-2 line-clamp-3 min-h-[3.75rem] whitespace-pre-wrap break-words text-xs leading-5 text-[#7B7168]">{description.trim() || "A clear product description will appear here so buyers know what you offer."}</p><div className="mt-4 flex flex-wrap items-end justify-between gap-2 border-t border-[#ECE4DB] pt-3"><div><p className="text-[10px] text-[#A3988D]">Price</p><p className="mt-1 text-lg font-black text-[#9F2D18]">{price.trim() && Number.isFinite(Number(price)) ? formatNaira(Number(price)) : priceMin.trim() || priceMax.trim() ? `${priceMin.trim() ? formatNaira(Number(priceMin)) : ""}${priceMin.trim() && priceMax.trim() ? " – " : ""}${priceMax.trim() ? formatNaira(Number(priceMax)) : ""}` : "Price required"}</p></div><span className={`rounded-full px-2.5 py-1 text-[10px] font-bold ${availability === "AVAILABLE" ? "bg-emerald-50 text-emerald-700" : availability === "UNAVAILABLE" ? "bg-rose-50 text-rose-700" : "bg-amber-50 text-amber-800"}`}>{getAvailabilityLabel(availability)}</span></div>{keywords.trim() && <div className="mt-3 flex flex-wrap gap-1.5">{keywords.split(",").map((word) => word.trim()).filter(Boolean).slice(0, 5).map((word, index) => <span key={`${word}-${index}`} className="rounded-full bg-[#F1ECE6] px-2 py-1 text-[10px] font-medium text-[#6F675F]">{word}</span>)}</div>}</div></div><div className="mt-4 grid grid-cols-3 gap-2"><MiniStat value={String(currentImages.length)} label="Photos" /><MiniStat value={String(keywords.split(",").map((word) => word.trim()).filter(Boolean).length)} label="Keywords" /><MiniStat value={completionPercent + "%"} label="Complete" /></div></div>
+                  <div className="p-4 sm:p-5"><div className="overflow-hidden rounded-2xl border border-[#ECE4DB] bg-[#FFFCF8]"><div className="relative grid aspect-[4/3] place-items-center overflow-hidden bg-[radial-gradient(circle_at_20%_10%,#FFE4D8,transparent_44%),linear-gradient(135deg,#F9F0E7,#E8E4DE)]">{previewImage ? <img src={previewImage} alt={name || "Product preview"} className="h-full w-full object-contain" /> : <div className="flex flex-col items-center gap-2 text-[#A99A8C]"><Package className="h-12 w-12" /><span className="text-xs font-semibold">Add a photo to preview</span></div>}<span className="absolute left-3 top-3 rounded-full bg-white/90 px-2.5 py-1 text-[10px] font-bold text-[#6D6259] shadow-sm">ReMarket find</span><span className={`absolute right-3 top-3 rounded-full px-2.5 py-1 text-[10px] font-bold shadow-sm ${status === "ACTIVE" ? "bg-emerald-50 text-emerald-700" : status === "PENDING" ? "bg-amber-50 text-amber-800" : "bg-stone-100 text-stone-600"}`}>{status.toLowerCase()}</span></div><div className="p-4"><p className="text-[10px] font-bold uppercase tracking-wide text-[#A3988D]">{displayCategoryName}</p><h3 className="mt-1 break-words text-base font-black text-[#202D37]">{name.trim() || "Your product name"}</h3><p className="mt-2 line-clamp-3 min-h-[3.75rem] whitespace-pre-wrap break-words text-xs leading-5 text-[#7B7168]">{description.trim() || "A clear product description will appear here so buyers know what you offer."}</p><div className="mt-4 flex flex-wrap items-end justify-between gap-2 border-t border-[#ECE4DB] pt-3"><div><p className="text-[10px] text-[#A3988D]">Selling price</p><p className="mt-1 text-lg font-black text-[#9F2D18]">{price.trim() && Number.isFinite(Number(price)) ? formatNaira(Number(price)) : "Ask for price"}</p>{price.trim() && originalPrice.trim() && Number(originalPrice) > Number(price) && Number(price) > 0 && <div className="mt-1 flex flex-wrap items-center gap-2"><span className="text-xs text-[#A3988D] line-through">{formatNaira(Number(originalPrice))}</span><span className="rounded-md bg-[#FFE7DF] px-2 py-0.5 text-[10px] font-bold text-[#9F2D18]">{Math.round(((Number(originalPrice) - Number(price)) / Number(originalPrice)) * 100)}% OFF</span></div>}</div><span className={`rounded-full px-2.5 py-1 text-[10px] font-bold ${availability === "AVAILABLE" ? "bg-emerald-50 text-emerald-700" : availability === "UNAVAILABLE" ? "bg-rose-50 text-rose-700" : "bg-amber-50 text-amber-800"}`}>{getAvailabilityLabel(availability)}</span></div>{keywords.trim() && <div className="mt-3 flex flex-wrap gap-1.5">{keywords.split(",").map((word) => word.trim()).filter(Boolean).slice(0, 5).map((word, index) => <span key={`${word}-${index}`} className="rounded-full bg-[#F1ECE6] px-2 py-1 text-[10px] font-medium text-[#6F675F]">{word}</span>)}</div>}</div></div><div className="mt-4 grid grid-cols-3 gap-2"><MiniStat value={String(currentImages.length)} label="Photos" /><MiniStat value={String(keywords.split(",").map((word) => word.trim()).filter(Boolean).length)} label="Keywords" /><MiniStat value={completionPercent + "%"} label="Complete" /></div></div>
                 </section>
 
                 <section className="rounded-[24px] border border-[#E7DDD2] bg-white p-4 shadow-sm sm:p-5"><div className="flex items-center gap-2"><Check className="h-4 w-4 text-[#2D8A54]" /><h2 className="text-sm font-black">Listing checklist</h2></div><p className="mt-1 text-xs leading-5 text-[#8B8178]">A quick quality check before saving.</p><div className="mt-4 space-y-3">{completionItems.map((item) => <div key={item.label} className="flex items-center gap-3"><span className={`grid h-5 w-5 shrink-0 place-items-center rounded-full ${item.complete ? "bg-[#E4F6EA] text-[#237B47]" : "bg-[#F2EEE8] text-[#AA9E92]"}`}>{item.complete ? <Check className="h-3 w-3" /> : <span className="h-1.5 w-1.5 rounded-full bg-current" />}</span><span className={`text-xs ${item.complete ? "font-semibold text-[#4D5E53]" : "text-[#8B8178]"}`}>{item.label}</span></div>)}</div><div className="mt-4 h-1.5 overflow-hidden rounded-full bg-[#F0EAE3]"><div className="h-full rounded-full bg-[#FF7756] transition-all duration-300" style={{ width: `${completionPercent}%` }} /></div></section>

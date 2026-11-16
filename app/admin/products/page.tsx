@@ -72,8 +72,6 @@ const NAV_ITEMS: NavItem[] = [
   { label: "Overview", href: "/admin", icon: LayoutDashboard },
   { label: "Businesses", href: "/admin/businesses", icon: Store },
   { label: "Products", href: "/admin/products", icon: Package },
-  { label: "Requests", href: "/admin/requests", icon: ClipboardList },
-  { label: "Content", href: "/admin/content", icon: Megaphone },
   { label: "Deletion requests", href: "/admin/business-deletion-requests", icon: Trash2 },
 ];
 
@@ -285,7 +283,7 @@ export default function AdminProductsPage() {
     setSuccess("");
     try {
       const response = await fetch(
-        `/api/admin/businesses/${encodeURIComponent(product.business.id)}/products/${encodeURIComponent(product.id)}`,
+        `/api/admin/products/${encodeURIComponent(product.id)}`,
         {
           method: "PATCH",
           headers: { "Content-Type": "application/json" },

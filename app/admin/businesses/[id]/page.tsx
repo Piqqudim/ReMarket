@@ -37,6 +37,7 @@ import {
   X,
   type LucideIcon,
 } from "lucide-react";
+import AreaAutocomplete from "@/components/filters/AreaAutocomplete";
 import {
   DEFAULT_CATEGORIES,
   mergeCategories,
@@ -83,33 +84,6 @@ const ADMIN_NAV = [
   { label: "Claims", href: "/admin/claims", icon: ShieldCheck },
 ];
 
-const LAGOS_AREA_GROUPS = [
-  { lga: "Agege", areas: ["Agege", "Orile Agege", "Dopemu", "Oko-Oba", "Isale Odo", "Keke"] },
-  { lga: "Ajeromi-Ifelodun", areas: ["Ajegunle", "Tolu", "Olodi", "Alaba Oro", "Awodi-Ora", "Layeni", "Mosafejo"] },
-  { lga: "Alimosho", areas: ["Alimosho", "Egbeda", "Akowonjo", "Shasha", "Idimu", "Egbe", "Ikotun", "Ijegun", "Igando", "Iyana-Ipaja", "Ayobo", "Abule Egba", "Aboru", "Meiran", "Oke-Odo", "Pleasure"] },
-  { lga: "Amuwo-Odofin", areas: ["Amuwo", "Festac", "Mile 2", "Satellite Town", "Kirikiri", "Irede", "Ibeshe"] },
-  { lga: "Apapa", areas: ["Apapa", "Apapa Wharf", "Iganmu", "Ijora", "Liverpool", "Tin Can"] },
-  { lga: "Badagry", areas: ["Badagry", "Badagry West", "Olorunda", "Oko-Afo"] },
-  { lga: "Epe", areas: ["Epe", "Eredo", "Ikosi-Ejinrin"] },
-  { lga: "Eti-Osa", areas: ["Ikoyi", "Obalende", "Victoria Island", "Oniru", "Lekki Phase 1", "Ikate", "Jakande", "Osapa London", "Agungi", "Igbo-Efon", "Idado", "Chevron", "Ikota", "VGC", "Ajah", "Badore", "Sangotedo"] },
-  { lga: "Ibeju-Lekki", areas: ["Ibeju-Lekki", "Abijo", "Awoyaya", "Lakowe", "Bogije", "Eleko", "Akodo"] },
-  { lga: "Ifako-Ijaiye", areas: ["Ifako", "Ijaiye", "Ojokoro", "Oke-Ira", "Agbado"] },
-  { lga: "Ikeja", areas: ["Ikeja", "Ikeja GRA", "Alausa", "Allen Avenue", "Oregun", "Opebi", "Ogba", "Ojodu", "Onigbongbo", "Computer Village", "Airport Road"] },
-  { lga: "Ikorodu", areas: ["Ikorodu", "Ikorodu North", "Ikorodu West", "Igbogbo", "Baiyeku", "Ijede", "Imota", "Odogunyan", "Itamaga", "Agric"] },
-  { lga: "Kosofe", areas: ["Kosofe", "Ketu", "Agboyi", "Ojota", "Gbagada", "Anthony", "Maryland", "Magodo", "Isheri", "Mile 12"] },
-  { lga: "Lagos Island", areas: ["Lagos Island", "Idumota", "Balogun", "Marina", "Broad Street", "Isale Eko", "Lafiaji", "Onikan", "Epetedo", "Okepopo"] },
-  { lga: "Lagos Mainland", areas: ["Yaba", "Ebute Metta", "Akoka", "Sabo", "Alagomeji", "Adekunle", "Abule Oja", "Onike", "Iwaya", "Makoko", "Jibowu", "Oyingbo", "Tejuosho"] },
-  { lga: "Mushin", areas: ["Mushin", "Papa Ajao", "Idi-Araba", "Ilupeju", "Odi-Olowo", "Ojuwoye"] },
-  { lga: "Ojo", areas: ["Ojo", "Iba", "Iyana-Iba", "Ajangbadi", "Oto-Awori", "Alaba"] },
-  { lga: "Oshodi-Isolo", areas: ["Oshodi", "Isolo", "Ejigbo", "Okota", "Ajao Estate", "Mafoluku", "Ago Palace"] },
-  { lga: "Shomolu", areas: ["Shomolu", "Bariga", "Pedro", "Onipanu", "Palmgrove", "Fadeyi"] },
-  { lga: "Surulere", areas: ["Surulere", "Ojuelegba", "Lawanson", "Itire", "Aguda", "Coker", "Ijeshatedo"] },
-] as const;
-
-function isKnownArea(area: string) {
-  const normalized = area.trim().toLowerCase();
-  return normalized.length > 0 && LAGOS_AREA_GROUPS.some((group) => group.areas.some((item) => item.toLowerCase() === normalized));
-}
 function looksLikeHouseNumber(value: string) {
   const normalized = value.trim().toLowerCase();
   return !!normalized && (/^\d+[a-z]?\b/.test(normalized) || /^(shop|house|building|block|plot|suite|unit|flat)\b/.test(normalized));
@@ -445,7 +419,7 @@ function BusinessEditor({ business, categories, usingCategoryFallback, onBusines
         <div className="mt-5 rounded-2xl border border-dashed border-[#E5DDD5] bg-[#FCFAF7] p-3 sm:p-4"><div className="flex flex-col gap-4 sm:flex-row sm:items-center"><div className="h-28 w-full shrink-0 overflow-hidden rounded-xl bg-[#EEE7DE] sm:h-28 sm:w-36">{imageUrl ? <img src={imageUrl} alt={`${name || "Business"} preview`} className="h-full w-full object-cover"/> : <div className="flex h-full min-h-28 items-center justify-center text-[#A59A90]"><ImagePlus className="h-8 w-8"/></div>}</div><div className="min-w-0 flex-1"><p className="text-sm font-extrabold text-[#2E241F]">{imageUrl ? "Your listing has a cover image" : "Add a recognisable business image"}</p><p className="mt-1 text-xs leading-5 text-[#84796F]">Use a clear shop, storefront or brand image. JPEG, PNG and WebP, up to 5MB.</p><label className={`mt-3 inline-flex cursor-pointer items-center gap-2 rounded-xl border border-[#F0C6B9] bg-white px-3.5 py-2.5 text-xs font-bold text-[#9F2D18] transition hover:bg-[#FFF0E8] ${deleted || saving || uploadingImage ? "pointer-events-none opacity-50" : ""}`}><Upload className="h-4 w-4"/>{uploadingImage ? "Uploading image…" : imageUrl ? "Change image" : "Upload image"}<input className="sr-only" type="file" accept="image/jpeg,image/png,image/webp" disabled={deleted || saving || uploadingImage} onChange={(event) => { const file = event.target.files?.[0]; event.target.value = ""; if (file) void uploadImage(file); }}/></label></div></div></div>
       </section>
 
-      <section id="location" className="scroll-mt-28 rounded-3xl border border-[#E6DDD3] bg-white p-4 shadow-[0_12px_40px_rgba(44,35,27,0.04)] sm:p-6"><SectionHeading eyebrow="02 / Findability" title="Pinpoint the location" description="Accurate area and street details help buyers distinguish similar business names and nearby streets." icon={MapPin}/><div className="grid min-w-0 gap-4 sm:grid-cols-2"><Field label="House / shop / building number" value={houseNumber} onChange={setHouseNumber} placeholder="e.g. Shop 12" disabled={deleted || saving}/><Field label="Street / road / close" value={street} onChange={setStreet} placeholder="e.g. Adewale Close" required disabled={deleted || saving}/><Field label="City" value={city} onChange={setCity} placeholder="e.g. Lagos or Epe" disabled={deleted || saving}/><div className="min-w-0"><label className="text-xs font-semibold text-[#51483F]">Area / neighbourhood <span className="text-[#C4452D">*</span></label><select value={area} onChange={(event) => setArea(event.target.value)} required disabled={deleted || saving} className="mt-2 h-12 w-full min-w-0 rounded-xl border border-[#E5DDD5] bg-white px-3 text-sm text-[#17202A] outline-none focus:border-[#FF8B6C] disabled:bg-[#F4F0EB]"><option value="">Select an area</option>{area && !isKnownArea(area) && <option value={area}>{area} (current)</option>}{LAGOS_AREA_GROUPS.map((group) => <optgroup key={group.lga} label={group.lga}>{group.areas.map((item) => <option key={`${group.lga}-${item}`} value={item}>{item}</option>)}</optgroup>)}</select></div></div>
+      <section id="location" className="scroll-mt-28 rounded-3xl border border-[#E6DDD3] bg-white p-4 shadow-[0_12px_40px_rgba(44,35,27,0.04)] sm:p-6"><SectionHeading eyebrow="02 / Findability" title="Pinpoint the location" description="Search supported areas by state and LGA, then add the exact street and address details to help buyers find the business." icon={MapPin}/><div className="grid min-w-0 gap-4 sm:grid-cols-2"><Field label="House / shop / building number" value={houseNumber} onChange={setHouseNumber} placeholder="e.g. Shop 12" disabled={deleted || saving}/><Field label="Street / road / close" value={street} onChange={setStreet} placeholder="e.g. Adewale Close" required disabled={deleted || saving}/><Field label="City" value={city} onChange={setCity} placeholder="e.g. Lagos or Epe" disabled={deleted || saving}/><div className="min-w-0"><label htmlFor="admin-business-area" className="text-xs font-semibold text-[#51483F]">Area / neighbourhood <span className="text-[#C4452D">*</span></label><div className="mt-2"><AreaAutocomplete id="admin-business-area" value={area} onChange={setArea} placeholder="Search an area, e.g. Ogba or Ekpoma" disabled={deleted || saving} /></div><p className="mt-1.5 text-[10px] leading-4 text-[#93877C]">Suggestions are grouped by state and LGA. Existing custom area names can still be entered.</p></div></div>
         {(houseNumber || street || area || city) && <div className="mt-4 rounded-2xl bg-[#F8F4EF] p-4"><p className="text-[10px] font-extrabold uppercase tracking-[0.14em] text-[#9A8F84]">Address preview</p><p className="mt-2 break-words text-sm font-bold leading-6 text-[#342B25]">{composedAddress || "Complete the address fields to preview the saved address."}</p><p className="mt-1 text-[10px] text-[#93877C]">House / Shop, Street, Area, City, Nigeria</p></div>}
         <div className="mt-4 rounded-2xl border border-[#E6DDD3] bg-[#FCFAF7] p-4"><div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between"><div className="min-w-0"><div className="flex items-center gap-2 text-sm font-extrabold text-[#342B25]"><Navigation className="h-4 w-4 text-[#FF5A36]"/>Exact business coordinates</div><p className="mt-1 text-xs leading-5 text-[#84796F]">{locationStatus}</p></div><button type="button" disabled={deleted || saving || capturingLocation} onClick={() => { if (!navigator.geolocation) { onError("Location is not supported by this browser."); return; } setCapturingLocation(true); onError(""); setLocationStatus("Waiting for location permission…"); navigator.geolocation.getCurrentPosition((position) => { setLat(String(position.coords.latitude)); setLong(String(position.coords.longitude)); setLocationStatus("Coordinates captured. Save changes to keep this update."); setCapturingLocation(false); }, (geoError) => { console.error("Location capture error:", geoError); setLocationStatus("Could not capture location. Check browser permissions and try again."); onError("Use location capture only when the device is physically at the business."); setCapturingLocation(false); }, { enableHighAccuracy: true, timeout: 15000, maximumAge: 60000 }); }} className="inline-flex min-h-11 shrink-0 items-center justify-center gap-2 rounded-xl bg-[#17202A] px-4 py-2.5 text-xs font-bold text-white transition hover:bg-[#2A3A48] disabled:opacity-50">{capturingLocation ? <Loader2 className="h-4 w-4 animate-spin"/> : <Navigation className="h-4 w-4"/>}{capturingLocation ? "Capturing…" : "Capture location"}</button></div><p className="mt-3 text-[10px] leading-5 text-[#988D82]">Only capture GPS when you are physically at the business location. Coordinates are managed internally and should not be exposed publicly as raw values.</p></div>
       </section>

@@ -8,11 +8,11 @@ import {
 import { NextResponse } from "next/server";
 
 import { requireAdmin } from "@/lib/admin-auth";
-import { writeAdminAuditLog } from "@/lib/admin-audit";
 import { createNotification } from "@/lib/notifications";
 import { validateProductPricing } from "@/lib/product-pricing";
 import { prisma } from "@/lib/prisma";
 import { getGrantedProductSlotBonus } from "@/lib/referrals";
+import { writeAdminAuditLog } from "@/lib/admin-audit";
 
 const BASE_MAX_ACTIVE_PRODUCTS = 100;
 const MAX_REQUEST_BYTES = 256 * 1024;
@@ -21,7 +21,6 @@ const MAX_KEYWORDS = 30;
 const MAX_KEYWORD_LENGTH = 80;
 const MAX_KEYWORDS_TOTAL_LENGTH = 1500;
 const MAX_PRISMA_INT = 2_147_483_647;
-const MAX_TRANSACTION_ATTEMPTS = 3;
 
 const VALID_AVAILABILITIES = [Availability.AVAILABLE, Availability.ASK_SELLER, Availability.UNAVAILABLE] as const;
 const VALID_PRODUCT_STATUSES = [BusinessStatus.ACTIVE, BusinessStatus.INACTIVE, BusinessStatus.PENDING] as const;
@@ -35,6 +34,7 @@ type ProductUpdateData = {
   description?: string | null;
   categoryId?: string | null;
   price?: number | null;
+  originalPrice?: number | null;
   priceMin?: number | null;
   priceMax?: number | null;
   availability?: ProductAvailability;
@@ -42,9 +42,7 @@ type ProductUpdateData = {
   imageUrl?: string | null;
   status?: ProductStatus;
 };
-type JsonBodyResult =
-  | { ok: true; value: unknown }
-  | { ok: false; reason: "TOO_LARGE" | "INVALID_JSON" };
+type JsonBodyResult = { ok: true; value: unknown } | { ok: false; reason: "TOO_LARGE" | "INVALID_JSON" };
 
 class ProductCapacityError extends Error {
   constructor(public readonly activeCount: number, public readonly maximum: number) {
@@ -82,14 +80,8 @@ function cleanString(value: unknown): string {
 
 function parseOptionalInt(value: unknown): { valid: boolean; value: number | null } {
   if (value === undefined || value === null || value === "") return { valid: true, value: null };
-  const parsed = typeof value === "number"
-    ? value
-    : typeof value === "string" && value.trim() !== ""
-      ? Number(value.trim())
-      : Number.NaN;
-  if (!Number.isSafeInteger(parsed) || parsed < 0 || parsed > MAX_PRISMA_INT) {
-    return { valid: false, value: null };
-  }
+  const parsed = typeof value === "number" ? value : typeof value === "string" && value.trim() ? Number(value.trim()) : Number.NaN;
+  if (!Number.isSafeInteger(parsed) || parsed < 0 || parsed > MAX_PRISMA_INT) return { valid: false, value: null };
   return { valid: true, value: parsed };
 }
 
@@ -106,7 +98,6 @@ function parseKeywords(value: unknown): { valid: boolean; value: string[] } {
   const keywords: string[] = [];
   const seen = new Set<string>();
   let totalLength = 0;
-
   for (const item of value) {
     if (typeof item !== "string") return { valid: false, value: [] };
     const keyword = item.trim().toLowerCase();
@@ -118,7 +109,6 @@ function parseKeywords(value: unknown): { valid: boolean; value: string[] } {
     seen.add(keyword);
     keywords.push(keyword);
   }
-
   return { valid: true, value: keywords };
 }
 
@@ -135,13 +125,11 @@ function isSafeImageUrl(value: string): boolean {
 function parseImages(value: unknown): { valid: boolean; value: ProductImageInput[] } {
   if (!Array.isArray(value) || value.length > MAX_PRODUCT_IMAGES) return { valid: false, value: [] };
   const parsed: ProductImageInput[] = [];
-
   for (let index = 0; index < value.length; index += 1) {
     const item = value[index];
     let url = "";
     let publicId: string | null = null;
     let sortOrder = index;
-
     if (typeof item === "string") {
       url = item.trim();
     } else if (isRecord(item)) {
@@ -159,11 +147,9 @@ function parseImages(value: unknown): { valid: boolean; value: ProductImageInput
     } else {
       return { valid: false, value: [] };
     }
-
     if (!isSafeImageUrl(url)) return { valid: false, value: [] };
     parsed.push({ url, publicId, sortOrder });
   }
-
   parsed.sort((a, b) => a.sortOrder - b.sortOrder);
   const seenUrls = new Set<string>();
   const uniqueImages: ProductImageInput[] = [];
@@ -182,7 +168,6 @@ async function readJsonBody(request: Request, maximumBytes = MAX_REQUEST_BYTES):
     if (Number.isFinite(declaredLength) && declaredLength > maximumBytes) return { ok: false, reason: "TOO_LARGE" };
   }
   if (!request.body) return { ok: false, reason: "INVALID_JSON" };
-
   const reader = request.body.getReader();
   const chunks: Uint8Array[] = [];
   let totalBytes = 0;
@@ -203,7 +188,6 @@ async function readJsonBody(request: Request, maximumBytes = MAX_REQUEST_BYTES):
   } finally {
     reader.releaseLock();
   }
-
   try {
     const bytes = new Uint8Array(totalBytes);
     let offset = 0;
@@ -211,8 +195,7 @@ async function readJsonBody(request: Request, maximumBytes = MAX_REQUEST_BYTES):
       bytes.set(chunk, offset);
       offset += chunk.byteLength;
     }
-    const decoded = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
-    return { ok: true, value: JSON.parse(decoded) as unknown };
+    return { ok: true, value: JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes)) as unknown };
   } catch {
     return { ok: false, reason: "INVALID_JSON" };
   }
@@ -269,16 +252,25 @@ async function updateProductWithRetry(input: {
   ownerId: string | null;
   previousAvailability: Availability;
 }> {
-  for (let attempt = 1; attempt <= MAX_TRANSACTION_ATTEMPTS; attempt += 1) {
+  for (let attempt = 1; attempt <= 3; attempt += 1) {
     try {
       return await prisma.$transaction(async (tx) => {
-        const current = await tx.product.findUnique({
-          where: { id: input.productId },
-          include: {
-            business: { select: { id: true, name: true, ownerId: true, deletedAt: true } },
-            images: { orderBy: [{ sortOrder: "asc" }, { createdAt: "asc" }] },
-          },
-        });
+       const current = await tx.product.findUnique({
+  where: { id: input.productId },
+  include: {
+    business: {
+      select: {
+        id: true,
+        name: true, // Required by the audit log below
+        ownerId: true,
+        deletedAt: true,
+      },
+    },
+    images: {
+      orderBy: [{ sortOrder: "asc" }, { createdAt: "asc" }],
+    },
+  },
+});
         if (!current || current.deletedAt) throw new Error("PRODUCT_NOT_FOUND");
         if (current.business.deletedAt) throw new Error("BUSINESS_DELETED");
 
@@ -296,10 +288,10 @@ async function updateProductWithRetry(input: {
           const activeCount = await tx.product.count({
             where: { businessId: current.business.id, status: BusinessStatus.ACTIVE, deletedAt: null },
           });
-          const bonusSlots = current.business.ownerId
+          const referralBonusSlots = current.business.ownerId
             ? await getGrantedProductSlotBonus(current.business.ownerId, tx)
             : 0;
-          const maximum = BASE_MAX_ACTIVE_PRODUCTS + Math.max(0, Number(bonusSlots) || 0);
+          const maximum = BASE_MAX_ACTIVE_PRODUCTS + Math.max(0, Number(referralBonusSlots) || 0);
           if (activeCount >= maximum) throw new ProductCapacityError(activeCount, maximum);
         }
 
@@ -309,6 +301,7 @@ async function updateProductWithRetry(input: {
           description: current.description,
           categoryId: current.categoryId,
           price: current.price,
+          originalPrice: current.originalPrice,
           priceMin: current.priceMin,
           priceMax: current.priceMax,
           availability: current.availability,
@@ -359,6 +352,7 @@ async function updateProductWithRetry(input: {
             description: updated.description,
             categoryId: updated.categoryId,
             price: updated.price,
+            originalPrice: updated.originalPrice,
             priceMin: updated.priceMin,
             priceMax: updated.priceMax,
             availability: updated.availability,
@@ -382,7 +376,7 @@ async function updateProductWithRetry(input: {
         return { product: updated, ownerId: current.business.ownerId, previousAvailability: current.availability };
       }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
     } catch (error) {
-      if (isPrismaErrorCode(error, "P2034") && attempt < MAX_TRANSACTION_ATTEMPTS) continue;
+      if (isPrismaErrorCode(error, "P2034") && attempt < 3) continue;
       throw error;
     }
   }
@@ -410,7 +404,6 @@ export async function PATCH(request: Request, { params }: RouteContext) {
   try {
     const { id: productId } = await params;
     if (!productId) return jsonError("Product ID is required.", 400);
-
     const existing = await prisma.product.findUnique({
       where: { id: productId },
       include: { business: { select: { id: true, name: true, ownerId: true, deletedAt: true } } },
@@ -463,6 +456,33 @@ export async function PATCH(request: Request, { params }: RouteContext) {
       data[field] = parsed.value;
       pricingWasProvided = true;
     }
+
+    if (hasOwn(body, "originalPrice")) {
+      const parsed = parseOptionalInt(body.originalPrice);
+      if (!parsed.valid) {
+        return jsonError("Original price must be a whole number between 1 and 2,147,483,647, or null.", 400);
+      }
+      if (parsed.value !== null && parsed.value <= 0) {
+        return jsonError("Original price must be a positive whole number.", 400);
+      }
+      data.originalPrice = parsed.value;
+      pricingWasProvided = true;
+    }
+
+    const resultingPrice = data.price !== undefined ? data.price : existing.price;
+    const resultingOriginalPrice = data.originalPrice !== undefined
+      ? data.originalPrice
+      : existing.originalPrice;
+
+    if (resultingOriginalPrice !== null) {
+      if (resultingPrice === null || resultingPrice <= 0) {
+        return jsonError("Enter a positive selling price before adding an original price.", 400);
+      }
+      if (resultingOriginalPrice <= resultingPrice) {
+        return jsonError("Original price must be greater than the selling price.", 400);
+      }
+    }
+
     if (hasOwn(body, "availability")) {
       if (!isAvailability(body.availability)) return jsonError("Invalid availability value.", 400);
       data.availability = body.availability;
@@ -486,13 +506,7 @@ export async function PATCH(request: Request, { params }: RouteContext) {
     }
     if (Object.keys(data).length === 0 && imageInputs === undefined) return jsonError("No supported changes were provided.", 400);
 
-    const updated = await updateProductWithRetry({
-      productId,
-      adminId: auth.user.id,
-      data,
-      imageInputs,
-      pricingWasProvided,
-    });
+    const updated = await updateProductWithRetry({ productId, adminId: auth.user.id, data, imageInputs, pricingWasProvided });
     const availabilityChanged = updated.product.availability !== updated.previousAvailability;
     await notifyProductOwner({
       ownerId: updated.ownerId,
@@ -541,6 +555,7 @@ export async function DELETE(_request: Request, { params }: RouteContext) {
           availability: true,
           categoryId: true,
           price: true,
+          originalPrice: true,
           deletedAt: true,
           business: { select: { id: true, ownerId: true } },
         },
@@ -567,6 +582,7 @@ export async function DELETE(_request: Request, { params }: RouteContext) {
           availability: existing.availability,
           categoryId: existing.categoryId,
           price: existing.price,
+          originalPrice: existing.originalPrice,
           deletedAt: null,
         } as Prisma.InputJsonValue,
         afterData: {
@@ -578,7 +594,6 @@ export async function DELETE(_request: Request, { params }: RouteContext) {
         } as Prisma.InputJsonValue,
         metadata: { businessId: existing.business.id } as Prisma.InputJsonValue,
       });
-
       return {
         kind: "DELETED" as const,
         productId: existing.id,
@@ -606,7 +621,9 @@ export async function DELETE(_request: Request, { params }: RouteContext) {
     });
     return NextResponse.json({ success: true, productId: result.productId, deletedAt: result.deletedAt.toISOString() }, { headers: jsonHeaders() });
   } catch (error) {
-    if (isPrismaErrorCode(error, "P2034")) return jsonError("The product changed during deletion. Refresh and try again.", 409);
+    if (isPrismaErrorCode(error, "P2034")) {
+      return jsonError("The product changed during deletion. Refresh and try again.", 409);
+    }
     console.error("Admin product DELETE error:", error);
     return jsonError("Unable to delete product.", 500);
   }

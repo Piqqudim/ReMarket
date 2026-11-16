@@ -40,6 +40,7 @@ import {
 } from "lucide-react";
 
 import ImageUpload from "@/components/ImageUpload";
+import AreaAutocomplete from "@/components/filters/AreaAutocomplete";
 import {
   DEFAULT_CATEGORIES,
   mergeCategories,
@@ -65,29 +66,6 @@ const ADMIN_NAV = [
   { label: "Requests", href: "/admin/requests", icon: FileText },
   { label: "Content studio", href: "/admin/content", icon: Megaphone },
 ];
-
-const LAGOS_AREA_GROUPS = [
-  { lga: "Agege", areas: ["Agege", "Orile Agege", "Dopemu", "Oko-Oba", "Isale Odo", "Keke"] },
-  { lga: "Ajeromi-Ifelodun", areas: ["Ajegunle", "Tolu", "Olodi", "Alaba Oro", "Awodi-Ora", "Layeni", "Mosafejo"] },
-  { lga: "Alimosho", areas: ["Alimosho", "Egbeda", "Akowonjo", "Shasha", "Idimu", "Egbe", "Ikotun", "Ijegun", "Igando", "Iyana-Ipaja", "Ayobo", "Abule Egba", "Aboru", "Meiran", "Oke-Odo", "Pleasure"] },
-  { lga: "Amuwo-Odofin", areas: ["Amuwo", "Festac", "Mile 2", "Satellite Town", "Kirikiri", "Irede", "Ibeshe"] },
-  { lga: "Apapa", areas: ["Apapa", "Apapa Wharf", "Iganmu", "Ijora", "Liverpool", "Tin Can"] },
-  { lga: "Badagry", areas: ["Badagry", "Badagry West", "Olorunda", "Oko-Afo"] },
-  { lga: "Epe", areas: ["Epe", "Eredo", "Ikosi-Ejinrin"] },
-  { lga: "Eti-Osa", areas: ["Ikoyi", "Obalende", "Victoria Island", "Oniru", "Lekki Phase 1", "Ikate", "Jakande", "Osapa London", "Agungi", "Igbo-Efon", "Idado", "Chevron", "Ikota", "VGC", "Ajah", "Badore", "Sangotedo"] },
-  { lga: "Ibeju-Lekki", areas: ["Ibeju-Lekki", "Abijo", "Awoyaya", "Lakowe", "Bogije", "Eleko", "Akodo"] },
-  { lga: "Ifako-Ijaiye", areas: ["Ifako", "Ijaiye", "Ojokoro", "Oke-Ira", "Agbado"] },
-  { lga: "Ikeja", areas: ["Ikeja", "Ikeja GRA", "Alausa", "Allen Avenue", "Oregun", "Opebi", "Ogba", "Ojodu", "Onigbongbo", "Computer Village", "Airport Road"] },
-  { lga: "Ikorodu", areas: ["Ikorodu", "Ikorodu North", "Ikorodu West", "Igbogbo", "Baiyeku", "Ijede", "Imota", "Odogunyan", "Itamaga", "Agric"] },
-  { lga: "Kosofe", areas: ["Kosofe", "Ketu", "Agboyi", "Ojota", "Gbagada", "Anthony", "Maryland", "Magodo", "Isheri", "Mile 12"] },
-  { lga: "Lagos Island", areas: ["Lagos Island", "Idumota", "Balogun", "Marina", "Broad Street", "Isale Eko", "Lafiaji", "Onikan", "Epetedo", "Okepopo"] },
-  { lga: "Lagos Mainland", areas: ["Yaba", "Ebute Metta", "Akoka", "Sabo", "Alagomeji", "Adekunle", "Abule Oja", "Onike", "Iwaya", "Makoko", "Jibowu", "Oyingbo", "Tejuosho"] },
-  { lga: "Mushin", areas: ["Mushin", "Papa Ajao", "Idi-Araba", "Ilupeju", "Odi-Olowo", "Ojuwoye"] },
-  { lga: "Ojo", areas: ["Ojo", "Iba", "Iyana-Iba", "Ajangbadi", "Oto-Awori", "Alaba"] },
-  { lga: "Oshodi-Isolo", areas: ["Oshodi", "Isolo", "Ejigbo", "Okota", "Ajao Estate", "Mafoluku", "Ago Palace"] },
-  { lga: "Shomolu", areas: ["Shomolu", "Bariga", "Pedro", "Onipanu", "Palmgrove", "Fadeyi"] },
-  { lga: "Surulere", areas: ["Surulere", "Ojuelegba", "Lawanson", "Itire", "Aguda", "Coker", "Ijeshatedo"] },
-] as const;
 
 const DEFAULT_COUNTRY = "Nigeria";
 const INPUT_CLASS = "mt-2 h-11 w-full min-w-0 rounded-xl border border-[#E7E0D8] bg-white px-3.5 text-sm text-[#202A34] outline-none transition placeholder:text-[#ADA49A] focus:border-[#FF7657] focus:ring-4 focus:ring-[#FF5A36]/10 disabled:cursor-not-allowed disabled:bg-[#F4F0EB]";
@@ -378,7 +356,21 @@ export default function NewBusinessPage() {
                       <Field><label className={LABEL_CLASS}>House / shop / building number</label><input value={houseNumber} onChange={(event) => setHouseNumber(event.target.value)} placeholder="e.g. Shop 12 or 18B" className={INPUT_CLASS} /><p className="mt-1.5 text-[10px] text-[#9C9186]">Optional if the place has no number.</p></Field>
                       <Field><label className={LABEL_CLASS}>Street / road / close <span className="text-[#D84B2E">*</span></label><input value={street} onChange={(event) => setStreet(event.target.value)} placeholder="e.g. Awolowo Road" required className={INPUT_CLASS} /></Field>
                       <Field><label className={LABEL_CLASS}>City <span className="text-[#D84B2E">*</span></label><input value={city} onChange={(event) => setCity(event.target.value)} placeholder="e.g. Lagos or Epe" className={INPUT_CLASS} /></Field>
-                      <Field><label className={LABEL_CLASS}>Area / neighbourhood <span className="text-[#D84B2E">*</span></label><div className="relative"><select value={area} onChange={(event) => setArea(event.target.value)} required className={`${INPUT_CLASS} appearance-none pr-10`}><option value="">Choose an area</option>{LAGOS_AREA_GROUPS.map((group) => <optgroup key={group.lga} label={group.lga}>{group.areas.map((item) => <option key={`${group.lga}-${item}`} value={item}>{item}</option>)}</optgroup>)}</select><ChevronDown className="pointer-events-none absolute right-3 top-[22px] h-4 w-4 text-[#978C81]" /></div></Field>
+                      <Field>
+                        <label htmlFor="admin-business-area" className={LABEL_CLASS}>
+                          Area / neighbourhood <span className="text-[#D84B2E">*</span>
+                        </label>
+                        <AreaAutocomplete
+                          id="admin-business-area"
+                          value={area}
+                          onChange={setArea}
+                          placeholder="Search an area, e.g. Ogba or Ekpoma"
+                          disabled={saving}
+                        />
+                        <p className="mt-1.5 text-[10px] leading-4 text-[#9C9186]">
+                          Suggestions are grouped by state and LGA. You can search across the supported locations.
+                        </p>
+                      </Field>
                       <Field className="sm:col-span-2"><label className={LABEL_CLASS}>Country</label><div className="relative"><Globe2 className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-[#9A8F84]" /><input value={DEFAULT_COUNTRY} readOnly className={`${INPUT_CLASS} bg-[#F7F3EE] pl-10`} /></div></Field>
                     </div>
                     <div className="mt-5 overflow-hidden rounded-2xl border border-[#E7DFD6] bg-[#F8F4EE]">
