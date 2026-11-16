@@ -1,250 +1,129 @@
+import { Prisma } from "@prisma/client";
 import { NextRequest, NextResponse } from "next/server";
 
-import { prisma } from "@/lib/prisma";
 import { requireAdmin } from "@/lib/admin-auth";
+import { writeAdminAuditLog } from "@/lib/admin-audit";
+import { prisma } from "@/lib/prisma";
+
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
+
+const noStore = { "Cache-Control": "private, no-store, max-age=0, must-revalidate" };
+
+function jsonError(message: string, status: number) {
+  return NextResponse.json({ error: message }, { status, headers: noStore });
+}
 
 function parseName(value: unknown): string {
-  if (typeof value !== "string") {
-    return "";
-  }
-
-  return value.trim();
+  return typeof value === "string" ? value.trim() : "";
 }
 
-function parseSortOrder(
-  value: unknown
-): number | null {
-  if (
-    value === undefined ||
-    value === null ||
-    value === ""
-  ) {
-    return 0;
-  }
-
+function parseSortOrder(value: unknown): number | null {
+  if (value === undefined || value === null || value === "") return 0;
   const parsed = Number(value);
-
-  if (
-    !Number.isInteger(parsed) ||
-    parsed < 0
-  ) {
-    return null;
-  }
-
-  return parsed;
+  return Number.isSafeInteger(parsed) && parsed >= 0 ? parsed : null;
 }
 
-function parseBoolean(
-  value: unknown,
-  fallback = true
-): boolean {
-  if (typeof value === "boolean") {
-    return value;
-  }
+function parseBoolean(value: unknown, fallback = true): boolean {
+  return typeof value === "boolean" ? value : fallback;
+}
 
-  return fallback;
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function isPrismaErrorCode(error: unknown, code: string): boolean {
+  return error instanceof Prisma.PrismaClientKnownRequestError && error.code === code;
 }
 
 export async function GET() {
   const auth = await requireAdmin();
-
-  if (!auth.authorized) {
-    return auth.response;
-  }
+  if (!auth.authorized) return auth.response;
 
   try {
-    const categories =
-      await prisma.category.findMany({
-        include: {
-          _count: {
-            select: {
-              business: true,
-              products: true,
-              requests: true,
-            },
-          },
-        },
-        orderBy: [
-          {
-            sortOrder: "asc",
-          },
-          {
-            name: "asc",
-          },
-        ],
-      });
-
-    return NextResponse.json({
-      categories,
+    const categories = await prisma.category.findMany({
+      include: { _count: { select: { business: true, products: true, requests: true } } },
+      orderBy: [{ sortOrder: "asc" }, { name: "asc" }],
     });
-  } catch (error) {
-    console.error(
-      "Admin categories GET error:",
-      error
-    );
 
-    return NextResponse.json(
-      {
-        error:
-          "Unable to load categories.",
-      },
-      {
-        status: 500,
-      }
-    );
+    return NextResponse.json({ categories }, { headers: noStore });
+  } catch (error) {
+    console.error("Admin categories GET error:", error);
+    return jsonError("Unable to load categories.", 500);
   }
 }
 
-export async function POST(
-  request: NextRequest
-) {
+export async function POST(request: NextRequest) {
   const auth = await requireAdmin();
-
-  if (!auth.authorized) {
-    return auth.response;
-  }
+  if (!auth.authorized) return auth.response;
 
   try {
-    const body: unknown =
-      await request.json();
-
-    if (
-      !body ||
-      typeof body !== "object" ||
-      Array.isArray(body)
-    ) {
-      return NextResponse.json(
-        {
-          error:
-            "Invalid request body.",
-        },
-        {
-          status: 400,
-        }
-      );
+    let body: unknown;
+    try {
+      body = await request.json();
+    } catch {
+      return jsonError("Invalid JSON body.", 400);
     }
 
-    const payload =
-      body as Record<
-        string,
-        unknown
-      >;
+    if (!isRecord(body)) return jsonError("Invalid request body.", 400);
 
-    const name =
-      parseName(payload.name);
+    const name = parseName(body.name);
+    const iconKey = parseName(body.iconKey) || "Store";
+    const sortOrder = parseSortOrder(body.sortOrder);
 
-    const iconKey =
-      parseName(
-        payload.iconKey
-      ) || "Store";
+    if (!name) return jsonError("Category name is required.", 400);
+    if (name.length > 50) return jsonError("Category name must be 50 characters or less.", 400);
+    if (sortOrder === null) return jsonError("Sort order must be a non-negative whole number.", 400);
 
-    const sortOrder =
-      parseSortOrder(
-        payload.sortOrder
-      );
-
-    if (!name) {
-      return NextResponse.json(
-        {
-          error:
-            "Category name is required.",
-        },
-        {
-          status: 400,
-        }
-      );
-    }
-
-    if (name.length > 50) {
-      return NextResponse.json(
-        {
-          error:
-            "Category name must be 50 characters or less.",
-        },
-        {
-          status: 400,
-        }
-      );
-    }
-
-    if (sortOrder === null) {
-      return NextResponse.json(
-        {
-          error:
-            "Sort order must be a non-negative whole number.",
-        },
-        {
-          status: 400,
-        }
-      );
-    }
-
-    const existing =
-      await prisma.category.findUnique({
-        where: {
-          name,
-        },
+    const result = await prisma.$transaction(async (tx) => {
+      const existing = await tx.category.findUnique({
+        where: { name },
+        select: { id: true },
       });
 
-    if (existing) {
-      return NextResponse.json(
-        {
-          error:
-            "A category with this name already exists.",
-        },
-        {
-          status: 409,
-        }
-      );
-    }
+      if (existing) return { kind: "EXISTS" as const };
 
-    const category =
-      await prisma.category.create({
-        data: {
-          name,
-          iconKey,
-          sortOrder,
-          isActive:
-            parseBoolean(
-              payload.isActive,
-              true
-            ),
-        },
-
-        include: {
-          _count: {
-            select: {
-              business: true,
-              products: true,
-              requests: true,
-            },
-          },
-        },
+      const category = await tx.category.create({
+        data: { name, iconKey, sortOrder, isActive: parseBoolean(body.isActive, true) },
+        include: { _count: { select: { business: true, products: true, requests: true } } },
       });
+
+      await writeAdminAuditLog(tx, {
+        adminId: auth.user.id,
+        action: "CATEGORY_CREATED_BY_ADMIN",
+        entityType: "CATEGORY",
+        entityId: category.id,
+        afterData: {
+          id: category.id,
+          name: category.name,
+          iconKey: category.iconKey,
+          sortOrder: category.sortOrder,
+          isActive: category.isActive,
+        } as Prisma.InputJsonValue,
+        metadata: {
+          relatedBusinesses: category._count.business,
+          relatedProducts: category._count.products,
+          relatedRequests: category._count.requests,
+        } as Prisma.InputJsonValue,
+      });
+
+      return { kind: "CREATED" as const, category };
+    });
+
+    if (result.kind === "EXISTS") {
+      return jsonError("A category with this name already exists.", 409);
+    }
 
     return NextResponse.json(
-      {
-        success: true,
-        category,
-      },
-      {
-        status: 201,
-      }
+      { success: true, category: result.category },
+      { status: 201, headers: noStore },
     );
   } catch (error) {
-    console.error(
-      "Admin category POST error:",
-      error
-    );
+    if (isPrismaErrorCode(error, "P2002")) {
+      return jsonError("A category with this name already exists.", 409);
+    }
 
-    return NextResponse.json(
-      {
-        error:
-          "Unable to create category.",
-      },
-      {
-        status: 500,
-      }
-    );
+    console.error("Admin category POST error:", error);
+    return jsonError("Unable to create category.", 500);
   }
 }

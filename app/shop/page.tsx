@@ -68,6 +68,7 @@ type Product = {
   name: string;
   description: string | null;
   price: number | null;
+  originalPrice: number | null;
   priceMin: number | null;
   priceMax: number | null;
   stockQuantity: number | null;
@@ -402,13 +403,26 @@ function parseProduct(value: unknown): Product | null {
     }))
     .filter((image) => image.url.length > 0);
 
+  const price = parseOptionalNumber(value.price);
+  const candidateOriginalPrice = parseOptionalNumber(
+    value.originalPrice,
+  );
+  const originalPrice =
+    price !== null &&
+    price > 0 &&
+    candidateOriginalPrice !== null &&
+    candidateOriginalPrice > price
+      ? candidateOriginalPrice
+      : null;
+
   const verification = cleanString(seller.verification);
 
   return {
     id: value.id,
     name: value.name,
     description: cleanString(value.description),
-    price: parseOptionalNumber(value.price),
+    price,
+    originalPrice,
     priceMin: parseOptionalNumber(value.priceMin),
     priceMax: parseOptionalNumber(value.priceMax),
     stockQuantity: parseOptionalNumber(value.stockQuantity),
@@ -449,6 +463,23 @@ function formatNaira(value: number): string {
   return `₦${value.toLocaleString("en-NG")}`;
 }
 
+function getDiscountPercentage(product: Product): number | null {
+  if (
+    product.price === null ||
+    product.price <= 0 ||
+    product.originalPrice === null ||
+    product.originalPrice <= product.price
+  ) {
+    return null;
+  }
+
+  return Math.round(
+    ((product.originalPrice - product.price) /
+      product.originalPrice) *
+      100,
+  );
+}
+
 function formatPrice(product: Product): string {
   if (product.price !== null) {
     return formatNaira(product.price);
@@ -472,6 +503,38 @@ function formatPrice(product: Product): string {
   }
 
   return "Ask seller";
+}
+
+function ProductPrice({
+  product,
+}: {
+  product: Product;
+}) {
+  const discount = getDiscountPercentage(product);
+
+  return (
+    <div className="min-w-0">
+      <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
+        <span className="text-[15px] font-extrabold leading-5 text-[#9F2D18] sm:text-base">
+          {product.price !== null
+            ? formatNaira(product.price)
+            : formatPrice(product)}
+        </span>
+
+        {product.originalPrice !== null && (
+          <span className="text-[10px] text-[#958B83] line-through sm:text-xs">
+            {formatNaira(product.originalPrice)}
+          </span>
+        )}
+      </div>
+
+      {discount !== null && (
+        <span className="mt-1 inline-flex rounded-md bg-[#FFF0EA] px-1.5 py-0.5 text-[9px] font-bold text-[#9F2D18]">
+          {discount}% off
+        </span>
+      )}
+    </div>
+  );
 }
 
 function getSortablePrice(product: Product): number {
@@ -2439,9 +2502,9 @@ function ShopPageView({
                                 {product.name}
                               </Link>
 
-                              <p className="mt-1.5 text-xs font-extrabold text-[#9F2D18] sm:text-sm">
-                                {formatPrice(product)}
-                              </p>
+                              <div className="mt-1.5">
+                                <ProductPrice product={product} />
+                              </div>
 
                               <div className="mt-2.5 flex items-center gap-1.5 border-t border-[#F0ECE7] pt-2.5">
                                 <Link

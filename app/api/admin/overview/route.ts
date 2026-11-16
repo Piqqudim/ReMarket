@@ -1,14 +1,23 @@
-import { NextResponse } from "next/server";
-import { prisma } from "@/lib/prisma";
-import { requireAdmin } from "@/lib/admin-auth";
 
-const DEFAULT_CONTACT_ACTIVITY = {
-  WHATSAPP: 0,
-  PHONE: 0,
-  INSTAGRAM: 0,
-  TIKTOK: 0,
-  FACEBOOK: 0,
-  DIRECTIONS: 0,
+import { NextResponse } from "next/server";
+import {
+  BusinessStatus,
+  OrderStatus,
+  PaymentStatus,
+} from "@prisma/client";
+
+import { requireAdmin } from "@/lib/admin-auth";
+import { prisma } from "@/lib/prisma";
+
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
+export const runtime = "nodejs";
+
+const noStore = {
+  "Cache-Control":
+    "private, no-store, max-age=0, must-revalidate",
+  Pragma: "no-cache",
+  Expires: "0",
 };
 
 export async function GET() {
@@ -21,68 +30,70 @@ export async function GET() {
   try {
     const [
       businesses,
+      activeBusinesses,
+      deletedBusinesses,
       products,
-      requests,
-      matches,
-      contacts,
-      contactActivityRows,
-      recentRequests,
-      recentBusinesses,
-      sellerAccounts,
+      activeProducts,
+      buyers,
+      sellers,
+      orders,
+      completedOrders,
+      cancelledOrders,
+      pendingSellerOrders,
+      unconfirmedDeliveryFees,
+      pendingPayments,
       pendingDeletionRequests,
-      pendingClaimRequests,
       categories,
       activeCategories,
       businessViews,
+      contacts,
+      contactActivityRows,
+      orderStatusRows,
+      paymentStatusRows,
+      recentOrders,
+      recentBusinesses,
     ] = await Promise.all([
-      prisma.business.count(),
-
-      prisma.product.count(),
-
-      prisma.buyerRequest.count(),
-
-      prisma.match.count(),
-
-      prisma.contactEvent.count(),
-
-      prisma.contactEvent.groupBy({
-        by: ["platform"],
-        _count: {
-          _all: true,
+      prisma.business.count({
+        where: {
+          deletedAt: null,
         },
       }),
 
-      prisma.buyerRequest.findMany({
-        orderBy: {
-          createdAt: "desc",
+      prisma.business.count({
+        where: {
+          status: BusinessStatus.ACTIVE,
+          deletedAt: null,
         },
-        take: 5,
-        include: {
-          category: {
-            select: {
-              id: true,
-              name: true,
-            },
-          },
-          matches: {
-            select: {
-              id: true,
-            },
+      }),
+
+      prisma.business.count({
+        where: {
+          deletedAt: {
+            not: null,
           },
         },
       }),
 
-      prisma.business.findMany({
-        orderBy: {
-          onboardedAt: "desc",
+      prisma.product.count({
+        where: {
+          deletedAt: null,
         },
-        take: 5,
-        include: {
-          location: {
-            select: {
-              area: true,
-            },
+      }),
+
+      prisma.product.count({
+        where: {
+          status: BusinessStatus.ACTIVE,
+          deletedAt: null,
+          business: {
+            status: BusinessStatus.ACTIVE,
+            deletedAt: null,
           },
+        },
+      }),
+
+      prisma.user.count({
+        where: {
+          role: "BUYER",
         },
       }),
 
@@ -92,13 +103,49 @@ export async function GET() {
         },
       }),
 
-      prisma.businessDeletionRequest.count({
+      prisma.order.count(),
+
+      prisma.order.count({
         where: {
-          status: "PENDING",
+          status: OrderStatus.COMPLETED,
         },
       }),
 
-      prisma.businessClaimRequest.count({
+      prisma.order.count({
+        where: {
+          status: {
+            in: [
+              OrderStatus.CANCELLED,
+              OrderStatus.PARTIALLY_CANCELLED,
+            ],
+          },
+        },
+      }),
+
+      prisma.sellerOrder.count({
+        where: {
+          status: "PENDING_ACCEPTANCE",
+        },
+      }),
+
+      prisma.order.count({
+        where: {
+          deliveryFeeStatus: "UNCONFIRMED",
+        },
+      }),
+
+      prisma.payment.count({
+        where: {
+          status: {
+            in: [
+              PaymentStatus.PENDING,
+              PaymentStatus.INITIATED,
+            ],
+          },
+        },
+      }),
+
+      prisma.businessDeletionRequest.count({
         where: {
           status: "PENDING",
         },
@@ -113,64 +160,173 @@ export async function GET() {
       }),
 
       prisma.businessViewEvent.count(),
+
+      prisma.contactEvent.count(),
+
+      prisma.contactEvent.groupBy({
+        by: ["platform"],
+        _count: {
+          _all: true,
+        },
+      }),
+
+      prisma.order.groupBy({
+        by: ["status"],
+        _count: {
+          _all: true,
+        },
+      }),
+
+      prisma.payment.groupBy({
+        by: ["status"],
+        _count: {
+          _all: true,
+        },
+      }),
+
+      prisma.order.findMany({
+        orderBy: [
+          {
+            createdAt: "desc",
+          },
+          {
+            id: "desc",
+          },
+        ],
+        take: 8,
+        select: {
+          id: true,
+          orderCode: true,
+          status: true,
+          itemsSubtotal: true,
+          deliveryFee: true,
+          deliveryFeeStatus: true,
+          totalAmount: true,
+          currency: true,
+          createdAt: true,
+
+          buyer: {
+            select: {
+              id: true,
+              name: true,
+              email: true,
+            },
+          },
+
+          _count: {
+            select: {
+              sellerOrders: true,
+            },
+          },
+        },
+      }),
+
+      prisma.business.findMany({
+        where: {
+          deletedAt: null,
+        },
+        orderBy: [
+          {
+            onboardedAt: "desc",
+          },
+          {
+            id: "desc",
+          },
+        ],
+        take: 6,
+        select: {
+          id: true,
+          name: true,
+          status: true,
+          verification: true,
+          onboardedAt: true,
+
+          location: {
+            select: {
+              area: true,
+            },
+          },
+        },
+      }),
     ]);
 
-    const contactActivity = {
-      ...DEFAULT_CONTACT_ACTIVITY,
+    const contactActivity: Record<string, number> = {
+      WHATSAPP: 0,
+      PHONE: 0,
+      INSTAGRAM: 0,
+      TIKTOK: 0,
+      FACEBOOK: 0,
+      DIRECTIONS: 0,
     };
 
     for (const row of contactActivityRows) {
-      if (row.platform in contactActivity) {
-        contactActivity[
-          row.platform as keyof typeof contactActivity
-        ] = row._count._all;
-      }
+      contactActivity[row.platform] =
+        row._count._all;
     }
 
-    return NextResponse.json({
-      stats: {
-        businesses,
-        products,
-        requests,
-        matches,
-        contacts,
-        businessViews,
+    const mapCounts = <T extends string>(
+      rows: Array<{
+        status: T;
+        _count: {
+          _all: number;
+        };
+      }>,
+    ) =>
+      rows.map((row) => ({
+        status: row.status,
+        count: row._count._all,
+      }));
+
+    return NextResponse.json(
+      {
+        stats: {
+          businesses,
+          activeBusinesses,
+          deletedBusinesses,
+          products,
+          activeProducts,
+          buyers,
+          sellers,
+          orders,
+          completedOrders,
+          cancelledOrders,
+          businessViews,
+          contacts,
+        },
+
+        operations: {
+          pendingSellerOrders,
+          unconfirmedDeliveryFees,
+          pendingPayments,
+          pendingDeletionRequests,
+          categories,
+          activeCategories,
+        },
+
+        orderStatusCounts:
+          mapCounts(orderStatusRows),
+
+        paymentStatusCounts:
+          mapCounts(paymentStatusRows),
+
+        contactActivity,
+
+        recentOrders: recentOrders.map(
+          (order) => ({
+            ...order,
+            sellerOrderCount:
+              order._count.sellerOrders,
+          }),
+        ),
+
+        recentBusinesses,
+
+        generatedAt: new Date().toISOString(),
       },
-
-      operations: {
-        sellerAccounts,
-        pendingDeletionRequests,
-        pendingClaimRequests,
-        categories,
-        activeCategories,
+      {
+        headers: noStore,
       },
-
-      contactActivity,
-
-      recentRequests: recentRequests.map(
-        (item) => ({
-          id: item.id,
-          requestCode: item.requestCode,
-          query: item.query,
-          status: item.status,
-          category: item.category,
-          createdAt: item.createdAt,
-          matchCount: item.matches.length,
-        }),
-      ),
-
-      recentBusinesses: recentBusinesses.map(
-        (item) => ({
-          id: item.id,
-          name: item.name,
-          status: item.status,
-          verification: item.verification,
-          availability: item.availability,
-          area: item.location?.area ?? null,
-          onboardedAt: item.onboardedAt,
-        }),
-      ),
-    });
+    );
   } catch (error) {
     console.error(
       "Admin overview error:",
@@ -180,10 +336,11 @@ export async function GET() {
     return NextResponse.json(
       {
         error:
-          "Unable to load admin overview",
+          "Unable to load the Admin overview.",
       },
       {
         status: 500,
+        headers: noStore,
       },
     );
   }

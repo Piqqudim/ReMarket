@@ -301,6 +301,25 @@ enum AdminContentStatus {
   ARCHIVED
 }
 
+
+enum UserAccountStatus {
+  ACTIVE
+  SUSPENDED
+}
+
+
+enum LedgerAccountType {
+  ASSET
+  LIABILITY
+  EQUITY
+  REVENUE
+  EXPENSE
+}
+
+enum FinancialJournalStatus {
+  DRAFT
+  POSTED
+}
 /**
  * ============================================================
  * USERS
@@ -312,6 +331,8 @@ model User {
   email     String   @unique
   password  String
   role      Role     @default(BUYER)
+  accountStatus UserAccountStatus @default(ACTIVE)
+  suspendedAt   DateTime?
   name      String?
   createdAt DateTime @default(now())
 
@@ -403,8 +424,85 @@ model User {
 
   // Reviews written for individual products.
   productReviews ProductReview[]
+
+    adminAuditLogs AdminAuditLog[] @relation("AdminAuditActor")
+    financialJournalsCreated  FinancialJournal[] @relation("FinancialJournalCreatedBy")
+financialJournalsApproved FinancialJournal[] @relation("FinancialJournalApprovedBy")
 }
 
+
+
+
+model FinancialAccount {
+  id        String           @id @default(cuid())
+  code      String           @unique @db.VarChar(30)
+  name      String
+  type      LedgerAccountType
+  currency  String           @default("NGN") @db.VarChar(3)
+  isSystem  Boolean          @default(false)
+  isActive  Boolean          @default(true)
+  createdAt DateTime         @default(now())
+  updatedAt DateTime         @updatedAt
+
+  journalLines FinancialJournalLine[]
+
+  @@index([type, isActive])
+}
+
+model FinancialJournal {
+  id                String                 @id @default(cuid())
+  reference         String                 @unique
+  sourceType        String                 @default("MANUAL") @db.VarChar(50)
+  sourceId          String?                @db.VarChar(100)
+  description       String?
+  currency          String                 @default("NGN") @db.VarChar(3)
+  status            FinancialJournalStatus @default(DRAFT)
+  idempotencyKey    String?                @unique
+
+  createdById       String?
+  createdBy         User?                  @relation("FinancialJournalCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+
+  approvedById      String?
+  approvedBy        User?                  @relation("FinancialJournalApprovedBy", fields: [approvedById], references: [id], onDelete: SetNull)
+
+  approvedAt        DateTime?
+  postedAt          DateTime?
+
+  reversesJournalId String?                @unique
+  reversesJournal   FinancialJournal?      @relation("FinancialJournalReversal", fields: [reversesJournalId], references: [id], onDelete: Restrict)
+  reversalJournal   FinancialJournal?      @relation("FinancialJournalReversal")
+
+  createdAt         DateTime               @default(now())
+
+  lines FinancialJournalLine[]
+
+  @@index([status, createdAt])
+  @@index([sourceType, sourceId])
+  @@index([createdById, createdAt])
+  @@index([approvedById, createdAt])
+}
+
+model FinancialJournalLine {
+  id          String           @id @default(cuid())
+  journalId   String
+  accountId   String
+
+  debit       Decimal          @default(0) @db.Decimal(18, 2)
+  credit      Decimal          @default(0) @db.Decimal(18, 2)
+
+  description String?
+  orderId     String?
+  sellerId    String?
+  createdAt   DateTime         @default(now())
+
+  journal FinancialJournal @relation(fields: [journalId], references: [id], onDelete: Restrict)
+  account FinancialAccount @relation(fields: [accountId], references: [id], onDelete: Restrict)
+
+  @@index([journalId])
+  @@index([accountId, createdAt])
+  @@index([orderId])
+  @@index([sellerId])
+}
 /**
  * ============================================================
  * REFERRALS
@@ -1320,6 +1418,43 @@ model AdminContent {
   @@index([createdById, createdAt])
 }
 
+/**
+ * ============================================================
+ * ADMIN AUDIT LOG
+ * ============================================================
+ * Records administrative changes across ReMarket.
+ *
+ * Store only relevant changed fields in beforeData and
+ * afterData. Avoid copying sensitive buyer information.
+ */
+
+model AdminAuditLog {
+  id String @id @default(cuid())
+
+  adminId String
+
+  admin User @relation("AdminAuditActor",fields: [adminId],references: [id],onDelete: Restrict)
+
+  action String
+
+  entityType String
+
+  entityId String
+
+  reason String?
+
+  beforeData Json?
+
+  afterData Json?
+
+  metadata Json?
+
+  createdAt DateTime @default(now())
+
+  @@index([adminId, createdAt])
+  @@index([entityType, entityId, createdAt])
+  @@index([action, createdAt])
+}
 /**
  * ============================================================
  * SAVED LISTINGS
