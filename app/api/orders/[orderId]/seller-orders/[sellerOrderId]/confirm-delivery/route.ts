@@ -25,14 +25,29 @@ const noStore = {
 };
 
 function jsonError(message: string, status: number) {
-  return NextResponse.json({ error: message }, { status, headers: noStore });
+  return NextResponse.json(
+    { error: message },
+    { status, headers: noStore },
+  );
 }
 
-function applyNoStore(response: NextResponse) {
+/**
+ * requireBuyer currently exposes its unauthorized response as the standard
+ * Response type. Clone it into a NextResponse while preserving its body,
+ * status, status text, and headers, then apply the no-cache headers.
+ */
+function applyNoStore(response: Response): NextResponse {
+  const headers = new Headers(response.headers);
+
   for (const [key, value] of Object.entries(noStore)) {
-    response.headers.set(key, value);
+    headers.set(key, value);
   }
-  return response;
+
+  return new NextResponse(response.body, {
+    status: response.status,
+    statusText: response.statusText,
+    headers,
+  });
 }
 
 function aggregateOrderStatus(statuses: SellerOrderStatus[]): OrderStatus {
