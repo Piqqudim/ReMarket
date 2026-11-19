@@ -1,12 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import {
-  useCallback,
-  useEffect,
-  useMemo,
-  useState,
-} from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   Activity,
   AlertCircle,
@@ -15,13 +10,11 @@ import {
   Check,
   CheckCircle2,
   ChevronDown,
-  ClipboardList,
   Clock3,
   ExternalLink,
   Eye,
   Filter,
   LayoutDashboard,
-  Megaphone,
   Package,
   Pencil,
   RefreshCw,
@@ -35,6 +28,13 @@ import {
 
 type ProductStatus = "ACTIVE" | "INACTIVE" | "PENDING";
 type ProductAvailability = "AVAILABLE" | "ASK_SELLER" | "UNAVAILABLE";
+
+type CategoryInfo = {
+  id: string;
+  name: string;
+  parentId: string | null;
+  parent: { id: string; name: string } | null;
+};
 
 type Product = {
   id: string;
@@ -53,7 +53,7 @@ type Product = {
     area: string;
     deletedAt: string | null;
   };
-  category: string | null;
+  category: CategoryInfo | null;
   updatedAt: string;
 };
 
@@ -104,6 +104,37 @@ function isAvailability(value: unknown): value is ProductAvailability {
   return value === "AVAILABLE" || value === "ASK_SELLER" || value === "UNAVAILABLE";
 }
 
+function normalizeCategory(value: unknown): CategoryInfo | null {
+  if (typeof value === "string" && value.trim()) {
+    return { id: "", name: value.trim(), parentId: null, parent: null };
+  }
+  if (!isRecord(value) || typeof value.name !== "string" || !value.name.trim()) {
+    return null;
+  }
+
+  const parentValue = isRecord(value.parent)
+    ? value.parent
+    : isRecord(value.parentCategory)
+      ? value.parentCategory
+      : null;
+  const parent = parentValue && typeof parentValue.name === "string" && parentValue.name.trim()
+    ? {
+        id: typeof parentValue.id === "string" ? parentValue.id : "",
+        name: parentValue.name.trim(),
+      }
+    : null;
+  const parentId = typeof value.parentId === "string"
+    ? value.parentId
+    : parent?.id || null;
+
+  return {
+    id: typeof value.id === "string" ? value.id : "",
+    name: value.name.trim(),
+    parentId,
+    parent,
+  };
+}
+
 function normalizeProduct(value: unknown): Product | null {
   if (!isRecord(value) || !isRecord(value.business)) return null;
   const business = value.business;
@@ -124,13 +155,6 @@ function normalizeProduct(value: unknown): Product | null {
   const nullableString = (input: unknown): string | null =>
     typeof input === "string" && input.trim() ? input : null;
 
-  const rawCategory = value.category;
-  const category = typeof rawCategory === "string"
-    ? rawCategory
-    : isRecord(rawCategory) && typeof rawCategory.name === "string"
-      ? rawCategory.name
-      : null;
-
   return {
     id: value.id,
     name: value.name,
@@ -148,9 +172,18 @@ function normalizeProduct(value: unknown): Product | null {
       area: typeof business.area === "string" ? business.area : "Area not provided",
       deletedAt: nullableString(business.deletedAt),
     },
-    category,
+    category: normalizeCategory(value.category),
     updatedAt: typeof value.updatedAt === "string" ? value.updatedAt : "",
   };
+}
+
+function categoryLabel(product: Product): string {
+  const category = product.category;
+  if (!category) return "No category";
+  if (category.parent?.name && category.parent.name !== category.name) {
+    return `${category.parent.name} / ${category.name}`;
+  }
+  return category.name;
 }
 
 function formatDate(value: string): string {
@@ -312,7 +345,6 @@ export default function AdminProductsPage() {
   return (
     <main className="min-h-dvh w-full overflow-x-clip bg-[#F7F3ED] text-[#28221E]">
       <div className="flex min-h-dvh w-full">
-        {/* Desktop rail: owns the viewport height, without narrowing the page on tablets. */}
         <aside className="sticky top-0 hidden h-dvh w-[228px] shrink-0 flex-col border-r border-[#E9DED3] bg-[#FFFEFC] xl:flex">
           <div className="border-b border-[#EEE5DC] px-5 py-6">
             <Link href="/admin" className="flex items-center gap-3">
@@ -344,7 +376,6 @@ export default function AdminProductsPage() {
         </aside>
 
         <section className="flex min-h-dvh min-w-0 flex-1 flex-col">
-          {/* Header stays inside the content column; the page itself remains the only vertical scroller. */}
           <header className="sticky top-0 z-30 border-b border-[#E9DED3] bg-[#FFFEFC]/95 px-4 py-3 backdrop-blur-md sm:px-6 xl:px-8">
             <div className="flex min-h-[42px] min-w-0 items-center justify-between gap-3">
               <div className="flex min-w-0 items-center gap-3">
@@ -363,7 +394,6 @@ export default function AdminProductsPage() {
 
           <div className="w-full flex-1 px-4 py-5 sm:px-6 sm:py-7 xl:px-8">
             <div className="mx-auto w-full max-w-[1700px]">
-              {/* Tablet/mobile navigation: single horizontal rail, never a 2-row grid that forces the page wider/taller. */}
               <nav aria-label="Admin sections" className="mb-6 flex w-full items-center gap-2 overflow-x-auto pb-1 xl:hidden">
                 {NAV_ITEMS.map((item) => {
                   const Icon = item.icon;
@@ -372,7 +402,6 @@ export default function AdminProductsPage() {
                 })}
               </nav>
 
-              {/* Intro */}
               <section className="relative mb-6 overflow-hidden rounded-[26px] bg-[#2B231F] px-5 py-6 text-white shadow-[0_16px_38px_rgba(54,40,30,0.12)] sm:px-7 sm:py-7 xl:px-8">
                 <div className="pointer-events-none absolute -right-10 -top-16 h-56 w-56 rounded-full border-[28px] border-white/[0.045]" />
                 <div className="pointer-events-none absolute -bottom-20 right-28 h-44 w-44 rounded-full bg-[#FF5A36]/15 blur-2xl" />
@@ -389,7 +418,6 @@ export default function AdminProductsPage() {
                 </div>
               </section>
 
-              {/* Result-set indicators; labels deliberately make it clear these describe the fetched/filtered results. */}
               <section aria-label="Product result summary" className="mb-6 grid grid-cols-2 gap-3 sm:grid-cols-4 sm:gap-4">
                 <MetricCard label="Products shown" value={summary.total} caption="Matching current filters" icon={Package} tone="orange" />
                 <MetricCard label="Active shown" value={summary.active} caption="Live within results" icon={CheckCircle2} tone="green" />
@@ -397,7 +425,6 @@ export default function AdminProductsPage() {
                 <MetricCard label="Unavailable shown" value={summary.unavailable} caption="Marked unavailable" icon={AlertCircle} tone="rose" />
               </section>
 
-              {/* Filters */}
               <section className="mb-5 rounded-[22px] border border-[#E9DED3] bg-white p-4 shadow-[0_5px_18px_rgba(70,48,30,0.035)] sm:p-5">
                 <div className="mb-3 flex items-center gap-2"><span className="flex h-8 w-8 items-center justify-center rounded-lg bg-[#FFF0E8] text-[#9F2D18]"><SlidersHorizontal size={16} /></span><div><h3 className="text-sm font-black">Find a product</h3><p className="text-[11px] text-[#9A8D82]">Filters update automatically</p></div><span className="ml-auto hidden items-center gap-1.5 text-[10px] font-bold text-[#9A8D82] sm:inline-flex"><Filter size={13} /> CATALOG FILTERS</span></div>
                 <div className="grid min-w-0 grid-cols-1 gap-3 md:grid-cols-[minmax(220px,1fr)_minmax(150px,190px)_minmax(170px,210px)]">
@@ -411,7 +438,6 @@ export default function AdminProductsPage() {
               {error && <div role="alert" className="mb-5 flex items-start gap-3 rounded-2xl border border-[#F2C7BC] bg-[#FFF0ED] px-4 py-3.5 text-sm text-[#9F2D18]"><AlertCircle size={18} className="mt-0.5 shrink-0" /><div className="min-w-0 flex-1"><p className="font-bold">Something needs attention</p><p className="mt-0.5 leading-5">{error}</p></div><button type="button" onClick={() => setError("")} aria-label="Dismiss error" className="rounded-lg p-1 hover:bg-white/70"><X size={16} /></button></div>}
               {success && <div role="status" aria-live="polite" className="mb-5 flex items-start gap-3 rounded-2xl border border-[#C7E9D7] bg-[#EFFAF4] px-4 py-3 text-sm text-[#18714D]"><CheckCircle2 size={18} className="mt-0.5 shrink-0" /><p className="font-semibold">{success}</p><button type="button" onClick={() => setSuccess("")} aria-label="Dismiss success message" className="ml-auto rounded-lg p-1 hover:bg-white/70"><X size={15} /></button></div>}
 
-              {/* Catalog */}
               <section className="overflow-hidden rounded-[22px] border border-[#E9DED3] bg-white shadow-[0_5px_18px_rgba(70,48,30,0.035)]">
                 <div className="flex flex-col gap-3 border-b border-[#EEE5DC] px-4 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-5">
                   <div className="flex min-w-0 items-center gap-3"><div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-[#F7F1EB] text-[#9F2D18]"><Package size={18} /></div><div className="min-w-0"><h3 className="text-sm font-black">Catalog listings</h3><p className="mt-0.5 text-xs text-[#968A80]">{loading ? "Refreshing listings…" : `${products.length.toLocaleString("en-NG")} matching ${products.length === 1 ? "listing" : "listings"}`}</p></div></div>
@@ -419,7 +445,6 @@ export default function AdminProductsPage() {
                 </div>
 
                 {loading ? <LoadingState /> : products.length === 0 ? <EmptyState hasFilters={Boolean(query || status || availability)} onClear={() => { setQuery(""); setStatus(""); setAvailability(""); }} /> : <>
-                  {/* Desktop table only starts at large widths; tablet uses cards to avoid forced horizontal scrolling. */}
                   <div className="hidden overflow-x-auto lg:block">
                     <table className="w-full min-w-[920px] border-collapse text-left">
                       <thead className="bg-[#FCFAF6]"><tr className="border-b border-[#EEE5DC] text-[10px] font-extrabold uppercase tracking-[0.12em] text-[#9A8D82]"><th className="px-5 py-3.5">Product listing</th><th className="px-4 py-3.5">Business</th><th className="px-4 py-3.5">Price</th><th className="px-4 py-3.5">Availability</th><th className="px-4 py-3.5">Status</th><th className="px-5 py-3.5 text-right">Actions</th></tr></thead>
@@ -482,17 +507,17 @@ function EmptyState({ hasFilters, onClear }: { hasFilters: boolean; onClear: () 
 
 function ProductRow({ product, updating, onUpdate }: { product: Product; updating: boolean; onUpdate: (product: Product, changes: ProductChanges) => void | Promise<void> }) {
   const locked = Boolean(product.deletedAt || product.business.deletedAt);
-  return <tr className={`transition hover:bg-[#FFFCF8] ${locked ? "bg-[#FCFAF6]" : ""}`}><td className="px-5 py-4"><div className="flex min-w-0 items-center gap-3"><ProductImage product={product} /><div className="min-w-0"><p className="max-w-[260px] truncate text-sm font-extrabold text-[#28221E]">{product.name}</p><p className="mt-1 text-[11px] text-[#A1968C]">{product.category || "No category"}{product.deletedAt ? " · Deleted" : ""}</p></div></div></td><td className="px-4 py-4"><Link href={`/admin/businesses/${encodeURIComponent(product.business.id)}`} className="block max-w-[200px] truncate text-xs font-extrabold text-[#4D4139] hover:text-[#9F2D18]">{product.business.name}</Link><p className="mt-1 truncate text-[11px] text-[#A1968C]">{product.business.area}</p>{product.business.deletedAt && <p className="mt-1 text-[10px] font-bold text-[#AD3A2A]">Business deleted</p>}</td><td className="whitespace-nowrap px-4 py-4 text-xs font-extrabold text-[#28221E]">{priceLabel(product)}</td><td className="px-4 py-4"><AvailabilityButton product={product} updating={updating} locked={locked} onUpdate={onUpdate} /></td><td className="px-4 py-4"><StatusButton product={product} updating={updating} locked={locked} onUpdate={onUpdate} /></td><td className="px-5 py-4"><ProductActions product={product} locked={locked} /></td></tr>;
+  return <tr className={`transition hover:bg-[#FFFCF8] ${locked ? "bg-[#FCFAF6]" : ""}`}><td className="px-5 py-4"><div className="flex min-w-0 items-center gap-3"><ProductImage product={product} /><div className="min-w-0"><p className="max-w-[260px] truncate text-sm font-extrabold text-[#28221E]">{product.name}</p><p className="mt-1 max-w-[260px] truncate text-[11px] text-[#A1968C]" title={categoryLabel(product)}>{categoryLabel(product)}{product.deletedAt ? " · Deleted" : ""}</p></div></div></td><td className="px-4 py-4"><Link href={`/admin/businesses/${encodeURIComponent(product.business.id)}`} className="block max-w-[200px] truncate text-xs font-extrabold text-[#4D4139] hover:text-[#9F2D18]">{product.business.name}</Link><p className="mt-1 truncate text-[11px] text-[#A1968C]">{product.business.area}</p>{product.business.deletedAt && <p className="mt-1 text-[10px] font-bold text-[#AD3A2A]">Business deleted</p>}</td><td className="whitespace-nowrap px-4 py-4 text-xs font-extrabold text-[#28221E]">{priceLabel(product)}</td><td className="px-4 py-4"><AvailabilityButton product={product} updating={updating} locked={locked} onUpdate={onUpdate} /></td><td className="px-4 py-4"><StatusButton product={product} updating={updating} locked={locked} onUpdate={onUpdate} /></td><td className="px-5 py-4"><ProductActions product={product} locked={locked} /></td></tr>;
 }
 
 function ProductWideCard({ product, updating, onUpdate }: { product: Product; updating: boolean; onUpdate: (product: Product, changes: ProductChanges) => void | Promise<void> }) {
   const locked = Boolean(product.deletedAt || product.business.deletedAt);
-  return <article className={`p-4 transition hover:bg-[#FFFCF8] sm:p-5 ${locked ? "bg-[#FCFAF6]" : ""}`}><div className="flex min-w-0 items-start gap-4"><ProductImage product={product} large /><div className="min-w-0 flex-1"><div className="flex flex-col gap-3 xl:flex-row xl:items-start xl:justify-between"><div className="min-w-0"><div className="flex flex-wrap items-center gap-2"><h3 className="break-words text-sm font-black text-[#28221E]">{product.name}</h3>{product.deletedAt && <RecordBadge label="Deleted product" tone="muted" />}{product.business.deletedAt && <RecordBadge label="Deleted business" tone="rose" />}</div><Link href={`/admin/businesses/${encodeURIComponent(product.business.id)}`} className="mt-1 inline-flex max-w-full items-center gap-1 truncate text-xs font-bold text-[#9F2D18] hover:underline"><Store size={12} />{product.business.name}</Link><p className="mt-1 text-[11px] text-[#9A8D82]">{product.business.area} · {product.category || "No category"}</p><p className="mt-2 text-sm font-black text-[#9F2D18]">{priceLabel(product)}</p></div><div className="flex flex-wrap gap-2 xl:justify-end"><StatusButton product={product} updating={updating} locked={locked} onUpdate={onUpdate} /><AvailabilityButton product={product} updating={updating} locked={locked} onUpdate={onUpdate} /></div></div><div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-[#F0E9E2] pt-3"><p className="flex items-center gap-1.5 text-[10px] font-semibold text-[#A1968C]"><Clock3 size={12} /> Updated {formatDate(product.updatedAt)}</p><ProductActions product={product} locked={locked} /></div></div></div></article>;
+  return <article className={`p-4 transition hover:bg-[#FFFCF8] sm:p-5 ${locked ? "bg-[#FCFAF6]" : ""}`}><div className="flex min-w-0 items-start gap-4"><ProductImage product={product} large /><div className="min-w-0 flex-1"><div className="flex flex-col gap-3 xl:flex-row xl:items-start xl:justify-between"><div className="min-w-0"><div className="flex flex-wrap items-center gap-2"><h3 className="break-words text-sm font-black text-[#28221E]">{product.name}</h3>{product.deletedAt && <RecordBadge label="Deleted product" tone="muted" />}{product.business.deletedAt && <RecordBadge label="Deleted business" tone="rose" />}</div><Link href={`/admin/businesses/${encodeURIComponent(product.business.id)}`} className="mt-1 inline-flex max-w-full items-center gap-1 truncate text-xs font-bold text-[#9F2D18] hover:underline"><Store size={12} />{product.business.name}</Link><p className="mt-1 text-[11px] text-[#9A8D82]">{product.business.area} · {categoryLabel(product)}</p><p className="mt-2 text-sm font-black text-[#9F2D18]">{priceLabel(product)}</p></div><div className="flex flex-wrap gap-2 xl:justify-end"><StatusButton product={product} updating={updating} locked={locked} onUpdate={onUpdate} /><AvailabilityButton product={product} updating={updating} locked={locked} onUpdate={onUpdate} /></div></div><div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-[#F0E9E2] pt-3"><p className="flex items-center gap-1.5 text-[10px] font-semibold text-[#A1968C]"><Clock3 size={12} /> Updated {formatDate(product.updatedAt)}</p><ProductActions product={product} locked={locked} /></div></div></div></article>;
 }
 
 function ProductMobileCard({ product, updating, onUpdate }: { product: Product; updating: boolean; onUpdate: (product: Product, changes: ProductChanges) => void | Promise<void> }) {
   const locked = Boolean(product.deletedAt || product.business.deletedAt);
-  return <article className={`p-4 ${locked ? "bg-[#FCFAF6]" : ""}`}><div className="flex min-w-0 items-start gap-3"><ProductImage product={product} large /><div className="min-w-0 flex-1"><div className="flex flex-wrap items-start gap-1.5"><h3 className="min-w-0 flex-1 break-words text-sm font-black text-[#28221E]">{product.name}</h3>{product.deletedAt && <RecordBadge label="Deleted" tone="muted" />}</div><Link href={`/admin/businesses/${encodeURIComponent(product.business.id)}`} className="mt-1 flex min-w-0 items-center gap-1.5 text-xs font-bold text-[#9F2D18]"><Store size={12} className="shrink-0" /><span className="truncate">{product.business.name}</span></Link><p className="mt-1 truncate text-[11px] text-[#9A8D82]">{product.business.area} · {product.category || "No category"}</p><p className="mt-2 text-base font-black text-[#9F2D18]">{priceLabel(product)}</p></div></div><div className="mt-4 flex flex-wrap gap-2"><StatusButton product={product} updating={updating} locked={locked} onUpdate={onUpdate} /><AvailabilityButton product={product} updating={updating} locked={locked} onUpdate={onUpdate} /></div><div className="mt-4 flex flex-wrap items-center justify-between gap-2 border-t border-[#F0E9E2] pt-3"><p className="flex items-center gap-1 text-[10px] font-semibold text-[#A1968C]"><Clock3 size={12} /> {formatDate(product.updatedAt)}</p><ProductActions product={product} locked={locked} /></div></article>;
+  return <article className={`p-4 ${locked ? "bg-[#FCFAF6]" : ""}`}><div className="flex min-w-0 items-start gap-3"><ProductImage product={product} large /><div className="min-w-0 flex-1"><div className="flex flex-wrap items-start gap-1.5"><h3 className="min-w-0 flex-1 break-words text-sm font-black text-[#28221E]">{product.name}</h3>{product.deletedAt && <RecordBadge label="Deleted" tone="muted" />}</div><Link href={`/admin/businesses/${encodeURIComponent(product.business.id)}`} className="mt-1 flex min-w-0 items-center gap-1.5 text-xs font-bold text-[#9F2D18]"><Store size={12} className="shrink-0" /><span className="truncate">{product.business.name}</span></Link><p className="mt-1 text-[11px] text-[#9A8D82]">{product.business.area} · {categoryLabel(product)}</p><p className="mt-2 text-base font-black text-[#9F2D18]">{priceLabel(product)}</p></div></div><div className="mt-4 flex flex-wrap gap-2"><StatusButton product={product} updating={updating} locked={locked} onUpdate={onUpdate} /><AvailabilityButton product={product} updating={updating} locked={locked} onUpdate={onUpdate} /></div><div className="mt-4 flex flex-wrap items-center justify-between gap-2 border-t border-[#F0E9E2] pt-3"><p className="flex items-center gap-1 text-[10px] font-semibold text-[#A1968C]"><Clock3 size={12} /> {formatDate(product.updatedAt)}</p><ProductActions product={product} locked={locked} /></div></article>;
 }
 
 function ProductImage({ product, large = false }: { product: Product; large?: boolean }) {

@@ -301,12 +301,10 @@ enum AdminContentStatus {
   ARCHIVED
 }
 
-
 enum UserAccountStatus {
   ACTIVE
   SUSPENDED
 }
-
 
 enum LedgerAccountType {
   ASSET
@@ -320,6 +318,7 @@ enum FinancialJournalStatus {
   DRAFT
   POSTED
 }
+
 /**
  * ============================================================
  * USERS
@@ -327,14 +326,14 @@ enum FinancialJournalStatus {
  */
 
 model User {
-  id        String   @id @default(cuid())
-  email     String   @unique
-  password  String
-  role      Role     @default(BUYER)
+  id            String            @id @default(cuid())
+  email         String            @unique
+  password      String
+  role          Role              @default(BUYER)
   accountStatus UserAccountStatus @default(ACTIVE)
   suspendedAt   DateTime?
-  name      String?
-  createdAt DateTime @default(now())
+  name          String?
+  createdAt     DateTime          @default(now())
 
   savedListings SavedListing[]
 
@@ -425,24 +424,21 @@ model User {
   // Reviews written for individual products.
   productReviews ProductReview[]
 
-    adminAuditLogs AdminAuditLog[] @relation("AdminAuditActor")
-    financialJournalsCreated  FinancialJournal[] @relation("FinancialJournalCreatedBy")
-financialJournalsApproved FinancialJournal[] @relation("FinancialJournalApprovedBy")
+  adminAuditLogs            AdminAuditLog[]    @relation("AdminAuditActor")
+  financialJournalsCreated  FinancialJournal[] @relation("FinancialJournalCreatedBy")
+  financialJournalsApproved FinancialJournal[] @relation("FinancialJournalApprovedBy")
 }
 
-
-
-
 model FinancialAccount {
-  id        String           @id @default(cuid())
-  code      String           @unique @db.VarChar(30)
+  id        String            @id @default(cuid())
+  code      String            @unique @db.VarChar(30)
   name      String
   type      LedgerAccountType
-  currency  String           @default("NGN") @db.VarChar(3)
-  isSystem  Boolean          @default(false)
-  isActive  Boolean          @default(true)
-  createdAt DateTime         @default(now())
-  updatedAt DateTime         @updatedAt
+  currency  String            @default("NGN") @db.VarChar(3)
+  isSystem  Boolean           @default(false)
+  isActive  Boolean           @default(true)
+  createdAt DateTime          @default(now())
+  updatedAt DateTime          @updatedAt
 
   journalLines FinancialJournalLine[]
 
@@ -450,29 +446,29 @@ model FinancialAccount {
 }
 
 model FinancialJournal {
-  id                String                 @id @default(cuid())
-  reference         String                 @unique
-  sourceType        String                 @default("MANUAL") @db.VarChar(50)
-  sourceId          String?                @db.VarChar(100)
-  description       String?
-  currency          String                 @default("NGN") @db.VarChar(3)
-  status            FinancialJournalStatus @default(DRAFT)
-  idempotencyKey    String?                @unique
+  id             String                 @id @default(cuid())
+  reference      String                 @unique
+  sourceType     String                 @default("MANUAL") @db.VarChar(50)
+  sourceId       String?                @db.VarChar(100)
+  description    String?
+  currency       String                 @default("NGN") @db.VarChar(3)
+  status         FinancialJournalStatus @default(DRAFT)
+  idempotencyKey String?                @unique
 
-  createdById       String?
-  createdBy         User?                  @relation("FinancialJournalCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  createdById String?
+  createdBy   User?   @relation("FinancialJournalCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
 
-  approvedById      String?
-  approvedBy        User?                  @relation("FinancialJournalApprovedBy", fields: [approvedById], references: [id], onDelete: SetNull)
+  approvedById String?
+  approvedBy   User?   @relation("FinancialJournalApprovedBy", fields: [approvedById], references: [id], onDelete: SetNull)
 
-  approvedAt        DateTime?
-  postedAt          DateTime?
+  approvedAt DateTime?
+  postedAt   DateTime?
 
-  reversesJournalId String?                @unique
-  reversesJournal   FinancialJournal?      @relation("FinancialJournalReversal", fields: [reversesJournalId], references: [id], onDelete: Restrict)
-  reversalJournal   FinancialJournal?      @relation("FinancialJournalReversal")
+  reversesJournalId String?           @unique
+  reversesJournal   FinancialJournal? @relation("FinancialJournalReversal", fields: [reversesJournalId], references: [id], onDelete: Restrict)
+  reversalJournal   FinancialJournal? @relation("FinancialJournalReversal")
 
-  createdAt         DateTime               @default(now())
+  createdAt DateTime @default(now())
 
   lines FinancialJournalLine[]
 
@@ -483,17 +479,17 @@ model FinancialJournal {
 }
 
 model FinancialJournalLine {
-  id          String           @id @default(cuid())
-  journalId   String
-  accountId   String
+  id        String @id @default(cuid())
+  journalId String
+  accountId String
 
-  debit       Decimal          @default(0) @db.Decimal(18, 2)
-  credit      Decimal          @default(0) @db.Decimal(18, 2)
+  debit  Decimal @default(0) @db.Decimal(18, 2)
+  credit Decimal @default(0) @db.Decimal(18, 2)
 
   description String?
   orderId     String?
   sellerId    String?
-  createdAt   DateTime         @default(now())
+  createdAt   DateTime @default(now())
 
   journal FinancialJournal @relation(fields: [journalId], references: [id], onDelete: Restrict)
   account FinancialAccount @relation(fields: [accountId], references: [id], onDelete: Restrict)
@@ -503,6 +499,7 @@ model FinancialJournalLine {
   @@index([orderId])
   @@index([sellerId])
 }
+
 /**
  * ============================================================
  * REFERRALS
@@ -640,20 +637,42 @@ model BusinessSocialLink {
 model Category {
   id String @id @default(cuid())
 
+  // Category name must be unique across ReMarket.
   name String @unique
 
+  // Lucide icon identifier, e.g. "Shirt", "Smartphone", "Store".
   iconKey String @default("Store")
 
+  // Optional image URL for category cards and navigation menus.
+  imageUrl String?
+
+  // Admin controls category visibility.
   isActive Boolean @default(true)
 
+  // Controls category display order.
   sortOrder Int @default(0)
 
+  // Optional parent category.
+  // null = top-level category.
+  // non-null = subcategory.
+  parentId String?
+
+  // Parent category relationship.
+  parent Category? @relation("CategoryHierarchy", fields: [parentId], references: [id], onDelete: SetNull)
+
+  // Categories belonging to this parent.
+  children Category[] @relation("CategoryHierarchy")
+
+  // Existing ReMarket relationships.
   business BusinessCategory[]
   products Product[]
   services Service[]
   requests BuyerRequest[]
 
+  // Existing active-category ordering.
   @@index([isActive, sortOrder])
+  // Efficient retrieval of active subcategories in display order.
+  @@index([parentId, isActive, sortOrder])
 }
 
 model BusinessCategory {
@@ -1423,7 +1442,6 @@ model AdminContent {
  * ADMIN AUDIT LOG
  * ============================================================
  * Records administrative changes across ReMarket.
- *
  * Store only relevant changed fields in beforeData and
  * afterData. Avoid copying sensitive buyer information.
  */
@@ -1433,7 +1451,7 @@ model AdminAuditLog {
 
   adminId String
 
-  admin User @relation("AdminAuditActor",fields: [adminId],references: [id],onDelete: Restrict)
+  admin User @relation("AdminAuditActor", fields: [adminId], references: [id], onDelete: Restrict)
 
   action String
 
@@ -1455,6 +1473,7 @@ model AdminAuditLog {
   @@index([entityType, entityId, createdAt])
   @@index([action, createdAt])
 }
+
 /**
  * ============================================================
  * SAVED LISTINGS

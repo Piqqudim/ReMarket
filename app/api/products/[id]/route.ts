@@ -14,78 +14,88 @@ function responseHeaders(baseHeaders?: HeadersInit): Headers {
   return headers;
 }
 
-function jsonError(
-  message: string,
-  status: number,
-  headers?: HeadersInit,
-) {
+function jsonError(message: string, status: number, headers?: HeadersInit) {
   return NextResponse.json(
-    {
-      product: null,
-      relatedProducts: [],
-      error: message,
-    },
-    {
-      status,
-      headers: responseHeaders(headers),
-    },
+    { product: null, relatedProducts: [], error: message },
+    { status, headers: responseHeaders(headers) },
   );
 }
 
-/**
- * Only expose an original price when it represents a genuine discount.
- * The current selling price remains the amount used for purchase calculations.
- */
-function getDisplayOriginalPrice(
-  price: number | null,
-  originalPrice: number | null,
-): number | null {
-  if (
-    price === null ||
-    !Number.isSafeInteger(price) ||
-    price <= 0 ||
-    originalPrice === null ||
-    !Number.isSafeInteger(originalPrice) ||
-    originalPrice <= price
-  ) {
+function toMoneyNumber(value: unknown): number | null {
+  let amount: number;
+
+  if (typeof value === "number") {
+    amount = value;
+  } else if (typeof value === "string") {
+    const normalized = value.trim().replace(/,/g, "");
+    if (!normalized) return null;
+    amount = Number(normalized);
+  } else if (typeof value === "bigint") {
+    amount = Number(value);
+    if (!Number.isSafeInteger(amount)) return null;
+  } else if (typeof value === "object" && value !== null) {
+    const decimal = value as { toNumber?: () => number };
+    if (typeof decimal.toNumber !== "function") return null;
+    try {
+      amount = decimal.toNumber();
+    } catch {
+      return null;
+    }
+  } else {
     return null;
   }
 
-  return originalPrice;
+  return Number.isFinite(amount) && amount >= 0 ? amount : null;
+}
+
+function getDisplayOriginalPrice(
+  price: unknown,
+  originalPrice: unknown,
+): number | null {
+  const current = toMoneyNumber(price);
+  const original = toMoneyNumber(originalPrice);
+  return current !== null && current > 0 && original !== null && original > current
+    ? original
+    : null;
 }
 
 function normalizeNigerianPhone(value: string): string {
   let clean = value.trim().replace(/[^\d+]/g, "");
-
   if (!clean) return "";
   if (clean.startsWith("00")) clean = clean.slice(2);
   if (clean.startsWith("+")) clean = clean.slice(1);
   if (clean.startsWith("234")) return `+${clean}`;
   if (clean.startsWith("0")) return `+234${clean.slice(1)}`;
-
   return `+234${clean}`;
 }
 
-function normalizeSocialHandle(
-  platform: string,
-  handle: string,
-): string {
+function normalizeSocialHandle(platform: string, handle: string): string {
   const clean = handle.trim();
   if (!clean) return "";
-
   if (platform === "PHONE" || platform === "WHATSAPP") {
-    if (
-      clean.startsWith("http://") ||
-      clean.startsWith("https://")
-    ) {
-      return clean;
-    }
-
+    if (clean.startsWith("http://") || clean.startsWith("https://")) return clean;
     return normalizeNigerianPhone(clean);
   }
-
   return clean;
 }
+
+type CategorySummary = {
+  id: string;
+  name: string;
+  isActive: boolean;
+  parentId: string | null;
+  imageUrl?: string | null;
+  iconKey?: string;
+  sortOrder?: number;
+  parent: {
+    id: string;
+    name: string;
+    isActive: boolean;
+    imageUrl?: string | null;
+    iconKey?: string;
+    sortOrder?: number;
+  } | null;
+};
 
 const relatedProductSelect = {
   id: true,
@@ -96,26 +106,30 @@ const relatedProductSelect = {
   stockQuantity: true,
   availability: true,
   imageUrl: true,
-
   images: {
-    select: {
-      id: true,
-      url: true,
-      publicId: true,
-      sortOrder: true,
-    },
-    orderBy: [
-      { sortOrder: "asc" },
-      { createdAt: "asc" },
-    ],
+    select: { id: true, url: true, publicId: true, sortOrder: true },
+    orderBy: [{ sortOrder: "asc" }, { createdAt: "asc" }],
     take: 1,
   },
-
   category: {
     select: {
       id: true,
       name: true,
       isActive: true,
+      parentId: true,
+      imageUrl: true,
+      iconKey: true,
+      sortOrder: true,
+      parent: {
+        select: {
+          id: true,
+          name: true,
+          isActive: true,
+          imageUrl: true,
+          iconKey: true,
+          sortOrder: true,
+        },
+      },
     },
   },
 } satisfies Prisma.ProductSelect;
@@ -132,42 +146,44 @@ function buildRelatedProductWhere(
   area?: string | null,
 ): Prisma.ProductWhereInput {
   return {
-    id: {
-      notIn: [productId, ...excludedIds],
-    },
-    businessId: {
-      not: businessId,
-    },
+    id: { notIn: [productId, ...excludedIds] },
+    businessId: { not: businessId },
     status: "ACTIVE",
     deletedAt: null,
-
     ...(categoryId
-      ? {
-          category: {
-            is: {
-              id: categoryId,
-              isActive: true,
-            },
-          },
-        }
+      ? { category: { is: { id: categoryId, isActive: true } } }
       : {}),
-
     business: {
       is: {
         status: "ACTIVE",
         deletedAt: null,
-
-        ...(area
-          ? {
-              location: {
-                is: {
-                  area,
-                },
-              },
-            }
-          : {}),
+        ...(area ? { location: { is: { area } } } : {}),
       },
     },
+  };
+}
+
+function formatCategory(category: CategorySummary | null) {
+  if (!category?.isActive) return null;
+
+  const parent = category.parent?.isActive ? category.parent : null;
+
+  return {
+    id: category.id,
+    name: category.name,
+    parentId: category.parentId,
+    imageUrl: category.imageUrl ?? null,
+    ...(category.iconKey !== undefined ? { iconKey: category.iconKey } : {}),
+    ...(category.sortOrder !== undefined ? { sortOrder: category.sortOrder } : {}),
+    parent: parent
+      ? {
+          id: parent.id,
+          name: parent.name,
+          imageUrl: parent.imageUrl ?? null,
+          ...(parent.iconKey !== undefined ? { iconKey: parent.iconKey } : {}),
+          ...(parent.sortOrder !== undefined ? { sortOrder: parent.sortOrder } : {}),
+        }
+      : null,
   };
 }
 
@@ -176,31 +192,18 @@ function formatRelatedProduct(related: RelatedProductRow) {
     id: related.id,
     name: related.name,
     description: related.description,
-    price: related.price,
-
-    originalPrice: getDisplayOriginalPrice(
-      related.price,
-      related.originalPrice,
-    ),
-
+    price: toMoneyNumber(related.price),
+    originalPrice: getDisplayOriginalPrice(related.price, related.originalPrice),
     stockQuantity: related.stockQuantity,
     availability: related.availability,
-    imageUrl: related.imageUrl,
-
+    imageUrl: related.imageUrl ?? related.images[0]?.url ?? null,
     images: related.images.map((image) => ({
       id: image.id,
       url: image.url,
       publicId: image.publicId,
       sortOrder: image.sortOrder,
     })),
-
-    category:
-      related.category?.isActive
-        ? {
-            id: related.category.id,
-            name: related.category.name,
-          }
-        : null,
+    category: formatCategory(related.category),
   };
 }
 
@@ -209,7 +212,6 @@ export async function GET(
   { params }: { params: Promise<{ id: string }> },
 ) {
   const rateLimit = checkPublicRateLimit(request, "featured");
-
   if (!rateLimit.allowed) {
     return jsonError(
       "Too many product requests. Please try again shortly.",
@@ -220,33 +222,18 @@ export async function GET(
 
   try {
     const { id } = await params;
-
-    if (
-      !id ||
-      id.trim().length === 0 ||
-      id.length > MAX_PRODUCT_ID_LENGTH
-    ) {
-      return jsonError(
-        "Invalid product ID.",
-        400,
-        rateLimit.headers,
-      );
+    const productId = typeof id === "string" ? id.trim() : "";
+    if (!productId || productId.length > MAX_PRODUCT_ID_LENGTH) {
+      return jsonError("Invalid product ID.", 400, rateLimit.headers);
     }
 
     const product = await prisma.product.findFirst({
       where: {
-        id: id.trim(),
+        id: productId,
         status: "ACTIVE",
         deletedAt: null,
-
-        business: {
-          is: {
-            status: "ACTIVE",
-            deletedAt: null,
-          },
-        },
+        business: { is: { status: "ACTIVE", deletedAt: null } },
       },
-
       select: {
         id: true,
         name: true,
@@ -259,17 +246,27 @@ export async function GET(
         keywords: true,
         createdAt: true,
         updatedAt: true,
-
         category: {
           select: {
             id: true,
             name: true,
             isActive: true,
             iconKey: true,
+            imageUrl: true,
             sortOrder: true,
+            parentId: true,
+            parent: {
+              select: {
+                id: true,
+                name: true,
+                isActive: true,
+                imageUrl: true,
+                iconKey: true,
+                sortOrder: true,
+              },
+            },
           },
         },
-
         images: {
           select: {
             id: true,
@@ -278,12 +275,8 @@ export async function GET(
             sortOrder: true,
             createdAt: true,
           },
-          orderBy: [
-            { sortOrder: "asc" },
-            { createdAt: "asc" },
-          ],
+          orderBy: [{ sortOrder: "asc" }, { createdAt: "asc" }],
         },
-
         business: {
           select: {
             id: true,
@@ -295,7 +288,6 @@ export async function GET(
             availability: true,
             verification: true,
             showContactInfo: true,
-
             location: {
               select: {
                 id: true,
@@ -305,30 +297,34 @@ export async function GET(
                 verification: true,
               },
             },
-
             categories: {
-              where: {
-                category: {
-                  isActive: true,
-                },
-              },
-
+              where: { category: { isActive: true } },
               select: {
                 category: {
                   select: {
                     id: true,
                     name: true,
+                    isActive: true,
+                    parentId: true,
+                    imageUrl: true,
+                    iconKey: true,
+                    sortOrder: true,
+                    parent: {
+                      select: {
+                        id: true,
+                        name: true,
+                        isActive: true,
+                        imageUrl: true,
+                        iconKey: true,
+                        sortOrder: true,
+                      },
+                    },
                   },
                 },
               },
             },
-
             socialLinks: {
-              select: {
-                id: true,
-                platform: true,
-                handle: true,
-              },
+              select: { id: true, platform: true, handle: true },
             },
           },
         },
@@ -336,38 +332,20 @@ export async function GET(
     });
 
     if (!product) {
-      return jsonError(
-        "Product not found.",
-        404,
-        rateLimit.headers,
-      );
+      return jsonError("Product not found.", 404, rateLimit.headers);
     }
 
     const seller = product.business;
     const showContactInfo = seller.showContactInfo === true;
-
-    /*
-     * Contact details are only formatted when
-     * the seller makes them public.
-     */
-
     const socialLinks = showContactInfo
       ? seller.socialLinks
           .map((link) => ({
             id: link.id,
             platform: link.platform,
-            handle: normalizeSocialHandle(
-              link.platform,
-              link.handle,
-            ),
+            handle: normalizeSocialHandle(link.platform, link.handle),
           }))
           .filter((link) => Boolean(link.handle))
       : [];
-
-    /*
-     * Support older manually onboarded sellers
-     * with a Business.phone value.
-     */
 
     if (
       showContactInfo &&
@@ -381,20 +359,14 @@ export async function GET(
       });
     }
 
-    const sellerCategories = seller.categories.map((item) => ({
-      id: item.category.id,
-      name: item.category.name,
-    }));
+    const businessCategories = seller.categories
+      .map((item) => formatCategory(item.category))
+      .filter((category): category is NonNullable<typeof category> => category !== null);
 
-    /*
-     * Similar products prioritise other sellers
-     * in the same area and category.
-     *
-     * If there are not enough, the query expands
-     * to other active sellers, then uses the
-     * original seller's remaining products as
-     * a final fallback.
-     */
+    const sellerCategories = businessCategories.map((category) => ({
+      id: category.id,
+      name: category.name,
+    }));
 
     const activeCategoryId = product.category?.isActive
       ? product.category.id
@@ -408,31 +380,15 @@ export async function GET(
         activeCategoryId,
         seller.location?.area,
       ),
-
       select: relatedProductSelect,
-
-      orderBy: [
-        { createdAt: "desc" },
-        { id: "desc" },
-      ],
-
+      orderBy: [{ createdAt: "desc" }, { id: "desc" }],
       take: RELATED_PRODUCT_LIMIT,
     });
 
-    let relatedRows: RelatedProductRow[] = [
-      ...preferredRelatedProducts,
-    ];
-
-    /*
-     * Expand to other locations while keeping
-     * the matching category and excluding
-     * products already selected.
-     */
+    let relatedRows: RelatedProductRow[] = [...preferredRelatedProducts];
 
     if (relatedRows.length < RELATED_PRODUCT_LIMIT) {
       const existingIds = relatedRows.map((item) => item.id);
-      const remaining = RELATED_PRODUCT_LIMIT - relatedRows.length;
-
       const broaderRelatedProducts = await prisma.product.findMany({
         where: buildRelatedProductWhere(
           product.id,
@@ -440,110 +396,49 @@ export async function GET(
           seller.id,
           activeCategoryId,
         ),
-
         select: relatedProductSelect,
-
-        orderBy: [
-          { createdAt: "desc" },
-          { id: "desc" },
-        ],
-
-        take: remaining,
+        orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+        take: RELATED_PRODUCT_LIMIT - relatedRows.length,
       });
-
-      relatedRows = [
-        ...relatedRows,
-        ...broaderRelatedProducts,
-      ];
+      relatedRows = [...relatedRows, ...broaderRelatedProducts];
     }
-
-    /*
-     * Final fallback: products from the original
-     * seller when there are not enough alternatives.
-     */
 
     if (relatedRows.length < RELATED_PRODUCT_LIMIT) {
       const existingIds = relatedRows.map((item) => item.id);
-      const remaining = RELATED_PRODUCT_LIMIT - relatedRows.length;
-
       const sameSellerProducts = await prisma.product.findMany({
         where: {
-          id: {
-            notIn: [product.id, ...existingIds],
-          },
-
+          id: { notIn: [product.id, ...existingIds] },
           businessId: seller.id,
           status: "ACTIVE",
           deletedAt: null,
-
-          business: {
-            is: {
-              status: "ACTIVE",
-              deletedAt: null,
-            },
-          },
+          business: { is: { status: "ACTIVE", deletedAt: null } },
         },
-
         select: relatedProductSelect,
-
-        orderBy: [
-          { createdAt: "desc" },
-          { id: "desc" },
-        ],
-
-        take: remaining,
+        orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+        take: RELATED_PRODUCT_LIMIT - relatedRows.length,
       });
-
-      relatedRows = [
-        ...relatedRows,
-        ...sameSellerProducts,
-      ];
+      relatedRows = [...relatedRows, ...sameSellerProducts];
     }
-
-    /*
-     * FORMAT MAIN PRODUCT
-     */
 
     const formattedProduct = {
       id: product.id,
       name: product.name,
       description: product.description,
-      price: product.price,
-
-      originalPrice: getDisplayOriginalPrice(
-        product.price,
-        product.originalPrice,
-      ),
-
+      price: toMoneyNumber(product.price),
+      originalPrice: getDisplayOriginalPrice(product.price, product.originalPrice),
       stockQuantity: product.stockQuantity,
       availability: product.availability,
-      imageUrl: product.imageUrl,
+      imageUrl: product.imageUrl ?? product.images[0]?.url ?? null,
       keywords: product.keywords,
       createdAt: product.createdAt,
       updatedAt: product.updatedAt,
-
-      category:
-        product.category?.isActive
-          ? {
-              id: product.category.id,
-              name: product.category.name,
-              iconKey: product.category.iconKey,
-              sortOrder: product.category.sortOrder,
-            }
-          : null,
-
+      category: formatCategory(product.category),
       images: product.images.map((image) => ({
         id: image.id,
         url: image.url,
         publicId: image.publicId,
         sortOrder: image.sortOrder,
       })),
-
-      /*
-       * Seller information supports trust and
-       * local context on this product page.
-       */
-
       seller: {
         id: seller.id,
         name: seller.name,
@@ -552,12 +447,8 @@ export async function GET(
         imageUrl: seller.imageUrl,
         availability: seller.availability,
         verification: seller.verification,
-
-        verified:
-          seller.verification === "VERIFIED",
-
+        verified: seller.verification === "VERIFIED",
         showContactInfo,
-
         location: seller.location
           ? {
               id: seller.location.id,
@@ -567,39 +458,22 @@ export async function GET(
               verification: seller.location.verification,
             }
           : null,
-
         categories: sellerCategories,
-
-        category:
-          sellerCategories[0]?.name ?? "Uncategorised",
-
+        businessCategories,
+        category: sellerCategories[0]?.name ?? "Uncategorised",
         socialLinks,
       },
     };
 
-    /*
-     * FORMAT RELATED PRODUCTS
-     */
-
-    const formattedRelatedProducts = relatedRows.map(
-      formatRelatedProduct,
-    );
-
     return NextResponse.json(
       {
         product: formattedProduct,
-        relatedProducts: formattedRelatedProducts,
+        relatedProducts: relatedRows.map(formatRelatedProduct),
       },
-      {
-        headers: responseHeaders(rateLimit.headers),
-      },
+      { headers: responseHeaders(rateLimit.headers) },
     );
   } catch (error) {
-    console.error(
-      "Public Product Details API error:",
-      error,
-    );
-
+    console.error("Public Product Details API error:", error);
     return jsonError(
       "Unable to load this product. Please try again.",
       500,

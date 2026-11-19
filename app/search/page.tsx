@@ -1,4 +1,3 @@
-
 "use client";
 
 import {
@@ -46,7 +45,16 @@ const SAVED_ITEMS_CHANGED_EVENT = "remarket-saved-items-changed";
 
 type Availability = "AVAILABLE" | "ASK_SELLER" | "UNAVAILABLE";
 type SortMode = "relevance" | "newest" | "price-asc" | "price-desc";
-type Category = ReMarketCategory;
+
+type Category = ReMarketCategory & {
+  parentId: string | null;
+  imageUrl: string | null;
+  sortOrder: number;
+};
+
+type CategoryTreeNode = Category & {
+  children: CategoryTreeNode[];
+};
 
 type ListingImage = {
   id: string;
@@ -87,6 +95,7 @@ type ProductSearchResult = {
 type SearchFilterValues = {
   query: string;
   category: string;
+  categoryId: string;
   state: string;
   lga: string;
   area: string;
@@ -100,6 +109,7 @@ type SearchFilterValues = {
 type SearchPageViewProps = {
   initialQuery: string;
   initialCategory: string;
+  initialCategoryId: string;
   initialState: string;
   initialLga: string;
   initialArea: string;
@@ -249,10 +259,6 @@ function parseImages(value: unknown): ListingImage[] {
   });
 }
 
-/*
- * The search API returns broad seller context:
- * verification status and area.
- */
 function parseSellerContext(value: unknown): ProductSellerContext {
   if (!isRecord(value)) {
     return {
@@ -419,7 +425,7 @@ function getLgasForState(
 function parseCategoryOptions(value: unknown): Category[] {
   if (!Array.isArray(value)) return [];
 
-  const categories: ApiCategory[] = value.flatMap((item) => {
+  const rawCategories = value.flatMap((item) => {
     if (
       !isRecord(item) ||
       typeof item.id !== "string" ||
@@ -440,12 +446,91 @@ function parseCategoryOptions(value: unknown): Category[] {
         sortOrder:
           typeof item.sortOrder === "number"
             ? item.sortOrder
-            : undefined,
+            : 0,
+        parentId: cleanString(item.parentId),
+        imageUrl: cleanString(item.imageUrl),
       },
     ];
   });
 
-  return mergeCategories(categories);
+  const apiCategories: ApiCategory[] = rawCategories.map((item) => ({
+    id: item.id,
+    name: item.name,
+    iconKey: item.iconKey,
+    isActive: item.isActive,
+    sortOrder: item.sortOrder,
+  }));
+
+  const mergedCategories = mergeCategories(apiCategories);
+
+  const mergedById = new Map(
+    mergedCategories.map((item) => [item.id, item]),
+  );
+
+  return rawCategories.flatMap((item) => {
+    const displayCategory = mergedById.get(item.id);
+
+    if (!displayCategory) {
+      return [];
+    }
+
+    return [
+      {
+        ...displayCategory,
+        id: item.id,
+        name: item.name,
+        parentId: item.parentId,
+        imageUrl: item.imageUrl,
+        sortOrder: item.sortOrder,
+      },
+    ];
+  });
+}
+
+function buildCategoryTree(
+  categories: Category[],
+): CategoryTreeNode[] {
+  const nodes: CategoryTreeNode[] = categories.map((category) => ({
+    ...category,
+    children: [],
+  }));
+
+  const nodesById = new Map(
+    nodes.map((category) => [category.id, category]),
+  );
+
+  const roots: CategoryTreeNode[] = [];
+
+  for (const category of nodes) {
+    const parent = category.parentId
+      ? nodesById.get(category.parentId)
+      : undefined;
+
+    if (parent && parent.id !== category.id) {
+      parent.children.push(category);
+    } else {
+      roots.push(category);
+    }
+  }
+
+  function sortNodes(items: CategoryTreeNode[]) {
+    items.sort((a, b) => {
+      const aOrder = Number(a.sortOrder ?? 0);
+      const bOrder = Number(b.sortOrder ?? 0);
+
+      if (aOrder !== bOrder) return aOrder - bOrder;
+
+      return a.name.localeCompare(b.name);
+    });
+
+    for (const item of items) {
+      sortNodes(item.children);
+    }
+  }
+
+  sortNodes(roots);
+
+  return roots;
 }
 
 function parseResultMeta(
@@ -613,6 +698,10 @@ function buildSearchParams(
 
   if (values.category.trim()) {
     params.set("category", values.category.trim());
+  }
+
+  if (values.categoryId.trim()) {
+    params.set("categoryId", values.categoryId.trim());
   }
 
   if (values.state.trim()) {
@@ -980,6 +1069,31 @@ function ProductResultCard({
 }
 
 /* -------------------------------------------------------------------------- */
+/* CATEGORY DISPLAY HELPERS                                                   */
+/* -------------------------------------------------------------------------- */
+
+function CategoryImageOrIcon({
+  category,
+}: {
+  category: Category;
+}) {
+  const Icon = category.icon;
+
+  if (category.imageUrl) {
+    return (
+      <img
+        src={category.imageUrl}
+        alt=""
+        loading="lazy"
+        className="h-full w-full rounded-full object-cover"
+      />
+    );
+  }
+
+  return <Icon className="h-3.5 w-3.5" />;
+}
+
+/* -------------------------------------------------------------------------- */
 /* SEARCH PAGE URL                                                            */
 /* -------------------------------------------------------------------------- */
 
@@ -989,11 +1103,11 @@ function SearchPageContent() {
 
   const initialQuery = searchParams.get("q") ?? "";
   const initialCategory = searchParams.get("category") ?? "";
+  const initialCategoryId = searchParams.get("categoryId") ?? "";
 
   const initialState = searchParams.get("state") ?? "";
   const initialLga = searchParams.get("lga") ?? "";
 
-  // Old search links used `location`. Continue reading them as `area`.
   const initialArea =
     searchParams.get("area") ??
     searchParams.get("location") ??
@@ -1023,7 +1137,6 @@ function SearchPageContent() {
       changed = true;
     }
 
-    // Convert old location links to the new area parameter.
     if (
       params.has("location") &&
       !params.has("area")
@@ -1069,6 +1182,7 @@ function SearchPageContent() {
       key={searchKey}
       initialQuery={initialQuery}
       initialCategory={initialCategory}
+      initialCategoryId={initialCategoryId}
       initialState={initialState}
       initialLga={initialLga}
       initialArea={initialArea}
@@ -1089,6 +1203,7 @@ function SearchPageContent() {
 function SearchPageView({
   initialQuery,
   initialCategory,
+  initialCategoryId,
   initialState,
   initialLga,
   initialArea,
@@ -1103,6 +1218,7 @@ function SearchPageView({
 
   const [query, setQuery] = useState(initialQuery);
   const [category, setCategory] = useState(initialCategory);
+  const [categoryId, setCategoryId] = useState(initialCategoryId);
 
   const [state, setState] = useState(initialState);
   const [lga, setLga] = useState(initialLga);
@@ -1110,9 +1226,7 @@ function SearchPageView({
 
   const [minPrice, setMinPrice] = useState(initialMinPrice);
   const [maxPrice, setMaxPrice] = useState(initialMaxPrice);
-  const [availability, setAvailability] = useState(
-    initialAvailability,
-  );
+  const [availability, setAvailability] = useState(initialAvailability);
   const [verified, setVerified] = useState(initialVerified);
 
   const [categories, setCategories] = useState<Category[]>([]);
@@ -1166,6 +1280,7 @@ function SearchPageView({
     () => ({
       query: initialQuery,
       category: initialCategory,
+      categoryId: initialCategoryId,
       state: initialState,
       lga: initialLga,
       area: initialArea,
@@ -1178,6 +1293,7 @@ function SearchPageView({
     [
       initialQuery,
       initialCategory,
+      initialCategoryId,
       initialState,
       initialLga,
       initialArea,
@@ -1193,6 +1309,23 @@ function SearchPageView({
     () => getLgasForState(locationOptions, state),
     [locationOptions, state],
   );
+
+  const categoryTree = useMemo(
+    () => buildCategoryTree(categories),
+    [categories],
+  );
+
+  const selectedCategoryId = useMemo(() => {
+    if (categoryId) return categoryId;
+
+    return (
+      categories.find(
+        (item) =>
+          item.name.toLowerCase() ===
+          initialCategory.toLowerCase(),
+      )?.id ?? ""
+    );
+  }, [categories, categoryId, initialCategory]);
 
   /* ------------------------------------------------------------------------ */
   /* NAVIGATION                                                               */
@@ -1240,6 +1373,26 @@ function SearchPageView({
     navigateToSearch({
       ...appliedFilters,
       ...overrides,
+    });
+  }
+
+  function isCategorySelected(item: Category): boolean {
+    if (selectedCategoryId) {
+      return selectedCategoryId === item.id;
+    }
+
+    return (
+      initialCategory.toLowerCase() ===
+      item.name.toLowerCase()
+    );
+  }
+
+  function toggleAppliedCategory(item: Category) {
+    const active = isCategorySelected(item);
+
+    applyAppliedFilterChanges({
+      category: active ? "" : item.name,
+      categoryId: active ? "" : item.id,
     });
   }
 
@@ -1563,6 +1716,7 @@ function SearchPageView({
       ...appliedFilters,
       query,
       category,
+      categoryId,
       state,
       lga,
       area,
@@ -1578,6 +1732,7 @@ function SearchPageView({
       ...appliedFilters,
       query,
       category,
+      categoryId,
       state,
       lga,
       area,
@@ -1592,6 +1747,7 @@ function SearchPageView({
 
   function closeFilters() {
     setCategory(initialCategory);
+    setCategoryId(initialCategoryId);
 
     setState(initialState);
     setLga(initialLga);
@@ -1608,6 +1764,7 @@ function SearchPageView({
   function clearFilters() {
     setQuery(initialQuery);
     setCategory("");
+    setCategoryId("");
 
     setState("");
     setLga("");
@@ -1622,6 +1779,7 @@ function SearchPageView({
       ...appliedFilters,
       query: initialQuery,
       category: "",
+      categoryId: "",
       state: "",
       lga: "",
       area: "",
@@ -1642,6 +1800,16 @@ function SearchPageView({
     setState(selected.state);
     setLga(selected.lga);
     setArea(selected.area);
+  }
+
+  function toggleDraftCategory(item: Category) {
+    const active =
+      categoryId === item.id ||
+      (!categoryId &&
+        category.toLowerCase() === item.name.toLowerCase());
+
+    setCategory(active ? "" : item.name);
+    setCategoryId(active ? "" : item.id);
   }
 
   /* ------------------------------------------------------------------------ */
@@ -1838,7 +2006,7 @@ function SearchPageView({
   ]);
 
   const activeFilterCount =
-    Number(Boolean(initialCategory)) +
+    Number(Boolean(initialCategory || initialCategoryId)) +
     Number(Boolean(initialState)) +
     Number(Boolean(initialLga)) +
     Number(Boolean(initialArea)) +
@@ -1951,7 +2119,7 @@ function SearchPageView({
           </section>
 
           {/* PRODUCT CATEGORY CHIPS */}
-          {categories.length > 0 && (
+          {categoryTree.length > 0 && (
             <section
               aria-label="Product categories"
               className="mt-5"
@@ -1961,12 +2129,13 @@ function SearchPageView({
                   Browse categories
                 </h2>
 
-                {initialCategory && (
+                {(initialCategory || initialCategoryId) && (
                   <button
                     type="button"
                     onClick={() =>
                       applyAppliedFilterChanges({
                         category: "",
+                        categoryId: "",
                       })
                     }
                     className="text-[10px] font-semibold text-[#9F2D18] hover:underline"
@@ -1979,14 +2148,15 @@ function SearchPageView({
               <div className="flex gap-2 overflow-x-auto pb-2 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
                 <button
                   type="button"
-                  aria-pressed={!initialCategory}
+                  aria-pressed={!initialCategory && !initialCategoryId}
                   onClick={() =>
                     applyAppliedFilterChanges({
                       category: "",
+                      categoryId: "",
                     })
                   }
                   className={`shrink-0 rounded-full border px-4 py-2 text-xs font-bold transition ${
-                    !initialCategory
+                    !initialCategory && !initialCategoryId
                       ? "border-[#FF5A36] bg-[#FF5A36] text-white"
                       : "border-[#EAE6DF] bg-white text-[#514840] hover:border-[#FF9A81]"
                   }`}
@@ -1994,44 +2164,55 @@ function SearchPageView({
                   All categories
                 </button>
 
-                {categories.map((item) => {
-                  const active =
-                    initialCategory.toLowerCase() ===
-                    item.name.toLowerCase();
-
-                  const Icon = item.icon;
-
-                  return (
+                {categoryTree.map((parent) => (
+                  <div
+                    key={parent.id}
+                    className="flex shrink-0 items-center gap-1.5"
+                  >
                     <button
-                      key={item.id}
                       type="button"
-                      aria-pressed={active}
-                      onClick={() =>
-                        applyAppliedFilterChanges({
-                          category: active
-                            ? ""
-                            : item.name,
-                        })
-                      }
+                      aria-pressed={isCategorySelected(parent)}
+                      onClick={() => toggleAppliedCategory(parent)}
                       className={`inline-flex shrink-0 items-center gap-2 rounded-full border px-3.5 py-2 text-xs font-semibold transition ${
-                        active
+                        isCategorySelected(parent)
                           ? "border-[#FF5A36] bg-[#FFF0EB] text-[#9F2D18]"
                           : "border-[#EAE6DF] bg-white text-[#514840] hover:border-[#FF9A81]"
                       }`}
                     >
                       <span
-                        className="flex h-5 w-5 items-center justify-center rounded-full"
-                        style={{
-                          backgroundColor: item.bg,
-                        }}
+                        className="flex h-5 w-5 items-center justify-center overflow-hidden rounded-full"
+                        style={{ backgroundColor: parent.bg }}
                       >
-                        <Icon className="h-3 w-3" />
+                        <CategoryImageOrIcon category={parent} />
                       </span>
 
-                      {item.name}
+                      {parent.name}
                     </button>
-                  );
-                })}
+
+                    {parent.children.map((child) => (
+                      <button
+                        key={child.id}
+                        type="button"
+                        aria-pressed={isCategorySelected(child)}
+                        onClick={() => toggleAppliedCategory(child)}
+                        className={`inline-flex shrink-0 items-center gap-2 rounded-full border px-3 py-2 text-[11px] font-medium transition ${
+                          isCategorySelected(child)
+                            ? "border-[#FF5A36] bg-[#FFF0EB] text-[#9F2D18]"
+                            : "border-[#EAE6DF] bg-white text-[#756B61] hover:border-[#FF9A81]"
+                        }`}
+                      >
+                        <span
+                          className="flex h-4 w-4 items-center justify-center overflow-hidden rounded-full"
+                          style={{ backgroundColor: child.bg }}
+                        >
+                          <CategoryImageOrIcon category={child} />
+                        </span>
+
+                        {child.name}
+                      </button>
+                    ))}
+                  </div>
+                ))}
               </div>
             </section>
           )}
@@ -2371,52 +2552,119 @@ function SearchPageView({
                 Category
               </label>
 
-              <div className="mt-2 grid grid-cols-2 gap-2">
-                {categories.map((item) => {
-                  const Icon = item.icon;
+              <div className="mt-2 space-y-3">
+                {categoryTree.map((parent) => {
+                  const ParentIcon = parent.icon;
 
-                  const active =
-                    category.toLowerCase() ===
-                    item.name.toLowerCase();
+                  const parentActive =
+                    categoryId === parent.id ||
+                    (!categoryId &&
+                      category.toLowerCase() ===
+                        parent.name.toLowerCase());
 
                   return (
-                    <button
-                      key={item.id}
-                      type="button"
-                      aria-pressed={active}
-                      onClick={() =>
-                        setCategory(
-                          active ? "" : item.name,
-                        )
-                      }
-                      className={`flex min-w-0 items-center gap-2 rounded-xl border px-2.5 py-2.5 text-left text-[11px] font-semibold transition ${
-                        active
-                          ? "border-[#FFB09B] bg-[#FFF1ED] text-[#9F2D18]"
-                          : "border-[#E8E4DE] bg-white text-[#514840] hover:bg-[#FCFAF6]"
-                      }`}
+                    <div
+                      key={parent.id}
+                      className="rounded-xl border border-[#EAE6DF] bg-white p-2"
                     >
-                      <span
-                        className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full"
-                        style={{
-                          backgroundColor: item.bg,
-                        }}
+                      <button
+                        type="button"
+                        aria-pressed={parentActive}
+                        onClick={() =>
+                          toggleDraftCategory(parent)
+                        }
+                        className={`flex w-full items-center gap-2 rounded-lg border px-2.5 py-2.5 text-left text-[11px] font-bold transition ${
+                          parentActive
+                            ? "border-[#FFB09B] bg-[#FFF1ED] text-[#9F2D18]"
+                            : "border-transparent text-[#514840] hover:bg-[#FCFAF6]"
+                        }`}
                       >
-                        <Icon className="h-4 w-4" />
-                      </span>
+                        <span
+                          className="flex h-7 w-7 shrink-0 items-center justify-center overflow-hidden rounded-full"
+                          style={{
+                            backgroundColor: parent.bg,
+                          }}
+                        >
+                          {parent.imageUrl ? (
+                            <img
+                              src={parent.imageUrl}
+                              alt=""
+                              className="h-full w-full object-cover"
+                            />
+                          ) : (
+                            <ParentIcon className="h-4 w-4" />
+                          )}
+                        </span>
 
-                      <span className="min-w-0 flex-1 truncate">
-                        {item.name}
-                      </span>
+                        <span className="min-w-0 flex-1">
+                          {parent.name}
+                        </span>
 
-                      {active && (
-                        <Check className="h-3.5 w-3.5 shrink-0" />
+                        {parentActive && (
+                          <Check className="h-3.5 w-3.5" />
+                        )}
+                      </button>
+
+                      {parent.children.length > 0 && (
+                        <div className="ml-5 mt-1 space-y-1 border-l border-[#EAE6DF] pl-3">
+                          {parent.children.map((child) => {
+                            const ChildIcon = child.icon;
+
+                            const childActive =
+                              categoryId === child.id ||
+                              (!categoryId &&
+                                category.toLowerCase() ===
+                                  child.name.toLowerCase());
+
+                            return (
+                              <button
+                                key={child.id}
+                                type="button"
+                                aria-pressed={childActive}
+                                onClick={() =>
+                                  toggleDraftCategory(child)
+                                }
+                                className={`flex w-full items-center gap-2 rounded-lg border px-2 py-2 text-left text-[10px] font-semibold transition ${
+                                  childActive
+                                    ? "border-[#FFB09B] bg-[#FFF1ED] text-[#9F2D18]"
+                                    : "border-transparent text-[#756B61] hover:bg-[#FCFAF6]"
+                                }`}
+                              >
+                                <span
+                                  className="flex h-6 w-6 shrink-0 items-center justify-center overflow-hidden rounded-full"
+                                  style={{
+                                    backgroundColor: child.bg,
+                                  }}
+                                >
+                                  {child.imageUrl ? (
+                                    <img
+                                      src={child.imageUrl}
+                                      alt=""
+                                      className="h-full w-full object-cover"
+                                    />
+                                  ) : (
+                                    <ChildIcon className="h-3.5 w-3.5" />
+                                  )}
+                                </span>
+
+                                <span className="min-w-0 flex-1">
+                                  {child.name}
+                                </span>
+
+                                {childActive && (
+                                  <Check className="h-3 w-3" />
+                                )}
+                              </button>
+                            );
+                          })}
+                        </div>
                       )}
-                    </button>
+                    </div>
                   );
                 })}
 
                 {categories.length === 0 && (
-                  <p className="col-span-2 text-[11px] text-[#91877E]">
+                  <p className="text-[11px] text-[#91877E]">
                     No product categories are available.
                   </p>
                 )}
@@ -2530,11 +2778,7 @@ function SearchPageView({
                   state={state || undefined}
                   lga={lga || undefined}
                   onChange={handleAreaChange}
-                  onSelect={(selected: AreaSelection) => {
-                    setState(selected.state);
-                    setLga(selected.lga);
-                    setArea(selected.area);
-                  }}
+                  onSelect={handleAreaSelect}
                 />
               </div>
 

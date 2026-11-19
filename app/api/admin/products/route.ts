@@ -46,7 +46,20 @@ export async function GET(request: NextRequest) {
         { description: { contains: q, mode: "insensitive" } },
         { business: { name: { contains: q, mode: "insensitive" } } },
         { business: { location: { area: { contains: q, mode: "insensitive" } } } },
-        { category: { name: { contains: q, mode: "insensitive" } } },
+        {
+          category: {
+            is: {
+              OR: [
+                { name: { contains: q, mode: "insensitive" } },
+                {
+                  parent: {
+                    is: { name: { contains: q, mode: "insensitive" } },
+                  },
+                },
+              ],
+            },
+          },
+        },
       ];
     }
 
@@ -62,32 +75,65 @@ export async function GET(request: NextRequest) {
             location: { select: { area: true } },
           },
         },
-        category: { select: { name: true } },
+        category: {
+          select: {
+            id: true,
+            name: true,
+            parentId: true,
+            iconKey: true,
+            imageUrl: true,
+            sortOrder: true,
+            parent: {
+              select: {
+                id: true,
+                name: true,
+              },
+            },
+          },
+        },
       },
     });
 
-    return NextResponse.json({
-      products: products.map((product) => ({
-        id: product.id,
-        name: product.name,
-        description: product.description,
-        price: product.price,
-        priceMin: product.priceMin,
-        priceMax: product.priceMax,
-        availability: product.availability,
-        status: product.status,
-        imageUrl: product.imageUrl,
-        deletedAt: product.deletedAt,
-        business: {
-          id: product.business.id,
-          name: product.business.name,
-          area: product.business.location?.area ?? "Location not added",
-          deletedAt: product.business.deletedAt,
-        },
-        category: product.category?.name ?? null,
-        updatedAt: product.updatedAt,
-      })),
-    }, { headers: noStore });
+    return NextResponse.json(
+      {
+        products: products.map((product) => ({
+          id: product.id,
+          name: product.name,
+          description: product.description,
+          price: product.price,
+          priceMin: product.priceMin,
+          priceMax: product.priceMax,
+          availability: product.availability,
+          status: product.status,
+          imageUrl: product.imageUrl,
+          deletedAt: product.deletedAt,
+          business: {
+            id: product.business.id,
+            name: product.business.name,
+            area: product.business.location?.area ?? "Location not added",
+            deletedAt: product.business.deletedAt,
+          },
+          category: product.category
+            ? {
+                id: product.category.id,
+                name: product.category.name,
+                parentId: product.category.parentId,
+                parent: product.category.parent
+                  ? {
+                      id: product.category.parent.id,
+                      name: product.category.parent.name,
+                    }
+                  : null,
+                iconKey: product.category.iconKey,
+                imageUrl: product.category.imageUrl,
+                sortOrder: product.category.sortOrder,
+              }
+            : null,
+          updatedAt: product.updatedAt,
+        })),
+      },
+      { headers: noStore },
+    );
   } catch (error) {
     console.error("Admin products GET error:", error);
     return NextResponse.json(

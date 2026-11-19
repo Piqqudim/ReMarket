@@ -51,6 +51,7 @@ type Product = {
   description: string | null;
   categoryId: string | null;
   categoryName: string | null;
+  categoryParentName: string | null;
   price: number | null;
   originalPrice: number | null;
   availability: Availability;
@@ -67,6 +68,18 @@ type ApiCategory = {
   iconKey?: string;
   isActive?: boolean;
   sortOrder?: number;
+  parentId?: string | null;
+  parent?: unknown;
+  imageUrl?: string | null;
+};
+
+type AdminCategory = ReMarketCategory & {
+  parentId: string | null;
+  parentName: string | null;
+  imageUrl: string | null;
+  isActive: boolean;
+  sortOrder: number;
+  hasChildren: boolean;
 };
 
 type AdminNavItem = {
@@ -180,13 +193,24 @@ function normalizeProduct(value: unknown): Product | null {
     : [];
 
   const category = isRecord(value.category) ? value.category : null;
+  const categoryParent = category && isRecord(category.parent) ? category.parent : null;
+  const categoryId = getString(value, "categoryId") ?? (category ? getString(category, "id") : null);
+  const categoryName = category
+    ? getString(category, "name")
+    : typeof value.category === "string"
+      ? value.category
+      : null;
+  const categoryParentName = category
+    ? getString(category, "parentName") ?? (categoryParent ? getString(categoryParent, "name") : null)
+    : null;
 
   return {
     id,
     name,
     description: getString(value, "description"),
-    categoryId: getString(value, "categoryId"),
-    categoryName: category && typeof category.name === "string" ? category.name : null,
+    categoryId,
+    categoryName,
+    categoryParentName,
     price: getNumber(value, "price"),
     originalPrice: getNumber(value, "originalPrice"),
     availability: isAvailability(value.availability) ? value.availability : "ASK_SELLER",
@@ -198,15 +222,68 @@ function normalizeProduct(value: unknown): Product | null {
   };
 }
 
-function getCategoryList(value: unknown): { categories: ReMarketCategory[]; fallback: boolean } {
+function getCategoryList(value: unknown): { categories: AdminCategory[]; fallback: boolean } {
   const rawCategories = isRecord(value) ? value.categories : undefined;
-  if (!Array.isArray(rawCategories)) return { categories: DEFAULT_CATEGORIES, fallback: true };
+  if (!Array.isArray(rawCategories)) {
+    return { categories: fallbackAdminCategories(), fallback: true };
+  }
+
   const backendCategories = rawCategories.filter(isApiCategory);
-  if (backendCategories.length === 0) return { categories: DEFAULT_CATEGORIES, fallback: true };
-  return {
-    categories: mergeCategories(backendCategories as Parameters<typeof mergeCategories>[0]),
-    fallback: false,
-  };
+  if (backendCategories.length === 0) {
+    return { categories: fallbackAdminCategories(), fallback: true };
+  }
+
+  const merged = mergeCategories(
+    backendCategories as Parameters<typeof mergeCategories>[0],
+  ) as ReMarketCategory[];
+  const sourceById = new Map(backendCategories.map((category) => [category.id, category]));
+
+  const normalized = merged.map((category) => {
+    const source = sourceById.get(category.id);
+    const rawParent = source && isRecord(source.parent) ? source.parent : null;
+    const parentId = source?.parentId ?? (rawParent ? getString(rawParent, "id") : null);
+    const parentName = rawParent
+      ? getString(rawParent, "name")
+      : parentId
+        ? sourceById.get(parentId)?.name ?? null
+        : null;
+
+    return {
+      ...category,
+      parentId: parentId || null,
+      parentName,
+      imageUrl: source && typeof source.imageUrl === "string" ? source.imageUrl : null,
+      isActive: source?.isActive !== false,
+      sortOrder: typeof source?.sortOrder === "number" ? source.sortOrder : 0,
+      hasChildren: false,
+    } as AdminCategory;
+  });
+
+  const activeIds = new Set(normalized.filter((category) => category.isActive).map((category) => category.id));
+  const withChildren = normalized.map((category) => ({
+    ...category,
+    hasChildren: normalized.some(
+      (child) => child.isActive && child.parentId === category.id && activeIds.has(category.id),
+    ),
+  }));
+
+  return { categories: withChildren, fallback: false };
+}
+
+function fallbackAdminCategories(): AdminCategory[] {
+  return DEFAULT_CATEGORIES.map((category) => ({
+    ...category,
+    parentId: null,
+    parentName: null,
+    imageUrl: null,
+    isActive: true,
+    sortOrder: 0,
+    hasChildren: false,
+  } as AdminCategory));
+}
+
+function getCategoryPath(category: Pick<AdminCategory, "name" | "parentName">): string {
+  return category.parentName ? `${category.parentName} / ${category.name}` : category.name;
 }
 
 function getStatusStyle(status: BusinessStatus): string {
@@ -230,7 +307,7 @@ export default function EditProductPage() {
   const [businessName, setBusinessName] = useState("");
   const [businessDeletedAt, setBusinessDeletedAt] = useState<string | null>(null);
   const [product, setProduct] = useState<Product | null>(null);
-  const [categories, setCategories] = useState<ReMarketCategory[]>(DEFAULT_CATEGORIES);
+  const [categories, setCategories] = useState<AdminCategory[]>(fallbackAdminCategories);
   const [categoriesFallback, setCategoriesFallback] = useState(true);
 
   const [name, setName] = useState("");
@@ -315,7 +392,7 @@ export default function EditProductPage() {
 
         const categoryState = categoriesResponse.ok
           ? getCategoryList(categoriesData)
-          : { categories: DEFAULT_CATEGORIES, fallback: true };
+          : { categories: fallbackAdminCategories(), fallback: true };
         setCategories(categoryState.categories);
         setCategoriesFallback(categoryState.fallback);
       } catch (loadError) {
@@ -342,9 +419,31 @@ export default function EditProductPage() {
     [categories, categoryId],
   );
 
+  const activeCategories = useMemo(
+    () => categories.filter((category) => category.isActive),
+    [categories],
+  );
+
+  const categoryTree = useMemo(() => {
+    const activeIds = new Set(activeCategories.map((category) => category.id));
+    const roots = activeCategories.filter(
+      (category) => !category.parentId || !activeIds.has(category.parentId),
+    );
+    return roots.map((parent) => ({
+      parent,
+      children: activeCategories
+        .filter((child) => child.parentId === parent.id)
+        .sort((a, b) => a.sortOrder - b.sortOrder || a.name.localeCompare(b.name)),
+    })).sort((a, b) => a.parent.sortOrder - b.parent.sortOrder || a.parent.name.localeCompare(b.parent.name));
+  }, [activeCategories]);
+
   const displayCategoryName = categoriesFallback
-    ? product?.categoryName ?? (product?.categoryId ? "Existing category" : "Uncategorised")
-    : selectedCategory?.name ?? "Uncategorised";
+    ? product?.categoryParentName
+      ? `${product.categoryParentName} / ${product.categoryName ?? "Existing category"}`
+      : product?.categoryName ?? (product?.categoryId ? "Existing category" : "Uncategorised")
+    : selectedCategory
+      ? `${getCategoryPath(selectedCategory)}${selectedCategory.hasChildren ? " — choose a subcategory" : ""}`
+      : product?.categoryName ?? (categoryId ? "Existing category" : "Uncategorised");
 
   const currentImages = useMemo(() => images.filter(Boolean), [images]);
   const previewImage = currentImages[0] ?? product?.imageUrl ?? null;
@@ -353,11 +452,11 @@ export default function EditProductPage() {
       { label: "Product name", complete: Boolean(name.trim()) },
       { label: "Product description", complete: Boolean(description.trim()) },
       { label: "Product photos", complete: currentImages.length > 0 },
-      { label: "Category", complete: Boolean(categoryId || product?.categoryId) },
+      { label: "Category", complete: Boolean(categoryId || product?.categoryId) && !selectedCategory?.hasChildren },
       { label: "Selling price", complete: Boolean(price.trim()) },
       { label: "Search keywords", complete: Boolean(keywords.trim()) },
     ],
-    [name, description, currentImages.length, categoryId, product?.categoryId, price, keywords],
+    [name, description, currentImages.length, categoryId, product?.categoryId, price, keywords, selectedCategory?.hasChildren],
   );
   const completionPercent = Math.round(
     (completionItems.filter((item) => item.complete).length / completionItems.length) * 100,
@@ -380,6 +479,10 @@ export default function EditProductPage() {
     }
     if (editingDisabled) {
       setError(productDeleted ? "This product has been deleted." : "This business has been deleted.");
+      return;
+    }
+    if (!categoriesFallback && selectedCategory?.hasChildren) {
+      setError("Choose a subcategory for this product. Parent categories with subcategories cannot be assigned directly.");
       return;
     }
 
@@ -511,10 +614,7 @@ export default function EditProductPage() {
     return (
       <main className="min-h-dvh bg-[#F5F0E9] p-4 sm:p-6">
         <div className="mx-auto max-w-3xl">
-          <Link
-            href={`/admin/businesses/${businessId}`}
-            className="inline-flex items-center gap-2 text-sm font-semibold text-[#6F675F] hover:text-[#9F2D18]"
-          >
+          <Link href={`/admin/businesses/${businessId}`} className="inline-flex items-center gap-2 text-sm font-semibold text-[#6F675F] hover:text-[#9F2D18]">
             <ArrowLeft className="h-4 w-4" /> Back to business
           </Link>
           <div className="mt-6 rounded-3xl border border-[#E8DFD5] bg-white p-8 text-center shadow-sm sm:p-12">
@@ -610,7 +710,30 @@ export default function EditProductPage() {
                 <section className="rounded-[24px] border border-[#E7DDD2] bg-white p-4 shadow-sm sm:p-6">
                   <div className="flex items-start gap-3"><div className="grid h-10 w-10 shrink-0 place-items-center rounded-2xl bg-[#E9F8F0] text-[#287A4B]"><BarChart3 className="h-5 w-5" /></div><div><h2 className="text-base font-black">03 · Category & pricing</h2><p className="mt-1 text-xs leading-5 text-[#8B8178]">Help buyers understand what it is and what it costs.</p></div></div>
                   <div className="mt-5 grid gap-4 sm:grid-cols-2">
-                    <div><label htmlFor="product-category" className="text-xs font-bold text-[#5E554E]">Category</label>{categoriesFallback ? <div className="mt-2 rounded-xl border border-amber-200 bg-amber-50 px-3.5 py-3 text-sm text-amber-900">{displayCategoryName}<p className="mt-1 text-[11px] leading-5 text-amber-800">Category service is unavailable. The saved category will be preserved when you save.</p></div> : <select id="product-category" value={categoryId} onChange={(event) => setCategoryId(event.target.value)} disabled={editingDisabled || saving || deleting} className="mt-2 h-12 w-full min-w-0 rounded-xl border border-[#E6DDD4] bg-[#FFFCF8] px-3 text-sm outline-none focus:border-[#FF8F73] focus:ring-4 focus:ring-[#FF5A36]/10 disabled:bg-[#F5F1EC]"><option value="">No category</option>{categories.map((category) => <option key={category.id} value={category.id}>{category.name}</option>)}</select>}</div>
+                    <div>
+                      <label htmlFor="product-category" className="text-xs font-bold text-[#5E554E]">Category</label>
+                      {categoriesFallback ? (
+                        <div className="mt-2 rounded-xl border border-amber-200 bg-amber-50 px-3.5 py-3 text-sm text-amber-900">{displayCategoryName}<p className="mt-1 text-[11px] leading-5 text-amber-800">Category service is unavailable. The saved category will be preserved when you save.</p></div>
+                      ) : (
+                        <>
+                          <select id="product-category" value={categoryId} onChange={(event) => setCategoryId(event.target.value)} disabled={editingDisabled || saving || deleting} className="mt-2 h-12 w-full min-w-0 rounded-xl border border-[#E6DDD4] bg-[#FFFCF8] px-3 text-sm outline-none focus:border-[#FF8F73] focus:ring-4 focus:ring-[#FF5A36]/10 disabled:bg-[#F5F1EC]">
+                            <option value="">No category</option>
+                            {categoryId && !selectedCategory && <option value={categoryId}>{displayCategoryName} (existing category)</option>}
+                            {selectedCategory && !selectedCategory.isActive && <option value={selectedCategory.id}>{getCategoryPath(selectedCategory)} (existing category)</option>}
+                            {categoryTree.map(({ parent, children }) => children.length > 0 ? (
+                              <optgroup key={parent.id} label={parent.name}>
+                                <option value={parent.id} disabled>{parent.name} — choose a subcategory</option>
+                                {children.map((child) => <option key={child.id} value={child.id}>{child.name}</option>)}
+                              </optgroup>
+                            ) : (
+                              <option key={parent.id} value={parent.id}>{parent.parentName ? `${parent.parentName} / ${parent.name}` : parent.name}</option>
+                            ))}
+                          </select>
+                          <p className="mt-1.5 text-[11px] leading-5 text-[#A3988D]">Choose a subcategory when a parent category contains subcategories. Parent categories with children cannot be assigned directly.</p>
+                          {selectedCategory?.hasChildren && <p className="mt-1 text-[11px] font-semibold text-[#AD3A2A]">Select one of the subcategories under {selectedCategory.name} before saving.</p>}
+                        </>
+                      )}
+                    </div>
                     <Field label="Selling price (₦)" value={price} onChange={setPrice} placeholder="Leave blank for price on request" inputMode="numeric" disabled={editingDisabled || saving || deleting} />
                     <Field label="Original price (₦) · optional" value={originalPrice} onChange={setOriginalPrice} placeholder="Enter the previous regular price" inputMode="numeric" disabled={editingDisabled || saving || deleting} />
                   </div>
@@ -627,7 +750,7 @@ export default function EditProductPage() {
                 </section>
 
                 <div className="sticky bottom-2 z-20 rounded-2xl border border-[#E4DACE] bg-[#FFFCF8]/95 p-3 shadow-[0_8px_28px_rgba(32,45,55,0.12)] backdrop-blur-xl sm:bottom-4 sm:p-4">
-                  <div className="flex flex-col-reverse gap-2 sm:flex-row sm:items-center sm:justify-between"><button type="button" onClick={() => setShowDeleteConfirm(true)} disabled={editingDisabled || deleting || saving} className="inline-flex items-center justify-center gap-2 rounded-xl border border-[#F0C6BD] bg-white px-4 py-3 text-xs font-bold text-[#A33122] hover:bg-[#FFF2EF] disabled:cursor-not-allowed disabled:opacity-40"><Trash2 className="h-4 w-4" />Delete product</button><div className="grid grid-cols-2 gap-2 sm:flex"><Link href={`/admin/businesses/${businessId}`} className="inline-flex items-center justify-center rounded-xl border border-[#E3D9CE] bg-white px-4 py-3 text-xs font-bold text-[#655C54] hover:bg-[#F8F3ED]">Cancel</Link><button type="submit" disabled={editingDisabled || saving || deleting} className="inline-flex items-center justify-center gap-2 rounded-xl bg-[#FF5A36] px-5 py-3 text-xs font-extrabold text-white shadow-sm transition hover:bg-[#E94B2D] disabled:cursor-not-allowed disabled:opacity-50">{saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}{saving ? "Saving…" : "Save changes"}</button></div></div>
+                  <div className="flex flex-col-reverse gap-2 sm:flex-row sm:items-center sm:justify-between"><button type="button" onClick={() => setShowDeleteConfirm(true)} disabled={editingDisabled || deleting || saving} className="inline-flex items-center justify-center gap-2 rounded-xl border border-[#F0C6BD] bg-white px-4 py-3 text-xs font-bold text-[#A33122] hover:bg-[#FFF2EF] disabled:cursor-not-allowed disabled:opacity-40"><Trash2 className="h-4 w-4" />Delete product</button><div className="grid grid-cols-2 gap-2 sm:flex"><Link href={`/admin/businesses/${businessId}`} className="inline-flex items-center justify-center rounded-xl border border-[#E3D9CE] bg-white px-4 py-3 text-xs font-bold text-[#655C54] hover:bg-[#F8F3ED]">Cancel</Link><button type="submit" disabled={editingDisabled || saving || deleting || (!categoriesFallback && Boolean(selectedCategory?.hasChildren))} className="inline-flex items-center justify-center gap-2 rounded-xl bg-[#FF5A36] px-5 py-3 text-xs font-extrabold text-white shadow-sm transition hover:bg-[#E94B2D] disabled:cursor-not-allowed disabled:opacity-50">{saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}{saving ? "Saving…" : "Save changes"}</button></div></div>
                 </div>
               </form>
 

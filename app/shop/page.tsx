@@ -1,4 +1,3 @@
-
 "use client";
 
 import {
@@ -23,44 +22,33 @@ import {
   Package,
   RotateCcw,
   Search,
+  ShoppingBag,
   ShoppingCart,
   SlidersHorizontal,
   X,
-  ShoppingBag,
 } from "lucide-react";
 
 import SiteHeader from "@/components/layout/SiteHeader";
 import MobileBottomNav from "@/components/layout/MobileBottomNav";
-
 import AreaAutocomplete, {
   type AreaSelection,
 } from "@/components/filters/AreaAutocomplete";
-
 import {
   mergeCategories,
   type ApiCategory,
   type ReMarketCategory,
 } from "@/lib/categories";
 
-/* =========================================================
-   TYPES
-========================================================= */
-
-type Availability =
-  | "AVAILABLE"
-  | "ASK_SELLER"
-  | "UNAVAILABLE";
-
-type SortOption =
-  | "NEWEST"
-  | "PRICE_LOW"
-  | "PRICE_HIGH"
-  | "NAME";
-
-type ProductImage = {
-  id?: string;
-  url: string;
-  sortOrder: number;
+type Availability = "AVAILABLE" | "ASK_SELLER" | "UNAVAILABLE";
+type SortOption = "NEWEST" | "PRICE_LOW" | "PRICE_HIGH" | "NAME";
+type ProductImage = { id?: string; url: string; sortOrder: number };
+type ProductCategory = {
+  id: string;
+  name: string;
+  parentId: string | null;
+  parent: { id: string; name: string } | null;
+  iconKey: string | null;
+  imageUrl: string | null;
 };
 
 type Product = {
@@ -76,10 +64,7 @@ type Product = {
   imageUrl: string | null;
   images: ProductImage[];
   createdAt: string | null;
-  category: {
-    id: string;
-    name: string;
-  } | null;
+  category: ProductCategory | null;
   seller: {
     id: string;
     name: string;
@@ -88,19 +73,19 @@ type Product = {
   };
 };
 
-type LocationLgaGroup = {
-  lga: string;
-  areas: string[];
+type ShopCategory = ReMarketCategory & {
+  parentId: string | null;
+  imageUrl: string | null;
+  sortOrder: number;
+  children: ShopCategory[];
 };
 
-type LocationStateGroup = {
-  state: string;
-  groups: LocationLgaGroup[];
-};
-
+type LocationLgaGroup = { lga: string; areas: string[] };
+type LocationStateGroup = { state: string; groups: LocationLgaGroup[] };
 type ShopPageViewProps = {
   initialQuery: string;
   initialCategory: string;
+  initialCategoryId: string;
   initialState: string;
   initialLga: string;
   initialArea: string;
@@ -110,10 +95,10 @@ type ShopPageViewProps = {
   initialVerified: boolean;
   initialPage: number;
 };
-
 type ShopFilters = {
   query: string;
   category: string;
+  categoryId: string;
   state: string;
   lga: string;
   area: string;
@@ -122,36 +107,31 @@ type ShopFilters = {
   availability: string;
   verified: boolean;
 };
-
 type SavedProductMap = Record<string, string>;
-
 type CartFeedback = {
   productId: string;
   kind: "success" | "error";
   message: string;
 } | null;
+type RawCategory = {
+  id: string;
+  name: string;
+  iconKey: string | null;
+  isActive: boolean;
+  sortOrder: number;
+  parentId: string | null;
+  imageUrl: string | null;
+};
 
 const PAGE_SIZE = 12;
 const MAX_CLIENT_RESULTS = 50;
 
-/* =========================================================
-   GENERAL HELPERS
-========================================================= */
-
-function isRecord(
-  value: unknown,
-): value is Record<string, unknown> {
-  return (
-    typeof value === "object" &&
-    value !== null &&
-    !Array.isArray(value)
-  );
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function cleanString(value: unknown): string | null {
-  if (typeof value !== "string") return null;
-
-  return value.trim() || null;
+  return typeof value === "string" ? value.trim() || null : null;
 }
 
 function normalizeLocationName(value: string): string {
@@ -160,261 +140,252 @@ function normalizeLocationName(value: string): string {
 
 function parseOptionalNumber(value: unknown): number | null {
   if (typeof value === "number") {
-    return Number.isFinite(value) ? value : null;
+    return Number.isFinite(value) && value >= 0 ? value : null;
   }
-
   if (typeof value === "string" && value.trim()) {
-    const parsed = Number(value.trim());
-
-    return Number.isFinite(parsed) ? parsed : null;
+    const parsed = Number(value.trim().replace(/,/g, ""));
+    return Number.isFinite(parsed) && parsed >= 0 ? parsed : null;
   }
-
   return null;
 }
 
-function parseApiCategories(value: unknown): ApiCategory[] {
-  if (!Array.isArray(value)) return [];
+function parseCategoryRows(payload: unknown): RawCategory[] {
+  if (!isRecord(payload)) return [];
+  const source = Array.isArray(payload.navigationCategories)
+    ? payload.navigationCategories
+    : payload.categories;
+  if (!Array.isArray(source)) return [];
 
-  return value
-    .filter(isRecord)
-    .map((item) => ({
-      id: cleanString(item.id) ?? "",
-      name: cleanString(item.name) ?? "",
-      iconKey: cleanString(item.iconKey),
-      isActive: item.isActive !== false,
-      sortOrder:
-        typeof item.sortOrder === "number" &&
-        Number.isFinite(item.sortOrder)
-          ? item.sortOrder
-          : undefined,
-    }))
-    .filter(
-      (item) =>
-        item.id.length > 0 &&
-        item.name.length > 0,
-    );
+  const rows: RawCategory[] = [];
+  const visited = new Set<string>();
+  const visit = (items: unknown[], inheritedParentId: string | null) => {
+    for (const value of items) {
+      if (!isRecord(value)) continue;
+      const id = cleanString(value.id);
+      const name = cleanString(value.name);
+      if (!id || !name || visited.has(id)) continue;
+      visited.add(id);
+
+      const parentId = cleanString(value.parentId) ?? inheritedParentId;
+      rows.push({
+        id,
+        name,
+        iconKey: cleanString(value.iconKey),
+        isActive: value.isActive !== false,
+        sortOrder:
+          typeof value.sortOrder === "number" && Number.isFinite(value.sortOrder)
+            ? value.sortOrder
+            : 0,
+        parentId,
+        imageUrl: cleanString(value.imageUrl),
+      });
+
+      if (Array.isArray(value.children)) visit(value.children, id);
+    }
+  };
+
+  visit(source, null);
+  return rows;
 }
 
-/* =========================================================
-   LOCATION CATALOGUE PARSER
-========================================================= */
+function sortCategoryTree(items: ShopCategory[]): ShopCategory[] {
+  return [...items]
+    .sort((a, b) => a.sortOrder - b.sortOrder || a.name.localeCompare(b.name))
+    .map((item) => ({ ...item, children: sortCategoryTree(item.children) }));
+}
 
-/*
- * Supports:
- *
- * stateGroups: [
- *   {
- *     state: "Lagos",
- *     groups: [
- *       { lga: "Epe", areas: ["Epe", "Eredo"] }
- *     ]
- *   }
- * ]
- *
- * Also supports `lgas` instead of `groups`.
- */
+function parseCategoryTree(payload: unknown): ShopCategory[] {
+  const rows = parseCategoryRows(payload).filter((item) => item.isActive);
+  if (!rows.length) return [];
 
-function parseLocationStateGroups(
-  value: unknown,
-): LocationStateGroup[] {
+  const apiCategories: ApiCategory[] = rows.map((item) => ({
+    id: item.id,
+    name: item.name,
+    iconKey: item.iconKey,
+    isActive: item.isActive,
+    sortOrder: item.sortOrder,
+  }));
+  const merged = mergeCategories(apiCategories);
+  const displayById = new Map<string, ReMarketCategory>(
+    merged.map((item) => [item.id, item] as const),
+  );
+  const nodes = rows.flatMap((item): ShopCategory[] => {
+    const display = displayById.get(item.id);
+    if (!display) return [];
+    return [{
+      ...display,
+      parentId: item.parentId,
+      imageUrl: item.imageUrl,
+      sortOrder: item.sortOrder,
+      children: [],
+    }];
+  });
+
+  const byId = new Map<string, ShopCategory>(
+    nodes.map((item) => [item.id, item] as const),
+  );
+  const roots: ShopCategory[] = [];
+  for (const node of nodes) {
+    const parent = node.parentId ? byId.get(node.parentId) : undefined;
+    if (parent && parent.id !== node.id) parent.children.push(node);
+    else roots.push(node);
+  }
+
+  // Keep malformed/orphaned rows visible rather than hiding categories.
+  const attachedIds = new Set<string>();
+  const markAttached = (items: ShopCategory[]) => {
+    for (const item of items) {
+      attachedIds.add(item.id);
+      markAttached(item.children);
+    }
+  };
+  markAttached(roots);
+  const orphans = nodes.filter((item) => !attachedIds.has(item.id));
+  return sortCategoryTree([...roots, ...orphans]);
+}
+
+function findCategoryById(
+  categories: ShopCategory[],
+  id: string,
+): ShopCategory | null {
+  for (const category of categories) {
+    if (category.id === id) return category;
+    const child = findCategoryById(category.children, id);
+    if (child) return child;
+  }
+  return null;
+}
+
+function findCategoryByName(
+  categories: ShopCategory[],
+  name: string,
+): ShopCategory | null {
+  const target = name.trim().toLocaleLowerCase();
+  if (!target) return null;
+  for (const category of categories) {
+    if (category.name.trim().toLocaleLowerCase() === target) return category;
+    const child = findCategoryByName(category.children, name);
+    if (child) return child;
+  }
+  return null;
+}
+
+function findCategoryParent(
+  categories: ShopCategory[],
+  childId: string,
+): ShopCategory | null {
+  for (const category of categories) {
+    if (category.children.some((child) => child.id === childId)) return category;
+    const nested = findCategoryParent(category.children, childId);
+    if (nested) return nested;
+  }
+  return null;
+}
+
+function parseLocationStateGroups(value: unknown): LocationStateGroup[] {
   if (!Array.isArray(value)) return [];
-
   return value.flatMap((raw): LocationStateGroup[] => {
     if (!isRecord(raw)) return [];
-
-    const state =
-      cleanString(raw.state) ??
-      cleanString(raw.name);
-
+    const state = cleanString(raw.state) ?? cleanString(raw.name);
     const rawGroups = Array.isArray(raw.lgas)
       ? raw.lgas
       : Array.isArray(raw.groups)
         ? raw.groups
         : [];
-
     if (!state) return [];
-
-    const groups = rawGroups.flatMap(
-      (item): LocationLgaGroup[] => {
-        if (
-          !isRecord(item) ||
-          typeof item.lga !== "string" ||
-          !Array.isArray(item.areas)
-        ) {
-          return [];
-        }
-
-        const lga = item.lga.trim();
-
-        const areas = Array.from(
-          new Set(
-            item.areas.flatMap((area) => {
-              if (typeof area !== "string") return [];
-
-              const cleaned = area.trim();
-
-              return cleaned ? [cleaned] : [];
-            }),
-          ),
-        );
-
-        if (!lga || areas.length === 0) {
-          return [];
-        }
-
-        return [
-          {
-            lga,
-            areas,
-          },
-        ];
-      },
-    );
-
-    return groups.length
-      ? [
-          {
-            state,
-            groups,
-          },
-        ]
-      : [];
+    const groups = rawGroups.flatMap((item): LocationLgaGroup[] => {
+      if (!isRecord(item) || typeof item.lga !== "string" || !Array.isArray(item.areas)) return [];
+      const lga = item.lga.trim();
+      const areas = Array.from(new Set(item.areas.flatMap((area) => {
+        if (typeof area !== "string") return [];
+        const cleaned = area.trim();
+        return cleaned ? [cleaned] : [];
+      })));
+      return lga && areas.length ? [{ lga, areas }] : [];
+    });
+    return groups.length ? [{ state, groups }] : [];
   });
 }
 
-/*
- * Backward compatibility with the previous Lagos-only API:
- *
- * { groups: [{ lga, areas }] }
- */
-function parseLegacyLagosGroups(
-  value: unknown,
-): LocationStateGroup[] {
+function parseLegacyLagosGroups(value: unknown): LocationStateGroup[] {
   if (!Array.isArray(value)) return [];
-
-  const groups = value.flatMap(
-    (item): LocationLgaGroup[] => {
-      if (
-        !isRecord(item) ||
-        typeof item.lga !== "string" ||
-        !Array.isArray(item.areas)
-      ) {
-        return [];
-      }
-
-      const lga = item.lga.trim();
-
-      const areas = item.areas.filter(
-        (area): area is string =>
-          typeof area === "string" &&
-          area.trim().length > 0,
-      );
-
-      return lga && areas.length
-        ? [{ lga, areas }]
-        : [];
-    },
-  );
-
-  return groups.length
-    ? [{ state: "Lagos", groups }]
-    : [];
+  const groups = value.flatMap((item): LocationLgaGroup[] => {
+    if (!isRecord(item) || typeof item.lga !== "string" || !Array.isArray(item.areas)) return [];
+    const lga = item.lga.trim();
+    const areas = item.areas.filter((area): area is string =>
+      typeof area === "string" && area.trim().length > 0,
+    );
+    return lga && areas.length ? [{ lga, areas }] : [];
+  });
+  return groups.length ? [{ state: "Lagos", groups }] : [];
 }
 
-function parseAvailability(
-  value: unknown,
-): Availability {
-  return (
-    value === "AVAILABLE" ||
-    value === "UNAVAILABLE" ||
-    value === "ASK_SELLER"
-  )
+function parseAvailability(value: unknown): Availability {
+  return value === "AVAILABLE" || value === "UNAVAILABLE" || value === "ASK_SELLER"
     ? value
     : "ASK_SELLER";
 }
 
-function parseAvailabilityFilter(
-  value: string,
-): Availability | "" {
-  return (
-    value === "AVAILABLE" ||
-    value === "ASK_SELLER" ||
-    value === "UNAVAILABLE"
-  )
+function parseAvailabilityFilter(value: string): Availability | "" {
+  return value === "AVAILABLE" || value === "ASK_SELLER" || value === "UNAVAILABLE"
     ? value
     : "";
 }
 
-function parseCategory(
-  value: unknown,
-): Product["category"] {
-  if (
-    !isRecord(value) ||
-    typeof value.id !== "string" ||
-    typeof value.name !== "string"
-  ) {
-    return null;
-  }
-
+function parseCategory(value: unknown): ProductCategory | null {
+  if (!isRecord(value) || typeof value.id !== "string" || typeof value.name !== "string") return null;
+  const parent = isRecord(value.parent) &&
+    typeof value.parent.id === "string" &&
+    typeof value.parent.name === "string"
+    ? { id: value.parent.id, name: value.parent.name }
+    : null;
   return {
     id: value.id,
     name: value.name,
+    parentId: cleanString(value.parentId),
+    parent,
+    iconKey: cleanString(value.iconKey),
+    imageUrl: cleanString(value.imageUrl),
   };
 }
 
 function parseProduct(value: unknown): Product | null {
   if (!isRecord(value)) return null;
-
   const seller = isRecord(value.seller)
     ? value.seller
     : isRecord(value.business)
       ? value.business
       : null;
-
   if (
     typeof value.id !== "string" ||
     typeof value.name !== "string" ||
     !seller ||
     typeof seller.id !== "string" ||
     typeof seller.name !== "string"
-  ) {
-    return null;
-  }
+  ) return null;
 
-  const images: ProductImage[] = (
-    Array.isArray(value.images)
-      ? value.images
-      : []
-  )
+  const images: ProductImage[] = (Array.isArray(value.images) ? value.images : [])
     .filter(isRecord)
     .map((image) => ({
-      id:
-        typeof image.id === "string"
-          ? image.id
-          : undefined,
-      url:
-        typeof image.url === "string"
-          ? image.url
-          : "",
-      sortOrder:
-        typeof image.sortOrder === "number"
-          ? image.sortOrder
-          : 0,
+      id: typeof image.id === "string" ? image.id : undefined,
+      url: typeof image.url === "string" ? image.url : "",
+      sortOrder: typeof image.sortOrder === "number" ? image.sortOrder : 0,
     }))
     .filter((image) => image.url.length > 0);
 
-  const price = parseOptionalNumber(value.price);
-  const candidateOriginalPrice = parseOptionalNumber(
-    value.originalPrice,
-  );
+  const price =
+    parseOptionalNumber(value.price) ??
+    parseOptionalNumber(value.salePrice) ??
+    parseOptionalNumber(value.currentPrice);
+  const candidateOriginalPrice =
+    parseOptionalNumber(value.originalPrice) ??
+    parseOptionalNumber(value.compareAtPrice) ??
+    parseOptionalNumber(value.regularPrice) ??
+    parseOptionalNumber(value.oldPrice);
   const originalPrice =
-    price !== null &&
-    price > 0 &&
-    candidateOriginalPrice !== null &&
-    candidateOriginalPrice > price
+    price !== null && candidateOriginalPrice !== null && candidateOriginalPrice > price
       ? candidateOriginalPrice
       : null;
-
   const verification = cleanString(seller.verification);
 
   return {
@@ -427,37 +398,23 @@ function parseProduct(value: unknown): Product | null {
     priceMax: parseOptionalNumber(value.priceMax),
     stockQuantity: parseOptionalNumber(value.stockQuantity),
     availability: parseAvailability(value.availability),
-    imageUrl:
-      cleanString(value.imageUrl) ??
-      images[0]?.url ??
-      null,
+    imageUrl: cleanString(value.imageUrl) ?? images[0]?.url ?? null,
     images,
-    createdAt:
-      cleanString(value.createdAt) ??
-      cleanString(value.updatedAt),
+    createdAt: cleanString(value.createdAt) ?? cleanString(value.updatedAt),
     category: parseCategory(value.category),
     seller: {
       id: seller.id,
       name: seller.name,
       verification,
-      verified:
-        seller.verified === true ||
-        verification === "VERIFIED",
+      verified: seller.verified === true || verification === "VERIFIED",
     },
   };
 }
 
 function parsePage(value: string | null): number {
   const parsed = Number(value);
-
-  return Number.isSafeInteger(parsed) && parsed > 0
-    ? parsed
-    : 1;
+  return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : 1;
 }
-
-/* =========================================================
-   PRODUCT HELPERS
-========================================================= */
 
 function formatNaira(value: number): string {
   return `₦${value.toLocaleString("en-NG")}`;
@@ -469,65 +426,36 @@ function getDiscountPercentage(product: Product): number | null {
     product.price <= 0 ||
     product.originalPrice === null ||
     product.originalPrice <= product.price
-  ) {
-    return null;
-  }
-
-  return Math.round(
-    ((product.originalPrice - product.price) /
-      product.originalPrice) *
-      100,
-  );
+  ) return null;
+  return Math.round(((product.originalPrice - product.price) / product.originalPrice) * 100);
 }
 
 function formatPrice(product: Product): string {
-  if (product.price !== null) {
-    return formatNaira(product.price);
-  }
-
-  if (
-    product.priceMin !== null &&
-    product.priceMax !== null
-  ) {
+  if (product.price !== null) return formatNaira(product.price);
+  if (product.priceMin !== null && product.priceMax !== null) {
     return product.priceMin === product.priceMax
       ? formatNaira(product.priceMin)
       : `${formatNaira(product.priceMin)} – ${formatNaira(product.priceMax)}`;
   }
-
-  if (product.priceMin !== null) {
-    return `From ${formatNaira(product.priceMin)}`;
-  }
-
-  if (product.priceMax !== null) {
-    return `Up to ${formatNaira(product.priceMax)}`;
-  }
-
+  if (product.priceMin !== null) return `From ${formatNaira(product.priceMin)}`;
+  if (product.priceMax !== null) return `Up to ${formatNaira(product.priceMax)}`;
   return "Ask seller";
 }
 
-function ProductPrice({
-  product,
-}: {
-  product: Product;
-}) {
+function ProductPrice({ product }: { product: Product }) {
   const discount = getDiscountPercentage(product);
-
   return (
     <div className="min-w-0">
       <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
         <span className="text-[15px] font-extrabold leading-5 text-[#9F2D18] sm:text-base">
-          {product.price !== null
-            ? formatNaira(product.price)
-            : formatPrice(product)}
+          {formatPrice(product)}
         </span>
-
-        {product.originalPrice !== null && (
-          <span className="text-[10px] text-[#958B83] line-through sm:text-xs">
+        {product.price !== null && product.originalPrice !== null && (
+          <del className="whitespace-nowrap text-[10px] text-[#958B83] sm:text-xs">
             {formatNaira(product.originalPrice)}
-          </span>
+          </del>
         )}
       </div>
-
       {discount !== null && (
         <span className="mt-1 inline-flex rounded-md bg-[#FFF0EA] px-1.5 py-0.5 text-[9px] font-bold text-[#9F2D18]">
           {discount}% off
@@ -537,77 +465,61 @@ function ProductPrice({
   );
 }
 
-function getSortablePrice(product: Product): number {
+function CategoryArtwork({
+  category,
+  size = "md",
+}: {
+  category: Pick<ShopCategory, "name" | "imageUrl">;
+  size?: "sm" | "md";
+}) {
+  const dimensions = size === "sm" ? "h-5 w-5" : "h-8 w-8";
   return (
-    product.price ??
-    product.priceMin ??
-    product.priceMax ??
-    Number.POSITIVE_INFINITY
+    <span className={`inline-flex ${dimensions} shrink-0 items-center justify-center overflow-hidden rounded-lg bg-[#FFF0EB] text-[#9F2D18]`} aria-hidden="true">
+      {category.imageUrl ? (
+        <img src={category.imageUrl} alt="" loading="lazy" className="h-full w-full object-cover" />
+      ) : (
+        <Package className={size === "sm" ? "h-3 w-3" : "h-4 w-4"} />
+      )}
+    </span>
   );
+}
+
+function getSortablePrice(product: Product): number {
+  return product.price ?? product.priceMin ?? product.priceMax ?? Number.POSITIVE_INFINITY;
 }
 
 function getAvailabilityLabel(value: Availability): string {
   if (value === "AVAILABLE") return "Available";
   if (value === "UNAVAILABLE") return "Unavailable";
-
   return "Ask seller";
 }
 
 function getAvailabilityStyle(value: Availability): string {
-  if (value === "AVAILABLE") {
-    return "bg-[#DCFCE7] text-[#166534]";
-  }
-
-  if (value === "UNAVAILABLE") {
-    return "bg-[#FEE2E2] text-[#B42318]";
-  }
-
+  if (value === "AVAILABLE") return "bg-[#DCFCE7] text-[#166534]";
+  if (value === "UNAVAILABLE") return "bg-[#FEE2E2] text-[#B42318]";
   return "bg-[#FEF3C7] text-[#92400E]";
 }
 
 function canAddProductToCart(
-  product: Pick<
-    Product,
-    "price" | "availability" | "stockQuantity"
-  >,
+  product: Pick<Product, "price" | "availability" | "stockQuantity">,
 ): boolean {
-  return (
-    product.availability === "AVAILABLE" &&
-    product.price !== null &&
-    product.price > 0 &&
-    product.stockQuantity !== 0
-  );
+  return product.availability === "AVAILABLE" &&
+    product.price !== null && product.price > 0 && product.stockQuantity !== 0;
 }
 
 function getCartDisabledReason(product: Product): string {
-  if (product.availability !== "AVAILABLE") {
-    return "This product is not currently available.";
-  }
-
-  if (product.price === null || product.price <= 0) {
-    return "A fixed product price is required.";
-  }
-
-  if (product.stockQuantity === 0) {
-    return "This product is out of stock.";
-  }
-
+  if (product.availability !== "AVAILABLE") return "This product is not currently available.";
+  if (product.price === null || product.price <= 0) return "A fixed product price is required.";
+  if (product.stockQuantity === 0) return "This product is out of stock.";
   return "Add to cart";
 }
 
-/* =========================================================
-   URL HELPERS
-========================================================= */
-
-function buildShopUrl(
-  filters: ShopFilters,
-  page: number,
-): string {
+function buildShopUrl(filters: ShopFilters, page: number): string {
   const params = new URLSearchParams();
-
   const fields: Array<[string, string]> = [
     ["q", filters.query],
     ["category", filters.category],
+    ["categoryId", filters.categoryId],
     ["state", filters.state],
     ["lga", filters.lga],
     ["area", filters.area],
@@ -615,159 +527,68 @@ function buildShopUrl(
     ["maxPrice", filters.maxPrice],
     ["availability", filters.availability],
   ];
-
   fields.forEach(([key, value]) => {
-    if (value.trim()) {
-      params.set(key, value.trim());
-    }
+    if (value.trim()) params.set(key, value.trim());
   });
-
-  if (filters.verified) {
-    params.set("verified", "true");
-  }
-
-  if (page > 1) {
-    params.set("page", String(page));
-  }
-
+  if (filters.verified) params.set("verified", "true");
+  if (page > 1) params.set("page", String(page));
   const queryString = params.toString();
-
-  return queryString
-    ? `/shop?${queryString}`
-    : "/shop";
+  return queryString ? `/shop?${queryString}` : "/shop";
 }
 
-/* =========================================================
-   SAVED PRODUCT HELPERS
-========================================================= */
-
-function parseSavedProductMap(
-  value: unknown,
-): SavedProductMap {
+function parseSavedProductMap(value: unknown): SavedProductMap {
   if (!isRecord(value)) return {};
-
   const result: SavedProductMap = {};
-
-  const collections = [
-    value.items,
-    value.savedListings,
-    value.savedProducts,
-    value.products,
-    value.saved,
-  ];
-
+  const collections = [value.items, value.savedListings, value.savedProducts, value.products, value.saved];
   for (const collection of collections) {
     if (!Array.isArray(collection)) continue;
-
     for (const item of collection) {
       if (!isRecord(item)) continue;
-
-      if (
-        item.type === "PRODUCT" &&
-        isRecord(item.listing)
-      ) {
+      if (item.type === "PRODUCT" && isRecord(item.listing)) {
         const productId = cleanString(item.listing.id);
         const savedId = cleanString(item.id);
-
-        if (productId && savedId) {
-          result[productId] = savedId;
-        }
-
+        if (productId && savedId) result[productId] = savedId;
         continue;
       }
-
-      const nestedProduct = isRecord(item.product)
-        ? item.product
-        : null;
-
-      const productId =
-        cleanString(item.productId) ??
-        cleanString(item.listingId) ??
-        (nestedProduct
-          ? cleanString(nestedProduct.id)
-          : null);
-
-      const savedId =
-        cleanString(item.savedListingId) ??
-        cleanString(item.savedId) ??
-        (productId
-          ? cleanString(item.id)
-          : null);
-
-      if (productId && savedId) {
-        result[productId] = savedId;
-      }
+      const nestedProduct = isRecord(item.product) ? item.product : null;
+      const productId = cleanString(item.productId) ?? cleanString(item.listingId) ??
+        (nestedProduct ? cleanString(nestedProduct.id) : null);
+      const savedId = cleanString(item.savedListingId) ?? cleanString(item.savedId) ??
+        (productId ? cleanString(item.id) : null);
+      if (productId && savedId) result[productId] = savedId;
     }
   }
-
   return result;
 }
 
 function getSavedRecordId(value: unknown): string | null {
   if (!isRecord(value)) return null;
-
-  for (const key of [
-    "item",
-    "savedListing",
-    "saved",
-  ]) {
+  for (const key of ["item", "savedListing", "saved"]) {
     if (isRecord(value[key])) {
       const id = cleanString(value[key].id);
-
       if (id) return id;
     }
   }
-
-  return (
-    cleanString(value.savedListingId) ??
-    cleanString(value.savedId)
-  );
+  return cleanString(value.savedListingId) ?? cleanString(value.savedId);
 }
-
-/* =========================================================
-   PAGE SEARCH PARAMS
-========================================================= */
 
 function ShopPageContent() {
   const searchParams = useSearchParams();
-
   const initialQuery = searchParams.get("q") ?? "";
   const initialCategory = searchParams.get("category") ?? "";
-
+  const initialCategoryId = searchParams.get("categoryId") ?? "";
   const initialState = searchParams.get("state") ?? "";
   const initialLga = searchParams.get("lga") ?? "";
-
-  // Older links used `location`; continue reading them as `area`.
-  const initialArea =
-    searchParams.get("area") ??
-    searchParams.get("location") ??
-    "";
-
+  const initialArea = searchParams.get("area") ?? searchParams.get("location") ?? "";
   const initialMinPrice = searchParams.get("minPrice") ?? "";
   const initialMaxPrice = searchParams.get("maxPrice") ?? "";
-
-  const initialAvailability = parseAvailabilityFilter(
-    searchParams.get("availability") ?? "",
-  );
-
-  const initialVerified =
-    searchParams.get("verified") === "true";
-
-  const initialPage = parsePage(
-    searchParams.get("page"),
-  );
-
+  const initialAvailability = parseAvailabilityFilter(searchParams.get("availability") ?? "");
+  const initialVerified = searchParams.get("verified") === "true";
+  const initialPage = parsePage(searchParams.get("page"));
   const pageKey = [
-    initialQuery,
-    initialCategory,
-    initialState,
-    initialLga,
-    initialArea,
-    initialMinPrice,
-    initialMaxPrice,
-    initialAvailability,
-    String(initialVerified),
-    String(initialPage),
+    initialQuery, initialCategory, initialCategoryId, initialState, initialLga,
+    initialArea, initialMinPrice, initialMaxPrice, initialAvailability,
+    String(initialVerified), String(initialPage),
   ].join("|");
 
   return (
@@ -775,6 +596,7 @@ function ShopPageContent() {
       key={pageKey}
       initialQuery={initialQuery}
       initialCategory={initialCategory}
+      initialCategoryId={initialCategoryId}
       initialState={initialState}
       initialLga={initialLga}
       initialArea={initialArea}
@@ -787,13 +609,10 @@ function ShopPageContent() {
   );
 }
 
-/* =========================================================
-   MAIN SHOP PAGE
-========================================================= */
-
 function ShopPageView({
   initialQuery,
   initialCategory,
+  initialCategoryId,
   initialState,
   initialLga,
   initialArea,
@@ -804,391 +623,166 @@ function ShopPageView({
   initialPage,
 }: ShopPageViewProps) {
   const router = useRouter();
-
-  /* FILTER STATE */
-
   const [query, setQuery] = useState(initialQuery);
   const [category, setCategory] = useState(initialCategory);
-
+  const [categoryId, setCategoryId] = useState(initialCategoryId);
   const [state, setState] = useState(initialState);
   const [lga, setLga] = useState(initialLga);
   const [area, setArea] = useState(initialArea);
-
   const [minPrice, setMinPrice] = useState(initialMinPrice);
   const [maxPrice, setMaxPrice] = useState(initialMaxPrice);
-
-  const [availability, setAvailability] = useState(
-    initialAvailability,
-  );
-
+  const [availability, setAvailability] = useState(initialAvailability);
   const [verified, setVerified] = useState(initialVerified);
-
   const [sortBy, setSortBy] = useState<SortOption>("NEWEST");
   const [showMobileFilters, setShowMobileFilters] = useState(false);
-
-  /* DATA STATE */
-
-  const [categories, setCategories] = useState<
-    ReMarketCategory[]
-  >([]);
-
-  const [locationGroups, setLocationGroups] = useState<
-    LocationStateGroup[]
-  >([]);
-
+  const [categories, setCategories] = useState<ShopCategory[]>([]);
+  const [locationGroups, setLocationGroups] = useState<LocationStateGroup[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
-
   const [totalProducts, setTotalProducts] = useState(0);
   const [resultsTruncated, setResultsTruncated] = useState(false);
-
   const [serverPagination, setServerPagination] = useState(false);
   const [serverTotalPages, setServerTotalPages] = useState(1);
-
-  /* SAVED PRODUCT STATE */
-
-  const [savedProducts, setSavedProducts] =
-    useState<SavedProductMap>({});
-
-  const [savingProductIds, setSavingProductIds] = useState<
-    Record<string, boolean>
-  >({});
-
+  const [savedProducts, setSavedProducts] = useState<SavedProductMap>({});
+  const [savingProductIds, setSavingProductIds] = useState<Record<string, boolean>>({});
   const [saveFeedback, setSaveFeedback] = useState("");
   const [saveFeedbackError, setSaveFeedbackError] = useState(false);
-
-  /* CART STATE */
-
-  const [addingToCartProductIds, setAddingToCartProductIds] =
-    useState<Record<string, boolean>>({});
-
-  const [cartFeedback, setCartFeedback] =
-    useState<CartFeedback>(null);
-
-  /* =====================================================
-     LOAD CATEGORIES AND LOCATION CATALOGUE
-  ===================================================== */
+  const [addingToCartProductIds, setAddingToCartProductIds] = useState<Record<string, boolean>>({});
+  const [cartFeedback, setCartFeedback] = useState<CartFeedback>(null);
 
   useEffect(() => {
     const controller = new AbortController();
-
     async function loadCategories() {
       try {
-        const response = await fetch(
-          "/api/categories?type=product",
-          {
-            cache: "no-store",
-            headers: {
-              Accept: "application/json",
-            },
-            signal: controller.signal,
-          },
-        );
-
-        if (!response.ok) {
-          throw new Error(
-            "Unable to load product categories.",
-          );
-        }
-
+        const response = await fetch("/api/categories?type=product&includeEmpty=true", {
+          cache: "no-store",
+          headers: { Accept: "application/json" },
+          signal: controller.signal,
+        });
+        if (!response.ok) throw new Error("Unable to load product categories.");
         const data: unknown = await response.json();
-
-        if (!isRecord(data)) {
-          throw new Error("Invalid category response.");
-        }
-
-        if (!controller.signal.aborted) {
-          setCategories(
-            mergeCategories(
-              parseApiCategories(data.categories),
-            ),
-          );
-        }
+        if (!isRecord(data)) throw new Error("Invalid category response.");
+        if (!controller.signal.aborted) setCategories(parseCategoryTree(data));
       } catch (err) {
-        if (
-          err instanceof DOMException &&
-          err.name === "AbortError"
-        ) {
-          return;
-        }
-
-        console.error(
-          "Shop category loading error:",
-          err,
-        );
-
-        if (!controller.signal.aborted) {
-          setCategories([]);
-        }
+        if (err instanceof DOMException && err.name === "AbortError") return;
+        console.error("Shop category loading error:", err);
+        if (!controller.signal.aborted) setCategories([]);
       }
     }
-
     async function loadLocations() {
       try {
         const response = await fetch("/api/areas", {
           cache: "force-cache",
-          headers: {
-            Accept: "application/json",
-          },
+          headers: { Accept: "application/json" },
           signal: controller.signal,
         });
-
-        if (!response.ok) {
-          throw new Error(
-            "Unable to load location suggestions.",
-          );
-        }
-
+        if (!response.ok) throw new Error("Unable to load location suggestions.");
         const data: unknown = await response.json();
-
-        if (!isRecord(data)) {
-          throw new Error("Invalid location response.");
-        }
-
-        let parsed = parseLocationStateGroups(
-          data.stateGroups,
-        );
-
-        // Support the old Lagos-only API response.
-        if (parsed.length === 0) {
-          parsed = parseLegacyLagosGroups(data.groups);
-        }
-
-        if (parsed.length === 0) {
-          throw new Error(
-            "No location groups are available.",
-          );
-        }
-
-        if (!controller.signal.aborted) {
-          setLocationGroups(parsed);
-        }
+        if (!isRecord(data)) throw new Error("Invalid location response.");
+        let parsed = parseLocationStateGroups(data.stateGroups);
+        if (parsed.length === 0) parsed = parseLegacyLagosGroups(data.groups);
+        if (parsed.length === 0) throw new Error("No location groups are available.");
+        if (!controller.signal.aborted) setLocationGroups(parsed);
       } catch (err) {
-        if (
-          err instanceof DOMException &&
-          err.name === "AbortError"
-        ) {
-          return;
-        }
-
-        console.error(
-          "Shop location loading error:",
-          err,
-        );
-
-        if (!controller.signal.aborted) {
-          setLocationGroups([]);
-        }
+        if (err instanceof DOMException && err.name === "AbortError") return;
+        console.error("Shop location loading error:", err);
+        if (!controller.signal.aborted) setLocationGroups([]);
       }
     }
-
     void loadCategories();
     void loadLocations();
-
     return () => controller.abort();
   }, []);
 
-  /* =====================================================
-     AVAILABLE LGAS
-  ===================================================== */
-
   const availableLgas = useMemo(() => {
     const selectedState = normalizeLocationName(state);
-
     if (!selectedState) return [];
-
-    return (
-      locationGroups.find(
-        (item) =>
-          normalizeLocationName(item.state) === selectedState,
-      )?.groups.map((item) => item.lga) ?? []
-    );
+    return locationGroups.find((item) => normalizeLocationName(item.state) === selectedState)
+      ?.groups.map((item) => item.lga) ?? [];
   }, [locationGroups, state]);
 
-  /* =====================================================
-     LOAD SAVED PRODUCTS
-  ===================================================== */
+  const selectedCategory = useMemo(() => {
+    return (categoryId ? findCategoryById(categories, categoryId) : null) ??
+      findCategoryByName(categories, category);
+  }, [categories, categoryId, category]);
 
-  async function loadSavedProducts(
-    signal?: AbortSignal,
-  ): Promise<SavedProductMap> {
+  const selectedCategoryRoot = useMemo(() => {
+    if (!selectedCategory) return null;
+    if (!selectedCategory.parentId) return selectedCategory;
+    return findCategoryParent(categories, selectedCategory.id) ?? selectedCategory;
+  }, [categories, selectedCategory]);
+
+  async function loadSavedProducts(signal?: AbortSignal): Promise<SavedProductMap> {
     const combined: SavedProductMap = {};
-
     try {
-      const firstResponse = await fetch(
-        "/api/saved?type=PRODUCT&page=1&limit=50",
-        {
-          cache: "no-store",
-          headers: {
-            Accept: "application/json",
-          },
-          signal,
-        },
-      );
-
-      if (
-        firstResponse.status === 401 ||
-        firstResponse.status === 403
-      ) {
-        if (!signal?.aborted) {
-          setSavedProducts({});
-        }
-
+      const firstResponse = await fetch("/api/saved?type=PRODUCT&page=1&limit=50", {
+        cache: "no-store",
+        headers: { Accept: "application/json" },
+        signal,
+      });
+      if (firstResponse.status === 401 || firstResponse.status === 403) {
+        if (!signal?.aborted) setSavedProducts({});
         return {};
       }
-
-      if (!firstResponse.ok) {
-        throw new Error(
-          "Unable to load saved products.",
-        );
-      }
-
+      if (!firstResponse.ok) throw new Error("Unable to load saved products.");
       const firstData: unknown = await firstResponse.json();
-
-      Object.assign(
-        combined,
-        parseSavedProductMap(firstData),
-      );
-
-      const pagination =
-        isRecord(firstData) &&
-        isRecord(firstData.pagination)
-          ? firstData.pagination
-          : null;
-
-      const totalPages =
-        pagination &&
-        typeof pagination.totalPages === "number" &&
-        Number.isInteger(pagination.totalPages) &&
-        pagination.totalPages > 0
-          ? Math.min(pagination.totalPages, 1000)
-          : 1;
-
-      for (
-        let page = 2;
-        page <= totalPages;
-        page += 4
-      ) {
-        if (signal?.aborted) {
-          return combined;
-        }
-
-        const pages = Array.from(
-          {
-            length: Math.min(
-              4,
-              totalPages - page + 1,
-            ),
-          },
-          (_, index) => page + index,
-        );
-
-        const maps = await Promise.all(
-          pages.map(async (pageNumber) => {
-            const response = await fetch(
-              `/api/saved?type=PRODUCT&page=${pageNumber}&limit=50`,
-              {
-                cache: "no-store",
-                headers: {
-                  Accept: "application/json",
-                },
-                signal,
-              },
-            );
-
-            if (!response.ok) {
-              throw new Error(
-                "Unable to load all saved products.",
-              );
-            }
-
-            return parseSavedProductMap(
-              await response.json(),
-            );
-          }),
-        );
-
-        maps.forEach((item) =>
-          Object.assign(combined, item),
-        );
+      Object.assign(combined, parseSavedProductMap(firstData));
+      const pagination = isRecord(firstData) && isRecord(firstData.pagination)
+        ? firstData.pagination
+        : null;
+      const totalPages = pagination && typeof pagination.totalPages === "number" &&
+        Number.isInteger(pagination.totalPages) && pagination.totalPages > 0
+        ? Math.min(pagination.totalPages, 1000)
+        : 1;
+      for (let page = 2; page <= totalPages; page += 4) {
+        if (signal?.aborted) return combined;
+        const pages = Array.from({ length: Math.min(4, totalPages - page + 1) }, (_, index) => page + index);
+        const maps = await Promise.all(pages.map(async (pageNumber) => {
+          const response = await fetch(`/api/saved?type=PRODUCT&page=${pageNumber}&limit=50`, {
+            cache: "no-store",
+            headers: { Accept: "application/json" },
+            signal,
+          });
+          if (!response.ok) throw new Error("Unable to load all saved products.");
+          return parseSavedProductMap(await response.json());
+        }));
+        maps.forEach((item) => Object.assign(combined, item));
       }
-
-      if (!signal?.aborted) {
-        setSavedProducts(combined);
-      }
-
+      if (!signal?.aborted) setSavedProducts(combined);
       return combined;
     } catch (err) {
-      if (
-        err instanceof DOMException &&
-        err.name === "AbortError"
-      ) {
-        return combined;
-      }
-
-      console.error(
-        "Saved products loading error:",
-        err,
-      );
-
-      if (
-        !signal?.aborted &&
-        Object.keys(combined).length
-      ) {
-        setSavedProducts(combined);
-      }
-
+      if (err instanceof DOMException && err.name === "AbortError") return combined;
+      console.error("Saved products loading error:", err);
+      if (!signal?.aborted && Object.keys(combined).length) setSavedProducts(combined);
       return combined;
     }
   }
 
   useEffect(() => {
     const controller = new AbortController();
-
     void loadSavedProducts(controller.signal);
-
     return () => controller.abort();
   }, []);
 
-  /* =====================================================
-     LOAD PRODUCTS
-  ===================================================== */
-
   useEffect(() => {
     const controller = new AbortController();
-
     async function loadProducts() {
       setLoading(true);
       setError("");
-
       const hasFilters = Boolean(
-        initialQuery.trim() ||
-        initialCategory ||
-        initialState ||
-        initialLga ||
-        initialArea ||
-        initialMinPrice ||
-        initialMaxPrice ||
-        initialAvailability ||
-        initialVerified,
+        initialQuery.trim() || initialCategory || initialCategoryId ||
+        initialState || initialLga || initialArea || initialMinPrice ||
+        initialMaxPrice || initialAvailability || initialVerified,
       );
-
       const useSearchApi = hasFilters;
-
-      const useServerPagination =
-        !useSearchApi && sortBy === "NEWEST";
-
+      const useServerPagination = !useSearchApi && sortBy === "NEWEST";
       setServerPagination(useServerPagination);
-
       try {
         const params = new URLSearchParams();
-
         let endpoint: string;
-
         if (useSearchApi) {
           params.set("type", "product");
-
           const fields: Array<[string, string]> = [
             ["q", initialQuery],
             ["category", initialCategory],
@@ -1199,40 +793,17 @@ function ShopPageView({
             ["maxPrice", initialMaxPrice],
             ["availability", initialAvailability],
           ];
-
           fields.forEach(([key, value]) => {
-            if (value.trim()) {
-              params.set(key, value.trim());
-            }
+            if (value.trim()) params.set(key, value.trim());
           });
-
-          if (initialVerified) {
-            params.set("verified", "true");
-          }
-
+          if (initialCategoryId) params.set("categoryId", initialCategoryId);
+          if (initialVerified) params.set("verified", "true");
           params.set("page", "1");
           params.set("pageSize", "48");
-
           endpoint = `/api/search?${params.toString()}`;
         } else {
-          params.set(
-            "page",
-            String(
-              useServerPagination
-                ? initialPage
-                : 1,
-            ),
-          );
-
-          params.set(
-            "pageSize",
-            String(
-              useServerPagination
-                ? PAGE_SIZE
-                : MAX_CLIENT_RESULTS,
-            ),
-          );
-
+          params.set("page", String(useServerPagination ? initialPage : 1));
+          params.set("pageSize", String(useServerPagination ? PAGE_SIZE : MAX_CLIENT_RESULTS));
           endpoint = `/api/recent-products?${params.toString()}`;
         }
 
@@ -1241,260 +812,115 @@ function ShopPageView({
           cache: "no-store",
           signal: controller.signal,
         });
-
         const data: unknown = await response.json();
-
         if (!response.ok) {
-          throw new Error(
-            isRecord(data) &&
-            typeof data.error === "string"
-              ? data.error
-              : "Unable to load products.",
-          );
+          throw new Error(isRecord(data) && typeof data.error === "string"
+            ? data.error
+            : "Unable to load products.");
         }
-
-        if (!isRecord(data)) {
-          throw new Error(
-            "Invalid products response.",
-          );
-        }
-
-        const rawProducts = Array.isArray(data.products)
-          ? data.products
-          : [];
-
-        const parsedProducts = rawProducts
-          .map(parseProduct)
-          .filter(
-            (item): item is Product =>
-              item !== null,
-          );
-
+        if (!isRecord(data)) throw new Error("Invalid products response.");
+        const rawProducts = Array.isArray(data.products) ? data.products : [];
+        const parsedProducts = rawProducts.map(parseProduct).filter((item): item is Product => item !== null);
         if (controller.signal.aborted) return;
-
         setProducts(parsedProducts);
 
         if (useSearchApi) {
-          const meta = isRecord(data.resultMeta)
-            ? data.resultMeta
-            : null;
-
-          const reportedTotal =
-            typeof meta?.totalProducts === "number"
-              ? meta.totalProducts
-              : parsedProducts.length;
-
-          setTotalProducts(
-            Math.max(0, reportedTotal),
-          );
-
-          setResultsTruncated(
-            meta?.truncated === true ||
-            reportedTotal > parsedProducts.length,
-          );
-
-          /*
-           * Search results are fetched in one batch of up to 48.
-           * Pagination below is client-side for this result set.
-           */
+          const meta = isRecord(data.resultMeta) ? data.resultMeta : null;
+          const reportedTotal = typeof meta?.totalProducts === "number"
+            ? meta.totalProducts
+            : parsedProducts.length;
+          setTotalProducts(Math.max(0, reportedTotal));
+          setResultsTruncated(meta?.truncated === true || reportedTotal > parsedProducts.length);
           setServerTotalPages(1);
         } else {
-          const reportedTotal =
-            typeof data.total === "number"
-              ? data.total
-              : parsedProducts.length;
-
-          const reportedPages =
-            typeof data.totalPages === "number"
-              ? data.totalPages
-              : Math.max(
-                  1,
-                  Math.ceil(
-                    reportedTotal / PAGE_SIZE,
-                  ),
-                );
-
-          setTotalProducts(
-            Math.max(0, reportedTotal),
-          );
-
-          setServerTotalPages(
-            Math.max(1, reportedPages),
-          );
-
-          setResultsTruncated(
-            !useServerPagination &&
-            reportedTotal > parsedProducts.length,
-          );
+          const reportedTotal = typeof data.total === "number" ? data.total : parsedProducts.length;
+          const reportedPages = typeof data.totalPages === "number"
+            ? data.totalPages
+            : Math.max(1, Math.ceil(reportedTotal / PAGE_SIZE));
+          setTotalProducts(Math.max(0, reportedTotal));
+          setServerTotalPages(Math.max(1, reportedPages));
+          setResultsTruncated(!useServerPagination && reportedTotal > parsedProducts.length);
         }
       } catch (err) {
-        if (
-          err instanceof DOMException &&
-          err.name === "AbortError"
-        ) {
-          return;
-        }
-
-        console.error(
-          "Products loading error:",
-          err,
-        );
-
+        if (err instanceof DOMException && err.name === "AbortError") return;
+        console.error("Products loading error:", err);
         setProducts([]);
         setTotalProducts(0);
         setServerTotalPages(1);
         setResultsTruncated(false);
-
-        setError(
-          err instanceof Error
-            ? err.message
-            : "Unable to load products. Please try again.",
-        );
+        setError(err instanceof Error ? err.message : "Unable to load products. Please try again.");
       } finally {
-        if (!controller.signal.aborted) {
-          setLoading(false);
-        }
+        if (!controller.signal.aborted) setLoading(false);
       }
     }
-
     void loadProducts();
-
     return () => controller.abort();
   }, [
-    initialQuery,
-    initialCategory,
-    initialState,
-    initialLga,
-    initialArea,
-    initialMinPrice,
-    initialMaxPrice,
-    initialAvailability,
-    initialVerified,
-    initialPage,
-    sortBy,
+    initialQuery, initialCategory, initialCategoryId, initialState, initialLga,
+    initialArea, initialMinPrice, initialMaxPrice, initialAvailability,
+    initialVerified, initialPage, sortBy,
   ]);
-
-  /* =====================================================
-     SORTING AND PAGINATION
-  ===================================================== */
 
   const sortedProducts = useMemo(() => {
     const result = [...products];
-
     switch (sortBy) {
       case "PRICE_LOW":
-        result.sort(
-          (a, b) =>
-            getSortablePrice(a) -
-            getSortablePrice(b),
-        );
+        result.sort((a, b) => getSortablePrice(a) - getSortablePrice(b));
         break;
-
       case "PRICE_HIGH":
-        result.sort(
-          (a, b) =>
-            getSortablePrice(b) -
-            getSortablePrice(a),
-        );
+        result.sort((a, b) => getSortablePrice(b) - getSortablePrice(a));
         break;
-
       case "NAME":
-        result.sort((a, b) =>
-          a.name.localeCompare(b.name),
-        );
-        break;
-
-      default:
+        result.sort((a, b) => a.name.localeCompare(b.name));
         break;
     }
-
     return result;
   }, [products, sortBy]);
 
   const totalPages = serverPagination
     ? serverTotalPages
-    : Math.max(
-        1,
-        Math.ceil(sortedProducts.length / PAGE_SIZE),
-      );
-
-  const currentPage = Math.min(
-    Math.max(1, initialPage),
-    totalPages,
-  );
-
+    : Math.max(1, Math.ceil(sortedProducts.length / PAGE_SIZE));
+  const currentPage = Math.min(Math.max(1, initialPage), totalPages);
   const visibleProducts = serverPagination
     ? sortedProducts
-    : sortedProducts.slice(
-        (currentPage - 1) * PAGE_SIZE,
-        currentPage * PAGE_SIZE,
-      );
-
-  const resultStart = visibleProducts.length
-    ? (currentPage - 1) * PAGE_SIZE + 1
-    : 0;
-
-  const resultEnd = resultStart
-    ? resultStart + visibleProducts.length - 1
-    : 0;
-
-  /* =====================================================
-     FILTER ACTIONS
-  ===================================================== */
+    : sortedProducts.slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE);
+  const resultStart = visibleProducts.length ? (currentPage - 1) * PAGE_SIZE + 1 : 0;
+  const resultEnd = resultStart ? resultStart + visibleProducts.length - 1 : 0;
 
   function getCurrentFilters(): ShopFilters {
     return {
-      query,
-      category,
-      state,
-      lga,
-      area,
-      minPrice,
-      maxPrice,
-      availability,
-      verified,
+      query, category, categoryId, state, lga, area, minPrice, maxPrice,
+      availability, verified,
     };
   }
 
-  function submitSearch(
-    event: FormEvent<HTMLFormElement>,
-  ) {
+  function submitSearch(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-
-    router.push(
-      buildShopUrl(getCurrentFilters(), 1),
-    );
+    router.push(buildShopUrl(getCurrentFilters(), 1));
   }
 
   function applyFilters() {
-    router.push(
-      buildShopUrl(getCurrentFilters(), 1),
-    );
-
+    router.push(buildShopUrl(getCurrentFilters(), 1));
     setShowMobileFilters(false);
   }
 
-  function selectCategory(nextCategory: string) {
+  function selectCategory(next: ShopCategory | null) {
+    const nextCategory = next?.name ?? "";
+    const nextCategoryId = next?.id ?? "";
     setCategory(nextCategory);
-
-    router.push(
-      buildShopUrl(
-        {
-          ...getCurrentFilters(),
-          category: nextCategory,
-        },
-        1,
-      ),
-    );
+    setCategoryId(nextCategoryId);
+    router.push(buildShopUrl({
+      ...getCurrentFilters(),
+      category: nextCategory,
+      categoryId: nextCategoryId,
+    }, 1));
   }
 
   function handleAreaChange(value: string) {
     setArea(value);
   }
 
-  function handleAreaSelect(
-    selected: AreaSelection,
-  ) {
+  function handleAreaSelect(selected: AreaSelection) {
     setState(selected.state);
     setLga(selected.lga);
     setArea(selected.area);
@@ -1503,393 +929,188 @@ function ShopPageView({
   function clearFilters() {
     setQuery("");
     setCategory("");
-
+    setCategoryId("");
     setState("");
     setLga("");
     setArea("");
-
     setMinPrice("");
     setMaxPrice("");
     setAvailability("");
     setVerified(false);
-
     setSortBy("NEWEST");
     setShowMobileFilters(false);
-
     router.push("/shop");
   }
 
   function goToPage(page: number) {
-    if (
-      page < 1 ||
-      page > totalPages ||
-      page === currentPage
-    ) {
-      return;
-    }
-
-    router.push(
-      buildShopUrl(getCurrentFilters(), page),
-    );
-
-    window.scrollTo({
-      top: 0,
-      behavior: "smooth",
-    });
+    if (page < 1 || page > totalPages || page === currentPage) return;
+    router.push(buildShopUrl(getCurrentFilters(), page));
+    window.scrollTo({ top: 0, behavior: "smooth" });
   }
 
   const activeFilterCount = [
-    category,
+    categoryId || category,
     state || lga || area ? "LOCATION" : "",
-    minPrice,
-    maxPrice,
-    availability,
-    verified ? "VERIFIED" : "",
+    minPrice, maxPrice, availability, verified ? "VERIFIED" : "",
   ].filter(Boolean).length;
-
-  /* =====================================================
-     SAVE / UNSAVE PRODUCTS
-  ===================================================== */
 
   async function toggleSavedProduct(product: Product) {
     if (savingProductIds[product.id]) return;
-
     setSaveFeedback("");
     setSaveFeedbackError(false);
-
-    setSavingProductIds((current) => ({
-      ...current,
-      [product.id]: true,
-    }));
-
+    setSavingProductIds((current) => ({ ...current, [product.id]: true }));
     try {
       const savedId = savedProducts[product.id];
-
       if (savedId) {
-        const response = await fetch(
-          `/api/saved/${encodeURIComponent(savedId)}`,
-          {
-            method: "DELETE",
-            cache: "no-store",
-            headers: {
-              Accept: "application/json",
-            },
-          },
-        );
-
-        const data: unknown = await response
-          .json()
-          .catch(() => null);
-
+        const response = await fetch(`/api/saved/${encodeURIComponent(savedId)}`, {
+          method: "DELETE",
+          cache: "no-store",
+          headers: { Accept: "application/json" },
+        });
+        const data: unknown = await response.json().catch(() => null);
         if (!response.ok) {
-          throw new Error(
-            isRecord(data) &&
-            typeof data.error === "string"
-              ? data.error
-              : "Unable to remove this saved product.",
-          );
+          throw new Error(isRecord(data) && typeof data.error === "string"
+            ? data.error
+            : "Unable to remove this saved product.");
         }
-
         setSavedProducts((current) => {
           const next = { ...current };
-
           delete next[product.id];
-
           return next;
         });
-
-        setSaveFeedback(
-          "Product removed from Saved.",
-        );
+        setSaveFeedback("Product removed from Saved.");
       } else {
         const response = await fetch("/api/saved", {
           method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            Accept: "application/json",
-          },
-          body: JSON.stringify({
-            type: "PRODUCT",
-            listingId: product.id,
-          }),
+          headers: { "Content-Type": "application/json", Accept: "application/json" },
+          body: JSON.stringify({ type: "PRODUCT", listingId: product.id }),
         });
-
-        const data: unknown = await response
-          .json()
-          .catch(() => null);
-
-        if (
-          response.status === 401 ||
-          response.status === 403
-        ) {
-          throw new Error(
-            "Sign in to save products.",
-          );
+        const data: unknown = await response.json().catch(() => null);
+        if (response.status === 401 || response.status === 403) {
+          throw new Error("Sign in to save products.");
         }
-
         if (!response.ok) {
-          throw new Error(
-            isRecord(data) &&
-            typeof data.error === "string"
-              ? data.error
-              : "Unable to save this product.",
-          );
+          throw new Error(isRecord(data) && typeof data.error === "string"
+            ? data.error
+            : "Unable to save this product.");
         }
-
         const createdId = getSavedRecordId(data);
-
         if (createdId) {
-          setSavedProducts((current) => ({
-            ...current,
-            [product.id]: createdId,
-          }));
+          setSavedProducts((current) => ({ ...current, [product.id]: createdId }));
         } else {
           await loadSavedProducts();
         }
-
-        setSaveFeedback(
-          isRecord(data) &&
-          data.alreadySaved === true
-            ? "This product is already in Saved."
-            : "Product added to Saved.",
-        );
+        setSaveFeedback(isRecord(data) && data.alreadySaved === true
+          ? "This product is already in Saved."
+          : "Product added to Saved.");
       }
-
-      window.dispatchEvent(
-        new Event("remarket-saved-items-changed"),
-      );
+      window.dispatchEvent(new Event("remarket-saved-items-changed"));
     } catch (err) {
       console.error("Save product error:", err);
-
       setSaveFeedbackError(true);
-
-      setSaveFeedback(
-        err instanceof Error
-          ? err.message
-          : "Unable to update your saved products.",
-      );
+      setSaveFeedback(err instanceof Error ? err.message : "Unable to update your saved products.");
     } finally {
       setSavingProductIds((current) => {
         const next = { ...current };
-
         delete next[product.id];
-
         return next;
       });
     }
   }
 
-  /* =====================================================
-     ADD TO CART
-  ===================================================== */
-
   async function addProductToCart(product: Product) {
-    if (
-      addingToCartProductIds[product.id] ||
-      !canAddProductToCart(product)
-    ) {
-      return;
-    }
-
+    if (addingToCartProductIds[product.id] || !canAddProductToCart(product)) return;
     setCartFeedback(null);
-
-    setAddingToCartProductIds((current) => ({
-      ...current,
-      [product.id]: true,
-    }));
-
+    setAddingToCartProductIds((current) => ({ ...current, [product.id]: true }));
     try {
-      const response = await fetch(
-        "/api/cart/items",
-        {
-          method: "POST",
-          credentials: "same-origin",
-          headers: {
-            "Content-Type": "application/json",
-            Accept: "application/json",
-          },
-          body: JSON.stringify({
-            productId: product.id,
-            quantity: 1,
-          }),
-        },
-      );
-
-      const data: unknown = await response
-        .json()
-        .catch(() => null);
-
-      if (
-        response.status === 401 ||
-        response.status === 403
-      ) {
-        const callbackUrl =
-          `${window.location.pathname}${window.location.search}`;
-
-        router.push(
-          `/buyer/login?callbackUrl=${encodeURIComponent(callbackUrl)}`,
-        );
-
+      const response = await fetch("/api/cart/items", {
+        method: "POST",
+        credentials: "same-origin",
+        headers: { "Content-Type": "application/json", Accept: "application/json" },
+        body: JSON.stringify({ productId: product.id, quantity: 1 }),
+      });
+      const data: unknown = await response.json().catch(() => null);
+      if (response.status === 401 || response.status === 403) {
+        const callbackUrl = `${window.location.pathname}${window.location.search}`;
+        router.push(`/buyer/login?callbackUrl=${encodeURIComponent(callbackUrl)}`);
         return;
       }
-
       if (!response.ok) {
-        throw new Error(
-          isRecord(data)
-            ? cleanString(data.error) ??
-                cleanString(data.message) ??
-                "Unable to add this product to your cart."
-            : "Unable to add this product to your cart.",
-        );
+        throw new Error(isRecord(data)
+          ? cleanString(data.error) ?? cleanString(data.message) ?? "Unable to add this product to your cart."
+          : "Unable to add this product to your cart.");
       }
-
-      setCartFeedback({
-        productId: product.id,
-        kind: "success",
-        message: "Added to cart successfully.",
-      });
-
-      window.dispatchEvent(
-        new Event("remarket-cart-changed"),
-      );
+      setCartFeedback({ productId: product.id, kind: "success", message: "Added to cart successfully." });
+      window.dispatchEvent(new Event("remarket-cart-changed"));
     } catch (err) {
       console.error("Add to cart error:", err);
-
       setCartFeedback({
         productId: product.id,
         kind: "error",
-        message:
-          err instanceof Error
-            ? err.message
-            : "Unable to add this product to your cart.",
+        message: err instanceof Error ? err.message : "Unable to add this product to your cart.",
       });
     } finally {
       setAddingToCartProductIds((current) => {
         const next = { ...current };
-
         delete next[product.id];
-
         return next;
       });
     }
   }
 
-  /* =====================================================
-     FILTER CONTROLS
-  ===================================================== */
-
   function renderFilterControls() {
+    const categoryValue = selectedCategory?.id ?? "";
     return (
       <div className="space-y-5">
-        {/* CATEGORY */}
         <div>
-          <label
-            htmlFor="shop-category"
-            className="mb-2 block text-xs font-bold text-[#17202A]"
-          >
-            Category
-          </label>
-
+          <label htmlFor="shop-category" className="mb-2 block text-xs font-bold text-[#17202A]">Category</label>
           <select
             id="shop-category"
-            value={category}
-            onChange={(event) =>
-              setCategory(event.target.value)
-            }
+            value={categoryValue}
+            onChange={(event) => selectCategory(findCategoryById(categories, event.target.value))}
             className="h-11 w-full rounded-xl border border-[#EAE6DF] bg-white px-3 text-sm text-[#17202A] outline-none focus:border-[#FF9A81] focus:ring-2 focus:ring-[#FF5A36]/10"
           >
             <option value="">All categories</option>
-
             {categories.map((item) => (
-              <option
-                key={item.id}
-                value={item.name}
-              >
-                {item.name}
-              </option>
+              <optgroup key={item.id} label={item.name}>
+                <option value={item.id}>All {item.name}</option>
+                {item.children.map((child) => (
+                  <option key={child.id} value={child.id}>— {child.name}</option>
+                ))}
+              </optgroup>
             ))}
           </select>
         </div>
 
-        {/* STATE */}
         <div>
-          <label
-            htmlFor="shop-state"
-            className="mb-2 block text-xs font-bold text-[#17202A]"
-          >
-            State
-          </label>
-
+          <label htmlFor="shop-state" className="mb-2 block text-xs font-bold text-[#17202A]">State</label>
           <select
             id="shop-state"
             value={state}
-            onChange={(event) => {
-              setState(event.target.value);
-              setLga("");
-              setArea("");
-            }}
+            onChange={(event) => { setState(event.target.value); setLga(""); setArea(""); }}
             className="h-11 w-full rounded-xl border border-[#EAE6DF] bg-white px-3 text-sm text-[#17202A] outline-none focus:border-[#FF9A81] focus:ring-2 focus:ring-[#FF5A36]/10"
           >
-            <option value="">
-              All supported states
-            </option>
-
-            {locationGroups.map((item) => (
-              <option
-                key={item.state}
-                value={item.state}
-              >
-                {item.state}
-              </option>
-            ))}
+            <option value="">All supported states</option>
+            {locationGroups.map((item) => <option key={item.state} value={item.state}>{item.state}</option>)}
           </select>
         </div>
 
-        {/* LGA */}
         <div>
-          <label
-            htmlFor="shop-lga"
-            className="mb-2 block text-xs font-bold text-[#17202A]"
-          >
-            Local Government Area
-          </label>
-
+          <label htmlFor="shop-lga" className="mb-2 block text-xs font-bold text-[#17202A]">Local Government Area</label>
           <select
             id="shop-lga"
             value={lga}
             disabled={!state}
-            onChange={(event) => {
-              setLga(event.target.value);
-              setArea("");
-            }}
+            onChange={(event) => { setLga(event.target.value); setArea(""); }}
             className="h-11 w-full rounded-xl border border-[#EAE6DF] bg-white px-3 text-sm text-[#17202A] outline-none focus:border-[#FF9A81] focus:ring-2 focus:ring-[#FF5A36]/10 disabled:cursor-not-allowed disabled:bg-[#FCFAF6]"
           >
-            <option value="">
-              {state
-                ? "All LGAs in selected state"
-                : "Select a state first"}
-            </option>
-
-            {availableLgas.map((item) => (
-              <option
-                key={item}
-                value={item}
-              >
-                {item}
-              </option>
-            ))}
+            <option value="">{state ? "All LGAs in selected state" : "Select a state first"}</option>
+            {availableLgas.map((item) => <option key={item} value={item}>{item}</option>)}
           </select>
         </div>
 
-        {/* AREA AUTOCOMPLETE */}
         <div>
-          <label
-            htmlFor="shop-area"
-            className="mb-2 block text-xs font-bold text-[#17202A]"
-          >
-            Area or neighbourhood
-          </label>
-
+          <label htmlFor="shop-area" className="mb-2 block text-xs font-bold text-[#17202A]">Area or neighbourhood</label>
           <AreaAutocomplete
             id="shop-area"
             value={area}
@@ -1901,80 +1122,23 @@ function ShopPageView({
           />
         </div>
 
-        {/* PRICE RANGE */}
         <div>
-          <p className="mb-2 text-xs font-bold text-[#17202A]">
-            Price range
-          </p>
-
+          <p className="mb-2 text-xs font-bold text-[#17202A]">Price range</p>
           <div className="grid grid-cols-2 gap-2">
             <div>
-              <label
-                htmlFor="shop-min-price"
-                className="mb-1 block text-[10px] text-[#756B61]"
-              >
-                Minimum
-              </label>
-
-              <input
-                id="shop-min-price"
-                type="number"
-                min="0"
-                step="1"
-                inputMode="numeric"
-                value={minPrice}
-                onChange={(event) =>
-                  setMinPrice(event.target.value)
-                }
-                placeholder="₦ Min"
-                className="h-11 w-full min-w-0 rounded-xl border border-[#EAE6DF] bg-white px-2.5 text-sm outline-none focus:border-[#FF9A81] focus:ring-2 focus:ring-[#FF5A36]/10"
-              />
+              <label htmlFor="shop-min-price" className="mb-1 block text-[10px] text-[#756B61]">Minimum</label>
+              <input id="shop-min-price" type="number" min="0" step="1" inputMode="numeric" value={minPrice} onChange={(event) => setMinPrice(event.target.value)} placeholder="₦ Min" className="h-11 w-full min-w-0 rounded-xl border border-[#EAE6DF] bg-white px-2.5 text-sm outline-none focus:border-[#FF9A81] focus:ring-2 focus:ring-[#FF5A36]/10" />
             </div>
-
             <div>
-              <label
-                htmlFor="shop-max-price"
-                className="mb-1 block text-[10px] text-[#756B61]"
-              >
-                Maximum
-              </label>
-
-              <input
-                id="shop-max-price"
-                type="number"
-                min="0"
-                step="1"
-                inputMode="numeric"
-                value={maxPrice}
-                onChange={(event) =>
-                  setMaxPrice(event.target.value)
-                }
-                placeholder="₦ Max"
-                className="h-11 w-full min-w-0 rounded-xl border border-[#EAE6DF] bg-white px-2.5 text-sm outline-none focus:border-[#FF9A81] focus:ring-2 focus:ring-[#FF5A36]/10"
-              />
+              <label htmlFor="shop-max-price" className="mb-1 block text-[10px] text-[#756B61]">Maximum</label>
+              <input id="shop-max-price" type="number" min="0" step="1" inputMode="numeric" value={maxPrice} onChange={(event) => setMaxPrice(event.target.value)} placeholder="₦ Max" className="h-11 w-full min-w-0 rounded-xl border border-[#EAE6DF] bg-white px-2.5 text-sm outline-none focus:border-[#FF9A81] focus:ring-2 focus:ring-[#FF5A36]/10" />
             </div>
           </div>
         </div>
 
-        {/* AVAILABILITY */}
         <div>
-          <label
-            htmlFor="shop-availability"
-            className="mb-2 block text-xs font-bold text-[#17202A]"
-          >
-            Availability
-          </label>
-
-          <select
-            id="shop-availability"
-            value={availability}
-            onChange={(event) =>
-              setAvailability(
-                parseAvailabilityFilter(event.target.value),
-              )
-            }
-            className="h-11 w-full rounded-xl border border-[#EAE6DF] bg-white px-3 text-sm outline-none focus:border-[#FF9A81] focus:ring-2 focus:ring-[#FF5A36]/10"
-          >
+          <label htmlFor="shop-availability" className="mb-2 block text-xs font-bold text-[#17202A]">Availability</label>
+          <select id="shop-availability" value={availability} onChange={(event) => setAvailability(parseAvailabilityFilter(event.target.value))} className="h-11 w-full rounded-xl border border-[#EAE6DF] bg-white px-3 text-sm outline-none focus:border-[#FF9A81] focus:ring-2 focus:ring-[#FF5A36]/10">
             <option value="">Any availability</option>
             <option value="AVAILABLE">Available</option>
             <option value="ASK_SELLER">Ask seller</option>
@@ -1982,741 +1146,284 @@ function ShopPageView({
           </select>
         </div>
 
-        {/* VERIFIED SELLERS */}
         <label className="flex cursor-pointer items-center gap-3 rounded-xl border border-[#EAE6DF] bg-white p-3">
-          <input
-            type="checkbox"
-            checked={verified}
-            onChange={(event) =>
-              setVerified(event.target.checked)
-            }
-            className="h-4 w-4 accent-[#FF5A36]"
-          />
-
+          <input type="checkbox" checked={verified} onChange={(event) => setVerified(event.target.checked)} className="h-4 w-4 accent-[#FF5A36]" />
           <span>
-            <span className="block text-xs font-semibold text-[#17202A]">
-              Verified sellers only
-            </span>
-
-            <span className="mt-0.5 block text-[10px] text-[#756B61]">
-              Show products from verified sellers.
-            </span>
+            <span className="block text-xs font-semibold text-[#17202A]">Verified sellers only</span>
+            <span className="mt-0.5 block text-[10px] text-[#756B61]">Show products from verified sellers.</span>
           </span>
         </label>
 
-        {/* FILTER ACTIONS */}
         <div className="space-y-2 border-t border-[#EAE6DF] pt-4">
-          <button
-            type="button"
-            onClick={applyFilters}
-            className="flex min-h-11 w-full items-center justify-center gap-2 rounded-xl bg-[#FF5A36] px-4 py-3 text-sm font-bold text-white transition hover:bg-[#E94A28]"
-          >
-            Apply filters
-            <ArrowRight className="h-4 w-4" />
+          <button type="button" onClick={applyFilters} className="flex min-h-11 w-full items-center justify-center gap-2 rounded-xl bg-[#FF5A36] px-4 py-3 text-sm font-bold text-white transition hover:bg-[#E94A28]">
+            Apply filters <ArrowRight className="h-4 w-4" />
           </button>
-
-          <button
-            type="button"
-            onClick={clearFilters}
-            className="flex min-h-10 w-full items-center justify-center gap-2 rounded-xl border border-[#EAE6DF] bg-white px-4 py-2.5 text-xs font-semibold text-[#756B61] transition hover:bg-[#FCFAF6]"
-          >
-            <RotateCcw className="h-3.5 w-3.5" />
-            Clear filters
+          <button type="button" onClick={clearFilters} className="flex min-h-10 w-full items-center justify-center gap-2 rounded-xl border border-[#EAE6DF] bg-white px-4 py-2.5 text-xs font-semibold text-[#756B61] transition hover:bg-[#FCFAF6]">
+            <RotateCcw className="h-3.5 w-3.5" /> Clear filters
           </button>
         </div>
       </div>
     );
   }
 
-  /* =====================================================
-     PAGE RENDER
-  ===================================================== */
-
   return (
     <>
       <SiteHeader />
-
-      <main
-        id="main-content"
-        className="min-h-dvh overflow-x-clip bg-[#FFFDFC] pb-28 text-[#17202A] lg:pb-10"
-      >
+      <main id="main-content" className="min-h-dvh overflow-x-clip bg-[#FFFDFC] pb-28 text-[#17202A] lg:pb-10">
         <div className="mx-auto max-w-[1600px] px-4 pb-8 pt-5 sm:px-6 lg:px-8 lg:pt-8 xl:px-10">
-          {/* INTRODUCTION */}
           <section className="relative overflow-hidden rounded-[24px] border border-[#FFE0D5] bg-gradient-to-r from-[#FFF0E7] via-[#FFF5EE] to-[#FFE4D9] px-5 py-6 sm:px-8 sm:py-8">
-            <div
-              aria-hidden="true"
-              className="pointer-events-none absolute -right-20 -top-24 hidden h-64 w-64 rounded-full bg-[#FF5A36]/10 sm:block"
-            />
-
+            <div aria-hidden="true" className="pointer-events-none absolute -right-20 -top-24 hidden h-64 w-64 rounded-full bg-[#FF5A36]/10 sm:block" />
             <div className="relative z-10">
               <div className="inline-flex items-center gap-2 rounded-full border border-[#FFD1C5] bg-white/75 px-3 py-1.5 text-[10px] font-bold uppercase tracking-[0.12em] text-[#9F2D18]">
-                <Package className="h-3.5 w-3.5 text-[#FF5A36]" />
-                ReMarket Products
+                <Package className="h-3.5 w-3.5 text-[#FF5A36]" /> ReMarket Products
               </div>
-
-              <h1 className="mt-3 text-[27px] font-extrabold leading-tight tracking-tight text-[#401B13] sm:text-4xl">
-                Find Products Nearby
-              </h1>
-
-              <p className="mt-2 max-w-[570px] text-sm leading-6 text-[#66564C] sm:text-base">
-                Discover products from sellers near you.
-                Compare prices and find what you need on ReMarket.
-              </p>
-
+              <h1 className="mt-3 text-[27px] font-extrabold leading-tight tracking-tight text-[#401B13] sm:text-4xl">Find Products Nearby</h1>
+              <p className="mt-2 max-w-[570px] text-sm leading-6 text-[#66564C] sm:text-base">Discover products from sellers near you. Compare prices and find what you need on ReMarket.</p>
               <div className="mt-4 flex flex-wrap items-center gap-x-5 gap-y-2 text-[11px] font-medium text-[#7A6255]">
-                <span className="inline-flex items-center gap-1.5">
-                  <ShoppingBag className="h-3.5 w-3.5 text-[#FF5A36]" />
-                  Local products
-                </span>
-
-                <span className="inline-flex items-center gap-1.5">
-                  <MapPin className="h-3.5 w-3.5 text-[#FF5A36]" />
-                  Area-based discovery
-                </span>
-
-                <span className="inline-flex items-center gap-1.5">
-                  <BadgeCheck className="h-3.5 w-3.5 text-[#FF5A36]" />
-                  Verified sellers
-                </span>
+                <span className="inline-flex items-center gap-1.5"><ShoppingBag className="h-3.5 w-3.5 text-[#FF5A36]" /> Local products</span>
+                <span className="inline-flex items-center gap-1.5"><MapPin className="h-3.5 w-3.5 text-[#FF5A36]" /> Area-based discovery</span>
+                <span className="inline-flex items-center gap-1.5"><BadgeCheck className="h-3.5 w-3.5 text-[#FF5A36]" /> Verified sellers</span>
               </div>
             </div>
           </section>
 
-          {/* SEARCH TOOLBAR */}
           <section className="mt-6">
-            <form
-              onSubmit={submitSearch}
-              role="search"
-              className="flex h-[52px] w-full items-center rounded-2xl border border-[#EAE6DF] bg-white p-1.5 shadow-[0_3px_14px_rgba(23,32,42,0.035)] focus-within:border-[#FF9A81] focus-within:ring-2 focus-within:ring-[#FF5A36]/10"
-            >
+            <form onSubmit={submitSearch} role="search" className="flex h-[52px] w-full items-center rounded-2xl border border-[#EAE6DF] bg-white p-1.5 shadow-[0_3px_14px_rgba(23,32,42,0.035)] focus-within:border-[#FF9A81] focus-within:ring-2 focus-within:ring-[#FF5A36]/10">
               <Search className="ml-3 h-5 w-5 shrink-0 text-[#81766C]" />
-
-              <input
-                value={query}
-                onChange={(event) =>
-                  setQuery(event.target.value)
-                }
-                placeholder="What product are you looking for?"
-                aria-label="Search products"
-                className="min-w-0 flex-1 bg-transparent px-3 text-sm outline-none placeholder:text-[#91877E]"
-              />
-
-              <button
-                type="submit"
-                disabled={!query.trim()}
-                className="flex h-10 shrink-0 items-center justify-center gap-2 rounded-xl bg-[#FF5A36] px-4 text-xs font-bold text-white transition hover:bg-[#E94A28] disabled:cursor-not-allowed disabled:opacity-50 sm:px-6"
-              >
-                <Search className="h-4 w-4" />
-                <span className="hidden sm:inline">
-                  Search
-                </span>
+              <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="What product are you looking for?" aria-label="Search products" className="min-w-0 flex-1 bg-transparent px-3 text-sm outline-none placeholder:text-[#91877E]" />
+              <button type="submit" disabled={!query.trim()} className="flex h-10 shrink-0 items-center justify-center gap-2 rounded-xl bg-[#FF5A36] px-4 text-xs font-bold text-white transition hover:bg-[#E94A28] disabled:cursor-not-allowed disabled:opacity-50 sm:px-6">
+                <Search className="h-4 w-4" /><span className="hidden sm:inline">Search</span>
               </button>
             </form>
-
             <div className="mt-3 flex flex-wrap items-center justify-between gap-3">
-              <button
-                type="button"
-                onClick={() => setShowMobileFilters(true)}
-                className="inline-flex min-h-10 items-center gap-2 rounded-xl border border-[#EAE6DF] bg-white px-3.5 py-2 text-xs font-bold text-[#514840] transition hover:border-[#FF9A81] hover:text-[#9F2D18] lg:hidden"
-              >
-                <SlidersHorizontal className="h-4 w-4" />
-                Filters
-
-                {activeFilterCount > 0 && (
-                  <span className="flex h-5 min-w-5 items-center justify-center rounded-full bg-[#FF5A36] px-1.5 text-[10px] text-white">
-                    {activeFilterCount}
-                  </span>
-                )}
+              <button type="button" onClick={() => setShowMobileFilters(true)} className="inline-flex min-h-10 items-center gap-2 rounded-xl border border-[#EAE6DF] bg-white px-3.5 py-2 text-xs font-bold text-[#514840] transition hover:border-[#FF9A81] hover:text-[#9F2D18] lg:hidden">
+                <SlidersHorizontal className="h-4 w-4" /> Filters
+                {activeFilterCount > 0 && <span className="flex h-5 min-w-5 items-center justify-center rounded-full bg-[#FF5A36] px-1.5 text-[10px] text-white">{activeFilterCount}</span>}
               </button>
-
               <div className="flex items-center gap-2">
-                <label
-                  htmlFor="product-sort"
-                  className="whitespace-nowrap text-[11px] font-medium text-[#756B61]"
-                >
-                  Sort by
-                </label>
-
-                <select
-                  id="product-sort"
-                  value={sortBy}
-                  onChange={(event) => {
-                    const nextSort =
-                      event.target.value as SortOption;
-
-                    setSortBy(nextSort);
-
-                    if (initialPage !== 1) {
-                      router.push(
-                        buildShopUrl(
-                          getCurrentFilters(),
-                          1,
-                        ),
-                      );
-                    }
-                  }}
-                  className="h-10 max-w-[175px] rounded-xl border border-[#EAE6DF] bg-white px-3 text-xs font-semibold outline-none focus:border-[#FF9A81]"
-                >
-                  <option value="NEWEST">
-                    Recently added
-                  </option>
-                  <option value="PRICE_LOW">
-                    Price: Low to High
-                  </option>
-                  <option value="PRICE_HIGH">
-                    Price: High to Low
-                  </option>
-                  <option value="NAME">
-                    Product name
-                  </option>
+                <label htmlFor="product-sort" className="whitespace-nowrap text-[11px] font-medium text-[#756B61]">Sort by</label>
+                <select id="product-sort" value={sortBy} onChange={(event) => {
+                  const nextSort = event.target.value as SortOption;
+                  setSortBy(nextSort);
+                  if (initialPage !== 1) router.push(buildShopUrl(getCurrentFilters(), 1));
+                }} className="h-10 max-w-[175px] rounded-xl border border-[#EAE6DF] bg-white px-3 text-xs font-semibold outline-none focus:border-[#FF9A81]">
+                  <option value="NEWEST">Recently added</option>
+                  <option value="PRICE_LOW">Price: Low to High</option>
+                  <option value="PRICE_HIGH">Price: High to Low</option>
+                  <option value="NAME">Product name</option>
                 </select>
               </div>
             </div>
           </section>
 
-          {/* CATEGORY CHIPS */}
-          <section
-            aria-label="Product categories"
-            className="mt-5"
-          >
+          <section aria-label="Product categories" className="mt-5">
             <div className="mb-2 flex items-center justify-between">
-              <h2 className="text-xs font-bold text-[#514840]">
-                Browse categories
-              </h2>
-
-              {category && (
-                <button
-                  type="button"
-                  onClick={() => selectCategory("")}
-                  className="text-[10px] font-semibold text-[#9F2D18] hover:underline"
-                >
-                  Clear category
-                </button>
-              )}
+              <h2 className="text-xs font-bold text-[#514840]">Browse categories</h2>
+              {(category || categoryId) && <button type="button" onClick={() => selectCategory(null)} className="text-[10px] font-semibold text-[#9F2D18] hover:underline">Clear category</button>}
             </div>
-
             <div className="flex gap-2 overflow-x-auto pb-2 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-              <button
-                type="button"
-                aria-pressed={!category}
-                onClick={() => selectCategory("")}
-                className={`flex min-h-10 shrink-0 items-center rounded-full border px-4 py-2 text-xs font-bold transition ${
-                  !category
-                    ? "border-[#FF5A36] bg-[#FF5A36] text-white"
-                    : "border-[#EAE6DF] bg-white text-[#514840] hover:border-[#FF9A81] hover:text-[#9F2D18]"
-                }`}
-              >
-                All products
-              </button>
-
+              <button type="button" aria-pressed={!category && !categoryId} onClick={() => selectCategory(null)} className={`flex min-h-10 shrink-0 items-center rounded-full border px-4 py-2 text-xs font-bold transition ${!category && !categoryId ? "border-[#FF5A36] bg-[#FF5A36] text-white" : "border-[#EAE6DF] bg-white text-[#514840] hover:border-[#FF9A81] hover:text-[#9F2D18]"}`}>All products</button>
               {categories.map((item) => {
-                const active =
-                  category.trim().toLowerCase() ===
-                  item.name.trim().toLowerCase();
-
+                const active = selectedCategoryRoot?.id === item.id;
                 return (
-                  <button
-                    key={item.id}
-                    type="button"
-                    aria-pressed={active}
-                    onClick={() =>
-                      selectCategory(
-                        active ? "" : item.name,
-                      )
-                    }
-                    className={`flex min-h-10 shrink-0 items-center rounded-full border px-4 py-2 text-xs font-semibold transition ${
-                      active
-                        ? "border-[#FF5A36] bg-[#FFF0EB] text-[#9F2D18]"
-                        : "border-[#EAE6DF] bg-white text-[#514840] hover:border-[#FF9A81] hover:text-[#9F2D18]"
-                    }`}
-                  >
-                    {item.name}
+                  <button key={item.id} type="button" aria-pressed={active} onClick={() => selectCategory(active && selectedCategory?.id === item.id ? null : item)} className={`flex min-h-11 shrink-0 items-center gap-2 rounded-full border px-3 py-1.5 text-xs font-semibold transition ${active ? "border-[#FF5A36] bg-[#FFF0EB] text-[#9F2D18]" : "border-[#EAE6DF] bg-white text-[#514840] hover:border-[#FF9A81] hover:text-[#9F2D18]"}`}>
+                    <CategoryArtwork category={item} size="sm" />
+                    <span>{item.name}{item.children.length > 0 ? ` (${item.children.length})` : ""}</span>
                   </button>
                 );
               })}
             </div>
+            {selectedCategoryRoot && selectedCategoryRoot.children.length > 0 && (
+              <div className="mt-2 rounded-xl border border-[#F0E5DD] bg-[#FCFAF6] px-3 py-3">
+                <div className="mb-2 flex items-center justify-between gap-3">
+                  <p className="text-[10px] font-bold uppercase tracking-[0.08em] text-[#8B6A5B]">Subcategories in {selectedCategoryRoot.name}</p>
+                  <button type="button" onClick={() => selectCategory(selectedCategoryRoot)} className="text-[10px] font-bold text-[#9F2D18] hover:underline">All {selectedCategoryRoot.name}</button>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  {selectedCategoryRoot.children.map((child) => {
+                    const active = selectedCategory?.id === child.id;
+                    return (
+                      <button key={child.id} type="button" aria-pressed={active} onClick={() => selectCategory(active ? selectedCategoryRoot : child)} className={`inline-flex min-h-9 items-center gap-1.5 rounded-full border px-3 py-1.5 text-[11px] font-semibold transition ${active ? "border-[#FF5A36] bg-[#FF5A36] text-white" : "border-[#EAE6DF] bg-white text-[#514840] hover:border-[#FF9A81] hover:text-[#9F2D18]"}`}>
+                        <CategoryArtwork category={child} size="sm" />
+                        {child.name}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
           </section>
 
-          {/* FILTER SIDEBAR + RESULTS */}
           <div className="mt-6 grid grid-cols-1 gap-6 lg:grid-cols-[230px_minmax(0,1fr)] xl:grid-cols-[250px_minmax(0,1fr)]">
-            {/* DESKTOP FILTER SIDEBAR */}
             <aside className="hidden lg:block">
               <div className="sticky top-[105px] rounded-2xl border border-[#EAE6DF] bg-[#FCFAF6] p-4">
                 <div className="mb-4 flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <Filter className="h-4 w-4 text-[#FF5A36]" />
-                    <h2 className="text-sm font-bold">
-                      Filters
-                    </h2>
-                  </div>
-
-                  <button
-                    type="button"
-                    onClick={clearFilters}
-                    className="text-[10px] font-semibold text-[#9F2D18] hover:underline"
-                  >
-                    Clear all
-                  </button>
+                  <div className="flex items-center gap-2"><Filter className="h-4 w-4 text-[#FF5A36]" /><h2 className="text-sm font-bold">Filters</h2></div>
+                  <button type="button" onClick={clearFilters} className="text-[10px] font-semibold text-[#9F2D18] hover:underline">Clear all</button>
                 </div>
-
                 {renderFilterControls()}
               </div>
             </aside>
 
-            {/* PRODUCT RESULTS */}
             <section className="min-w-0">
               <div className="mb-4 flex flex-wrap items-end justify-between gap-3">
                 <div>
-                  <h2 className="text-xl font-extrabold tracking-tight text-[#401B13] sm:text-2xl">
-                    {category || "All Products"}
-                  </h2>
-
+                  <h2 className="text-xl font-extrabold tracking-tight text-[#401B13] sm:text-2xl">{selectedCategory?.name ?? (category || "All Products")}</h2>
                   <p className="mt-1 text-xs text-[#756B61] sm:text-sm">
-                    {loading
-                      ? "Finding products..."
-                      : error
-                        ? "Products could not be loaded."
-                        : `${totalProducts.toLocaleString("en-NG")} ${
-                            totalProducts === 1
-                              ? "product"
-                              : "products"
-                          } found`}
+                    {loading ? "Finding products..." : error ? "Products could not be loaded." : `${totalProducts.toLocaleString("en-NG")} ${totalProducts === 1 ? "product" : "products"} found`}
                   </p>
                 </div>
-
-                {totalPages > 1 && !loading && (
-                  <span className="text-[10px] font-semibold text-[#756B61]">
-                    Page {currentPage} of {totalPages}
-                  </span>
-                )}
+                {totalPages > 1 && !loading && <span className="text-[10px] font-semibold text-[#756B61]">Page {currentPage} of {totalPages}</span>}
               </div>
 
-              {/* SAVED FEEDBACK */}
               {saveFeedback && (
-                <div
-                  role={saveFeedbackError ? "alert" : "status"}
-                  className={`mb-4 flex items-center justify-between gap-3 rounded-xl border px-4 py-3 text-xs ${
-                    saveFeedbackError
-                      ? "border-red-200 bg-red-50 text-red-700"
-                      : "border-[#FFD9CE] bg-[#FFF1ED] text-[#9F2D18]"
-                  }`}
-                >
+                <div role={saveFeedbackError ? "alert" : "status"} className={`mb-4 flex items-center justify-between gap-3 rounded-xl border px-4 py-3 text-xs ${saveFeedbackError ? "border-red-200 bg-red-50 text-red-700" : "border-[#FFD9CE] bg-[#FFF1ED] text-[#9F2D18]"}`}>
                   <span>{saveFeedback}</span>
-
-                  <button
-                    type="button"
-                    onClick={() => setSaveFeedback("")}
-                    aria-label="Dismiss message"
-                  >
-                    <X className="h-4 w-4" />
-                  </button>
+                  <button type="button" onClick={() => setSaveFeedback("")} aria-label="Dismiss message"><X className="h-4 w-4" /></button>
                 </div>
               )}
 
-              {/* LOADING */}
               {loading && (
                 <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-4 2xl:grid-cols-5">
-                  {Array.from(
-                    { length: 10 },
-                    (_, index) => (
-                      <div
-                        key={index}
-                        className="overflow-hidden rounded-xl border border-[#EAE6DF] bg-white"
-                        aria-hidden="true"
-                      >
-                        <div className="aspect-[4/3] animate-pulse bg-[#F0ECE7]" />
-
-                        <div className="space-y-2 p-2.5">
-                          <div className="h-3 w-4/5 animate-pulse rounded bg-[#F0ECE7]" />
-                          <div className="h-3 w-2/5 animate-pulse rounded bg-[#F0ECE7]" />
-                          <div className="h-2.5 w-3/5 animate-pulse rounded bg-[#F0ECE7]" />
-                        </div>
-                      </div>
-                    ),
-                  )}
+                  {Array.from({ length: 10 }, (_, index) => (
+                    <div key={index} className="overflow-hidden rounded-xl border border-[#EAE6DF] bg-white" aria-hidden="true">
+                      <div className="aspect-[4/3] animate-pulse bg-[#F0ECE7]" />
+                      <div className="space-y-2 p-2.5"><div className="h-3 w-4/5 animate-pulse rounded bg-[#F0ECE7]" /><div className="h-3 w-2/5 animate-pulse rounded bg-[#F0ECE7]" /><div className="h-2.5 w-3/5 animate-pulse rounded bg-[#F0ECE7]" /></div>
+                    </div>
+                  ))}
                 </div>
               )}
 
-              {/* ERROR */}
               {!loading && error && (
                 <div className="rounded-2xl border border-red-200 bg-red-50 px-5 py-10 text-center">
                   <Package className="mx-auto h-9 w-9 text-red-400" />
-
-                  <h3 className="mt-3 text-sm font-bold text-red-800">
-                    We couldn't load products.
-                  </h3>
-
-                  <p className="mt-2 text-xs leading-5 text-red-700">
-                    {error}
-                  </p>
-
-                  <button
-                    type="button"
-                    onClick={() => router.refresh()}
-                    className="mt-5 rounded-xl bg-[#FF5A36] px-5 py-2.5 text-xs font-bold text-white hover:bg-[#E94A28]"
-                  >
-                    Try again
-                  </button>
+                  <h3 className="mt-3 text-sm font-bold text-red-800">We couldn't load products.</h3>
+                  <p className="mt-2 text-xs leading-5 text-red-700">{error}</p>
+                  <button type="button" onClick={() => router.refresh()} className="mt-5 rounded-xl bg-[#FF5A36] px-5 py-2.5 text-xs font-bold text-white hover:bg-[#E94A28]">Try again</button>
                 </div>
               )}
 
-              {/* EMPTY RESULTS */}
-              {!loading &&
-                !error &&
-                visibleProducts.length === 0 && (
-                  <div className="rounded-2xl border border-dashed border-[#E8E4DE] bg-[#FCFAF6] px-5 py-12 text-center">
-                    <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-white text-[#FF5A36] shadow-sm">
-                      <Search className="h-7 w-7" />
-                    </div>
+              {!loading && !error && visibleProducts.length === 0 && (
+                <div className="rounded-2xl border border-dashed border-[#E8E4DE] bg-[#FCFAF6] px-5 py-12 text-center">
+                  <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-white text-[#FF5A36] shadow-sm"><Search className="h-7 w-7" /></div>
+                  <h3 className="mt-4 text-sm font-bold">No products found</h3>
+                  <p className="mx-auto mt-2 max-w-sm text-xs leading-5 text-[#756B61]">Try another search, choose a different category or remove some filters.</p>
+                  <button type="button" onClick={clearFilters} className="mt-5 inline-flex min-h-10 items-center gap-2 rounded-xl bg-[#FF5A36] px-5 py-2.5 text-xs font-bold text-white hover:bg-[#E94A28]">Clear filters <RotateCcw className="h-3.5 w-3.5" /></button>
+                </div>
+              )}
 
-                    <h3 className="mt-4 text-sm font-bold">
-                      No products found
-                    </h3>
+              {!loading && !error && visibleProducts.length > 0 && (
+                <>
+                  <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-4 2xl:grid-cols-5">
+                    {visibleProducts.map((product) => {
+                      const isSaved = Boolean(savedProducts[product.id]);
+                      const isSaving = Boolean(savingProductIds[product.id]);
+                      const isAdding = Boolean(addingToCartProductIds[product.id]);
+                      const canAdd = canAddProductToCart(product);
+                      const imageUrl = product.imageUrl ?? product.images[0]?.url ?? null;
+                      const feedback = cartFeedback?.productId === product.id ? cartFeedback : null;
+                      const added = feedback?.kind === "success";
+                      const productUrl = `/product/${encodeURIComponent(product.id)}`;
+                      return (
+                        <article key={product.id} className="group flex min-w-0 flex-col overflow-hidden rounded-xl border border-[#EAE6DF] bg-white shadow-[0_3px_12px_rgba(23,32,42,0.035)] transition duration-200 hover:-translate-y-0.5 hover:border-[#FFD0C3] hover:shadow-[0_8px_20px_rgba(23,32,42,0.08)]">
+                          <div className="relative aspect-[4/3] overflow-hidden bg-[#FCFAF6]">
+                            <Link href={productUrl} aria-label={`View ${product.name}`} className="absolute inset-0">
+                              {imageUrl ? <img src={imageUrl} alt={product.name} loading="lazy" className="h-full w-full object-cover transition-transform duration-300 group-hover:scale-[1.04]" /> : <div className="flex h-full w-full items-center justify-center text-[#C3B9AE]"><Package className="h-9 w-9" /></div>}
+                            </Link>
+                            {getDiscountPercentage(product) !== null && (
+                              <span className="absolute bottom-2 left-2 rounded-md bg-[#9F2D18] px-2 py-1 text-[9px] font-bold text-white">{getDiscountPercentage(product)}% off</span>
+                            )}
+                            <button type="button" aria-label={isSaved ? `Remove ${product.name} from Saved` : `Save ${product.name}`} aria-pressed={isSaved} disabled={isSaving} onClick={() => void toggleSavedProduct(product)} className={`absolute right-2 top-2 z-10 flex h-8 w-8 items-center justify-center rounded-full border border-white/80 bg-white/95 shadow-sm transition hover:scale-105 disabled:opacity-60 ${isSaved ? "text-[#FF5A36]" : "text-[#756B61] hover:text-[#FF5A36]"}`}>
+                              {isSaving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Heart className="h-4 w-4" fill={isSaved ? "currentColor" : "none"} />}
+                            </button>
+                            <span className={`absolute bottom-2 right-2 rounded-full px-2 py-1 text-[8px] font-bold shadow-sm ${getAvailabilityStyle(product.availability)}`}>{getAvailabilityLabel(product.availability)}</span>
+                          </div>
 
-                    <p className="mx-auto mt-2 max-w-sm text-xs leading-5 text-[#756B61]">
-                      Try another search, choose a different
-                      category or remove some filters.
-                    </p>
-
-                    <button
-                      type="button"
-                      onClick={clearFilters}
-                      className="mt-5 inline-flex min-h-10 items-center gap-2 rounded-xl bg-[#FF5A36] px-5 py-2.5 text-xs font-bold text-white hover:bg-[#E94A28]"
-                    >
-                      Clear filters
-                      <RotateCcw className="h-3.5 w-3.5" />
-                    </button>
-                  </div>
-                )}
-
-              {/* PRODUCT GRID */}
-              {!loading &&
-                !error &&
-                visibleProducts.length > 0 && (
-                  <>
-                    <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-4 2xl:grid-cols-5">
-                      {visibleProducts.map((product) => {
-                        const isSaved = Boolean(
-                          savedProducts[product.id],
-                        );
-
-                        const isSaving = Boolean(
-                          savingProductIds[product.id],
-                        );
-
-                        const isAdding = Boolean(
-                          addingToCartProductIds[product.id],
-                        );
-
-                        const canAdd =
-                          canAddProductToCart(product);
-
-                        const imageUrl =
-                          product.imageUrl ??
-                          product.images[0]?.url ??
-                          null;
-
-                        const feedback =
-                          cartFeedback?.productId === product.id
-                            ? cartFeedback
-                            : null;
-
-                        const added =
-                          feedback?.kind === "success";
-
-                        return (
-                          <article
-                            key={product.id}
-                            className="group flex min-w-0 flex-col overflow-hidden rounded-xl border border-[#EAE6DF] bg-white shadow-[0_3px_12px_rgba(23,32,42,0.035)] transition duration-200 hover:-translate-y-0.5 hover:border-[#FFD0C3] hover:shadow-[0_8px_20px_rgba(23,32,42,0.08)]"
-                          >
-                            <div className="relative aspect-[4/3] overflow-hidden bg-[#FCFAF6]">
-                              <Link
-                                href={`/product/${encodeURIComponent(product.id)}`}
-                                aria-label={`View ${product.name}`}
-                                className="absolute inset-0"
-                              >
-                                {imageUrl ? (
-                                  <img
-                                    src={imageUrl}
-                                    alt={product.name}
-                                    loading="lazy"
-                                    className="h-full w-full object-cover transition-transform duration-300 group-hover:scale-[1.04]"
-                                  />
-                                ) : (
-                                  <div className="flex h-full w-full items-center justify-center text-[#C3B9AE]">
-                                    <Package className="h-9 w-9" />
-                                  </div>
-                                )}
-                              </Link>
-
-                              <button
-                                type="button"
-                                aria-label={
-                                  isSaved
-                                    ? `Remove ${product.name} from Saved`
-                                    : `Save ${product.name}`
-                                }
-                                aria-pressed={isSaved}
-                                disabled={isSaving}
-                                onClick={() =>
-                                  void toggleSavedProduct(product)
-                                }
-                                className={`absolute right-2 top-2 z-10 flex h-8 w-8 items-center justify-center rounded-full border border-white/80 bg-white/95 shadow-sm transition hover:scale-105 disabled:opacity-60 ${
-                                  isSaved
-                                    ? "text-[#FF5A36]"
-                                    : "text-[#756B61] hover:text-[#FF5A36]"
-                                }`}
-                              >
-                                {isSaving ? (
-                                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                                ) : (
-                                  <Heart
-                                    className="h-4 w-4"
-                                    fill={
-                                      isSaved
-                                        ? "currentColor"
-                                        : "none"
-                                    }
-                                  />
-                                )}
+                          <div className="flex flex-1 flex-col p-2.5 sm:p-3">
+                            {product.category && (
+                              <p className="mb-1 truncate text-[8px] font-bold uppercase tracking-[0.1em] text-[#9F2D18] sm:text-[9px]">
+                                {product.category.parent && product.category.parent.id !== product.category.id
+                                  ? `${product.category.parent.name} · ${product.category.name}`
+                                  : product.category.name}
+                              </p>
+                            )}
+                            <Link href={productUrl} className="line-clamp-2 min-h-9 text-[11px] font-bold leading-4 text-[#17202A] hover:text-[#9F2D18] sm:text-xs">{product.name}</Link>
+                            <div className="mt-1.5"><ProductPrice product={product} /></div>
+                            <div className="mt-2.5 flex items-center gap-1.5 border-t border-[#F0ECE7] pt-2.5">
+                              <Link href={productUrl} className="flex min-h-9 min-w-0 flex-1 items-center justify-center gap-1 rounded-lg bg-[#FFF1ED] px-1.5 py-2 text-[9px] font-bold text-[#9F2D18] hover:bg-[#FFE0D6] sm:text-[10px]">View product <ArrowRight className="h-3 w-3 shrink-0" /></Link>
+                              <button type="button" disabled={!canAdd || isAdding} onClick={() => void addProductToCart(product)} title={getCartDisabledReason(product)} aria-label={`Add ${product.name} to cart`} className={`flex h-9 w-10 shrink-0 items-center justify-center rounded-lg transition disabled:cursor-not-allowed disabled:opacity-40 ${added ? "bg-[#DCFCE7] text-[#166534]" : canAdd ? "bg-[#FF5A36] text-white hover:bg-[#E94A28]" : "bg-[#EEEAE6] text-[#A69B91]"}`}>
+                                {isAdding ? <Loader2 className="h-4 w-4 animate-spin" /> : added ? <Check className="h-4 w-4" /> : <ShoppingCart className="h-4 w-4" />}
                               </button>
-
-                              <span
-                                className={`absolute bottom-2 left-2 rounded-full px-2 py-1 text-[8px] font-bold shadow-sm ${getAvailabilityStyle(product.availability)}`}
-                              >
-                                {getAvailabilityLabel(product.availability)}
-                              </span>
                             </div>
+                            {feedback && <p role={feedback.kind === "error" ? "alert" : "status"} className={`mt-1.5 text-[9px] leading-4 ${feedback.kind === "success" ? "text-[#267344]" : "text-[#B42318]"}`}>{feedback.message}</p>}
+                          </div>
+                        </article>
+                      );
+                    })}
+                  </div>
 
-                            <div className="flex flex-1 flex-col p-2.5 sm:p-3">
-                              {product.category && (
-                                <p className="mb-1 truncate text-[8px] font-bold uppercase tracking-[0.1em] text-[#9F2D18] sm:text-[9px]">
-                                  {product.category.name}
-                                </p>
-                              )}
+                  {resultsTruncated && <div className="mt-5 rounded-xl border border-[#F2E3C9] bg-[#FFFAF0] px-4 py-3 text-xs leading-5 text-[#785B25]">Only the first set of matching products has been loaded. Narrow your search or apply additional filters to find more specific results.</div>}
 
-                              <Link
-                                href={`/product/${encodeURIComponent(product.id)}`}
-                                className="line-clamp-2 min-h-9 text-[11px] font-bold leading-4 text-[#17202A] hover:text-[#9F2D18] sm:text-xs"
-                              >
-                                {product.name}
-                              </Link>
-
-                              <div className="mt-1.5">
-                                <ProductPrice product={product} />
-                              </div>
-
-                              <div className="mt-2.5 flex items-center gap-1.5 border-t border-[#F0ECE7] pt-2.5">
-                                <Link
-                                  href={`/product/${encodeURIComponent(product.id)}`}
-                                  className="flex min-h-9 min-w-0 flex-1 items-center justify-center gap-1 rounded-lg bg-[#FFF1ED] px-1.5 py-2 text-[9px] font-bold text-[#9F2D18] hover:bg-[#FFE0D6] sm:text-[10px]"
-                                >
-                                  View product
-                                  <ArrowRight className="h-3 w-3 shrink-0" />
-                                </Link>
-
-                                <button
-                                  type="button"
-                                  disabled={!canAdd || isAdding}
-                                  onClick={() =>
-                                    void addProductToCart(product)
-                                  }
-                                  title={getCartDisabledReason(product)}
-                                  aria-label={`Add ${product.name} to cart`}
-                                  className={`flex h-9 w-10 shrink-0 items-center justify-center rounded-lg transition disabled:cursor-not-allowed disabled:opacity-40 ${
-                                    added
-                                      ? "bg-[#DCFCE7] text-[#166534]"
-                                      : canAdd
-                                        ? "bg-[#FF5A36] text-white hover:bg-[#E94A28]"
-                                        : "bg-[#EEEAE6] text-[#A69B91]"
-                                  }`}
-                                >
-                                  {isAdding ? (
-                                    <Loader2 className="h-4 w-4 animate-spin" />
-                                  ) : added ? (
-                                    <Check className="h-4 w-4" />
-                                  ) : (
-                                    <ShoppingCart className="h-4 w-4" />
-                                  )}
-                                </button>
-                              </div>
-
-                              {feedback && (
-                                <p
-                                  role={
-                                    feedback.kind === "error"
-                                      ? "alert"
-                                      : "status"
-                                  }
-                                  className={`mt-1.5 text-[9px] leading-4 ${
-                                    feedback.kind === "success"
-                                      ? "text-[#267344]"
-                                      : "text-[#B42318]"
-                                  }`}
-                                >
-                                  {feedback.message}
-                                </p>
-                              )}
-                            </div>
-                          </article>
-                        );
-                      })}
+                  {totalPages > 1 && (
+                    <div className="mt-7 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-[#EAE6DF] bg-white p-3 sm:px-4">
+                      <p className="text-[10px] text-[#756B61] sm:text-xs">Showing {resultStart}–{resultEnd}{resultsTruncated ? " of the loaded results" : ` of ${totalProducts.toLocaleString("en-NG")}`}</p>
+                      <div className="flex items-center gap-2">
+                        <button type="button" onClick={() => goToPage(currentPage - 1)} disabled={currentPage <= 1} aria-label="Previous page" className="flex h-9 w-9 items-center justify-center rounded-xl border border-[#EAE6DF] text-[#9F2D18] hover:bg-[#FFF1ED] disabled:opacity-40"><ChevronLeft className="h-4 w-4" /></button>
+                        <span className="min-w-[74px] text-center text-xs font-bold">{currentPage} / {totalPages}</span>
+                        <button type="button" onClick={() => goToPage(currentPage + 1)} disabled={currentPage >= totalPages} aria-label="Next page" className="flex h-9 w-9 items-center justify-center rounded-xl border border-[#EAE6DF] text-[#9F2D18] hover:bg-[#FFF1ED] disabled:opacity-40"><ChevronRight className="h-4 w-4" /></button>
+                      </div>
                     </div>
-
-                    {resultsTruncated && (
-                      <div className="mt-5 rounded-xl border border-[#F2E3C9] bg-[#FFFAF0] px-4 py-3 text-xs leading-5 text-[#785B25]">
-                        Only the first set of matching products
-                        has been loaded. Narrow your search or
-                        apply additional filters to find more
-                        specific results.
-                      </div>
-                    )}
-
-                    {totalPages > 1 && (
-                      <div className="mt-7 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-[#EAE6DF] bg-white p-3 sm:px-4">
-                        <p className="text-[10px] text-[#756B61] sm:text-xs">
-                          Showing {resultStart}–{resultEnd}
-                          {resultsTruncated
-                            ? " of the loaded results"
-                            : ` of ${totalProducts.toLocaleString("en-NG")}`}
-                        </p>
-
-                        <div className="flex items-center gap-2">
-                          <button
-                            type="button"
-                            onClick={() =>
-                              goToPage(currentPage - 1)
-                            }
-                            disabled={currentPage <= 1}
-                            aria-label="Previous page"
-                            className="flex h-9 w-9 items-center justify-center rounded-xl border border-[#EAE6DF] text-[#9F2D18] hover:bg-[#FFF1ED] disabled:opacity-40"
-                          >
-                            <ChevronLeft className="h-4 w-4" />
-                          </button>
-
-                          <span className="min-w-[74px] text-center text-xs font-bold">
-                            {currentPage} / {totalPages}
-                          </span>
-
-                          <button
-                            type="button"
-                            onClick={() =>
-                              goToPage(currentPage + 1)
-                            }
-                            disabled={currentPage >= totalPages}
-                            aria-label="Next page"
-                            className="flex h-9 w-9 items-center justify-center rounded-xl border border-[#EAE6DF] text-[#9F2D18] hover:bg-[#FFF1ED] disabled:opacity-40"
-                          >
-                            <ChevronRight className="h-4 w-4" />
-                          </button>
-                        </div>
-                      </div>
-                    )}
-                  </>
-                )}
+                  )}
+                </>
+              )}
             </section>
           </div>
 
           <footer className="mt-10 flex items-center justify-center gap-3 pb-3 text-[10px] text-[#9B9188]">
-            <span className="h-px w-12 bg-[#EAE6DF]" />
-            <span>ReMarket · Find it nearby</span>
-            <span className="h-px w-12 bg-[#EAE6DF]" />
+            <span className="h-px w-12 bg-[#EAE6DF]" /><span>ReMarket · Find it nearby</span><span className="h-px w-12 bg-[#EAE6DF]" />
           </footer>
         </div>
       </main>
 
-      {/* MOBILE FILTER SHEET */}
       {showMobileFilters && (
-        <div
-          className="fixed inset-0 z-[100] flex items-end justify-center bg-black/40 p-0 sm:items-center sm:p-4 lg:hidden"
-          onMouseDown={(event) => {
-            if (event.target === event.currentTarget) {
-              setShowMobileFilters(false);
-            }
-          }}
-        >
-          <section
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="mobile-filter-heading"
-            className="max-h-[88dvh] w-full max-w-lg overflow-y-auto rounded-t-[24px] bg-[#FFFDFC] p-5 shadow-2xl sm:rounded-[24px]"
-          >
+        <div className="fixed inset-0 z-[100] flex items-end justify-center bg-black/40 p-0 sm:items-center sm:p-4 lg:hidden" onMouseDown={(event) => {
+          if (event.target === event.currentTarget) setShowMobileFilters(false);
+        }}>
+          <section role="dialog" aria-modal="true" aria-labelledby="mobile-filter-heading" className="max-h-[88dvh] w-full max-w-lg overflow-y-auto rounded-t-[24px] bg-[#FFFDFC] p-5 shadow-2xl sm:rounded-[24px]">
             <div className="mb-5 flex items-center justify-between border-b border-[#EAE6DF] pb-4">
-              <div>
-                <h2
-                  id="mobile-filter-heading"
-                  className="text-lg font-extrabold"
-                >
-                  Filter products
-                </h2>
-
-                <p className="mt-1 text-xs text-[#756B61]">
-                  Narrow your product search.
-                </p>
-              </div>
-
-              <button
-                type="button"
-                onClick={() =>
-                  setShowMobileFilters(false)
-                }
-                aria-label="Close filters"
-                className="flex h-9 w-9 items-center justify-center rounded-full bg-[#FCFAF6] text-[#756B61] hover:bg-[#FFF1ED] hover:text-[#9F2D18]"
-              >
-                <X className="h-5 w-5" />
-              </button>
+              <div><h2 id="mobile-filter-heading" className="text-lg font-extrabold">Filter products</h2><p className="mt-1 text-xs text-[#756B61]">Narrow your product search.</p></div>
+              <button type="button" onClick={() => setShowMobileFilters(false)} aria-label="Close filters" className="flex h-9 w-9 items-center justify-center rounded-full bg-[#FCFAF6] text-[#756B61] hover:bg-[#FFF1ED] hover:text-[#9F2D18]"><X className="h-5 w-5" /></button>
             </div>
-
             {renderFilterControls()}
           </section>
         </div>
       )}
-
       <MobileBottomNav />
     </>
   );
 }
 
-/* =========================================================
-   PAGE ENTRY
-========================================================= */
-
 export default function ShopPage() {
   return (
-    <Suspense
-      fallback={
-        <>
-          <SiteHeader />
-
-          <main className="min-h-dvh bg-[#FFFDFC] px-4 pb-28 pt-8">
-            <div className="mx-auto max-w-[1600px]">
-              <div className="h-32 animate-pulse rounded-2xl bg-[#F0ECE7]" />
-
-              <div className="mt-6 grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-4 2xl:grid-cols-5">
-                {Array.from(
-                  { length: 10 },
-                  (_, index) => (
-                    <div
-                      key={index}
-                      className="overflow-hidden rounded-xl border border-[#EAE6DF] bg-white"
-                    >
-                      <div className="aspect-[4/3] animate-pulse bg-[#F0ECE7]" />
-
-                      <div className="space-y-2 p-2.5">
-                        <div className="h-3 w-4/5 animate-pulse rounded bg-[#F0ECE7]" />
-                        <div className="h-3 w-2/5 animate-pulse rounded bg-[#F0ECE7]" />
-                      </div>
-                    </div>
-                  ),
-                )}
-              </div>
+    <Suspense fallback={
+      <>
+        <SiteHeader />
+        <main className="min-h-dvh bg-[#FFFDFC] px-4 pb-28 pt-8">
+          <div className="mx-auto max-w-[1600px]">
+            <div className="h-32 animate-pulse rounded-2xl bg-[#F0ECE7]" />
+            <div className="mt-6 grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-4 2xl:grid-cols-5">
+              {Array.from({ length: 10 }, (_, index) => (
+                <div key={index} className="overflow-hidden rounded-xl border border-[#EAE6DF] bg-white">
+                  <div className="aspect-[4/3] animate-pulse bg-[#F0ECE7]" />
+                  <div className="space-y-2 p-2.5"><div className="h-3 w-4/5 animate-pulse rounded bg-[#F0ECE7]" /><div className="h-3 w-2/5 animate-pulse rounded bg-[#F0ECE7]" /></div>
+                </div>
+              ))}
             </div>
-          </main>
-
-          <MobileBottomNav />
-        </>
-      }
-    >
+          </div>
+        </main>
+        <MobileBottomNav />
+      </>
+    }>
       <ShopPageContent />
     </Suspense>
   );

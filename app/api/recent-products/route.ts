@@ -23,6 +23,21 @@ const recentProductSelect = {
       id: true,
       name: true,
       isActive: true,
+      iconKey: true,
+      imageUrl: true,
+      parentId: true,
+      sortOrder: true,
+      parent: {
+        select: {
+          id: true,
+          name: true,
+          isActive: true,
+          iconKey: true,
+          imageUrl: true,
+          parentId: true,
+          sortOrder: true,
+        },
+      },
     },
   },
   images: {
@@ -71,16 +86,14 @@ type PaginationResult =
 
 function parsePositiveInteger(
   rawValue: string | null,
-  fallback: number
+  fallback: number,
 ): number | null {
   if (rawValue === null) return fallback;
 
   const value = rawValue.trim();
-
   if (!/^\d+$/.test(value)) return null;
 
   const parsed = Number(value);
-
   if (!Number.isSafeInteger(parsed) || parsed < 1) {
     return null;
   }
@@ -89,11 +102,11 @@ function parsePositiveInteger(
 }
 
 function parsePagination(
-  searchParams: URLSearchParams
+  searchParams: URLSearchParams,
 ): PaginationResult {
   const page = parsePositiveInteger(
     searchParams.get("page"),
-    DEFAULT_PAGE
+    DEFAULT_PAGE,
   );
 
   if (page === null) {
@@ -105,7 +118,7 @@ function parsePagination(
 
   const requestedPageSize = parsePositiveInteger(
     searchParams.get("pageSize"),
-    DEFAULT_PAGE_SIZE
+    DEFAULT_PAGE_SIZE,
   );
 
   if (requestedPageSize === null) {
@@ -115,11 +128,7 @@ function parsePagination(
     };
   }
 
-  const pageSize = Math.min(
-    requestedPageSize,
-    MAX_PAGE_SIZE
-  );
-
+  const pageSize = Math.min(requestedPageSize, MAX_PAGE_SIZE);
   const skip = (page - 1) * pageSize;
 
   if (
@@ -132,18 +141,13 @@ function parsePagination(
     };
   }
 
-  return {
-    valid: true,
-    page,
-    pageSize,
-    skip,
-  };
+  return { valid: true, page, pageSize, skip };
 }
 
 function paginationMetadata(
   total: number,
   page: number,
-  pageSize: number
+  pageSize: number,
 ) {
   const totalPages = Math.ceil(total / pageSize);
 
@@ -157,60 +161,100 @@ function paginationMetadata(
   };
 }
 
-function responseHeaders(
-  rateLimitHeaders?: Headers
-): Headers {
+function responseHeaders(rateLimitHeaders?: Headers): Headers {
   const headers = new Headers(rateLimitHeaders);
-
   headers.set("Cache-Control", "no-store");
   headers.set("Content-Type", "application/json");
-
   return headers;
 }
 
-function serializeProduct(
-  product: RecentProductRecord
-) {
-  const {
-    category,
-    images,
-    business,
-    ...fields
-  } = product;
+function toMoneyNumber(value: unknown): number | null {
+  let parsed: number;
 
-  // Only expose an original price when it represents a valid discount.
+  if (typeof value === "number") {
+    parsed = value;
+  } else if (typeof value === "string") {
+    const cleaned = value.trim().replace(/,/g, "");
+    if (!cleaned) return null;
+    parsed = Number(cleaned);
+  } else if (typeof value === "bigint") {
+    parsed = Number(value);
+    if (!Number.isSafeInteger(parsed)) return null;
+  } else if (typeof value === "object" && value !== null) {
+    const decimalValue = value as { toNumber?: () => number };
+
+    if (typeof decimalValue.toNumber !== "function") {
+      return null;
+    }
+
+    try {
+      parsed = decimalValue.toNumber();
+    } catch {
+      return null;
+    }
+  } else {
+    return null;
+  }
+
+  return Number.isFinite(parsed) && parsed >= 0
+    ? parsed
+    : null;
+}
+
+function serializeCategory(
+  category: RecentProductRecord["category"],
+) {
+  if (!category?.isActive) return null;
+
+  const parent = category.parent?.isActive
+    ? {
+        id: category.parent.id,
+        name: category.parent.name,
+        iconKey: category.parent.iconKey,
+        imageUrl: category.parent.imageUrl,
+        parentId: category.parent.parentId,
+        sortOrder: category.parent.sortOrder,
+      }
+    : null;
+
+  return {
+    id: category.id,
+    name: category.name,
+    iconKey: category.iconKey,
+    imageUrl: category.imageUrl,
+    parentId: category.parentId,
+    sortOrder: category.sortOrder,
+    parent,
+  };
+}
+
+function serializeProduct(product: RecentProductRecord) {
+  const { category, images, business, ...fields } = product;
+
+  const currentPrice = toMoneyNumber(product.price);
+  const candidateOriginalPrice = toMoneyNumber(
+    product.originalPrice,
+  );
+
   const originalPrice =
-    product.price !== null &&
-    Number.isSafeInteger(product.price) &&
-    product.price > 0 &&
-    product.originalPrice !== null &&
-    Number.isSafeInteger(product.originalPrice) &&
-    product.originalPrice > product.price
-      ? product.originalPrice
+    currentPrice !== null &&
+    currentPrice > 0 &&
+    candidateOriginalPrice !== null &&
+    candidateOriginalPrice > currentPrice
+      ? candidateOriginalPrice
       : null;
 
   return {
     ...fields,
+    price: currentPrice,
     originalPrice,
-
-    // Product.imageUrl is the compatibility mirror.
-    // The first ProductImage is used as a fallback.
     imageUrl: product.imageUrl ?? images[0]?.url ?? null,
-
-    category: category?.isActive
-      ? {
-          id: category.id,
-          name: category.name,
-        }
-      : null,
-
+    category: serializeCategory(category),
     business: {
       id: business.id,
       name: business.name,
       availability: business.availability,
       verification: business.verification,
-
-      // Do not expose precise coordinates or a street address.
       location: business.location
         ? {
             area: business.location.area,
@@ -235,9 +279,8 @@ const publicProductWhere = {
 export async function GET(request: NextRequest) {
   const rateLimit = checkPublicRateLimit(
     request,
-    "recent-products"
+    "recent-products",
   );
-
   const headers = responseHeaders(rateLimit.headers);
 
   if (!rateLimit.allowed) {
@@ -245,21 +288,14 @@ export async function GET(request: NextRequest) {
       {
         products: [],
         total: 0,
-        error:
-          "Too many product requests. Please try again shortly.",
+        error: "Too many product requests. Please try again shortly.",
       },
-      {
-        status: 429,
-        headers,
-      }
+      { status: 429, headers },
     );
   }
 
   const url = new URL(request.url);
-
-  const pagination = parsePagination(
-    url.searchParams
-  );
+  const pagination = parsePagination(url.searchParams);
 
   if (!pagination.valid) {
     return NextResponse.json(
@@ -268,25 +304,15 @@ export async function GET(request: NextRequest) {
         total: 0,
         error: pagination.error,
       },
-      {
-        status: 400,
-        headers,
-      }
+      { status: 400, headers },
     );
   }
 
-  const {
-    page,
-    pageSize,
-    skip,
-  } = pagination;
+  const { page, pageSize, skip } = pagination;
 
   try {
     const [total, records] = await Promise.all([
-      prisma.product.count({
-        where: publicProductWhere,
-      }),
-
+      prisma.product.count({ where: publicProductWhere }),
       prisma.product.findMany({
         where: publicProductWhere,
         select: recentProductSelect,
@@ -302,33 +328,20 @@ export async function GET(request: NextRequest) {
     return NextResponse.json(
       {
         products: records.map(serializeProduct),
-        ...paginationMetadata(
-          total,
-          page,
-          pageSize
-        ),
+        ...paginationMetadata(total, page, pageSize),
       },
-      {
-        headers,
-      }
+      { headers },
     );
   } catch (error) {
-    console.error(
-      "Recent products API error:",
-      error
-    );
+    console.error("Recent products API error:", error);
 
     return NextResponse.json(
       {
         products: [],
         total: 0,
-        error:
-          "Unable to load recently added products.",
+        error: "Unable to load recently added products.",
       },
-      {
-        status: 500,
-        headers,
-      }
+      { status: 500, headers },
     );
   }
 }

@@ -58,6 +58,13 @@ class ProductPricingError extends Error {
   }
 }
 
+class CategoryAssignmentError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "CategoryAssignmentError";
+  }
+}
+
 function jsonHeaders() {
   return { "Cache-Control": "no-store" };
 }
@@ -235,7 +242,21 @@ async function getProduct(productId: string) {
     where: { id: productId },
     include: {
       business: { select: { id: true, name: true, deletedAt: true, location: { select: { area: true } } } },
-      category: true,
+      category: {
+        include: {
+          parent: {
+            select: {
+              id: true,
+              name: true,
+              parentId: true,
+              iconKey: true,
+              imageUrl: true,
+              sortOrder: true,
+              isActive: true,
+            },
+          },
+        },
+      },
       images: { orderBy: [{ sortOrder: "asc" }, { createdAt: "asc" }] },
     },
   });
@@ -255,24 +276,60 @@ async function updateProductWithRetry(input: {
   for (let attempt = 1; attempt <= 3; attempt += 1) {
     try {
       return await prisma.$transaction(async (tx) => {
-       const current = await tx.product.findUnique({
-  where: { id: input.productId },
-  include: {
-    business: {
-      select: {
-        id: true,
-        name: true, // Required by the audit log below
-        ownerId: true,
-        deletedAt: true,
-      },
-    },
-    images: {
-      orderBy: [{ sortOrder: "asc" }, { createdAt: "asc" }],
-    },
-  },
-});
+        const current = await tx.product.findUnique({
+          where: { id: input.productId },
+          include: {
+            business: {
+              select: {
+                id: true,
+                name: true,
+                ownerId: true,
+                deletedAt: true,
+              },
+            },
+            images: {
+              orderBy: [{ sortOrder: "asc" }, { createdAt: "asc" }],
+            },
+          },
+        });
+
         if (!current || current.deletedAt) throw new Error("PRODUCT_NOT_FOUND");
         if (current.business.deletedAt) throw new Error("BUSINESS_DELETED");
+
+        if (input.data.categoryId !== undefined && input.data.categoryId !== null) {
+          const category = await tx.category.findFirst({
+            where: { id: input.data.categoryId, isActive: true },
+            select: {
+              id: true,
+              parentId: true,
+              parent: {
+                select: {
+                  id: true,
+                  isActive: true,
+                  parentId: true,
+                },
+              },
+            },
+          });
+
+          if (!category) {
+            throw new CategoryAssignmentError("Selected category was not found or is inactive.");
+          }
+          if (category.parentId && (!category.parent || !category.parent.isActive)) {
+            throw new CategoryAssignmentError("The selected subcategory belongs to an inactive or unavailable parent category.");
+          }
+          if (category.parent?.parentId) {
+            throw new CategoryAssignmentError("This category is deeper than the supported two-level hierarchy. Select a valid subcategory instead.");
+          }
+
+          const activeChild = await tx.category.findFirst({
+            where: { parentId: category.id, isActive: true },
+            select: { id: true },
+          });
+          if (activeChild) {
+            throw new CategoryAssignmentError("This is a parent category. Select one of its active subcategories instead.");
+          }
+        }
 
         const isActivating = current.status !== BusinessStatus.ACTIVE && input.data.status === BusinessStatus.ACTIVE;
         if (input.pricingWasProvided || isActivating) {
@@ -333,7 +390,21 @@ async function updateProductWithRetry(input: {
           where: { id: current.id },
           include: {
             business: { select: { id: true, name: true, deletedAt: true, location: { select: { area: true } } } },
-            category: true,
+            category: {
+              include: {
+                parent: {
+                  select: {
+                    id: true,
+                    name: true,
+                    parentId: true,
+                    iconKey: true,
+                    imageUrl: true,
+                    sortOrder: true,
+                    isActive: true,
+                  },
+                },
+              },
+            },
             images: { orderBy: [{ sortOrder: "asc" }, { createdAt: "asc" }] },
           },
         });
@@ -436,13 +507,7 @@ export async function PATCH(request: Request, { params }: RouteContext) {
     if (hasOwn(body, "categoryId")) {
       if (body.categoryId !== null && typeof body.categoryId !== "string") return jsonError("Category ID must be a string or null.", 400);
       const categoryId = cleanString(body.categoryId);
-      if (!categoryId) {
-        data.categoryId = null;
-      } else {
-        const category = await prisma.category.findFirst({ where: { id: categoryId, isActive: true }, select: { id: true } });
-        if (!category) return jsonError("Selected category was not found or is inactive.", 400);
-        data.categoryId = category.id;
-      }
+      data.categoryId = categoryId || null;
     }
 
     let pricingWasProvided = false;
@@ -530,6 +595,7 @@ export async function PATCH(request: Request, { params }: RouteContext) {
       }, { status: 409, headers: jsonHeaders() });
     }
     if (error instanceof ProductPricingError) return jsonError(error.message, 400);
+    if (error instanceof CategoryAssignmentError) return jsonError(error.message, 400);
     if (error instanceof Error && error.message === "PRODUCT_NOT_FOUND") return jsonError("Product not found.", 404);
     if (error instanceof Error && error.message === "BUSINESS_DELETED") return jsonError("This business has been deleted and its products cannot be edited.", 409);
     if (isPrismaErrorCode(error, "P2025")) return jsonError("Product could not be found.", 404);

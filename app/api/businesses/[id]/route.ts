@@ -28,18 +28,12 @@ function normalizeNigerianPhone(value: string): string {
   return `+234${clean}`;
 }
 
-function normalizeSocialHandle(
-  platform: string,
-  handle: string,
-): string {
+function normalizeSocialHandle(platform: string, handle: string): string {
   const clean = handle.trim();
   if (!clean) return "";
 
   if (platform === "WHATSAPP" || platform === "PHONE") {
-    if (
-      clean.startsWith("http://") ||
-      clean.startsWith("https://")
-    ) {
+    if (clean.startsWith("http://") || clean.startsWith("https://")) {
       return clean;
     }
 
@@ -49,14 +43,6 @@ function normalizeSocialHandle(
   return clean;
 }
 
-/**
- * Only expose an original price when it represents a valid discount:
- * - The current selling price must be a positive fixed price.
- * - The original price must be greater than the selling price.
- *
- * The original price is display information only. Checkout and order
- * calculations must continue to use Product.price.
- */
 function getValidOriginalPrice(
   price: number | null,
   originalPrice: number | null,
@@ -75,6 +61,39 @@ function getValidOriginalPrice(
   return originalPrice;
 }
 
+function formatCategory(category: {
+  id: string;
+  name: string;
+  iconKey: string;
+  imageUrl: string | null;
+  parentId: string | null;
+  isActive: boolean;
+  sortOrder: number;
+  parent: {
+    id: string;
+    name: string;
+    isActive: boolean;
+  } | null;
+}) {
+  if (!category.isActive) return null;
+
+  return {
+    id: category.id,
+    name: category.name,
+    iconKey: category.iconKey,
+    imageUrl: category.imageUrl,
+    parentId: category.parentId,
+    sortOrder: category.sortOrder,
+    parent:
+      category.parent?.isActive
+        ? {
+            id: category.parent.id,
+            name: category.parent.name,
+          }
+        : null,
+  };
+}
+
 export async function GET(
   request: NextRequest,
   {
@@ -87,9 +106,7 @@ export async function GET(
 
   if (!rateLimit.allowed) {
     return NextResponse.json(
-      {
-        error: "Too many business requests. Please try again shortly.",
-      },
+      { error: "Too many business requests. Please try again shortly." },
       {
         status: 429,
         headers: getResponseHeaders(rateLimit.headers),
@@ -135,8 +152,6 @@ export async function GET(
         availability: true,
         verification: true,
         phone: true,
-
-        // Contact details are only returned publicly when enabled by the seller.
         showContactInfo: true,
 
         location: {
@@ -162,6 +177,18 @@ export async function GET(
               select: {
                 id: true,
                 name: true,
+                iconKey: true,
+                imageUrl: true,
+                parentId: true,
+                isActive: true,
+                sortOrder: true,
+                parent: {
+                  select: {
+                    id: true,
+                    name: true,
+                    isActive: true,
+                  },
+                },
               },
             },
           },
@@ -181,6 +208,24 @@ export async function GET(
             availability: true,
             imageUrl: true,
             keywords: true,
+            category: {
+              select: {
+                id: true,
+                name: true,
+                iconKey: true,
+                imageUrl: true,
+                parentId: true,
+                isActive: true,
+                sortOrder: true,
+                parent: {
+                  select: {
+                    id: true,
+                    name: true,
+                    isActive: true,
+                  },
+                },
+              },
+            },
             images: {
               select: {
                 id: true,
@@ -200,8 +245,6 @@ export async function GET(
           },
         },
 
-        // Only active, non-deleted services are visible on public profiles.
-        // Service price ranges remain supported independently of product pricing.
         services: {
           where: {
             status: "ACTIVE",
@@ -226,8 +269,17 @@ export async function GET(
                 id: true,
                 name: true,
                 iconKey: true,
+                imageUrl: true,
+                parentId: true,
                 isActive: true,
                 sortOrder: true,
+                parent: {
+                  select: {
+                    id: true,
+                    name: true,
+                    isActive: true,
+                  },
+                },
               },
             },
             images: {
@@ -296,16 +348,11 @@ export async function GET(
     });
 
     const reviewCount = reviewSummary._count._all;
-
     const averageRating =
       reviewCount > 0 && reviewSummary._avg.rating !== null
         ? Number(reviewSummary._avg.rating.toFixed(1))
         : 0;
 
-    /*
-     * Contact information is only formatted and returned
-     * when the seller has explicitly enabled public visibility.
-     */
     const formattedSocialLinks: {
       id: string;
       platform: string;
@@ -317,10 +364,7 @@ export async function GET(
         formattedSocialLinks.push({
           id: link.id,
           platform: link.platform,
-          handle: normalizeSocialHandle(
-            link.platform,
-            link.handle,
-          ),
+          handle: normalizeSocialHandle(link.platform, link.handle),
         });
       }
 
@@ -328,7 +372,6 @@ export async function GET(
         (link) => link.platform === "PHONE",
       );
 
-      // Backward compatibility for older businesses with a legacy phone field.
       if (!hasPhoneSocialLink && business.phone) {
         formattedSocialLinks.push({
           id: `legacy-phone-${business.id}`,
@@ -338,8 +381,6 @@ export async function GET(
       }
     }
 
-    // Coordinates are used only to determine whether directions are available.
-    // They are deliberately not included in the public response.
     const hasValidCoordinates = Boolean(
       business.location &&
         typeof business.location.lat === "number" &&
@@ -352,11 +393,12 @@ export async function GET(
         business.location.long <= 180,
     );
 
-    const hasAddress = Boolean(
-      business.location?.address?.trim(),
-    );
-
+    const hasAddress = Boolean(business.location?.address?.trim());
     const hasDirections = hasValidCoordinates || hasAddress;
+
+    const businessCategories = business.categories
+      .map((item) => formatCategory(item.category))
+      .filter((category): category is NonNullable<typeof category> => Boolean(category));
 
     const formattedBusiness = {
       id: business.id,
@@ -364,8 +406,6 @@ export async function GET(
       ownerName: business.ownerName,
       description: business.description,
       imageUrl: business.imageUrl,
-
-      // Do not expose ownerId or the removed claim-business state.
       showContactInfo: business.showContactInfo === true,
 
       location: {
@@ -374,20 +414,16 @@ export async function GET(
         street: business.location?.street ?? null,
         address: business.location?.address ?? null,
         hasDirections,
-        verification:
-          business.location?.verification ?? "UNVERIFIED",
+        verification: business.location?.verification ?? "UNVERIFIED",
       },
 
       availability: business.availability,
       verification: business.verification,
       verified: business.verification === "VERIFIED",
 
-      category:
-        business.categories[0]?.category?.name ?? "Other",
-
-      categories: business.categories.map(
-        (item) => item.category.name,
-      ),
+      category: businessCategories[0]?.name ?? "Other",
+      categories: businessCategories.map((category) => category.name),
+      businessCategories,
 
       productCount: business._count.products,
       serviceCount: business._count.services,
@@ -406,6 +442,9 @@ export async function GET(
         availability: product.availability,
         imageUrl: product.imageUrl,
         keywords: product.keywords,
+        category: product.category
+          ? formatCategory(product.category)
+          : null,
         images: product.images.map((image) => ({
           id: image.id,
           url: image.url,
@@ -428,13 +467,8 @@ export async function GET(
         imageUrl: service.imageUrl,
         createdAt: service.createdAt,
         updatedAt: service.updatedAt,
-        category: service.category?.isActive
-          ? {
-              id: service.category.id,
-              name: service.category.name,
-              iconKey: service.category.iconKey,
-              sortOrder: service.category.sortOrder,
-            }
+        category: service.category
+          ? formatCategory(service.category)
           : null,
         images: service.images.map((image) => ({
           id: image.id,
@@ -443,7 +477,6 @@ export async function GET(
         })),
       })),
 
-      // This remains an empty array when public contact visibility is disabled.
       socialLinks: formattedSocialLinks,
     };
 

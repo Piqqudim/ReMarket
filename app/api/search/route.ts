@@ -1,4 +1,3 @@
-
 import {
   Availability,
   Prisma,
@@ -10,6 +9,7 @@ import { checkPublicRateLimit } from "@/lib/rate-limit";
 
 const MAX_SEARCH_LENGTH = 100;
 const MAX_CATEGORY_LENGTH = 100;
+const MAX_CATEGORY_ID_LENGTH = 100;
 const MAX_STATE_LENGTH = 100;
 const MAX_LGA_LENGTH = 100;
 const MAX_AREA_LENGTH = 100;
@@ -19,11 +19,16 @@ const DEFAULT_PAGE_SIZE = 12;
 const MAX_PAGE_SIZE = 48;
 const PRODUCT_IMAGE_LIMIT = 1;
 
-type SortMode = "relevance" | "newest" | "price-asc" | "price-desc";
+type SortMode =
+  | "relevance"
+  | "newest"
+  | "price-asc"
+  | "price-desc";
 
 type SearchFilters = {
   query: string;
   category: string;
+  categoryIds: string[];
   state: string;
   lga: string;
   area: string;
@@ -60,8 +65,10 @@ const ALLOWED_SORTS = new Set<SortMode>([
 ]);
 
 /*
- * Product data selected for the public Shop search page.
+ * Product data selected for the public search page.
+ *
  * State, LGA and area are included in the returned seller location.
+ * Exact latitude and longitude are never exposed.
  */
 const productSearchSelect = {
   id: true,
@@ -120,10 +127,18 @@ type SearchProduct = Prisma.ProductGetPayload<{
   select: typeof productSearchSelect;
 }>;
 
+/* -------------------------------------------------------------------------- */
+/* RESPONSE HELPERS                                                           */
+/* -------------------------------------------------------------------------- */
+
 function noStoreHeaders(baseHeaders?: HeadersInit): Headers {
   const headers = new Headers(baseHeaders);
 
-  headers.set("Cache-Control", "no-store, max-age=0, must-revalidate");
+  headers.set(
+    "Cache-Control",
+    "no-store, max-age=0, must-revalidate",
+  );
+
   headers.set("Pragma", "no-cache");
   headers.set("Expires", "0");
 
@@ -152,6 +167,10 @@ function jsonError(
 function clean(value: string | null): string {
   return value?.trim() ?? "";
 }
+
+/* -------------------------------------------------------------------------- */
+/* INPUT VALIDATION                                                           */
+/* -------------------------------------------------------------------------- */
 
 function parseBoundedInteger(
   rawValue: string | null,
@@ -223,6 +242,10 @@ function parsePriceParameter(
 
   return { value: parsed };
 }
+
+/* -------------------------------------------------------------------------- */
+/* INLINE PRICE SEARCH                                                        */
+/* -------------------------------------------------------------------------- */
 
 function parseMoneyAmount(input: string): number | null {
   const normalized = input
@@ -322,6 +345,10 @@ function parseInlineBudget(rawQuery: string): InlineBudget {
   };
 }
 
+/* -------------------------------------------------------------------------- */
+/* TEXT SEARCH HELPERS                                                        */
+/* -------------------------------------------------------------------------- */
+
 function normalizeText(value: string): string {
   return value
     .normalize("NFKD")
@@ -376,6 +403,125 @@ function getSearchTerms(query: string): string[] {
     ),
   );
 }
+
+/* -------------------------------------------------------------------------- */
+/* CATEGORY HIERARCHY RESOLUTION                                              */
+/* -------------------------------------------------------------------------- */
+
+/*
+ * Category selection supports:
+ *
+ * 1. categoryId:
+ *    The preferred new category selector.
+ *
+ * 2. category:
+ *    The legacy category-name selector.
+ *
+ * Parent selection:
+ *    Parent category ID + its active direct subcategory IDs.
+ *
+ * Subcategory selection:
+ *    Only the selected subcategory ID.
+ *
+ * ReMarket supports a maximum hierarchy depth of two levels.
+ */
+
+type ResolvedCategory = {
+  id: string;
+  name: string;
+  isActive: boolean;
+  parentId: string | null;
+  children: Array<{
+    id: string;
+  }>;
+};
+
+async function resolveCategorySelection(
+  categoryId: string,
+  categoryName: string,
+): Promise<{
+  category: ResolvedCategory | null;
+  categoryIds: string[];
+}> {
+  if (!categoryId && !categoryName) {
+    return {
+      category: null,
+      categoryIds: [],
+    };
+  }
+
+  const select = {
+    id: true,
+    name: true,
+    isActive: true,
+    parentId: true,
+    children: {
+      where: {
+        isActive: true,
+      },
+      select: {
+        id: true,
+      },
+    },
+  } satisfies Prisma.CategorySelect;
+
+  let selectedCategory: ResolvedCategory | null = null;
+
+  if (categoryId) {
+    selectedCategory = await prisma.category.findUnique({
+      where: {
+        id: categoryId,
+      },
+      select,
+    });
+  } else {
+    selectedCategory = await prisma.category.findFirst({
+      where: {
+        name: {
+          equals: categoryName,
+          mode: "insensitive",
+        },
+        isActive: true,
+      },
+      select,
+    });
+  }
+
+  if (!selectedCategory || !selectedCategory.isActive) {
+    return {
+      category: null,
+      categoryIds: [],
+    };
+  }
+
+  /*
+   * A selected subcategory is filtered by its own ID only.
+   */
+  if (selectedCategory.parentId !== null) {
+    return {
+      category: selectedCategory,
+      categoryIds: [selectedCategory.id],
+    };
+  }
+
+  /*
+   * A selected parent includes itself and its active
+   * direct subcategories.
+   */
+  const categoryIds = [
+    selectedCategory.id,
+    ...selectedCategory.children.map((child) => child.id),
+  ];
+
+  return {
+    category: selectedCategory,
+    categoryIds,
+  };
+}
+
+/* -------------------------------------------------------------------------- */
+/* PRODUCT FILTERS                                                            */
+/* -------------------------------------------------------------------------- */
 
 function buildProductPriceConditions(
   filters: SearchFilters,
@@ -453,15 +599,19 @@ function productTextConditions(
   }));
 }
 
+/* -------------------------------------------------------------------------- */
+/* LOCATION FILTERING                                                         */
+/* -------------------------------------------------------------------------- */
+
 /*
- * Location filtering:
- *
  * State: exact, case-insensitive match.
  * LGA: exact, case-insensitive match.
  * Area: partial match against area, street or address.
  *
- * When multiple location values are provided, all are applied together.
+ * When multiple location values are provided,
+ * all are applied together.
  */
+
 function buildLocationWhere(
   filters: Pick<SearchFilters, "state" | "lga" | "area">,
 ): Prisma.LocationWhereInput {
@@ -515,6 +665,10 @@ function buildLocationWhere(
     : {};
 }
 
+/* -------------------------------------------------------------------------- */
+/* PRODUCT WHERE CLAUSE                                                       */
+/* -------------------------------------------------------------------------- */
+
 function buildProductWhere(
   filters: SearchFilters,
   terms: string[],
@@ -556,7 +710,29 @@ function buildProductWhere(
     conditions.push(...productTextConditions(terms));
   }
 
-  if (filters.category) {
+  /*
+   * New hierarchy-aware filtering.
+   *
+   * When categoryIds are available, filter by IDs.
+   * This is what allows parent category searches
+   * to include products assigned to subcategories.
+   */
+  if (filters.categoryIds.length > 0) {
+    conditions.push({
+      category: {
+        is: {
+          isActive: true,
+          id: {
+            in: filters.categoryIds,
+          },
+        },
+      },
+    });
+  } else if (filters.category) {
+    /*
+     * Backward compatibility for category names
+     * that do not resolve to an active category ID.
+     */
     conditions.push({
       category: {
         is: {
@@ -576,12 +752,18 @@ function buildProductWhere(
     });
   }
 
-  conditions.push(...buildProductPriceConditions(filters));
+  conditions.push(
+    ...buildProductPriceConditions(filters),
+  );
 
   return {
     AND: conditions,
   };
 }
+
+/* -------------------------------------------------------------------------- */
+/* RELEVANCE SCORING                                                          */
+/* -------------------------------------------------------------------------- */
 
 function scoreText(
   query: string,
@@ -637,6 +819,10 @@ function scoreProduct(
     ])
   );
 }
+
+/* -------------------------------------------------------------------------- */
+/* SORTING                                                                    */
+/* -------------------------------------------------------------------------- */
 
 function comparePrice(
   a: SearchProduct,
@@ -710,6 +896,10 @@ function sortProducts(
   return scored;
 }
 
+/* -------------------------------------------------------------------------- */
+/* PUBLIC PRODUCT FORMAT                                                      */
+/* -------------------------------------------------------------------------- */
+
 function formatProduct(
   product: SearchProduct,
   matchScore: number,
@@ -772,6 +962,10 @@ function formatProduct(
   };
 }
 
+/* -------------------------------------------------------------------------- */
+/* SEARCH API                                                                 */
+/* -------------------------------------------------------------------------- */
+
 export async function GET(request: NextRequest) {
   const rateLimit = checkPublicRateLimit(request, "search");
 
@@ -787,15 +981,34 @@ export async function GET(request: NextRequest) {
     const searchParams = request.nextUrl.searchParams;
 
     const rawQuery = clean(searchParams.get("q"));
-    const category = clean(searchParams.get("category"));
 
-    const state = clean(searchParams.get("state"));
-    const lga = clean(searchParams.get("lga"));
+    const category = clean(
+      searchParams.get("category"),
+    );
 
-    // Backward compatibility: old `location` parameter means `area`.
+    const categoryId = clean(
+      searchParams.get("categoryId"),
+    );
+
+    const state = clean(
+      searchParams.get("state"),
+    );
+
+    const lga = clean(
+      searchParams.get("lga"),
+    );
+
+    /*
+     * Backward compatibility:
+     * Older URLs used `location` instead of `area`.
+     */
     const area =
       clean(searchParams.get("area")) ||
       clean(searchParams.get("location"));
+
+    /* ---------------------------------------------------------------------- */
+    /* SEARCH TYPE                                                            */
+    /* ---------------------------------------------------------------------- */
 
     const rawType = clean(
       searchParams.get("type"),
@@ -812,7 +1025,9 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    // Service search is currently paused.
+    /*
+     * Service search is currently paused.
+     */
     if (rawType === "service") {
       return NextResponse.json(
         {
@@ -829,6 +1044,10 @@ export async function GET(request: NextRequest) {
       );
     }
 
+    /* ---------------------------------------------------------------------- */
+    /* TEXT VALIDATION                                                        */
+    /* ---------------------------------------------------------------------- */
+
     if (rawQuery.length > MAX_SEARCH_LENGTH) {
       return jsonError(
         `Search text must not exceed ${MAX_SEARCH_LENGTH} characters.`,
@@ -840,6 +1059,14 @@ export async function GET(request: NextRequest) {
     if (category.length > MAX_CATEGORY_LENGTH) {
       return jsonError(
         `Category must not exceed ${MAX_CATEGORY_LENGTH} characters.`,
+        400,
+        rateLimit.headers,
+      );
+    }
+
+    if (categoryId.length > MAX_CATEGORY_ID_LENGTH) {
+      return jsonError(
+        `Category ID must not exceed ${MAX_CATEGORY_ID_LENGTH} characters.`,
         400,
         rateLimit.headers,
       );
@@ -868,6 +1095,10 @@ export async function GET(request: NextRequest) {
         rateLimit.headers,
       );
     }
+
+    /* ---------------------------------------------------------------------- */
+    /* PAGINATION                                                             */
+    /* ---------------------------------------------------------------------- */
 
     const pageInput = parseBoundedInteger(
       searchParams.get("page"),
@@ -907,6 +1138,10 @@ export async function GET(request: NextRequest) {
       );
     }
 
+    /* ---------------------------------------------------------------------- */
+    /* SORT VALIDATION                                                        */
+    /* ---------------------------------------------------------------------- */
+
     const rawSort = clean(
       searchParams.get("sort"),
     ).toLowerCase();
@@ -922,6 +1157,10 @@ export async function GET(request: NextRequest) {
         rateLimit.headers,
       );
     }
+
+    /* ---------------------------------------------------------------------- */
+    /* PRICE VALIDATION                                                       */
+    /* ---------------------------------------------------------------------- */
 
     const minimumPriceInput = parsePriceParameter(
       searchParams.get("minPrice"),
@@ -949,6 +1188,10 @@ export async function GET(request: NextRequest) {
       );
     }
 
+    /* ---------------------------------------------------------------------- */
+    /* AVAILABILITY VALIDATION                                                */
+    /* ---------------------------------------------------------------------- */
+
     const availabilityRaw = clean(
       searchParams.get("availability"),
     );
@@ -966,6 +1209,10 @@ export async function GET(request: NextRequest) {
       );
     }
 
+    /* ---------------------------------------------------------------------- */
+    /* VERIFICATION VALIDATION                                                */
+    /* ---------------------------------------------------------------------- */
+
     const verifiedRaw = clean(
       searchParams.get("verified"),
     );
@@ -982,11 +1229,56 @@ export async function GET(request: NextRequest) {
       );
     }
 
+    /* ---------------------------------------------------------------------- */
+    /* CATEGORY RESOLUTION                                                    */
+    /* ---------------------------------------------------------------------- */
+
+    /*
+     * categoryId takes priority.
+     *
+     * When only the older category-name parameter is supplied,
+     * resolve the name to its active category record.
+     *
+     * Parent category:
+     *   Parent ID + active child IDs.
+     *
+     * Subcategory:
+     *   Subcategory ID only.
+     *
+     * If an old category name does not resolve to an active
+     * category, retain the original name-based filtering.
+     */
+    const resolvedCategory = await resolveCategorySelection(
+      categoryId,
+      category,
+    );
+
+    if (categoryId && !resolvedCategory.category) {
+      return jsonError(
+        "The selected category does not exist or is inactive.",
+        404,
+        rateLimit.headers,
+      );
+    }
+
+    const resolvedCategoryName =
+      resolvedCategory.category?.name ?? category;
+
+    const categoryIds =
+      resolvedCategory.categoryIds;
+
+    /* ---------------------------------------------------------------------- */
+    /* BUILD SEARCH FILTERS                                                   */
+    /* ---------------------------------------------------------------------- */
+
     const inlineBudget = parseInlineBudget(rawQuery);
 
     const filters: SearchFilters = {
       query: inlineBudget.query,
-      category,
+
+      category: resolvedCategoryName,
+      categoryIds,
+
       state,
       lga,
       area,
@@ -1018,12 +1310,20 @@ export async function GET(request: NextRequest) {
       );
     }
 
+    /* ---------------------------------------------------------------------- */
+    /* BUILD DATABASE FILTERS                                                 */
+    /* ---------------------------------------------------------------------- */
+
     const terms = getSearchTerms(filters.query);
 
     const productWhere = buildProductWhere(
       filters,
       terms,
     );
+
+    /* ---------------------------------------------------------------------- */
+    /* FETCH MATCHING PRODUCTS                                                */
+    /* ---------------------------------------------------------------------- */
 
     const [totalProducts, matchedProducts] =
       await Promise.all([
@@ -1041,11 +1341,19 @@ export async function GET(request: NextRequest) {
         }),
       ]);
 
+    /* ---------------------------------------------------------------------- */
+    /* SORT PRODUCTS                                                          */
+    /* ---------------------------------------------------------------------- */
+
     const sortedProducts = sortProducts(
       matchedProducts,
       filters.query,
       sort,
     );
+
+    /* ---------------------------------------------------------------------- */
+    /* SERVER-SIDE PAGINATION                                                 */
+    /* ---------------------------------------------------------------------- */
 
     const offset =
       (pageInput.value - 1) *
@@ -1061,6 +1369,10 @@ export async function GET(request: NextRequest) {
         formatProduct(product, matchScore),
     );
 
+    /* ---------------------------------------------------------------------- */
+    /* SEARCH EVENT TRACKING                                                  */
+    /* ---------------------------------------------------------------------- */
+
     /*
      * Search tracking should never prevent a successful
      * product search response.
@@ -1072,7 +1384,9 @@ export async function GET(request: NextRequest) {
       await prisma.searchEvent.create({
         data: {
           query: rawQuery,
-          category: category || null,
+
+          category: resolvedCategoryName || null,
+
           resultCount: totalProducts,
 
           location:
@@ -1092,6 +1406,10 @@ export async function GET(request: NextRequest) {
       );
     }
 
+    /* ---------------------------------------------------------------------- */
+    /* RESULT METADATA                                                        */
+    /* ---------------------------------------------------------------------- */
+
     const cappedTotal = Math.min(
       totalProducts,
       MAX_SEARCH_RESULTS,
@@ -1104,6 +1422,10 @@ export async function GET(request: NextRequest) {
     const hasMore =
       offset + products.length < cappedTotal;
 
+    /* ---------------------------------------------------------------------- */
+    /* RESPONSE                                                               */
+    /* ---------------------------------------------------------------------- */
+
     return NextResponse.json(
       {
         products,
@@ -1112,6 +1434,7 @@ export async function GET(request: NextRequest) {
 
         resultMeta: {
           type: "product",
+
           totalProducts,
           totalServices: 0,
           totalResults: totalProducts,
@@ -1123,12 +1446,17 @@ export async function GET(request: NextRequest) {
           hasMore,
 
           maxResults: MAX_SEARCH_RESULTS,
+
           truncated:
             totalProducts > MAX_SEARCH_RESULTS,
 
           sort,
 
           filters: {
+            category: resolvedCategoryName || null,
+            categoryId:
+              resolvedCategory?.category?.id ?? null,
+
             state: state || null,
             lga: lga || null,
             area: area || null,

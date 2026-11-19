@@ -72,7 +72,7 @@ const ADMIN_NAV: AdminNavItem[] = [
   { label: "Deletion requests", href: "/admin/business-deletion-requests", icon: Trash2, available: true },
 ];
 const MOBILE_NAV = ADMIN_NAV.filter(({ label }) =>
-  ["Overview", "Businesses", "Buyers", "Sellers", "Products", "Orders", "Audit logs"].includes(label),
+  ["Overview", "Businesses", "Buyers", "Sellers", "Products", "Categories", "Orders", "Audit logs"].includes(label),
 );
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -481,13 +481,13 @@ export default function AdminPage() {
         </main>
       </div>
 
-      <nav className="fixed inset-x-0 bottom-0 z-50 border-t border-[#E8DED3] bg-[#FFFDFC]/95 px-2 pt-2 pb-[max(8px,env(safe-area-inset-bottom))] shadow-[0_-4px_18px_rgba(46,36,31,0.08)] backdrop-blur lg:hidden" aria-label="Mobile Admin navigation">
-        <div className="mx-auto grid w-full max-w-xl grid-cols-7 gap-1">
+      <nav className="fixed inset-x-0 bottom-0 z-50 overflow-x-auto border-t border-[#E8DED3] bg-[#FFFDFC]/95 px-2 pt-2 pb-[max(8px,env(safe-area-inset-bottom))] shadow-[0_-4px_18px_rgba(46,36,31,0.08)] backdrop-blur lg:hidden" aria-label="Mobile Admin navigation">
+        <div className="mx-auto flex w-full max-w-xl min-w-max gap-1">
           {MOBILE_NAV.map((item) => {
             const Icon = item.icon;
             const active = item.href === "/admin" ? pathname === "/admin" : pathname === item.href || pathname.startsWith(`${item.href}/`);
-            if (!item.available) return <div key={item.href} className="flex min-h-[48px] cursor-not-allowed flex-col items-center justify-center gap-1 rounded-xl px-1 py-1 text-center text-[10px] font-semibold text-[#B5AAA1]" aria-disabled="true" title="Coming soon"><Icon className="h-4 w-4 shrink-0" /><span className="leading-tight">{item.label}</span></div>;
-            return <Link key={item.href} href={item.href} aria-current={active ? "page" : undefined} className={`flex min-h-[48px] flex-col items-center justify-center gap-1 rounded-xl px-1 py-1 text-center text-[10px] font-semibold transition ${active ? "bg-[#FFF0E8] text-[#9F2D18]" : "text-[#6F675F] hover:bg-[#F7F1EB]"}`}><Icon className="h-4 w-4 shrink-0" /><span className="leading-tight">{item.label}</span></Link>;
+            if (!item.available) return <div key={item.href} className="flex min-h-[48px] min-w-[64px] flex-1 cursor-not-allowed flex-col items-center justify-center gap-1 rounded-xl px-1 py-1 text-center text-[10px] font-semibold text-[#B5AAA1]" aria-disabled="true" title="Coming soon"><Icon className="h-4 w-4 shrink-0" /><span className="leading-tight">{item.label}</span></div>;
+            return <Link key={item.href} href={item.href} aria-current={active ? "page" : undefined} className={`flex min-h-[48px] min-w-[64px] flex-1 flex-col items-center justify-center gap-1 rounded-xl px-1 py-1 text-center text-[10px] font-semibold transition ${active ? "bg-[#FFF0E8] text-[#9F2D18]" : "text-[#6F675F] hover:bg-[#F7F1EB]"}`}><Icon className="h-4 w-4 shrink-0" /><span className="leading-tight">{item.label}</span></Link>;
           })}
         </div>
       </nav>
