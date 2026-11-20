@@ -159,9 +159,7 @@ enum ShipmentStatus {
   FAILED
 }
 
-/**
- * Seller settlements are created only after buyer-confirmed delivery.
- */
+/** Seller settlements are created only after buyer-confirmed delivery. */
 enum SellerSettlementStatus {
   AWAITING_PAYOUT_ACCOUNT
   READY
@@ -171,9 +169,7 @@ enum SellerSettlementStatus {
   REQUIRES_REVIEW
 }
 
-/**
- * Provider-reported state of a bank transfer.
- */
+/** Provider-reported state of a bank transfer. */
 enum SellerPayoutStatus {
   QUEUED
   INITIATING
@@ -356,18 +352,7 @@ enum UserAccountStatus {
   SUSPENDED
 }
 
-enum LedgerAccountType {
-  ASSET
-  LIABILITY
-  EQUITY
-  REVENUE
-  EXPENSE
-}
 
-enum FinancialJournalStatus {
-  DRAFT
-  POSTED
-}
 
 /**
  * ============================================================
@@ -485,79 +470,6 @@ model User {
   shipbubbleAddresses   ShipbubbleAddress[]
 
   adminAuditLogs            AdminAuditLog[]    @relation("AdminAuditActor")
-  financialJournalsCreated  FinancialJournal[] @relation("FinancialJournalCreatedBy")
-  financialJournalsApproved FinancialJournal[] @relation("FinancialJournalApprovedBy")
-}
-
-model FinancialAccount {
-  id        String            @id @default(cuid())
-  code      String            @unique @db.VarChar(30)
-  name      String
-  type      LedgerAccountType
-  currency  String            @default("NGN") @db.VarChar(3)
-  isSystem  Boolean           @default(false)
-  isActive  Boolean           @default(true)
-  createdAt DateTime          @default(now())
-  updatedAt DateTime          @updatedAt
-
-  journalLines FinancialJournalLine[]
-
-  @@index([type, isActive])
-}
-
-model FinancialJournal {
-  id             String                 @id @default(cuid())
-  reference      String                 @unique
-  sourceType     String                 @default("MANUAL") @db.VarChar(50)
-  sourceId       String?                @db.VarChar(100)
-  description    String?
-  currency       String                 @default("NGN") @db.VarChar(3)
-  status         FinancialJournalStatus @default(DRAFT)
-  idempotencyKey String?                @unique
-
-  createdById String?
-  createdBy   User?   @relation("FinancialJournalCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
-
-  approvedById String?
-  approvedBy   User?   @relation("FinancialJournalApprovedBy", fields: [approvedById], references: [id], onDelete: SetNull)
-
-  approvedAt DateTime?
-  postedAt   DateTime?
-
-  reversesJournalId String?           @unique
-  reversesJournal   FinancialJournal? @relation("FinancialJournalReversal", fields: [reversesJournalId], references: [id], onDelete: Restrict)
-  reversalJournal   FinancialJournal? @relation("FinancialJournalReversal")
-
-  createdAt DateTime @default(now())
-
-  lines FinancialJournalLine[]
-
-  @@index([status, createdAt])
-  @@index([sourceType, sourceId])
-  @@index([createdById, createdAt])
-  @@index([approvedById, createdAt])
-}
-
-model FinancialJournalLine {
-  id        String @id @default(cuid())
-  journalId String
-  accountId String
-
-  debit  Decimal @default(0) @db.Decimal(18, 2)
-  credit Decimal @default(0) @db.Decimal(18, 2)
-
-  description String?
-  orderId     String?
-  sellerId    String?
-  createdAt   DateTime @default(now())
-
-  journal FinancialJournal @relation(fields: [journalId], references: [id], onDelete: Restrict)
-  account FinancialAccount @relation(fields: [accountId], references: [id], onDelete: Restrict)
-
-  @@index([journalId])
-  @@index([accountId, createdAt])
-  @@index([orderId])
-  @@index([sellerId])
 }
 
 /**
@@ -700,6 +612,12 @@ model Category {
   name String @unique
 
   iconKey String @default("Store")
+  imageUrl String?
+
+  // ReMarket supports one parent level: parent categories contain subcategories.
+  parentId String?
+  parent Category? @relation("CategoryHierarchy", fields: [parentId], references: [id], onDelete: SetNull)
+  children Category[] @relation("CategoryHierarchy")
 
   isActive Boolean @default(true)
 
@@ -711,6 +629,7 @@ model Category {
   requests BuyerRequest[]
 
   @@index([isActive, sortOrder])
+  @@index([parentId])
 }
 
 model BusinessCategory {
@@ -2017,16 +1936,16 @@ model SellerPayoutAccount {
   sellerId String
   seller   User   @relation("SellerPayoutAccountOwner", fields: [sellerId], references: [id], onDelete: Restrict)
 
-  provider           String   @default("PAYSTACK")
-  recipientCode      String
-  accountFingerprint String   @unique
-  bankCode           String
-  bankName           String
-  accountName        String
-  accountNumberLast4 String   @db.VarChar(4)
-  currency           String   @default("NGN") @db.VarChar(3)
-  isActive           Boolean  @default(true)
-  verifiedAt         DateTime
+  provider String @default("PAYSTACK")
+  recipientCode String
+  accountFingerprint String @unique
+  bankCode String
+  bankName String
+  accountName String
+  accountNumberLast4 String @db.VarChar(4)
+  currency String @default("NGN") @db.VarChar(3)
+  isActive Boolean @default(true)
+  verifiedAt DateTime
 
   payouts SellerPayout[]
 
@@ -2043,23 +1962,23 @@ model SellerPayoutAccount {
 model SellerSettlement {
   id String @id @default(cuid())
 
-  sellerOrderId String      @unique
-  sellerOrder   SellerOrder @relation(fields: [sellerOrderId], references: [id], onDelete: Restrict)
+  sellerOrderId String @unique
+  sellerOrder SellerOrder @relation(fields: [sellerOrderId], references: [id], onDelete: Restrict)
 
   sellerId String
-  seller   User   @relation("SellerSettlementSeller", fields: [sellerId], references: [id], onDelete: Restrict)
+  seller User @relation("SellerSettlementSeller", fields: [sellerId], references: [id], onDelete: Restrict)
 
-  grossSalesAmount  Int
-  commissionRateBps Int                    @default(500)
-  commissionAmount  Int
-  adjustmentAmount  Int                    @default(0)
-  netPayoutAmount   Int
-  currency          String                 @default("NGN") @db.VarChar(3)
-  status            SellerSettlementStatus @default(AWAITING_PAYOUT_ACCOUNT)
+  grossSalesAmount Int
+  commissionRateBps Int @default(500)
+  commissionAmount Int
+  adjustmentAmount Int @default(0)
+  netPayoutAmount Int
+  currency String @default("NGN") @db.VarChar(3)
+  status SellerSettlementStatus @default(AWAITING_PAYOUT_ACCOUNT)
 
   deliveryConfirmedAt DateTime
-  paidAt              DateTime?
-  failureReason       String?
+  paidAt DateTime?
+  failureReason String?
 
   payout SellerPayout?
 
@@ -2077,28 +1996,28 @@ model SellerSettlement {
 model SellerPayout {
   id String @id @default(cuid())
 
-  settlementId String           @unique
-  settlement   SellerSettlement @relation(fields: [settlementId], references: [id], onDelete: Restrict)
+  settlementId String @unique
+  settlement SellerSettlement @relation(fields: [settlementId], references: [id], onDelete: Restrict)
 
   sellerId String
-  seller   User   @relation("SellerPayoutSeller", fields: [sellerId], references: [id], onDelete: Restrict)
+  seller User @relation("SellerPayoutSeller", fields: [sellerId], references: [id], onDelete: Restrict)
 
   payoutAccountId String
-  payoutAccount   SellerPayoutAccount @relation(fields: [payoutAccountId], references: [id], onDelete: Restrict)
+  payoutAccount SellerPayoutAccount @relation(fields: [payoutAccountId], references: [id], onDelete: Restrict)
 
-  provider             String             @default("PAYSTACK")
-  reference            String             @unique
-  providerTransferCode String?            @unique
-  amount               Int
-  currency             String             @default("NGN") @db.VarChar(3)
-  status               SellerPayoutStatus @default(QUEUED)
-  attemptCount         Int                @default(0)
-  lastAttemptAt        DateTime?
-  nextAttemptAt        DateTime?
-  submittedAt          DateTime?
-  paidAt               DateTime?
-  reversedAt           DateTime?
-  failureReason        String?
+  provider String @default("PAYSTACK")
+  reference String @unique
+  providerTransferCode String? @unique
+  amount Int
+  currency String @default("NGN") @db.VarChar(3)
+  status SellerPayoutStatus @default(QUEUED)
+  attemptCount Int @default(0)
+  lastAttemptAt DateTime?
+  nextAttemptAt DateTime?
+  submittedAt DateTime?
+  paidAt DateTime?
+  reversedAt DateTime?
+  failureReason String?
 
   attempts SellerPayoutAttempt[]
 
@@ -2110,23 +2029,21 @@ model SellerPayout {
   @@index([payoutAccountId, createdAt])
 }
 
-/**
- * One row per actual Paystack transfer attempt, preserving its unique reference.
- */
+/** One row per actual Paystack transfer attempt, preserving its unique reference. */
 model SellerPayoutAttempt {
   id String @id @default(cuid())
 
   payoutId String
-  payout   SellerPayout @relation(fields: [payoutId], references: [id], onDelete: Restrict)
+  payout SellerPayout @relation(fields: [payoutId], references: [id], onDelete: Restrict)
 
-  attemptNumber        Int
-  reference            String             @unique
-  providerTransferCode String?            @unique
-  status               SellerPayoutStatus @default(QUEUED)
-  failureReason        String?
-  submittedAt          DateTime?
-  paidAt               DateTime?
-  reversedAt           DateTime?
+  attemptNumber Int
+  reference String @unique
+  providerTransferCode String? @unique
+  status SellerPayoutStatus @default(QUEUED)
+  failureReason String?
+  submittedAt DateTime?
+  paidAt DateTime?
+  reversedAt DateTime?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt

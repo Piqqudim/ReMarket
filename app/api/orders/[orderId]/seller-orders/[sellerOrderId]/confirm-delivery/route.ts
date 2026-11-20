@@ -473,7 +473,7 @@ export async function PATCH(_request: Request, context: RouteContext) {
       );
     }
 
-    let payoutResult: { initiated: boolean; status: string; reason?: string } | null = null;
+    let payoutResult: Awaited<ReturnType<typeof initiateQueuedSellerPayout>> | null = null;
     if (result.settlement.payoutId) {
       try {
         payoutResult = await initiateQueuedSellerPayout(result.settlement.payoutId);

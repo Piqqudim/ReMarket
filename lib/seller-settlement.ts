@@ -37,8 +37,13 @@ function calculateCommission(amount: number): number {
   if (!Number.isSafeInteger(amount) || amount < 0) {
     throw new Error("Seller order subtotal is not a valid whole-naira amount.");
   }
-  // All ReMarket order values are whole naira. Round 5% to the nearest naira.
-  return Number((BigInt(amount) * BigInt(COMMISSION_RATE_BPS) + 5_000n) / 10_000n);
+  // Seller order amounts are stored as Prisma Int values, so this product
+  // remains within JavaScript's safe-integer range. Round to the nearest naira.
+  const numerator = amount * COMMISSION_RATE_BPS + 5_000;
+  if (!Number.isSafeInteger(numerator)) {
+    throw new Error("Seller order subtotal is too large to calculate safely.");
+  }
+  return Math.floor(numerator / 10_000);
 }
 
 function retryAt(attemptCount: number): Date | null {
@@ -118,10 +123,14 @@ export async function createSettlementAfterBuyerConfirmation(
     Number.isSafeInteger(item.lineTotal) && item.lineTotal >= 0,
   );
   const itemTotal = sellerOrder.items.reduce(
-    (sum, item) => sum + BigInt(item.lineTotal),
-    0n,
+    (sum, item) => sum + item.lineTotal,
+    0,
   );
-  if (!lineTotalsAreValid || itemTotal !== BigInt(sellerOrder.subtotal)) {
+  if (
+    !lineTotalsAreValid ||
+    !Number.isSafeInteger(itemTotal) ||
+    itemTotal !== sellerOrder.subtotal
+  ) {
     throw new Error("Seller order subtotal does not match its stored product line totals. Manual reconciliation is required.");
   }
 
@@ -159,7 +168,6 @@ export async function createSettlementAfterBuyerConfirmation(
       sellerId: sellerOrder.sellerId,
       provider: "PAYSTACK",
       isActive: true,
-      verifiedAt: { not: null },
     },
     orderBy: { updatedAt: "desc" },
     select: { id: true },
@@ -185,7 +193,7 @@ export async function createSettlementAfterBuyerConfirmation(
   });
 
   let payoutId: string | null = null;
-  let finalStatus = settlementStatus;
+  let finalStatus: SellerSettlementStatus = settlementStatus;
 
   if (payoutAccount && netPayoutAmount > 0) {
     const reference = createTransferReference();
@@ -912,7 +920,11 @@ export async function reconcileSellerPayout(payoutId: string) {
   );
   const conflictingFinalStatus = Boolean(
     providerFinalStatus &&
-    [SellerPayoutStatus.SUCCESS, SellerPayoutStatus.FAILED, SellerPayoutStatus.REVERSED].includes(attempt.status) &&
+    new Set<SellerPayoutStatus>([
+      SellerPayoutStatus.SUCCESS,
+      SellerPayoutStatus.FAILED,
+      SellerPayoutStatus.REVERSED,
+    ]).has(attempt.status) &&
     attempt.status !== providerFinalStatus &&
     !(attempt.status === SellerPayoutStatus.SUCCESS && providerFinalStatus === SellerPayoutStatus.REVERSED)
   );
@@ -1081,15 +1093,15 @@ export async function runSellerPayoutQueue(limit = 25) {
     try {
       if (payout.status === SellerPayoutStatus.QUEUED) {
         const initiated = await initiateQueuedSellerPayout(payout.id);
-        results.push({ payoutId: payout.id, status: String(initiated.status), message: initiated.reason });
+        results.push({ payoutId: payout.id, status: String(initiated.status), message: initiated.reason ?? undefined });
       } else if (payout.status === SellerPayoutStatus.FAILED) {
         const requeuedId = await queueNextAttemptAfterConclusiveFailure(payout.id, now);
         if (!requeuedId) continue;
         const initiated = await initiateQueuedSellerPayout(requeuedId);
-        results.push({ payoutId: payout.id, status: String(initiated.status), message: initiated.reason });
+        results.push({ payoutId: payout.id, status: String(initiated.status), message: initiated.reason ?? undefined });
       } else {
         const reconciled = await reconcileSellerPayout(payout.id);
-        results.push({ payoutId: payout.id, status: String(reconciled.status), message: reconciled.reason });
+        results.push({ payoutId: payout.id, status: String(reconciled.status), message: reconciled.reason ?? undefined });
       }
     } catch (error) {
       results.push({ payoutId: payout.id, status: "REQUIRES_REVIEW", message: error instanceof Error ? error.message : "Unable to reconcile payout." });

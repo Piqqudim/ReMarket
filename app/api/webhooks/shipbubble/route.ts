@@ -156,7 +156,11 @@ function shouldApplyShipmentStatus(input: {
   // in-transit/out-for-delivery/delivered event to resume that shipment.
   if (
     input.currentStatus === ShipmentStatus.DELIVERY_FAILED &&
-    [ShipmentStatus.IN_TRANSIT, ShipmentStatus.OUT_FOR_DELIVERY, ShipmentStatus.DELIVERED].includes(input.nextStatus) &&
+    new Set<ShipmentStatus>([
+      ShipmentStatus.IN_TRANSIT,
+      ShipmentStatus.OUT_FOR_DELIVERY,
+      ShipmentStatus.DELIVERED,
+    ]).has(input.nextStatus) &&
     input.occurredAt &&
     (!input.latestOccurredAt || input.occurredAt.getTime() > input.latestOccurredAt.getTime())
   ) {
@@ -357,7 +361,7 @@ export async function POST(request: Request) {
       });
       const allParcelsDelivered = sellerShipments.length > 0 &&
         sellerShipments.every((item) => item.status === ShipmentStatus.DELIVERED);
-      const courierHasTakenParcel = sellerShipments.some((item) => [
+      const courierHasTakenStatuses = new Set<ShipmentStatus>([
         ShipmentStatus.PICKED_UP,
         ShipmentStatus.IN_TRANSIT,
         ShipmentStatus.OUT_FOR_DELIVERY,
@@ -365,7 +369,10 @@ export async function POST(request: Request) {
         ShipmentStatus.DELIVERED,
         ShipmentStatus.RETURNING,
         ShipmentStatus.RETURNED,
-      ].includes(item.status));
+      ]);
+      const courierHasTakenParcel = sellerShipments.some((item) =>
+        courierHasTakenStatuses.has(item.status),
+      );
 
       if (allParcelsDelivered) {
         await tx.sellerOrder.updateMany({
