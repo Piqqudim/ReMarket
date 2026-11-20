@@ -5,7 +5,7 @@ import {
   useEffect,
   useMemo,
   useState,
-  type FormEvent,
+  type ReactNode,
 } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
@@ -13,16 +13,14 @@ import {
   ArrowRight,
   BadgeCheck,
   Check,
+  ChevronDown,
   ChevronLeft,
   ChevronRight,
   Filter,
   Heart,
   Loader2,
-  MapPin,
   Package,
   RotateCcw,
-  Search,
-  ShoppingBag,
   ShoppingCart,
   SlidersHorizontal,
   X,
@@ -40,46 +38,42 @@ import {
 } from "@/lib/categories";
 
 type Availability = "AVAILABLE" | "ASK_SELLER" | "UNAVAILABLE";
-type SortOption = "NEWEST" | "PRICE_LOW" | "PRICE_HIGH" | "NAME";
-type ProductImage = { id?: string; url: string; sortOrder: number };
+type SortMode = "relevance" | "newest" | "price-asc" | "price-desc";
+type ProductImage = { id: string; url: string; publicId: string | null; sortOrder: number };
 type ProductCategory = {
   id: string;
   name: string;
-  parentId: string | null;
-  parent: { id: string; name: string } | null;
   iconKey: string | null;
-  imageUrl: string | null;
+  isActive: boolean;
+  sortOrder: number;
 };
-
 type Product = {
   id: string;
   name: string;
   description: string | null;
   price: number | null;
   originalPrice: number | null;
-  priceMin: number | null;
-  priceMax: number | null;
   stockQuantity: number | null;
   availability: Availability;
   imageUrl: string | null;
   images: ProductImage[];
-  createdAt: string | null;
   category: ProductCategory | null;
+  keywords: string[];
+  matchScore: number;
   seller: {
     id: string;
     name: string;
     verification: string | null;
     verified: boolean;
+    location: { area: string | null; street: string | null; lga: string | null; state: string | null } | null;
   };
 };
-
 type ShopCategory = ReMarketCategory & {
   parentId: string | null;
   imageUrl: string | null;
   sortOrder: number;
   children: ShopCategory[];
 };
-
 type LocationLgaGroup = { lga: string; areas: string[] };
 type LocationStateGroup = { state: string; groups: LocationLgaGroup[] };
 type ShopPageViewProps = {
@@ -94,6 +88,7 @@ type ShopPageViewProps = {
   initialAvailability: string;
   initialVerified: boolean;
   initialPage: number;
+  initialSort: SortMode;
 };
 type ShopFilters = {
   query: string;
@@ -106,6 +101,7 @@ type ShopFilters = {
   maxPrice: string;
   availability: string;
   verified: boolean;
+  sort: SortMode;
 };
 type SavedProductMap = Record<string, string>;
 type CartFeedback = {
@@ -124,7 +120,7 @@ type RawCategory = {
 };
 
 const PAGE_SIZE = 12;
-const MAX_CLIENT_RESULTS = 50;
+const MOBILE_FILTER_TITLE_ID = "shop-mobile-filter-title";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -151,7 +147,7 @@ function parseOptionalNumber(value: unknown): number | null {
 
 function parseCategoryRows(payload: unknown): RawCategory[] {
   if (!isRecord(payload)) return [];
-  const source = Array.isArray(payload.navigationCategories)
+  const source = Array.isArray(payload.navigationCategories) && payload.navigationCategories.length > 0
     ? payload.navigationCategories
     : payload.categories;
   if (!Array.isArray(source)) return [];
@@ -165,7 +161,6 @@ function parseCategoryRows(payload: unknown): RawCategory[] {
       const name = cleanString(value.name);
       if (!id || !name || visited.has(id)) continue;
       visited.add(id);
-
       const parentId = cleanString(value.parentId) ?? inheritedParentId;
       rows.push({
         id,
@@ -179,7 +174,6 @@ function parseCategoryRows(payload: unknown): RawCategory[] {
         parentId,
         imageUrl: cleanString(value.imageUrl),
       });
-
       if (Array.isArray(value.children)) visit(value.children, id);
     }
   };
@@ -221,9 +215,7 @@ function parseCategoryTree(payload: unknown): ShopCategory[] {
     }];
   });
 
-  const byId = new Map<string, ShopCategory>(
-    nodes.map((item) => [item.id, item] as const),
-  );
+  const byId = new Map<string, ShopCategory>(nodes.map((item) => [item.id, item] as const));
   const roots: ShopCategory[] = [];
   for (const node of nodes) {
     const parent = node.parentId ? byId.get(node.parentId) : undefined;
@@ -231,23 +223,28 @@ function parseCategoryTree(payload: unknown): ShopCategory[] {
     else roots.push(node);
   }
 
-  // Keep malformed/orphaned rows visible rather than hiding categories.
+  // Orphaned or malformed rows remain visible instead of silently disappearing.
   const attachedIds = new Set<string>();
-  const markAttached = (items: ShopCategory[]) => {
+  const markAttached = (items: ShopCategory[], trail = new Set<string>()) => {
     for (const item of items) {
+      if (trail.has(item.id) || attachedIds.has(item.id)) continue;
       attachedIds.add(item.id);
-      markAttached(item.children);
+      const nextTrail = new Set(trail);
+      nextTrail.add(item.id);
+      markAttached(item.children, nextTrail);
     }
   };
   markAttached(roots);
   const orphans = nodes.filter((item) => !attachedIds.has(item.id));
+  // Detach orphaned nodes completely so malformed cycles cannot recurse forever.
+  orphans.forEach((item) => {
+    item.parentId = null;
+    item.children = [];
+  });
   return sortCategoryTree([...roots, ...orphans]);
 }
 
-function findCategoryById(
-  categories: ShopCategory[],
-  id: string,
-): ShopCategory | null {
+function findCategoryById(categories: ShopCategory[], id: string): ShopCategory | null {
   for (const category of categories) {
     if (category.id === id) return category;
     const child = findCategoryById(category.children, id);
@@ -256,10 +253,7 @@ function findCategoryById(
   return null;
 }
 
-function findCategoryByName(
-  categories: ShopCategory[],
-  name: string,
-): ShopCategory | null {
+function findCategoryByName(categories: ShopCategory[], name: string): ShopCategory | null {
   const target = name.trim().toLocaleLowerCase();
   if (!target) return null;
   for (const category of categories) {
@@ -270,17 +264,6 @@ function findCategoryByName(
   return null;
 }
 
-function findCategoryParent(
-  categories: ShopCategory[],
-  childId: string,
-): ShopCategory | null {
-  for (const category of categories) {
-    if (category.children.some((child) => child.id === childId)) return category;
-    const nested = findCategoryParent(category.children, childId);
-    if (nested) return nested;
-  }
-  return null;
-}
 
 function parseLocationStateGroups(value: unknown): LocationStateGroup[] {
   if (!Array.isArray(value)) return [];
@@ -301,7 +284,7 @@ function parseLocationStateGroups(value: unknown): LocationStateGroup[] {
         const cleaned = area.trim();
         return cleaned ? [cleaned] : [];
       })));
-      return lga && areas.length ? [{ lga, areas }] : [];
+      return lga ? [{ lga, areas }] : [];
     });
     return groups.length ? [{ state, groups }] : [];
   });
@@ -312,9 +295,11 @@ function parseLegacyLagosGroups(value: unknown): LocationStateGroup[] {
   const groups = value.flatMap((item): LocationLgaGroup[] => {
     if (!isRecord(item) || typeof item.lga !== "string" || !Array.isArray(item.areas)) return [];
     const lga = item.lga.trim();
-    const areas = item.areas.filter((area): area is string =>
-      typeof area === "string" && area.trim().length > 0,
-    );
+    const areas = item.areas.flatMap((area) => {
+      if (typeof area !== "string") return [];
+      const cleaned = area.trim();
+      return cleaned ? [cleaned] : [];
+    });
     return lga && areas.length ? [{ lga, areas }] : [];
   });
   return groups.length ? [{ state: "Lagos", groups }] : [];
@@ -333,87 +318,95 @@ function parseAvailabilityFilter(value: string): Availability | "" {
 }
 
 function parseCategory(value: unknown): ProductCategory | null {
-  if (!isRecord(value) || typeof value.id !== "string" || typeof value.name !== "string") return null;
-  const parent = isRecord(value.parent) &&
-    typeof value.parent.id === "string" &&
-    typeof value.parent.name === "string"
-    ? { id: value.parent.id, name: value.parent.name }
-    : null;
+  if (!isRecord(value) || typeof value.id !== "string" || typeof value.name !== "string") {
+    return null;
+  }
+
   return {
     id: value.id,
     name: value.name,
-    parentId: cleanString(value.parentId),
-    parent,
     iconKey: cleanString(value.iconKey),
-    imageUrl: cleanString(value.imageUrl),
+    isActive: value.isActive === true,
+    sortOrder: typeof value.sortOrder === "number" && Number.isFinite(value.sortOrder)
+      ? value.sortOrder
+      : 0,
   };
 }
 
 function parseProduct(value: unknown): Product | null {
   if (!isRecord(value)) return null;
-  const seller = isRecord(value.seller)
-    ? value.seller
-    : isRecord(value.business)
-      ? value.business
-      : null;
-  if (
-    typeof value.id !== "string" ||
-    typeof value.name !== "string" ||
-    !seller ||
-    typeof seller.id !== "string" ||
-    typeof seller.name !== "string"
-  ) return null;
+
+  const seller = isRecord(value.seller) ? value.seller : null;
+  const id = cleanString(value.id);
+  const name = cleanString(value.name);
+  const sellerId = seller ? cleanString(seller.id) : null;
+  const sellerName = seller ? cleanString(seller.name) : null;
+
+  if (!id || !name || !seller || !sellerId || !sellerName) return null;
 
   const images: ProductImage[] = (Array.isArray(value.images) ? value.images : [])
     .filter(isRecord)
-    .map((image) => ({
-      id: typeof image.id === "string" ? image.id : undefined,
-      url: typeof image.url === "string" ? image.url : "",
-      sortOrder: typeof image.sortOrder === "number" ? image.sortOrder : 0,
-    }))
-    .filter((image) => image.url.length > 0);
+    .flatMap((image): ProductImage[] => {
+      const url = cleanString(image.url);
+      if (!url) return [];
+      return [{
+        id: cleanString(image.id) ?? "",
+        url,
+        publicId: cleanString(image.publicId),
+        sortOrder: typeof image.sortOrder === "number" && Number.isFinite(image.sortOrder)
+          ? image.sortOrder
+          : 0,
+      }];
+    })
+    .sort((a, b) => a.sortOrder - b.sortOrder);
 
-  const price =
-    parseOptionalNumber(value.price) ??
-    parseOptionalNumber(value.salePrice) ??
-    parseOptionalNumber(value.currentPrice);
-  const candidateOriginalPrice =
-    parseOptionalNumber(value.originalPrice) ??
-    parseOptionalNumber(value.compareAtPrice) ??
-    parseOptionalNumber(value.regularPrice) ??
-    parseOptionalNumber(value.oldPrice);
-  const originalPrice =
-    price !== null && candidateOriginalPrice !== null && candidateOriginalPrice > price
-      ? candidateOriginalPrice
-      : null;
+  const price = parseOptionalNumber(value.price);
+  const originalCandidate = parseOptionalNumber(value.originalPrice);
+  const originalPrice = price !== null && originalCandidate !== null && originalCandidate > price
+    ? originalCandidate
+    : null;
   const verification = cleanString(seller.verification);
+  const rawLocation = isRecord(seller.location) ? seller.location : null;
 
   return {
-    id: value.id,
-    name: value.name,
+    id,
+    name,
     description: cleanString(value.description),
     price,
     originalPrice,
-    priceMin: parseOptionalNumber(value.priceMin),
-    priceMax: parseOptionalNumber(value.priceMax),
     stockQuantity: parseOptionalNumber(value.stockQuantity),
     availability: parseAvailability(value.availability),
-    imageUrl: cleanString(value.imageUrl) ?? images[0]?.url ?? null,
+    imageUrl: cleanString(value.imageUrl),
     images,
-    createdAt: cleanString(value.createdAt) ?? cleanString(value.updatedAt),
     category: parseCategory(value.category),
+    keywords: Array.isArray(value.keywords)
+      ? value.keywords.filter((item): item is string => typeof item === "string")
+      : [],
+    matchScore: parseOptionalNumber(value.matchScore) ?? 0,
     seller: {
-      id: seller.id,
-      name: seller.name,
+      id: sellerId,
+      name: sellerName,
       verification,
       verified: seller.verified === true || verification === "VERIFIED",
+      location: rawLocation ? {
+        area: cleanString(rawLocation.area),
+        street: cleanString(rawLocation.street),
+        lga: cleanString(rawLocation.lga),
+        state: cleanString(rawLocation.state),
+      } : null,
     },
   };
 }
 
 function parsePage(value: string | null): number {
   const parsed = Number(value);
-  return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : 1;
+  return Number.isSafeInteger(parsed) && parsed > 0 ? Math.min(parsed, 100_000) : 1;
+}
+
+function parseSortMode(value: string | null): SortMode {
+  return value === "relevance" || value === "price-asc" || value === "price-desc" || value === "newest"
+    ? value
+    : "newest";
 }
 
 function formatNaira(value: number): string {
@@ -431,72 +424,20 @@ function getDiscountPercentage(product: Product): number | null {
 }
 
 function formatPrice(product: Product): string {
-  if (product.price !== null) return formatNaira(product.price);
-  if (product.priceMin !== null && product.priceMax !== null) {
-    return product.priceMin === product.priceMax
-      ? formatNaira(product.priceMin)
-      : `${formatNaira(product.priceMin)} – ${formatNaira(product.priceMax)}`;
+  return product.price !== null ? formatNaira(product.price) : "Ask seller";
+}
+
+function getAvailabilityLabel(product: Pick<Product, "availability" | "stockQuantity">): string {
+  if (product.availability === "UNAVAILABLE" || product.stockQuantity === 0) return "Out of stock";
+  if (product.availability === "AVAILABLE") return "Available";
+  return "Ask seller";
+}
+
+function getAvailabilityStyle(product: Pick<Product, "availability" | "stockQuantity">): string {
+  if (product.availability === "UNAVAILABLE" || product.stockQuantity === 0) {
+    return "bg-[#FEE2E2] text-[#B42318]";
   }
-  if (product.priceMin !== null) return `From ${formatNaira(product.priceMin)}`;
-  if (product.priceMax !== null) return `Up to ${formatNaira(product.priceMax)}`;
-  return "Ask seller";
-}
-
-function ProductPrice({ product }: { product: Product }) {
-  const discount = getDiscountPercentage(product);
-  return (
-    <div className="min-w-0">
-      <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
-        <span className="text-[15px] font-extrabold leading-5 text-[#9F2D18] sm:text-base">
-          {formatPrice(product)}
-        </span>
-        {product.price !== null && product.originalPrice !== null && (
-          <del className="whitespace-nowrap text-[10px] text-[#958B83] sm:text-xs">
-            {formatNaira(product.originalPrice)}
-          </del>
-        )}
-      </div>
-      {discount !== null && (
-        <span className="mt-1 inline-flex rounded-md bg-[#FFF0EA] px-1.5 py-0.5 text-[9px] font-bold text-[#9F2D18]">
-          {discount}% off
-        </span>
-      )}
-    </div>
-  );
-}
-
-function CategoryArtwork({
-  category,
-  size = "md",
-}: {
-  category: Pick<ShopCategory, "name" | "imageUrl">;
-  size?: "sm" | "md";
-}) {
-  const dimensions = size === "sm" ? "h-5 w-5" : "h-8 w-8";
-  return (
-    <span className={`inline-flex ${dimensions} shrink-0 items-center justify-center overflow-hidden rounded-lg bg-[#FFF0EB] text-[#9F2D18]`} aria-hidden="true">
-      {category.imageUrl ? (
-        <img src={category.imageUrl} alt="" loading="lazy" className="h-full w-full object-cover" />
-      ) : (
-        <Package className={size === "sm" ? "h-3 w-3" : "h-4 w-4"} />
-      )}
-    </span>
-  );
-}
-
-function getSortablePrice(product: Product): number {
-  return product.price ?? product.priceMin ?? product.priceMax ?? Number.POSITIVE_INFINITY;
-}
-
-function getAvailabilityLabel(value: Availability): string {
-  if (value === "AVAILABLE") return "Available";
-  if (value === "UNAVAILABLE") return "Unavailable";
-  return "Ask seller";
-}
-
-function getAvailabilityStyle(value: Availability): string {
-  if (value === "AVAILABLE") return "bg-[#DCFCE7] text-[#166534]";
-  if (value === "UNAVAILABLE") return "bg-[#FEE2E2] text-[#B42318]";
+  if (product.availability === "AVAILABLE") return "bg-[#DCFCE7] text-[#166534]";
   return "bg-[#FEF3C7] text-[#92400E]";
 }
 
@@ -507,15 +448,12 @@ function canAddProductToCart(
     product.price !== null && product.price > 0 && product.stockQuantity !== 0;
 }
 
-function getCartDisabledReason(product: Product): string {
-  if (product.availability !== "AVAILABLE") return "This product is not currently available.";
-  if (product.price === null || product.price <= 0) return "A fixed product price is required.";
-  if (product.stockQuantity === 0) return "This product is out of stock.";
-  return "Add to cart";
-}
-
 function buildShopUrl(filters: ShopFilters, page: number): string {
   const params = new URLSearchParams();
+  params.set("type", "product");
+  params.set("pageSize", String(PAGE_SIZE));
+  params.set("sort", filters.sort);
+
   const fields: Array<[string, string]> = [
     ["q", filters.query],
     ["category", filters.category],
@@ -532,8 +470,7 @@ function buildShopUrl(filters: ShopFilters, page: number): string {
   });
   if (filters.verified) params.set("verified", "true");
   if (page > 1) params.set("page", String(page));
-  const queryString = params.toString();
-  return queryString ? `/shop?${queryString}` : "/shop";
+  return `/shop?${params.toString()}`;
 }
 
 function parseSavedProductMap(value: unknown): SavedProductMap {
@@ -572,6 +509,165 @@ function getSavedRecordId(value: unknown): string | null {
   return cleanString(value.savedListingId) ?? cleanString(value.savedId);
 }
 
+function ProductPrice({ product }: { product: Product }) {
+  const discount = getDiscountPercentage(product);
+  return (
+    <div className="min-w-0">
+      <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
+        <span className="text-[15px] font-extrabold leading-5 text-[#9F2D18] sm:text-base">
+          {formatPrice(product)}
+        </span>
+        {product.originalPrice !== null && product.price !== null && (
+          <del className="whitespace-nowrap text-[10px] text-[#958B83] sm:text-xs">
+            {formatNaira(product.originalPrice)}
+          </del>
+        )}
+      </div>
+      {discount !== null && (
+        <span className="mt-1 inline-flex rounded bg-[#FFF0EA] px-1.5 py-0.5 text-[9px] font-semibold text-[#9F2D18]">
+          {discount}% off
+        </span>
+      )}
+    </div>
+  );
+}
+
+function ShopProductCard({
+  product,
+  saved,
+  saving,
+  adding,
+  feedback,
+  onToggleSaved,
+  onAddToCart,
+}: {
+  product: Product;
+  saved: boolean;
+  saving: boolean;
+  adding: boolean;
+  feedback: CartFeedback;
+  onToggleSaved: (product: Product) => void;
+  onAddToCart: (product: Product) => void;
+}) {
+  const canAdd = canAddProductToCart(product);
+  const discount = getDiscountPercentage(product);
+  const imageUrl = product.imageUrl ?? product.images[0]?.url ?? null;
+  const productUrl = `/product/${encodeURIComponent(product.id)}`;
+
+  return (
+    <article className="group flex min-w-0 flex-col overflow-hidden rounded-xl border border-[#EAE6DF] bg-white transition-colors hover:border-[#FFB5A2] hover:shadow-[0_5px_18px_rgba(23,32,42,0.07)]">
+      <div className="relative aspect-square overflow-hidden bg-[#FCFAF6]">
+        <Link
+          href={productUrl}
+          aria-label={`View ${product.name}`}
+          className="absolute inset-0 flex items-center justify-center p-3 sm:p-4"
+        >
+          {imageUrl ? (
+            <img
+              src={imageUrl}
+              alt={product.name}
+              loading="lazy"
+              className="h-full w-full object-contain transition-transform duration-300 group-hover:scale-[1.035]"
+            />
+          ) : (
+            <Package className="h-10 w-10 text-[#C3B9AE]" aria-hidden="true" />
+          )}
+        </Link>
+
+        {discount !== null && (
+          <span className="absolute bottom-2 left-2 rounded bg-[#9F2D18] px-2 py-1 text-[9px] font-bold text-white">
+            -{discount}%
+          </span>
+        )}
+
+        <span className={`absolute bottom-2 right-2 rounded-full px-2 py-1 text-[8px] font-semibold shadow-sm ${getAvailabilityStyle(product)}`}>
+          {getAvailabilityLabel(product)}
+        </span>
+
+        <button
+          type="button"
+          aria-label={saved ? `Remove ${product.name} from Saved` : `Save ${product.name}`}
+          aria-pressed={saved}
+          disabled={saving}
+          onClick={() => onToggleSaved(product)}
+          className={`absolute right-2 top-2 z-10 flex h-9 w-9 items-center justify-center rounded-full border border-[#EAE6DF] bg-white/95 shadow-sm transition hover:scale-105 disabled:opacity-60 ${saved ? "text-[#FF5A36]" : "text-[#756B61] hover:text-[#FF5A36]"}`}
+        >
+          {saving ? (
+            <Loader2 className="h-4 w-4 animate-spin" />
+          ) : (
+            <Heart className="h-4 w-4" fill={saved ? "currentColor" : "none"} />
+          )}
+        </button>
+      </div>
+
+      <div className="flex flex-1 flex-col p-3 sm:p-3.5">
+        <div className="mb-1 flex min-h-4 items-center justify-between gap-2">
+          <p className="min-w-0 truncate text-[9px] font-semibold uppercase tracking-wide text-[#8A6252]">
+            {product.category?.name ?? "Product"}
+          </p>
+          {product.seller.verified && (
+            <span className="inline-flex shrink-0 items-center gap-1 text-[9px] font-semibold text-[#237A57]" title="Verified seller">
+              <BadgeCheck className="h-3.5 w-3.5" aria-hidden="true" />
+              Verified
+            </span>
+          )}
+        </div>
+
+        <Link
+          href={productUrl}
+          className="line-clamp-2 min-h-10 text-[12px] font-semibold leading-5 text-[#17202A] transition hover:text-[#9F2D18] sm:text-[13px]"
+        >
+          {product.name}
+        </Link>
+
+        <div className="mt-2">
+          <ProductPrice product={product} />
+        </div>
+
+        <div className="mt-2 flex min-w-0 items-center gap-1.5 text-[10px] text-[#756B61]">
+          <span className="truncate">Sold by {product.seller.name}</span>
+        </div>
+
+        <div className="mt-auto pt-3">
+          <button
+            type="button"
+            disabled={!canAdd || adding}
+            onClick={() => onAddToCart(product)}
+            aria-label={canAdd ? `Add ${product.name} to cart` : `${product.name} cannot be added to cart`}
+            title={!canAdd ? "This product needs an available status, fixed price and stock." : "Add to cart"}
+            className={`flex min-h-10 w-full items-center justify-center gap-2 rounded-lg px-2.5 py-2 text-[11px] font-bold transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#FF5A36] focus-visible:ring-offset-2 disabled:cursor-not-allowed ${feedback?.productId === product.id && feedback.kind === "success"
+              ? "bg-[#DCFCE7] text-[#166534]"
+              : canAdd
+                ? "bg-[#FF5A36] text-white hover:bg-[#E94A28]"
+                : "bg-[#F0ECE7] text-[#8A8077]"}`}
+          >
+            {adding ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : feedback?.productId === product.id && feedback.kind === "success" ? (
+              <Check className="h-4 w-4" />
+            ) : (
+              <ShoppingCart className="h-4 w-4" />
+            )}
+            {adding ? "Adding…" : !canAdd ? "Not available to buy" : feedback?.productId === product.id && feedback.kind === "success" ? "Added to cart" : "Add to cart"}
+          </button>
+          {feedback?.productId === product.id && feedback.kind === "error" && (
+            <p role="alert" className="mt-1.5 text-[9px] leading-4 text-[#B42318]">{feedback.message}</p>
+          )}
+        </div>
+      </div>
+    </article>
+  );
+}
+
+function FilterSection({ title, children }: { title: string; children: ReactNode }) {
+  return (
+    <section className="border-b border-[#EAE6DF] py-4 first:pt-0 last:border-b-0 last:pb-0">
+      <h3 className="mb-3 text-[12px] font-bold text-[#17202A]">{title}</h3>
+      {children}
+    </section>
+  );
+}
+
 function ShopPageContent() {
   const searchParams = useSearchParams();
   const initialQuery = searchParams.get("q") ?? "";
@@ -585,15 +681,9 @@ function ShopPageContent() {
   const initialAvailability = parseAvailabilityFilter(searchParams.get("availability") ?? "");
   const initialVerified = searchParams.get("verified") === "true";
   const initialPage = parsePage(searchParams.get("page"));
-  const pageKey = [
-    initialQuery, initialCategory, initialCategoryId, initialState, initialLga,
-    initialArea, initialMinPrice, initialMaxPrice, initialAvailability,
-    String(initialVerified), String(initialPage),
-  ].join("|");
-
+  const initialSort = parseSortMode(searchParams.get("sort"));
   return (
     <ShopPageView
-      key={pageKey}
       initialQuery={initialQuery}
       initialCategory={initialCategory}
       initialCategoryId={initialCategoryId}
@@ -605,6 +695,7 @@ function ShopPageContent() {
       initialAvailability={initialAvailability}
       initialVerified={initialVerified}
       initialPage={initialPage}
+      initialSort={initialSort}
     />
   );
 }
@@ -621,9 +712,10 @@ function ShopPageView({
   initialAvailability,
   initialVerified,
   initialPage,
+  initialSort,
 }: ShopPageViewProps) {
   const router = useRouter();
-  const [query, setQuery] = useState(initialQuery);
+  const query = initialQuery;
   const [category, setCategory] = useState(initialCategory);
   const [categoryId, setCategoryId] = useState(initialCategoryId);
   const [state, setState] = useState(initialState);
@@ -633,8 +725,8 @@ function ShopPageView({
   const [maxPrice, setMaxPrice] = useState(initialMaxPrice);
   const [availability, setAvailability] = useState(initialAvailability);
   const [verified, setVerified] = useState(initialVerified);
-  const [sortBy, setSortBy] = useState<SortOption>("NEWEST");
   const [showMobileFilters, setShowMobileFilters] = useState(false);
+  const [isDesktop, setIsDesktop] = useState(false);
   const [categories, setCategories] = useState<ShopCategory[]>([]);
   const [locationGroups, setLocationGroups] = useState<LocationStateGroup[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
@@ -642,14 +734,56 @@ function ShopPageView({
   const [error, setError] = useState("");
   const [totalProducts, setTotalProducts] = useState(0);
   const [resultsTruncated, setResultsTruncated] = useState(false);
-  const [serverPagination, setServerPagination] = useState(false);
   const [serverTotalPages, setServerTotalPages] = useState(1);
+  const [hasMoreResults, setHasMoreResults] = useState(false);
+  const [maxSearchResults, setMaxSearchResults] = useState(120);
+  const [filterValidationError, setFilterValidationError] = useState("");
   const [savedProducts, setSavedProducts] = useState<SavedProductMap>({});
   const [savingProductIds, setSavingProductIds] = useState<Record<string, boolean>>({});
   const [saveFeedback, setSaveFeedback] = useState("");
   const [saveFeedbackError, setSaveFeedbackError] = useState(false);
   const [addingToCartProductIds, setAddingToCartProductIds] = useState<Record<string, boolean>>({});
   const [cartFeedback, setCartFeedback] = useState<CartFeedback>(null);
+
+  useEffect(() => {
+    setCategory(initialCategory);
+    setCategoryId(initialCategoryId);
+    setState(initialState);
+    setLga(initialLga);
+    setArea(initialArea);
+    setMinPrice(initialMinPrice);
+    setMaxPrice(initialMaxPrice);
+    setAvailability(initialAvailability);
+    setVerified(initialVerified);
+  }, [
+    initialCategory, initialCategoryId, initialState, initialLga, initialArea,
+    initialMinPrice, initialMaxPrice, initialAvailability, initialVerified,
+  ]);
+
+  useEffect(() => {
+    const media = window.matchMedia("(min-width: 1024px)");
+    const updateViewport = () => {
+      setIsDesktop(media.matches);
+      if (media.matches) setShowMobileFilters(false);
+    };
+    updateViewport();
+    media.addEventListener("change", updateViewport);
+    return () => media.removeEventListener("change", updateViewport);
+  }, []);
+
+  useEffect(() => {
+    if (!showMobileFilters) return;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") setShowMobileFilters(false);
+    }
+    window.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      window.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [showMobileFilters]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -681,8 +815,34 @@ function ShopPageView({
         const data: unknown = await response.json();
         if (!isRecord(data)) throw new Error("Invalid location response.");
         let parsed = parseLocationStateGroups(data.stateGroups);
+
+        if (parsed.length === 0 && isRecord(data.lgasByState)) {
+          parsed = Object.entries(data.lgasByState).flatMap(([stateName, rawLgas]) => {
+            const stateNameClean = stateName.trim();
+            if (!stateNameClean || !Array.isArray(rawLgas)) return [];
+            const groups = rawLgas.flatMap((rawLga): LocationLgaGroup[] => {
+              const lga = typeof rawLga === "string"
+                ? rawLga.trim()
+                : isRecord(rawLga)
+                  ? cleanString(rawLga.lga) ?? cleanString(rawLga.name) ?? ""
+                  : "";
+              return lga ? [{ lga, areas: [] }] : [];
+            });
+            return [{ state: stateNameClean, groups }];
+          });
+        }
+
         if (parsed.length === 0) parsed = parseLegacyLagosGroups(data.groups);
-        if (parsed.length === 0) throw new Error("No location groups are available.");
+        if (parsed.length === 0 && Array.isArray(data.states)) {
+          parsed = data.states.flatMap((rawState) => {
+            const stateName = typeof rawState === "string"
+              ? rawState.trim()
+              : isRecord(rawState)
+                ? cleanString(rawState.state) ?? cleanString(rawState.name) ?? ""
+                : "";
+            return stateName ? [{ state: stateName, groups: [] }] : [];
+          });
+        }
         if (!controller.signal.aborted) setLocationGroups(parsed);
       } catch (err) {
         if (err instanceof DOMException && err.name === "AbortError") return;
@@ -707,11 +867,7 @@ function ShopPageView({
       findCategoryByName(categories, category);
   }, [categories, categoryId, category]);
 
-  const selectedCategoryRoot = useMemo(() => {
-    if (!selectedCategory) return null;
-    if (!selectedCategory.parentId) return selectedCategory;
-    return findCategoryParent(categories, selectedCategory.id) ?? selectedCategory;
-  }, [categories, selectedCategory]);
+
 
   async function loadSavedProducts(signal?: AbortSignal): Promise<SavedProductMap> {
     const combined: SavedProductMap = {};
@@ -767,139 +923,153 @@ function ShopPageView({
 
   useEffect(() => {
     const controller = new AbortController();
+
     async function loadProducts() {
       setLoading(true);
       setError("");
-      const hasFilters = Boolean(
-        initialQuery.trim() || initialCategory || initialCategoryId ||
-        initialState || initialLga || initialArea || initialMinPrice ||
-        initialMaxPrice || initialAvailability || initialVerified,
-      );
-      const useSearchApi = hasFilters;
-      const useServerPagination = !useSearchApi && sortBy === "NEWEST";
-      setServerPagination(useServerPagination);
+      setCartFeedback(null);
+
       try {
         const params = new URLSearchParams();
-        let endpoint: string;
-        if (useSearchApi) {
-          params.set("type", "product");
-          const fields: Array<[string, string]> = [
-            ["q", initialQuery],
-            ["category", initialCategory],
-            ["state", initialState],
-            ["lga", initialLga],
-            ["area", initialArea],
-            ["minPrice", initialMinPrice],
-            ["maxPrice", initialMaxPrice],
-            ["availability", initialAvailability],
-          ];
-          fields.forEach(([key, value]) => {
-            if (value.trim()) params.set(key, value.trim());
-          });
-          if (initialCategoryId) params.set("categoryId", initialCategoryId);
-          if (initialVerified) params.set("verified", "true");
-          params.set("page", "1");
-          params.set("pageSize", "48");
-          endpoint = `/api/search?${params.toString()}`;
-        } else {
-          params.set("page", String(useServerPagination ? initialPage : 1));
-          params.set("pageSize", String(useServerPagination ? PAGE_SIZE : MAX_CLIENT_RESULTS));
-          endpoint = `/api/recent-products?${params.toString()}`;
-        }
+        params.set("type", "product");
+        params.set("page", String(initialPage));
+        params.set("pageSize", String(PAGE_SIZE));
+        params.set("sort", initialSort);
 
-        const response = await fetch(endpoint, {
+        const fields: Array<[string, string]> = [
+          ["q", initialQuery],
+          ["category", initialCategory],
+          ["categoryId", initialCategoryId],
+          ["state", initialState],
+          ["lga", initialLga],
+          ["area", initialArea],
+          ["minPrice", initialMinPrice],
+          ["maxPrice", initialMaxPrice],
+          ["availability", initialAvailability],
+        ];
+        fields.forEach(([key, value]) => {
+          if (value.trim()) params.set(key, value.trim());
+        });
+        if (initialVerified) params.set("verified", "true");
+
+        const response = await fetch(`/api/search?${params.toString()}`, {
           method: "GET",
           cache: "no-store",
+          headers: { Accept: "application/json" },
           signal: controller.signal,
         });
-        const data: unknown = await response.json();
+        const data: unknown = await response.json().catch(() => null);
+
         if (!response.ok) {
           throw new Error(isRecord(data) && typeof data.error === "string"
             ? data.error
             : "Unable to load products.");
         }
-        if (!isRecord(data)) throw new Error("Invalid products response.");
-        const rawProducts = Array.isArray(data.products) ? data.products : [];
-        const parsedProducts = rawProducts.map(parseProduct).filter((item): item is Product => item !== null);
-        if (controller.signal.aborted) return;
-        setProducts(parsedProducts);
+        if (!isRecord(data)) throw new Error("The search API returned an invalid response.");
 
-        if (useSearchApi) {
-          const meta = isRecord(data.resultMeta) ? data.resultMeta : null;
-          const reportedTotal = typeof meta?.totalProducts === "number"
-            ? meta.totalProducts
-            : parsedProducts.length;
-          setTotalProducts(Math.max(0, reportedTotal));
-          setResultsTruncated(meta?.truncated === true || reportedTotal > parsedProducts.length);
-          setServerTotalPages(1);
-        } else {
-          const reportedTotal = typeof data.total === "number" ? data.total : parsedProducts.length;
-          const reportedPages = typeof data.totalPages === "number"
-            ? data.totalPages
-            : Math.max(1, Math.ceil(reportedTotal / PAGE_SIZE));
-          setTotalProducts(Math.max(0, reportedTotal));
-          setServerTotalPages(Math.max(1, reportedPages));
-          setResultsTruncated(!useServerPagination && reportedTotal > parsedProducts.length);
-        }
+        const rawProducts = Array.isArray(data.products) ? data.products : [];
+        const parsedProducts = rawProducts
+          .map(parseProduct)
+          .filter((item): item is Product => item !== null);
+        if (controller.signal.aborted) return;
+
+        const meta = isRecord(data.resultMeta) ? data.resultMeta : {};
+        const readMetaInteger = (key: string, fallback: number, minimum = 0) => {
+          const candidate = meta[key];
+          return typeof candidate === "number" && Number.isSafeInteger(candidate) && candidate >= minimum
+            ? candidate
+            : fallback;
+        };
+
+        const reportedTotal = readMetaInteger("totalProducts", parsedProducts.length);
+        const reportedPageSize = readMetaInteger("pageSize", PAGE_SIZE, 1);
+        const reportedMax = readMetaInteger("maxResults", 120, 1);
+        const cappedTotal = Math.min(reportedTotal, reportedMax);
+        const reportedPages = readMetaInteger(
+          "totalPages",
+          Math.max(1, Math.ceil(cappedTotal / reportedPageSize)),
+        );
+
+        setProducts(parsedProducts);
+        setTotalProducts(reportedTotal);
+        setServerTotalPages(Math.max(1, reportedPages));
+        setHasMoreResults(meta.hasMore === true);
+        setMaxSearchResults(reportedMax);
+        setResultsTruncated(meta.truncated === true || reportedTotal > reportedMax);
       } catch (err) {
         if (err instanceof DOMException && err.name === "AbortError") return;
         console.error("Products loading error:", err);
         setProducts([]);
         setTotalProducts(0);
         setServerTotalPages(1);
+        setHasMoreResults(false);
+        setMaxSearchResults(120);
         setResultsTruncated(false);
         setError(err instanceof Error ? err.message : "Unable to load products. Please try again.");
       } finally {
         if (!controller.signal.aborted) setLoading(false);
       }
     }
+
     void loadProducts();
     return () => controller.abort();
   }, [
     initialQuery, initialCategory, initialCategoryId, initialState, initialLga,
     initialArea, initialMinPrice, initialMaxPrice, initialAvailability,
-    initialVerified, initialPage, sortBy,
+    initialVerified, initialPage, initialSort,
   ]);
 
-  const sortedProducts = useMemo(() => {
-    const result = [...products];
-    switch (sortBy) {
-      case "PRICE_LOW":
-        result.sort((a, b) => getSortablePrice(a) - getSortablePrice(b));
-        break;
-      case "PRICE_HIGH":
-        result.sort((a, b) => getSortablePrice(b) - getSortablePrice(a));
-        break;
-      case "NAME":
-        result.sort((a, b) => a.name.localeCompare(b.name));
-        break;
-    }
-    return result;
-  }, [products, sortBy]);
-
-  const totalPages = serverPagination
-    ? serverTotalPages
-    : Math.max(1, Math.ceil(sortedProducts.length / PAGE_SIZE));
+  const totalPages = Math.max(1, serverTotalPages);
   const currentPage = Math.min(Math.max(1, initialPage), totalPages);
-  const visibleProducts = serverPagination
-    ? sortedProducts
-    : sortedProducts.slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE);
+  const visibleProducts = products;
   const resultStart = visibleProducts.length ? (currentPage - 1) * PAGE_SIZE + 1 : 0;
   const resultEnd = resultStart ? resultStart + visibleProducts.length - 1 : 0;
+
+  useEffect(() => {
+    if (loading || currentPage === initialPage) return;
+    router.replace(buildShopUrl({
+      query: initialQuery,
+      category: initialCategory,
+      categoryId: initialCategoryId,
+      state: initialState,
+      lga: initialLga,
+      area: initialArea,
+      minPrice: initialMinPrice,
+      maxPrice: initialMaxPrice,
+      availability: initialAvailability,
+      verified: initialVerified,
+      sort: initialSort,
+    }, currentPage));
+  }, [
+    loading, currentPage, initialPage, initialQuery, initialCategory,
+    initialCategoryId, initialState, initialLga, initialArea,
+    initialMinPrice, initialMaxPrice, initialAvailability,
+    initialVerified, initialSort, router,
+  ]);
 
   function getCurrentFilters(): ShopFilters {
     return {
       query, category, categoryId, state, lga, area, minPrice, maxPrice,
-      availability, verified,
+      availability, verified, sort: initialSort,
     };
   }
 
-  function submitSearch(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    router.push(buildShopUrl(getCurrentFilters(), 1));
-  }
-
   function applyFilters() {
+    const min = minPrice.trim() ? Number(minPrice) : null;
+    const max = maxPrice.trim() ? Number(maxPrice) : null;
+    if (min !== null && (!Number.isSafeInteger(min) || min < 0 || min > 1_000_000_000)) {
+      setFilterValidationError("Minimum price must be a whole number between ₦0 and ₦1,000,000,000.");
+      return;
+    }
+    if (max !== null && (!Number.isSafeInteger(max) || max < 0 || max > 1_000_000_000)) {
+      setFilterValidationError("Maximum price must be a whole number between ₦0 and ₦1,000,000,000.");
+      return;
+    }
+    if (min !== null && max !== null && min > max) {
+      setFilterValidationError("Minimum price cannot be greater than maximum price.");
+      return;
+    }
+    setFilterValidationError("");
     router.push(buildShopUrl(getCurrentFilters(), 1));
     setShowMobileFilters(false);
   }
@@ -914,6 +1084,7 @@ function ShopPageView({
       category: nextCategory,
       categoryId: nextCategoryId,
     }, 1));
+    setShowMobileFilters(false);
   }
 
   function handleAreaChange(value: string) {
@@ -927,7 +1098,6 @@ function ShopPageView({
   }
 
   function clearFilters() {
-    setQuery("");
     setCategory("");
     setCategoryId("");
     setState("");
@@ -937,7 +1107,7 @@ function ShopPageView({
     setMaxPrice("");
     setAvailability("");
     setVerified(false);
-    setSortBy("NEWEST");
+    setFilterValidationError("");
     setShowMobileFilters(false);
     router.push("/shop");
   }
@@ -951,7 +1121,10 @@ function ShopPageView({
   const activeFilterCount = [
     categoryId || category,
     state || lga || area ? "LOCATION" : "",
-    minPrice, maxPrice, availability, verified ? "VERIFIED" : "",
+    minPrice,
+    maxPrice,
+    availability,
+    verified ? "VERIFIED" : "",
   ].filter(Boolean).length;
 
   async function toggleSavedProduct(product: Product) {
@@ -968,6 +1141,11 @@ function ShopPageView({
           headers: { Accept: "application/json" },
         });
         const data: unknown = await response.json().catch(() => null);
+        if (response.status === 401 || response.status === 403) {
+          const callbackUrl = `${window.location.pathname}${window.location.search}`;
+          router.push(`/buyer/login?callbackUrl=${encodeURIComponent(callbackUrl)}`);
+          return;
+        }
         if (!response.ok) {
           throw new Error(isRecord(data) && typeof data.error === "string"
             ? data.error
@@ -987,7 +1165,9 @@ function ShopPageView({
         });
         const data: unknown = await response.json().catch(() => null);
         if (response.status === 401 || response.status === 403) {
-          throw new Error("Sign in to save products.");
+          const callbackUrl = `${window.location.pathname}${window.location.search}`;
+          router.push(`/buyer/login?callbackUrl=${encodeURIComponent(callbackUrl)}`);
+          return;
         }
         if (!response.ok) {
           throw new Error(isRecord(data) && typeof data.error === "string"
@@ -1058,17 +1238,24 @@ function ShopPageView({
     }
   }
 
-  function renderFilterControls() {
+  function renderFilterFields(prefix: "desktop" | "mobile") {
     const categoryValue = selectedCategory?.id ?? "";
+    const categoryIdInput = `${prefix}-shop-category`;
+    const stateIdInput = `${prefix}-shop-state`;
+    const lgaIdInput = `${prefix}-shop-lga`;
+    const areaIdInput = `${prefix}-shop-area`;
+    const minPriceIdInput = `${prefix}-shop-min-price`;
+    const maxPriceIdInput = `${prefix}-shop-max-price`;
+    const availabilityIdInput = `${prefix}-shop-availability`;
     return (
-      <div className="space-y-5">
-        <div>
-          <label htmlFor="shop-category" className="mb-2 block text-xs font-bold text-[#17202A]">Category</label>
+      <div className="space-y-4">
+        <FilterSection title="Category">
           <select
-            id="shop-category"
+            id={categoryIdInput}
+            aria-label="Filter by category"
             value={categoryValue}
             onChange={(event) => selectCategory(findCategoryById(categories, event.target.value))}
-            className="h-11 w-full rounded-xl border border-[#EAE6DF] bg-white px-3 text-sm text-[#17202A] outline-none focus:border-[#FF9A81] focus:ring-2 focus:ring-[#FF5A36]/10"
+            className="h-10 w-full rounded-lg border border-[#E2DED8] bg-white px-3 text-xs text-[#17202A] outline-none transition focus:border-[#FF9A81] focus:ring-2 focus:ring-[#FF5A36]/10"
           >
             <option value="">All categories</option>
             {categories.map((item) => (
@@ -1080,297 +1267,298 @@ function ShopPageView({
               </optgroup>
             ))}
           </select>
-        </div>
+        </FilterSection>
 
-        <div>
-          <label htmlFor="shop-state" className="mb-2 block text-xs font-bold text-[#17202A]">State</label>
-          <select
-            id="shop-state"
-            value={state}
-            onChange={(event) => { setState(event.target.value); setLga(""); setArea(""); }}
-            className="h-11 w-full rounded-xl border border-[#EAE6DF] bg-white px-3 text-sm text-[#17202A] outline-none focus:border-[#FF9A81] focus:ring-2 focus:ring-[#FF5A36]/10"
-          >
-            <option value="">All supported states</option>
-            {locationGroups.map((item) => <option key={item.state} value={item.state}>{item.state}</option>)}
-          </select>
-        </div>
-
-        <div>
-          <label htmlFor="shop-lga" className="mb-2 block text-xs font-bold text-[#17202A]">Local Government Area</label>
-          <select
-            id="shop-lga"
-            value={lga}
-            disabled={!state}
-            onChange={(event) => { setLga(event.target.value); setArea(""); }}
-            className="h-11 w-full rounded-xl border border-[#EAE6DF] bg-white px-3 text-sm text-[#17202A] outline-none focus:border-[#FF9A81] focus:ring-2 focus:ring-[#FF5A36]/10 disabled:cursor-not-allowed disabled:bg-[#FCFAF6]"
-          >
-            <option value="">{state ? "All LGAs in selected state" : "Select a state first"}</option>
-            {availableLgas.map((item) => <option key={item} value={item}>{item}</option>)}
-          </select>
-        </div>
-
-        <div>
-          <label htmlFor="shop-area" className="mb-2 block text-xs font-bold text-[#17202A]">Area or neighbourhood</label>
-          <AreaAutocomplete
-            id="shop-area"
-            value={area}
-            state={state || undefined}
-            lga={lga || undefined}
-            onChange={handleAreaChange}
-            onSelect={handleAreaSelect}
-            placeholder="Search an area, e.g. Ogba or Ekpoma"
-          />
-        </div>
-
-        <div>
-          <p className="mb-2 text-xs font-bold text-[#17202A]">Price range</p>
-          <div className="grid grid-cols-2 gap-2">
+        <FilterSection title="Location">
+          <div className="space-y-3">
             <div>
-              <label htmlFor="shop-min-price" className="mb-1 block text-[10px] text-[#756B61]">Minimum</label>
-              <input id="shop-min-price" type="number" min="0" step="1" inputMode="numeric" value={minPrice} onChange={(event) => setMinPrice(event.target.value)} placeholder="₦ Min" className="h-11 w-full min-w-0 rounded-xl border border-[#EAE6DF] bg-white px-2.5 text-sm outline-none focus:border-[#FF9A81] focus:ring-2 focus:ring-[#FF5A36]/10" />
+              <label htmlFor={stateIdInput} className="mb-1.5 block text-[10px] font-medium text-[#756B61]">State</label>
+              <select
+                id={stateIdInput}
+                value={state}
+                onChange={(event) => { setState(event.target.value); setLga(""); setArea(""); }}
+                className="h-10 w-full rounded-lg border border-[#E2DED8] bg-white px-3 text-xs outline-none focus:border-[#FF9A81]"
+              >
+                <option value="">All supported states</option>
+                {locationGroups.map((item) => <option key={item.state} value={item.state}>{item.state}</option>)}
+              </select>
             </div>
             <div>
-              <label htmlFor="shop-max-price" className="mb-1 block text-[10px] text-[#756B61]">Maximum</label>
-              <input id="shop-max-price" type="number" min="0" step="1" inputMode="numeric" value={maxPrice} onChange={(event) => setMaxPrice(event.target.value)} placeholder="₦ Max" className="h-11 w-full min-w-0 rounded-xl border border-[#EAE6DF] bg-white px-2.5 text-sm outline-none focus:border-[#FF9A81] focus:ring-2 focus:ring-[#FF5A36]/10" />
+              <label htmlFor={lgaIdInput} className="mb-1.5 block text-[10px] font-medium text-[#756B61]">Local Government Area</label>
+              <select
+                id={lgaIdInput}
+                value={lga}
+                disabled={!state}
+                onChange={(event) => { setLga(event.target.value); setArea(""); }}
+                className="h-10 w-full rounded-lg border border-[#E2DED8] bg-white px-3 text-xs outline-none focus:border-[#FF9A81] disabled:cursor-not-allowed disabled:bg-[#F6F3EF]"
+              >
+                <option value="">{state ? "All LGAs in selected state" : "Select a state first"}</option>
+                {availableLgas.map((item) => <option key={item} value={item}>{item}</option>)}
+              </select>
+            </div>
+            <div>
+              <label htmlFor={areaIdInput} className="mb-1.5 block text-[10px] font-medium text-[#756B61]">Area or neighbourhood</label>
+              <AreaAutocomplete
+                id={areaIdInput}
+                value={area}
+                state={state || undefined}
+                lga={lga || undefined}
+                onChange={(value) => setArea(value)}
+                onSelect={(selected: AreaSelection) => {
+                  setState(selected.state);
+                  setLga(selected.lga);
+                  setArea(selected.area);
+                }}
+                placeholder="Search an area"
+              />
             </div>
           </div>
-        </div>
+        </FilterSection>
 
-        <div>
-          <label htmlFor="shop-availability" className="mb-2 block text-xs font-bold text-[#17202A]">Availability</label>
-          <select id="shop-availability" value={availability} onChange={(event) => setAvailability(parseAvailabilityFilter(event.target.value))} className="h-11 w-full rounded-xl border border-[#EAE6DF] bg-white px-3 text-sm outline-none focus:border-[#FF9A81] focus:ring-2 focus:ring-[#FF5A36]/10">
+        <FilterSection title="Price range">
+          <div className="grid grid-cols-2 gap-2">
+            <div>
+              <label htmlFor={minPriceIdInput} className="mb-1.5 block text-[10px] text-[#756B61]">Minimum (₦)</label>
+              <input
+                id={minPriceIdInput}
+                type="number"
+                min="0"
+                max="1000000000"
+                step="1"
+                inputMode="numeric"
+                value={minPrice}
+                onChange={(event) => setMinPrice(event.target.value)}
+                placeholder="0"
+                className="h-10 w-full min-w-0 rounded-lg border border-[#E2DED8] bg-white px-2.5 text-xs outline-none focus:border-[#FF9A81]"
+              />
+            </div>
+            <div>
+              <label htmlFor={maxPriceIdInput} className="mb-1.5 block text-[10px] text-[#756B61]">Maximum (₦)</label>
+              <input
+                id={maxPriceIdInput}
+                type="number"
+                min="0"
+                max="1000000000"
+                step="1"
+                inputMode="numeric"
+                value={maxPrice}
+                onChange={(event) => setMaxPrice(event.target.value)}
+                placeholder="Any"
+                className="h-10 w-full min-w-0 rounded-lg border border-[#E2DED8] bg-white px-2.5 text-xs outline-none focus:border-[#FF9A81]"
+              />
+            </div>
+          </div>
+        </FilterSection>
+
+        {filterValidationError && (
+          <p role="alert" className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-[10px] leading-4 text-red-700">
+            {filterValidationError}
+          </p>
+        )}
+
+        <FilterSection title="Availability">
+          <select
+            id={availabilityIdInput}
+            aria-label="Filter by availability"
+            value={availability}
+            onChange={(event) => setAvailability(parseAvailabilityFilter(event.target.value))}
+            className="h-10 w-full rounded-lg border border-[#E2DED8] bg-white px-3 text-xs outline-none focus:border-[#FF9A81]"
+          >
             <option value="">Any availability</option>
             <option value="AVAILABLE">Available</option>
             <option value="ASK_SELLER">Ask seller</option>
             <option value="UNAVAILABLE">Unavailable</option>
           </select>
-        </div>
+        </FilterSection>
 
-        <label className="flex cursor-pointer items-center gap-3 rounded-xl border border-[#EAE6DF] bg-white p-3">
-          <input type="checkbox" checked={verified} onChange={(event) => setVerified(event.target.checked)} className="h-4 w-4 accent-[#FF5A36]" />
+        <label className="flex cursor-pointer items-start gap-2.5 rounded-lg border border-[#EAE6DF] bg-white p-3">
+          <input
+            type="checkbox"
+            checked={verified}
+            onChange={(event) => setVerified(event.target.checked)}
+            className="mt-0.5 h-4 w-4 shrink-0 accent-[#FF5A36]"
+          />
           <span>
-            <span className="block text-xs font-semibold text-[#17202A]">Verified sellers only</span>
-            <span className="mt-0.5 block text-[10px] text-[#756B61]">Show products from verified sellers.</span>
+            <span className="block text-[11px] font-semibold text-[#17202A]">Verified sellers only</span>
+            <span className="mt-0.5 block text-[10px] leading-4 text-[#756B61]">Only show products from verified sellers.</span>
           </span>
         </label>
-
-        <div className="space-y-2 border-t border-[#EAE6DF] pt-4">
-          <button type="button" onClick={applyFilters} className="flex min-h-11 w-full items-center justify-center gap-2 rounded-xl bg-[#FF5A36] px-4 py-3 text-sm font-bold text-white transition hover:bg-[#E94A28]">
-            Apply filters <ArrowRight className="h-4 w-4" />
-          </button>
-          <button type="button" onClick={clearFilters} className="flex min-h-10 w-full items-center justify-center gap-2 rounded-xl border border-[#EAE6DF] bg-white px-4 py-2.5 text-xs font-semibold text-[#756B61] transition hover:bg-[#FCFAF6]">
-            <RotateCcw className="h-3.5 w-3.5" /> Clear filters
-          </button>
-        </div>
       </div>
     );
   }
 
+  function renderFilterActions(mobile = false) {
+    return (
+      <div className={`${mobile ? "" : "mt-4 border-t border-[#EAE6DF] pt-4"} grid grid-cols-2 gap-2`}>
+        <button
+          type="button"
+          onClick={clearFilters}
+          className="flex min-h-10 items-center justify-center gap-1.5 rounded-lg border border-[#E2DED8] bg-white px-3 py-2 text-[11px] font-semibold text-[#62574E] transition hover:bg-[#FCFAF6]"
+        >
+          <RotateCcw className="h-3.5 w-3.5" /> Clear
+        </button>
+        <button
+          type="button"
+          onClick={applyFilters}
+          className="flex min-h-10 items-center justify-center gap-1.5 rounded-lg bg-[#FF5A36] px-3 py-2 text-[11px] font-bold text-white transition hover:bg-[#E94A28]"
+        >
+          Apply filters <ArrowRight className="h-3.5 w-3.5" />
+        </button>
+      </div>
+    );
+  }
+
+  const title = selectedCategory?.name ?? (category || "All products");
+  const productCountLabel = loading
+    ? "Loading products…"
+    : error
+      ? "Products could not be loaded"
+      : `${totalProducts.toLocaleString("en-NG")} ${totalProducts === 1 ? "product" : "products"}`;
+
   return (
     <>
-      <SiteHeader />
-      <main id="main-content" className="min-h-dvh overflow-x-clip bg-[#FFFDFC] pb-28 text-[#17202A] lg:pb-10">
-        <div className="mx-auto max-w-[1600px] px-4 pb-8 pt-5 sm:px-6 lg:px-8 lg:pt-8 xl:px-10">
-          <section className="relative overflow-hidden rounded-[24px] border border-[#FFE0D5] bg-gradient-to-r from-[#FFF0E7] via-[#FFF5EE] to-[#FFE4D9] px-5 py-6 sm:px-8 sm:py-8">
-            <div aria-hidden="true" className="pointer-events-none absolute -right-20 -top-24 hidden h-64 w-64 rounded-full bg-[#FF5A36]/10 sm:block" />
-            <div className="relative z-10">
-              <div className="inline-flex items-center gap-2 rounded-full border border-[#FFD1C5] bg-white/75 px-3 py-1.5 text-[10px] font-bold uppercase tracking-[0.12em] text-[#9F2D18]">
-                <Package className="h-3.5 w-3.5 text-[#FF5A36]" /> ReMarket Products
-              </div>
-              <h1 className="mt-3 text-[27px] font-extrabold leading-tight tracking-tight text-[#401B13] sm:text-4xl">Find Products Nearby</h1>
-              <p className="mt-2 max-w-[570px] text-sm leading-6 text-[#66564C] sm:text-base">Discover products from sellers near you. Compare prices and find what you need on ReMarket.</p>
-              <div className="mt-4 flex flex-wrap items-center gap-x-5 gap-y-2 text-[11px] font-medium text-[#7A6255]">
-                <span className="inline-flex items-center gap-1.5"><ShoppingBag className="h-3.5 w-3.5 text-[#FF5A36]" /> Local products</span>
-                <span className="inline-flex items-center gap-1.5"><MapPin className="h-3.5 w-3.5 text-[#FF5A36]" /> Area-based discovery</span>
-                <span className="inline-flex items-center gap-1.5"><BadgeCheck className="h-3.5 w-3.5 text-[#FF5A36]" /> Verified sellers</span>
-              </div>
+      <SiteHeader searchMode="PRODUCTS" />
+      <main id="main-content" className="min-h-dvh overflow-x-clip bg-[#FFFDFC] pb-24 text-[#17202A] lg:pb-10">
+        <div className="mx-auto max-w-[1600px] px-3 pb-8 pt-4 sm:px-5 sm:pt-6 lg:px-7 xl:px-9">
+          <div className="mb-4 flex flex-wrap items-end justify-between gap-3 border-b border-[#EAE6DF] pb-4 sm:mb-5 sm:pb-5">
+            <div className="min-w-0">
+              <nav aria-label="Breadcrumb" className="mb-2 flex items-center gap-1.5 text-[10px] text-[#82776E]">
+                <Link href="/" className="transition hover:text-[#9F2D18]">Home</Link>
+                <ChevronRight className="h-3 w-3" aria-hidden="true" />
+                <span className="font-semibold text-[#514840]">Shop</span>
+              </nav>
+              <h1 className="text-xl font-extrabold tracking-tight text-[#17202A] sm:text-2xl">{query ? `Results for “${query}”` : title}</h1>
+              <p className="mt-1 text-[11px] text-[#756B61] sm:text-xs">{productCountLabel}</p>
             </div>
-          </section>
-
-          <section className="mt-6">
-            <form onSubmit={submitSearch} role="search" className="flex h-[52px] w-full items-center rounded-2xl border border-[#EAE6DF] bg-white p-1.5 shadow-[0_3px_14px_rgba(23,32,42,0.035)] focus-within:border-[#FF9A81] focus-within:ring-2 focus-within:ring-[#FF5A36]/10">
-              <Search className="ml-3 h-5 w-5 shrink-0 text-[#81766C]" />
-              <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="What product are you looking for?" aria-label="Search products" className="min-w-0 flex-1 bg-transparent px-3 text-sm outline-none placeholder:text-[#91877E]" />
-              <button type="submit" disabled={!query.trim()} className="flex h-10 shrink-0 items-center justify-center gap-2 rounded-xl bg-[#FF5A36] px-4 text-xs font-bold text-white transition hover:bg-[#E94A28] disabled:cursor-not-allowed disabled:opacity-50 sm:px-6">
-                <Search className="h-4 w-4" /><span className="hidden sm:inline">Search</span>
+            {(activeFilterCount > 0 || query) && (
+              <button type="button" onClick={clearFilters} className="text-[11px] font-semibold text-[#9F2D18] transition hover:text-[#FF5A36]">
+                Clear filters
               </button>
-            </form>
-            <div className="mt-3 flex flex-wrap items-center justify-between gap-3">
-              <button type="button" onClick={() => setShowMobileFilters(true)} className="inline-flex min-h-10 items-center gap-2 rounded-xl border border-[#EAE6DF] bg-white px-3.5 py-2 text-xs font-bold text-[#514840] transition hover:border-[#FF9A81] hover:text-[#9F2D18] lg:hidden">
-                <SlidersHorizontal className="h-4 w-4" /> Filters
-                {activeFilterCount > 0 && <span className="flex h-5 min-w-5 items-center justify-center rounded-full bg-[#FF5A36] px-1.5 text-[10px] text-white">{activeFilterCount}</span>}
-              </button>
-              <div className="flex items-center gap-2">
-                <label htmlFor="product-sort" className="whitespace-nowrap text-[11px] font-medium text-[#756B61]">Sort by</label>
-                <select id="product-sort" value={sortBy} onChange={(event) => {
-                  const nextSort = event.target.value as SortOption;
-                  setSortBy(nextSort);
-                  if (initialPage !== 1) router.push(buildShopUrl(getCurrentFilters(), 1));
-                }} className="h-10 max-w-[175px] rounded-xl border border-[#EAE6DF] bg-white px-3 text-xs font-semibold outline-none focus:border-[#FF9A81]">
-                  <option value="NEWEST">Recently added</option>
-                  <option value="PRICE_LOW">Price: Low to High</option>
-                  <option value="PRICE_HIGH">Price: High to Low</option>
-                  <option value="NAME">Product name</option>
-                </select>
-              </div>
-            </div>
-          </section>
-
-          <section aria-label="Product categories" className="mt-5">
-            <div className="mb-2 flex items-center justify-between">
-              <h2 className="text-xs font-bold text-[#514840]">Browse categories</h2>
-              {(category || categoryId) && <button type="button" onClick={() => selectCategory(null)} className="text-[10px] font-semibold text-[#9F2D18] hover:underline">Clear category</button>}
-            </div>
-            <div className="flex gap-2 overflow-x-auto pb-2 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-              <button type="button" aria-pressed={!category && !categoryId} onClick={() => selectCategory(null)} className={`flex min-h-10 shrink-0 items-center rounded-full border px-4 py-2 text-xs font-bold transition ${!category && !categoryId ? "border-[#FF5A36] bg-[#FF5A36] text-white" : "border-[#EAE6DF] bg-white text-[#514840] hover:border-[#FF9A81] hover:text-[#9F2D18]"}`}>All products</button>
-              {categories.map((item) => {
-                const active = selectedCategoryRoot?.id === item.id;
-                return (
-                  <button key={item.id} type="button" aria-pressed={active} onClick={() => selectCategory(active && selectedCategory?.id === item.id ? null : item)} className={`flex min-h-11 shrink-0 items-center gap-2 rounded-full border px-3 py-1.5 text-xs font-semibold transition ${active ? "border-[#FF5A36] bg-[#FFF0EB] text-[#9F2D18]" : "border-[#EAE6DF] bg-white text-[#514840] hover:border-[#FF9A81] hover:text-[#9F2D18]"}`}>
-                    <CategoryArtwork category={item} size="sm" />
-                    <span>{item.name}{item.children.length > 0 ? ` (${item.children.length})` : ""}</span>
-                  </button>
-                );
-              })}
-            </div>
-            {selectedCategoryRoot && selectedCategoryRoot.children.length > 0 && (
-              <div className="mt-2 rounded-xl border border-[#F0E5DD] bg-[#FCFAF6] px-3 py-3">
-                <div className="mb-2 flex items-center justify-between gap-3">
-                  <p className="text-[10px] font-bold uppercase tracking-[0.08em] text-[#8B6A5B]">Subcategories in {selectedCategoryRoot.name}</p>
-                  <button type="button" onClick={() => selectCategory(selectedCategoryRoot)} className="text-[10px] font-bold text-[#9F2D18] hover:underline">All {selectedCategoryRoot.name}</button>
-                </div>
-                <div className="flex flex-wrap gap-2">
-                  {selectedCategoryRoot.children.map((child) => {
-                    const active = selectedCategory?.id === child.id;
-                    return (
-                      <button key={child.id} type="button" aria-pressed={active} onClick={() => selectCategory(active ? selectedCategoryRoot : child)} className={`inline-flex min-h-9 items-center gap-1.5 rounded-full border px-3 py-1.5 text-[11px] font-semibold transition ${active ? "border-[#FF5A36] bg-[#FF5A36] text-white" : "border-[#EAE6DF] bg-white text-[#514840] hover:border-[#FF9A81] hover:text-[#9F2D18]"}`}>
-                        <CategoryArtwork category={child} size="sm" />
-                        {child.name}
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
             )}
-          </section>
+          </div>
 
-          <div className="mt-6 grid grid-cols-1 gap-6 lg:grid-cols-[230px_minmax(0,1fr)] xl:grid-cols-[250px_minmax(0,1fr)]">
-            <aside className="hidden lg:block">
-              <div className="sticky top-[105px] rounded-2xl border border-[#EAE6DF] bg-[#FCFAF6] p-4">
-                <div className="mb-4 flex items-center justify-between">
-                  <div className="flex items-center gap-2"><Filter className="h-4 w-4 text-[#FF5A36]" /><h2 className="text-sm font-bold">Filters</h2></div>
-                  <button type="button" onClick={clearFilters} className="text-[10px] font-semibold text-[#9F2D18] hover:underline">Clear all</button>
-                </div>
-                {renderFilterControls()}
+          <div className="mb-4 flex flex-wrap items-center justify-between gap-2 sm:mb-5">
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => setShowMobileFilters(true)}
+                className="inline-flex min-h-9 items-center gap-2 rounded-lg border border-[#E2DED8] bg-white px-3 py-2 text-[11px] font-semibold text-[#514840] transition hover:border-[#FF9A81] hover:text-[#9F2D18] lg:hidden"
+              >
+                <SlidersHorizontal className="h-3.5 w-3.5" />
+                Filters
+                {activeFilterCount > 0 && <span className="flex h-4 min-w-4 items-center justify-center rounded-full bg-[#FF5A36] px-1 text-[9px] text-white">{activeFilterCount}</span>}
+              </button>
+              <span className="hidden text-[11px] text-[#756B61] sm:inline">
+                {loading ? "Updating results" : `${visibleProducts.length} shown on this page`}
+              </span>
+            </div>
+
+            <div className="flex items-center gap-2">
+              <label htmlFor="product-sort" className="whitespace-nowrap text-[10px] text-[#756B61] sm:text-[11px]">Sort:</label>
+              <div className="relative">
+                <select
+                  id="product-sort"
+                  value={initialSort}
+                  onChange={(event) => {
+                    const nextSort = parseSortMode(event.target.value);
+                    router.push(buildShopUrl({ ...getCurrentFilters(), sort: nextSort }, 1));
+                  }}
+                  className="h-9 max-w-[190px] appearance-none rounded-lg border border-[#E2DED8] bg-white py-2 pl-3 pr-8 text-[11px] font-semibold text-[#514840] outline-none transition focus:border-[#FF9A81]"
+                >
+                  <option value="relevance">Best match</option>
+                  <option value="newest">Recently updated</option>
+                  <option value="price-asc">Price: lowest first</option>
+                  <option value="price-desc">Price: highest first</option>
+                </select>
+                <ChevronDown className="pointer-events-none absolute right-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-[#756B61]" aria-hidden="true" />
               </div>
-            </aside>
+            </div>
+          </div>
 
-            <section className="min-w-0">
-              <div className="mb-4 flex flex-wrap items-end justify-between gap-3">
-                <div>
-                  <h2 className="text-xl font-extrabold tracking-tight text-[#401B13] sm:text-2xl">{selectedCategory?.name ?? (category || "All Products")}</h2>
-                  <p className="mt-1 text-xs text-[#756B61] sm:text-sm">
-                    {loading ? "Finding products..." : error ? "Products could not be loaded." : `${totalProducts.toLocaleString("en-NG")} ${totalProducts === 1 ? "product" : "products"} found`}
-                  </p>
+          <div className="grid min-w-0 grid-cols-1 gap-5 lg:grid-cols-[224px_minmax(0,1fr)] xl:grid-cols-[248px_minmax(0,1fr)] xl:gap-6">
+            {isDesktop && <aside className="hidden min-w-0 lg:block">
+              <div className="sticky top-[150px] rounded-xl border border-[#EAE6DF] bg-[#FCFAF6] p-4">
+                <div className="mb-4 flex items-center justify-between border-b border-[#EAE6DF] pb-3">
+                  <div className="flex items-center gap-2">
+                    <Filter className="h-4 w-4 text-[#9F2D18]" aria-hidden="true" />
+                    <h2 className="text-sm font-bold text-[#17202A]">Filters</h2>
+                  </div>
+                  {activeFilterCount > 0 && <span className="rounded-full bg-[#FFF0EB] px-2 py-0.5 text-[9px] font-bold text-[#9F2D18]">{activeFilterCount} applied</span>}
                 </div>
-                {totalPages > 1 && !loading && <span className="text-[10px] font-semibold text-[#756B61]">Page {currentPage} of {totalPages}</span>}
+                {renderFilterFields("desktop")}
+                {renderFilterActions()}
               </div>
+            </aside>}
 
+            <section aria-label="Product results" className="min-w-0">
               {saveFeedback && (
-                <div role={saveFeedbackError ? "alert" : "status"} className={`mb-4 flex items-center justify-between gap-3 rounded-xl border px-4 py-3 text-xs ${saveFeedbackError ? "border-red-200 bg-red-50 text-red-700" : "border-[#FFD9CE] bg-[#FFF1ED] text-[#9F2D18]"}`}>
+                <div role={saveFeedbackError ? "alert" : "status"} className={`mb-4 flex items-center justify-between gap-3 rounded-lg border px-3 py-2.5 text-[11px] ${saveFeedbackError ? "border-red-200 bg-red-50 text-red-700" : "border-[#FFD9CE] bg-[#FFF1ED] text-[#9F2D18]"}`}>
                   <span>{saveFeedback}</span>
-                  <button type="button" onClick={() => setSaveFeedback("")} aria-label="Dismiss message"><X className="h-4 w-4" /></button>
+                  <button type="button" onClick={() => setSaveFeedback("")} aria-label="Dismiss message" className="rounded p-1 hover:bg-black/5"><X className="h-3.5 w-3.5" /></button>
                 </div>
               )}
 
               {loading && (
-                <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-4 2xl:grid-cols-5">
-                  {Array.from({ length: 10 }, (_, index) => (
+                <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-3 2xl:grid-cols-4 sm:gap-3">
+                  {Array.from({ length: 8 }, (_, index) => (
                     <div key={index} className="overflow-hidden rounded-xl border border-[#EAE6DF] bg-white" aria-hidden="true">
-                      <div className="aspect-[4/3] animate-pulse bg-[#F0ECE7]" />
-                      <div className="space-y-2 p-2.5"><div className="h-3 w-4/5 animate-pulse rounded bg-[#F0ECE7]" /><div className="h-3 w-2/5 animate-pulse rounded bg-[#F0ECE7]" /><div className="h-2.5 w-3/5 animate-pulse rounded bg-[#F0ECE7]" /></div>
+                      <div className="aspect-square animate-pulse bg-[#F0ECE7]" />
+                      <div className="space-y-2 p-3"><div className="h-2.5 w-3/4 animate-pulse rounded bg-[#F0ECE7]" /><div className="h-3.5 w-1/2 animate-pulse rounded bg-[#F0ECE7]" /><div className="h-9 animate-pulse rounded-lg bg-[#F0ECE7]" /></div>
                     </div>
                   ))}
                 </div>
               )}
 
               {!loading && error && (
-                <div className="rounded-2xl border border-red-200 bg-red-50 px-5 py-10 text-center">
-                  <Package className="mx-auto h-9 w-9 text-red-400" />
-                  <h3 className="mt-3 text-sm font-bold text-red-800">We couldn't load products.</h3>
+                <div className="rounded-xl border border-red-200 bg-red-50 px-5 py-10 text-center">
+                  <Package className="mx-auto h-9 w-9 text-red-400" aria-hidden="true" />
+                  <h2 className="mt-3 text-sm font-bold text-red-800">We couldn't load products.</h2>
                   <p className="mt-2 text-xs leading-5 text-red-700">{error}</p>
-                  <button type="button" onClick={() => router.refresh()} className="mt-5 rounded-xl bg-[#FF5A36] px-5 py-2.5 text-xs font-bold text-white hover:bg-[#E94A28]">Try again</button>
+                  <button type="button" onClick={() => router.refresh()} className="mt-5 rounded-lg bg-[#FF5A36] px-5 py-2.5 text-xs font-bold text-white hover:bg-[#E94A28]">Try again</button>
                 </div>
               )}
 
               {!loading && !error && visibleProducts.length === 0 && (
-                <div className="rounded-2xl border border-dashed border-[#E8E4DE] bg-[#FCFAF6] px-5 py-12 text-center">
-                  <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-white text-[#FF5A36] shadow-sm"><Search className="h-7 w-7" /></div>
-                  <h3 className="mt-4 text-sm font-bold">No products found</h3>
-                  <p className="mx-auto mt-2 max-w-sm text-xs leading-5 text-[#756B61]">Try another search, choose a different category or remove some filters.</p>
-                  <button type="button" onClick={clearFilters} className="mt-5 inline-flex min-h-10 items-center gap-2 rounded-xl bg-[#FF5A36] px-5 py-2.5 text-xs font-bold text-white hover:bg-[#E94A28]">Clear filters <RotateCcw className="h-3.5 w-3.5" /></button>
+                <div className="rounded-xl border border-dashed border-[#E8E4DE] bg-[#FCFAF6] px-5 py-12 text-center">
+                  <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-white text-[#FF5A36]"><Package className="h-6 w-6" /></div>
+                  <h2 className="mt-4 text-sm font-bold text-[#17202A]">No products found</h2>
+                  <p className="mx-auto mt-2 max-w-sm text-xs leading-5 text-[#756B61]">Try changing your category, area or price range.</p>
+                  <button type="button" onClick={clearFilters} className="mt-5 inline-flex min-h-10 items-center gap-2 rounded-lg bg-[#FF5A36] px-5 py-2.5 text-xs font-bold text-white hover:bg-[#E94A28]">Clear filters <RotateCcw className="h-3.5 w-3.5" /></button>
                 </div>
               )}
 
               {!loading && !error && visibleProducts.length > 0 && (
                 <>
-                  <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-4 2xl:grid-cols-5">
-                    {visibleProducts.map((product) => {
-                      const isSaved = Boolean(savedProducts[product.id]);
-                      const isSaving = Boolean(savingProductIds[product.id]);
-                      const isAdding = Boolean(addingToCartProductIds[product.id]);
-                      const canAdd = canAddProductToCart(product);
-                      const imageUrl = product.imageUrl ?? product.images[0]?.url ?? null;
-                      const feedback = cartFeedback?.productId === product.id ? cartFeedback : null;
-                      const added = feedback?.kind === "success";
-                      const productUrl = `/product/${encodeURIComponent(product.id)}`;
-                      return (
-                        <article key={product.id} className="group flex min-w-0 flex-col overflow-hidden rounded-xl border border-[#EAE6DF] bg-white shadow-[0_3px_12px_rgba(23,32,42,0.035)] transition duration-200 hover:-translate-y-0.5 hover:border-[#FFD0C3] hover:shadow-[0_8px_20px_rgba(23,32,42,0.08)]">
-                          <div className="relative aspect-[4/3] overflow-hidden bg-[#FCFAF6]">
-                            <Link href={productUrl} aria-label={`View ${product.name}`} className="absolute inset-0">
-                              {imageUrl ? <img src={imageUrl} alt={product.name} loading="lazy" className="h-full w-full object-cover transition-transform duration-300 group-hover:scale-[1.04]" /> : <div className="flex h-full w-full items-center justify-center text-[#C3B9AE]"><Package className="h-9 w-9" /></div>}
-                            </Link>
-                            {getDiscountPercentage(product) !== null && (
-                              <span className="absolute bottom-2 left-2 rounded-md bg-[#9F2D18] px-2 py-1 text-[9px] font-bold text-white">{getDiscountPercentage(product)}% off</span>
-                            )}
-                            <button type="button" aria-label={isSaved ? `Remove ${product.name} from Saved` : `Save ${product.name}`} aria-pressed={isSaved} disabled={isSaving} onClick={() => void toggleSavedProduct(product)} className={`absolute right-2 top-2 z-10 flex h-8 w-8 items-center justify-center rounded-full border border-white/80 bg-white/95 shadow-sm transition hover:scale-105 disabled:opacity-60 ${isSaved ? "text-[#FF5A36]" : "text-[#756B61] hover:text-[#FF5A36]"}`}>
-                              {isSaving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Heart className="h-4 w-4" fill={isSaved ? "currentColor" : "none"} />}
-                            </button>
-                            <span className={`absolute bottom-2 right-2 rounded-full px-2 py-1 text-[8px] font-bold shadow-sm ${getAvailabilityStyle(product.availability)}`}>{getAvailabilityLabel(product.availability)}</span>
-                          </div>
-
-                          <div className="flex flex-1 flex-col p-2.5 sm:p-3">
-                            {product.category && (
-                              <p className="mb-1 truncate text-[8px] font-bold uppercase tracking-[0.1em] text-[#9F2D18] sm:text-[9px]">
-                                {product.category.parent && product.category.parent.id !== product.category.id
-                                  ? `${product.category.parent.name} · ${product.category.name}`
-                                  : product.category.name}
-                              </p>
-                            )}
-                            <Link href={productUrl} className="line-clamp-2 min-h-9 text-[11px] font-bold leading-4 text-[#17202A] hover:text-[#9F2D18] sm:text-xs">{product.name}</Link>
-                            <div className="mt-1.5"><ProductPrice product={product} /></div>
-                            <div className="mt-2.5 flex items-center gap-1.5 border-t border-[#F0ECE7] pt-2.5">
-                              <Link href={productUrl} className="flex min-h-9 min-w-0 flex-1 items-center justify-center gap-1 rounded-lg bg-[#FFF1ED] px-1.5 py-2 text-[9px] font-bold text-[#9F2D18] hover:bg-[#FFE0D6] sm:text-[10px]">View product <ArrowRight className="h-3 w-3 shrink-0" /></Link>
-                              <button type="button" disabled={!canAdd || isAdding} onClick={() => void addProductToCart(product)} title={getCartDisabledReason(product)} aria-label={`Add ${product.name} to cart`} className={`flex h-9 w-10 shrink-0 items-center justify-center rounded-lg transition disabled:cursor-not-allowed disabled:opacity-40 ${added ? "bg-[#DCFCE7] text-[#166534]" : canAdd ? "bg-[#FF5A36] text-white hover:bg-[#E94A28]" : "bg-[#EEEAE6] text-[#A69B91]"}`}>
-                                {isAdding ? <Loader2 className="h-4 w-4 animate-spin" /> : added ? <Check className="h-4 w-4" /> : <ShoppingCart className="h-4 w-4" />}
-                              </button>
-                            </div>
-                            {feedback && <p role={feedback.kind === "error" ? "alert" : "status"} className={`mt-1.5 text-[9px] leading-4 ${feedback.kind === "success" ? "text-[#267344]" : "text-[#B42318]"}`}>{feedback.message}</p>}
-                          </div>
-                        </article>
-                      );
-                    })}
+                  <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-3 lg:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4 sm:gap-3">
+                    {visibleProducts.map((product) => (
+                      <ShopProductCard
+                        key={product.id}
+                        product={product}
+                        saved={Boolean(savedProducts[product.id])}
+                        saving={Boolean(savingProductIds[product.id])}
+                        adding={Boolean(addingToCartProductIds[product.id])}
+                        feedback={cartFeedback?.productId === product.id ? cartFeedback : null}
+                        onToggleSaved={(item) => void toggleSavedProduct(item)}
+                        onAddToCart={(item) => void addProductToCart(item)}
+                      />
+                    ))}
                   </div>
 
-                  {resultsTruncated && <div className="mt-5 rounded-xl border border-[#F2E3C9] bg-[#FFFAF0] px-4 py-3 text-xs leading-5 text-[#785B25]">Only the first set of matching products has been loaded. Narrow your search or apply additional filters to find more specific results.</div>}
+                  {resultsTruncated && (
+                    <div className="mt-5 rounded-lg border border-[#F2E3C9] bg-[#FFFAF0] px-4 py-3 text-[11px] leading-5 text-[#785B25]">
+                      The Search API limits results to the first {maxSearchResults.toLocaleString("en-NG")} matches. Narrow your search or add filters to find more specific results.
+                    </div>
+                  )}
 
                   {totalPages > 1 && (
-                    <div className="mt-7 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-[#EAE6DF] bg-white p-3 sm:px-4">
-                      <p className="text-[10px] text-[#756B61] sm:text-xs">Showing {resultStart}–{resultEnd}{resultsTruncated ? " of the loaded results" : ` of ${totalProducts.toLocaleString("en-NG")}`}</p>
+                    <div className="mt-6 flex flex-wrap items-center justify-between gap-3 border-t border-[#EAE6DF] pt-4">
+                      <p className="text-[10px] text-[#756B61] sm:text-[11px]">
+                        Showing {resultStart}–{resultEnd}{resultsTruncated ? ` of the first ${maxSearchResults.toLocaleString("en-NG")} results` : ` of ${totalProducts.toLocaleString("en-NG")}`}
+                      </p>
                       <div className="flex items-center gap-2">
-                        <button type="button" onClick={() => goToPage(currentPage - 1)} disabled={currentPage <= 1} aria-label="Previous page" className="flex h-9 w-9 items-center justify-center rounded-xl border border-[#EAE6DF] text-[#9F2D18] hover:bg-[#FFF1ED] disabled:opacity-40"><ChevronLeft className="h-4 w-4" /></button>
-                        <span className="min-w-[74px] text-center text-xs font-bold">{currentPage} / {totalPages}</span>
-                        <button type="button" onClick={() => goToPage(currentPage + 1)} disabled={currentPage >= totalPages} aria-label="Next page" className="flex h-9 w-9 items-center justify-center rounded-xl border border-[#EAE6DF] text-[#9F2D18] hover:bg-[#FFF1ED] disabled:opacity-40"><ChevronRight className="h-4 w-4" /></button>
+                        <button type="button" onClick={() => goToPage(currentPage - 1)} disabled={currentPage <= 1} aria-label="Previous page" className="flex h-9 w-9 items-center justify-center rounded-lg border border-[#E2DED8] bg-white text-[#9F2D18] transition hover:bg-[#FFF1ED] disabled:opacity-40"><ChevronLeft className="h-4 w-4" /></button>
+                        <span className="min-w-[74px] text-center text-[11px] font-semibold text-[#514840]">Page {currentPage} of {totalPages}</span>
+                        <button type="button" onClick={() => goToPage(currentPage + 1)} disabled={currentPage >= totalPages || !hasMoreResults} aria-label="Next page" className="flex h-9 w-9 items-center justify-center rounded-lg border border-[#E2DED8] bg-white text-[#9F2D18] transition hover:bg-[#FFF1ED] disabled:opacity-40"><ChevronRight className="h-4 w-4" /></button>
                       </div>
                     </div>
                   )}
@@ -1379,22 +1567,40 @@ function ShopPageView({
             </section>
           </div>
 
-          <footer className="mt-10 flex items-center justify-center gap-3 pb-3 text-[10px] text-[#9B9188]">
-            <span className="h-px w-12 bg-[#EAE6DF]" /><span>ReMarket · Find it nearby</span><span className="h-px w-12 bg-[#EAE6DF]" />
+          <footer className="mt-10 flex items-center justify-center gap-3 border-t border-[#EAE6DF] pt-5 text-[10px] text-[#9B9188]">
+            <span className="h-px w-10 bg-[#EAE6DF]" />
+            <span>ReMarket · Find it nearby</span>
+            <span className="h-px w-10 bg-[#EAE6DF]" />
           </footer>
         </div>
       </main>
 
-      {showMobileFilters && (
-        <div className="fixed inset-0 z-[100] flex items-end justify-center bg-black/40 p-0 sm:items-center sm:p-4 lg:hidden" onMouseDown={(event) => {
-          if (event.target === event.currentTarget) setShowMobileFilters(false);
-        }}>
-          <section role="dialog" aria-modal="true" aria-labelledby="mobile-filter-heading" className="max-h-[88dvh] w-full max-w-lg overflow-y-auto rounded-t-[24px] bg-[#FFFDFC] p-5 shadow-2xl sm:rounded-[24px]">
-            <div className="mb-5 flex items-center justify-between border-b border-[#EAE6DF] pb-4">
-              <div><h2 id="mobile-filter-heading" className="text-lg font-extrabold">Filter products</h2><p className="mt-1 text-xs text-[#756B61]">Narrow your product search.</p></div>
-              <button type="button" onClick={() => setShowMobileFilters(false)} aria-label="Close filters" className="flex h-9 w-9 items-center justify-center rounded-full bg-[#FCFAF6] text-[#756B61] hover:bg-[#FFF1ED] hover:text-[#9F2D18]"><X className="h-5 w-5" /></button>
+      {!isDesktop && showMobileFilters && (
+        <div
+          className="fixed inset-0 z-[100] flex items-end justify-center bg-[#17202A]/45 sm:items-center sm:p-4 lg:hidden"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget) setShowMobileFilters(false);
+          }}
+        >
+          <section
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby={MOBILE_FILTER_TITLE_ID}
+            className="flex max-h-[90dvh] w-full max-w-lg flex-col overflow-hidden rounded-t-2xl border border-[#EAE6DF] bg-[#FFFDFC] shadow-2xl sm:rounded-2xl"
+          >
+            <div className="flex shrink-0 items-center justify-between border-b border-[#EAE6DF] px-4 py-4 sm:px-5">
+              <div>
+                <h2 id={MOBILE_FILTER_TITLE_ID} className="text-base font-extrabold text-[#17202A]">Filter products</h2>
+                <p className="mt-0.5 text-[11px] text-[#756B61]">Choose the details that matter to you.</p>
+              </div>
+              <button type="button" onClick={() => setShowMobileFilters(false)} aria-label="Close filters" className="flex h-9 w-9 items-center justify-center rounded-full bg-[#F4F1ED] text-[#62574E] transition hover:bg-[#FFF0EB] hover:text-[#9F2D18]"><X className="h-4 w-4" /></button>
             </div>
-            {renderFilterControls()}
+            <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 py-4 sm:px-5">
+              {renderFilterFields("mobile")}
+            </div>
+            <div className="shrink-0 border-t border-[#EAE6DF] bg-white px-4 py-3 pb-[calc(0.75rem+env(safe-area-inset-bottom))] sm:px-5">
+              {renderFilterActions(true)}
+            </div>
           </section>
         </div>
       )}
@@ -1407,17 +1613,20 @@ export default function ShopPage() {
   return (
     <Suspense fallback={
       <>
-        <SiteHeader />
-        <main className="min-h-dvh bg-[#FFFDFC] px-4 pb-28 pt-8">
+        <SiteHeader searchMode="PRODUCTS" />
+        <main className="min-h-dvh bg-[#FFFDFC] px-3 pb-24 pt-6 sm:px-5 lg:px-8">
           <div className="mx-auto max-w-[1600px]">
-            <div className="h-32 animate-pulse rounded-2xl bg-[#F0ECE7]" />
-            <div className="mt-6 grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-4 2xl:grid-cols-5">
-              {Array.from({ length: 10 }, (_, index) => (
-                <div key={index} className="overflow-hidden rounded-xl border border-[#EAE6DF] bg-white">
-                  <div className="aspect-[4/3] animate-pulse bg-[#F0ECE7]" />
-                  <div className="space-y-2 p-2.5"><div className="h-3 w-4/5 animate-pulse rounded bg-[#F0ECE7]" /><div className="h-3 w-2/5 animate-pulse rounded bg-[#F0ECE7]" /></div>
-                </div>
-              ))}
+            <div className="mb-5 h-10 w-48 animate-pulse rounded bg-[#F0ECE7]" />
+            <div className="grid grid-cols-1 gap-5 lg:grid-cols-[224px_minmax(0,1fr)]">
+              <div className="hidden h-[520px] animate-pulse rounded-xl bg-[#F0ECE7] lg:block" />
+              <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-3 2xl:grid-cols-4 sm:gap-3">
+                {Array.from({ length: 8 }, (_, index) => (
+                  <div key={index} className="overflow-hidden rounded-xl border border-[#EAE6DF] bg-white">
+                    <div className="aspect-square animate-pulse bg-[#F0ECE7]" />
+                    <div className="space-y-2 p-3"><div className="h-2.5 w-3/4 animate-pulse rounded bg-[#F0ECE7]" /><div className="h-3.5 w-1/2 animate-pulse rounded bg-[#F0ECE7]" /></div>
+                  </div>
+                ))}
+              </div>
             </div>
           </div>
         </main>

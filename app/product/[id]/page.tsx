@@ -5,7 +5,7 @@ import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import {
   ArrowLeft, ArrowRight, BadgeCheck, Check, ChevronLeft, ChevronRight,
-  Heart, Image as ImageIcon, LoaderCircle, MapPin, Package, Plus,
+  Heart, Image as ImageIcon, LoaderCircle, MapPin, Package,
   Share2, ShoppingCart, Store, X,
 } from "lucide-react";
 import SiteHeader from "@/components/layout/SiteHeader";
@@ -13,7 +13,7 @@ import MobileBottomNav from "@/components/layout/MobileBottomNav";
 import AddToCartButton from "@/components/cart/AddToCartButton";
 
 type Availability = "AVAILABLE" | "ASK_SELLER" | "UNAVAILABLE";
-type ProductImage = { id: string; url: string; sortOrder: number };
+type ProductImage = { id: string; url: string; publicId: string | null; sortOrder: number };
 type CategoryParent = { id: string; name: string; imageUrl: string | null; iconKey: string | null };
 type ProductCategory = {
   id?: string;
@@ -86,7 +86,7 @@ function isProductUnavailable(product: { availability: Availability; stockQuanti
   return product.availability === "UNAVAILABLE" || product.stockQuantity === 0;
 }
 function canAddProductToCart(product: { price: number | null; availability: Availability; stockQuantity: number | null }): boolean {
-  return product.availability === "AVAILABLE" && product.price !== null && product.price > 0 && product.stockQuantity !== 0;
+  return product.availability === "AVAILABLE" && product.price !== null && Number.isSafeInteger(product.price) && product.price > 0 && product.stockQuantity !== 0 && (product.stockQuantity === null || (Number.isSafeInteger(product.stockQuantity) && product.stockQuantity > 0));
 }
 function getSellerProfileHref(businessId: string): string {
   return `/seller/${encodeURIComponent(businessId)}`;
@@ -95,8 +95,8 @@ function parseImages(value: unknown): ProductImage[] {
   if (!Array.isArray(value)) return [];
   return value.flatMap((item, index) => {
     if (!isRecord(item) || typeof item.url !== "string" || !item.url.trim()) return [];
-    return [{ id: typeof item.id === "string" ? item.id : `image-${index}`, url: item.url, sortOrder: typeof item.sortOrder === "number" ? item.sortOrder : index }];
-  });
+    return [{ id: typeof item.id === "string" ? item.id : `image-${index}`, url: item.url.trim(), publicId: cleanString(item.publicId), sortOrder: typeof item.sortOrder === "number" && Number.isFinite(item.sortOrder) ? item.sortOrder : index }];
+  }).sort((a, b) => a.sortOrder - b.sortOrder);
 }
 function parseCategory(value: unknown): ProductCategory {
   if (!isRecord(value) || typeof value.name !== "string") return null;
@@ -181,7 +181,7 @@ function formatNaira(value: number): string {
   return `₦${value.toLocaleString("en-NG")}`;
 }
 function formatProductPrice(price: number | null): string {
-  return price !== null ? formatNaira(price) : "Price unavailable";
+  return price !== null ? formatNaira(price) : "Price not listed";
 }
 function getDiscountPercentage(price: number | null, originalPrice: number | null): number | null {
   if (price === null || originalPrice === null || price <= 0 || originalPrice <= price) return null;
@@ -233,7 +233,7 @@ function findSavedProduct(value: unknown, productId: string): { found: boolean; 
 }
 function extractCreatedSavedId(value: unknown): string | null {
   if (!isRecord(value)) return null;
-  for (const key of ["item", "savedListing", "saved"]) {
+  for (const key of ["item", "savedListing", "savedItem", "saved"]) {
     if (isRecord(value[key])) {
       const id = cleanString(value[key].id);
       if (id) return id;
@@ -244,8 +244,8 @@ function extractCreatedSavedId(value: unknown): string | null {
 function getAvailability(product: { availability: Availability; stockQuantity: number | null }) {
   if (isProductUnavailable(product)) return { label: "Out of stock", description: "This product is currently unavailable.", className: "bg-[#FEE2E2] text-[#B42318]" };
   if (product.availability === "AVAILABLE") return {
-    label: product.stockQuantity !== null ? `${product.stockQuantity} in stock` : "Available",
-    description: product.stockQuantity !== null ? "This product is currently available." : "Check availability again at checkout.",
+    label: "Available",
+    description: "This product is currently marked as available.",
     className: "bg-[#DCFCE7] text-[#166534]",
   };
   return { label: "Confirm availability", description: "Availability needs to be confirmed before online checkout.", className: "bg-[#FEF3C7] text-[#92400E]" };
@@ -262,28 +262,44 @@ function ProductTile({ product, adding, feedback, onAddToCart }: {
   feedback: CartFeedback;
   onAddToCart: (product: RelatedProduct) => void;
 }) {
-  const image = product.images[0]?.url ?? product.imageUrl;
+  const image = product.imageUrl ?? product.images[0]?.url ?? null;
   const unavailable = !canAddProductToCart(product);
   const href = `/product/${encodeURIComponent(product.id)}`;
+  const isSuccess = feedback?.productId === product.id && feedback.kind === "success";
+  const isError = feedback?.productId === product.id && feedback.kind === "error";
+
   return (
-    <article className="group w-[165px] shrink-0 snap-start overflow-hidden rounded-2xl border border-[#EAE6DF] bg-white transition hover:-translate-y-1 hover:border-[#FFB39F] hover:shadow-lg">
+    <article className="group flex w-[188px] shrink-0 snap-start flex-col overflow-hidden rounded-xl border border-[#EAE6DF] bg-white transition hover:border-[#FFB39F] hover:shadow-[0_5px_18px_rgba(23,32,42,0.07)] sm:w-[210px]">
       <Link href={href} aria-label={`View ${product.name}`} className="block">
-        <div className="relative aspect-square overflow-hidden bg-[#FCFAF6]">
-          {image ? <img src={image} alt={product.name} loading="lazy" className="h-full w-full object-cover transition-transform duration-300 group-hover:scale-[1.04]" /> : <div className="flex h-full w-full items-center justify-center text-[#B6A99E]"><Package className="h-10 w-10" /></div>}
-          {isProductUnavailable(product) && <span className="absolute right-2 top-2 rounded-full bg-[#17202A]/85 px-2 py-1 text-[9px] font-bold text-white">Out of stock</span>}
-          {product.category && <span className="absolute bottom-2 left-2 max-w-[calc(100%-1rem)] truncate rounded-full border border-white/70 bg-white/95 px-2 py-1 text-[9px] font-bold text-[#9F2D18]">{formatCategoryName(product.category)}</span>}
+        <div className="relative aspect-square overflow-hidden bg-[#FCFAF6] p-3">
+          {image ? (
+            <img src={image} alt={product.name} loading="lazy" className="h-full w-full object-contain transition-transform duration-300 group-hover:scale-[1.035]" />
+          ) : (
+            <div className="flex h-full w-full items-center justify-center text-[#B6A99E]"><Package className="h-10 w-10" /></div>
+          )}
+          {isProductUnavailable(product) && (
+            <span className="absolute left-2 top-2 rounded-full bg-[#17202A]/85 px-2 py-1 text-[9px] font-bold text-white">Out of stock</span>
+          )}
         </div>
       </Link>
-      <div className="p-3">
-        <Link href={href} className="block min-h-10 text-xs font-semibold leading-5 text-[#292522] hover:text-[#9F2D18]"><span className="line-clamp-2">{product.name}</span></Link>
+      <div className="flex flex-1 flex-col p-3">
+        {product.category && <p className="mb-1 truncate text-[9px] font-semibold uppercase tracking-wide text-[#8A6252]">{formatCategoryName(product.category)}</p>}
+        <Link href={href} className="line-clamp-2 min-h-10 text-xs font-semibold leading-5 text-[#292522] hover:text-[#9F2D18]">{product.name}</Link>
         <div className="mt-2"><ProductPrice price={product.price} originalPrice={product.originalPrice} /></div>
-        <div className="mt-3 flex items-center justify-between gap-2 border-t border-[#F0ECE7] pt-2.5">
-          <Link href={href} className="min-w-0 truncate text-[10px] font-bold text-[#9F2D18] hover:text-[#FF5A36]">View product</Link>
-          <button type="button" disabled={unavailable || adding} onClick={() => onAddToCart(product)} aria-label={`Add ${product.name} to cart`} title={unavailable ? "Unavailable for online checkout" : "Add to cart"} className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-full transition disabled:cursor-not-allowed disabled:opacity-50 ${unavailable ? "bg-[#EEEAE6] text-[#A69B91]" : "bg-[#FF5A36] text-white hover:bg-[#E94E2C]"}`}>
-            {adding ? <LoaderCircle className="h-4 w-4 animate-spin" /> : feedback?.productId === product.id && feedback.kind === "success" ? <Check className="h-4 w-4" /> : <span className="relative"><ShoppingCart className="h-4 w-4" /><Plus className="absolute -right-1.5 -top-1.5 h-2.5 w-2.5 rounded-full bg-white text-[#FF5A36]" /></span>}
+        <div className="mt-auto pt-3">
+          <button
+            type="button"
+            disabled={unavailable || adding}
+            onClick={() => onAddToCart(product)}
+            aria-label={`Add ${product.name} to cart`}
+            title={unavailable ? "This product is not available for online checkout" : "Add to cart"}
+            className={`flex min-h-9 w-full items-center justify-center gap-2 rounded-lg px-2.5 py-2 text-[10px] font-bold transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#FF5A36] focus-visible:ring-offset-2 disabled:cursor-not-allowed ${isSuccess ? "bg-[#DCFCE7] text-[#166534]" : unavailable ? "bg-[#EEEAE6] text-[#8A8077]" : "bg-[#FF5A36] text-white hover:bg-[#E94E2C]"}`}
+          >
+            {adding ? <LoaderCircle className="h-3.5 w-3.5 animate-spin" /> : isSuccess ? <Check className="h-3.5 w-3.5" /> : <ShoppingCart className="h-3.5 w-3.5" />}
+            {adding ? "Adding…" : isSuccess ? "Added to cart" : unavailable ? "Unavailable" : "Add to cart"}
           </button>
+          {isError && <p role="alert" className="mt-2 text-[9px] leading-4 text-[#B42318]">{feedback?.message}</p>}
         </div>
-        {feedback?.productId === product.id && <p role="status" className={`mt-2 text-[9px] leading-4 ${feedback.kind === "success" ? "text-[#267344]" : "text-[#B42318]"}`}>{feedback.message}</p>}
       </div>
     </article>
   );
@@ -326,7 +342,7 @@ function ProductPageContent({ id }: { id: string }) {
         if (!normalized) throw new Error("Product information is not available.");
         if (controller.signal.aborted) return;
         setProduct(normalized);
-        setRelatedProducts(parseRelatedProducts(payload.relatedProducts).slice(0, MAX_RELATED_PRODUCTS));
+        setRelatedProducts(parseRelatedProducts(payload.relatedProducts).filter((item, index, all) => item.id !== normalized.id && all.findIndex((candidate) => candidate.id === item.id) === index).slice(0, MAX_RELATED_PRODUCTS));
         setActiveImageIndex(0); setImageViewerOpen(false); setShareFeedback(""); setRelatedCartFeedback(null);
       } catch (loadError) {
         if (loadError instanceof DOMException && loadError.name === "AbortError") return;
@@ -350,39 +366,73 @@ function ProductPageContent({ id }: { id: string }) {
   function showNextImage() { if (images.length > 1) setActiveImageIndex((current) => current === images.length - 1 ? 0 : current + 1); }
 
   useEffect(() => {
-    if (!imageViewerOpen) return;
+    if (!imageViewerOpen || images.length === 0) return;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+
     function handleKeyDown(event: KeyboardEvent) {
       if (event.key === "Escape") setImageViewerOpen(false);
       if (event.key === "ArrowLeft") setActiveImageIndex((current) => current === 0 ? images.length - 1 : current - 1);
       if (event.key === "ArrowRight") setActiveImageIndex((current) => current === images.length - 1 ? 0 : current + 1);
     }
+
     window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      window.removeEventListener("keydown", handleKeyDown);
+    };
   }, [imageViewerOpen, images.length]);
 
   useEffect(() => {
-    if (!id) { setSavedLoading(false); return; }
+    if (!id) {
+      setSavedLoading(false);
+      return;
+    }
+
     const controller = new AbortController();
-    async function loadSavedStatus() {
-      setSavedLoading(true);
+
+    async function loadSavedStatus(showLoading: boolean) {
+      if (showLoading) setSavedLoading(true);
       try {
-        const response = await fetch("/api/saved", { method: "GET", cache: "no-store", headers: { Accept: "application/json" }, signal: controller.signal });
+        const response = await fetch("/api/saved?type=PRODUCT", {
+          method: "GET",
+          cache: "no-store",
+          headers: { Accept: "application/json" },
+          signal: controller.signal,
+        });
+
         if (response.status === 401 || response.status === 403) {
-          if (!controller.signal.aborted) { setSaved(false); setSavedListingId(null); }
+          if (!controller.signal.aborted) {
+            setSaved(false);
+            setSavedListingId(null);
+          }
           return;
         }
         if (!response.ok) return;
+
         const result = findSavedProduct(await response.json(), id);
         if (controller.signal.aborted) return;
-        setSaved(result.found); setSavedListingId(result.savedListingId);
+        setSaved(result.found);
+        setSavedListingId(result.savedListingId);
       } catch (loadError) {
-        if (!(loadError instanceof DOMException && loadError.name === "AbortError")) console.error("Saved product status error:", loadError);
+        if (!(loadError instanceof DOMException && loadError.name === "AbortError")) {
+          console.error("Saved product status error:", loadError);
+        }
       } finally {
-        if (!controller.signal.aborted) setSavedLoading(false);
+        if (showLoading && !controller.signal.aborted) setSavedLoading(false);
       }
     }
-    void loadSavedStatus();
-    return () => controller.abort();
+
+    const refreshSavedStatus = () => { void loadSavedStatus(false); };
+    void loadSavedStatus(true);
+    window.addEventListener(SAVED_ITEMS_CHANGED_EVENT, refreshSavedStatus);
+    window.addEventListener("storage", refreshSavedStatus);
+
+    return () => {
+      controller.abort();
+      window.removeEventListener(SAVED_ITEMS_CHANGED_EVENT, refreshSavedStatus);
+      window.removeEventListener("storage", refreshSavedStatus);
+    };
   }, [id]);
 
   async function addRelatedProductToCart(relatedProduct: RelatedProduct) {
@@ -396,7 +446,7 @@ function ProductPageContent({ id }: { id: string }) {
       });
       const payload: unknown = await response.json().catch(() => null);
       if (response.status === 401 || response.status === 403) {
-        router.push(`/buyer/login?callbackUrl=${encodeURIComponent(`/product/${relatedProduct.id}`)}`);
+        router.push(`/buyer/login?callbackUrl=${encodeURIComponent(`${window.location.pathname}${window.location.search}`)}`);
         return;
       }
       if (!response.ok) throw new Error(isRecord(payload) ? cleanString(payload.error) ?? cleanString(payload.message) ?? "Unable to add this product to your cart." : "Unable to add this product to your cart.");
@@ -414,8 +464,8 @@ function ProductPageContent({ id }: { id: string }) {
       if (saved) {
         let recordId = savedListingId;
         if (!recordId) {
-          const savedResponse = await fetch("/api/saved", { method: "GET", cache: "no-store", headers: { Accept: "application/json" } });
-          if (savedResponse.status === 401 || savedResponse.status === 403) { router.push("/buyer/login"); return; }
+          const savedResponse = await fetch("/api/saved?type=PRODUCT", { method: "GET", cache: "no-store", headers: { Accept: "application/json" } });
+          if (savedResponse.status === 401 || savedResponse.status === 403) { router.push(`/buyer/login?callbackUrl=${encodeURIComponent(`${window.location.pathname}${window.location.search}`)}`); return; }
           if (!savedResponse.ok) throw new Error("Unable to retrieve your saved product.");
           const record = findSavedProduct(await savedResponse.json(), product.id);
           recordId = record.savedListingId;
@@ -423,6 +473,7 @@ function ProductPageContent({ id }: { id: string }) {
         }
         const response = await fetch(`/api/saved/${encodeURIComponent(recordId)}`, { method: "DELETE", headers: { Accept: "application/json" } });
         const payload: unknown = await response.json().catch(() => null);
+        if (response.status === 401 || response.status === 403) { router.push(`/buyer/login?callbackUrl=${encodeURIComponent(`${window.location.pathname}${window.location.search}`)}`); return; }
         if (!response.ok) throw new Error(isRecord(payload) && typeof payload.error === "string" ? payload.error : "Unable to remove this product from Saved.");
         setSaved(false); setSavedListingId(null); setSavedFeedback("Product removed from your Saved products.");
       } else {
@@ -438,7 +489,7 @@ function ProductPageContent({ id }: { id: string }) {
         setSaved(true);
         let recordId = extractCreatedSavedId(payload);
         if (!recordId) {
-          const refreshResponse = await fetch("/api/saved", { method: "GET", cache: "no-store", headers: { Accept: "application/json" } });
+          const refreshResponse = await fetch("/api/saved?type=PRODUCT", { method: "GET", cache: "no-store", headers: { Accept: "application/json" } });
           if (refreshResponse.ok) recordId = findSavedProduct(await refreshResponse.json(), product.id).savedListingId;
         }
         setSavedListingId(recordId); setSavedFeedback("Product added to your Saved products.");
@@ -471,7 +522,7 @@ function ProductPageContent({ id }: { id: string }) {
   const listedDate = formatDate(product.createdAt);
   const area = product.seller.location?.area;
   const sellerProfileHref = getSellerProfileHref(product.seller.id);
-  const categoryParts = product.category?.parent ? [product.category.parent, product.category] : product.category ? [product.category] : [];
+  const categoryParts = product.category?.parent && product.category.parent.id !== product.category.id ? [product.category.parent, product.category] : product.category ? [product.category] : [];
 
   return (
     <>
@@ -483,14 +534,15 @@ function ProductPageContent({ id }: { id: string }) {
             {categoryParts.map((item, index) => {
               const isCurrent = index === categoryParts.length - 1;
               const href = isCurrent ? categoryHref(product.category) : item.id ? `/shop?categoryId=${encodeURIComponent(item.id)}&category=${encodeURIComponent(item.name)}` : "/shop";
-              return <span key={`${item.id}-${item.name}`} className="flex min-w-0 items-center gap-2"><ChevronRight className="h-3 w-3 shrink-0" /><Link href={href} aria-current={isCurrent ? "page" : undefined} className={`truncate ${isCurrent ? "font-semibold text-[#9F2D18]" : "hover:text-[#9F2D18]"}`}>{item.name}</Link></span>;
+              return <span key={`${item.id}-${item.name}`} className="flex min-w-0 items-center gap-2"><ChevronRight className="h-3 w-3 shrink-0" /><Link href={href} className={`truncate ${isCurrent ? "font-semibold text-[#9F2D18]" : "hover:text-[#9F2D18]"}`}>{item.name}</Link></span>;
             })}
+            <span className="flex min-w-0 items-center gap-2" aria-current="page"><ChevronRight className="h-3 w-3 shrink-0" /><span className="max-w-[220px] truncate font-semibold text-[#514840]">{product.name}</span></span>
           </nav>
 
           <div className="grid min-w-0 items-start gap-6 lg:grid-cols-[minmax(0,1.08fr)_minmax(380px,0.92fr)] xl:gap-10">
             <section className="min-w-0">
               <div className="flex flex-col gap-3 lg:grid lg:grid-cols-[78px_minmax(0,1fr)]">
-                {images.length > 1 && <div className="order-2 flex gap-2 overflow-x-auto pb-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden lg:order-1 lg:flex-col lg:overflow-y-auto lg:overflow-x-hidden">{images.map((image, index) => <button key={`${product.id}-image-${index}`} type="button" onClick={() => setActiveImageIndex(index)} aria-label={`Show product image ${index + 1}`} aria-pressed={activeImageIndex === index} className={`h-[66px] w-[66px] shrink-0 overflow-hidden rounded-xl border-2 bg-white transition sm:h-[74px] sm:w-[74px] ${activeImageIndex === index ? "border-[#FF5A36]" : "border-[#EAE6DF] hover:border-[#FFB39F]"}`}><img src={image} alt="" loading="lazy" className="h-full w-full object-cover" /></button>)}</div>}
+                {images.length > 1 && <div className="order-2 flex gap-2 overflow-x-auto pb-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden lg:order-1 lg:flex-col lg:overflow-y-auto lg:overflow-x-hidden">{images.map((image, index) => <button key={`${product.id}-image-${index}`} type="button" onClick={() => setActiveImageIndex(index)} aria-label={`Show product image ${index + 1}`} aria-pressed={activeImageIndex === index} className={`h-[66px] w-[66px] shrink-0 overflow-hidden rounded-xl border-2 bg-white transition sm:h-[74px] sm:w-[74px] ${activeImageIndex === index ? "border-[#FF5A36]" : "border-[#EAE6DF] hover:border-[#FFB39F]"}`}><img src={image} alt="" loading="lazy" className="h-full w-full object-contain" /></button>)}</div>}
                 <div className="order-1 min-w-0 lg:order-2"><div className="relative overflow-hidden rounded-[22px] border border-[#EAE6DF] bg-[#FCFAF6]"><div className="relative flex aspect-square max-h-[680px] items-center justify-center">
                   {images[activeImageIndex] ? <img src={images[activeImageIndex]} alt={product.name} fetchPriority="high" className="h-full w-full object-contain" /> : <div className="flex flex-col items-center gap-3 text-[#B6A99E]"><ImageIcon className="h-14 w-14" /><span className="text-xs font-semibold">No product image available</span></div>}
                   {images.length > 0 && <button type="button" onClick={() => setImageViewerOpen(true)} className="absolute bottom-3 right-3 inline-flex items-center gap-2 rounded-full border border-[#EAE6DF] bg-white/95 px-3 py-2 text-[10px] font-bold text-[#514840] shadow-sm hover:text-[#9F2D18]"><ImageIcon className="h-3.5 w-3.5" />View images</button>}
@@ -499,14 +551,13 @@ function ProductPageContent({ id }: { id: string }) {
               </div>
             </section>
 
-            <section className="min-w-0 lg:sticky lg:top-[100px] lg:self-start"><div className="rounded-[22px] border border-[#EAE6DF] bg-white p-5 shadow-[0_5px_24px_rgba(23,32,42,0.045)] sm:p-6">
+            <section className="min-w-0 lg:sticky lg:top-[148px] lg:self-start"><div className="rounded-[22px] border border-[#EAE6DF] bg-white p-5 shadow-[0_5px_24px_rgba(23,32,42,0.045)] sm:p-6">
               <div className="flex flex-wrap items-center gap-2">
-                {product.category && <Link href={categoryHref(product.category)} className="rounded-full border border-[#FFD9CE] bg-[#FFF1ED] px-3 py-1.5 text-[10px] font-bold text-[#9F2D18] hover:bg-[#FFE0D6]">{formatCategoryName(product.category)}</Link>}
                 {product.seller.verified && <span className="inline-flex items-center gap-1 rounded-full bg-[#DCFCE7] px-2.5 py-1.5 text-[10px] font-bold text-[#166534]"><BadgeCheck className="h-3.5 w-3.5" />Verified seller</span>}
               </div>
               <h1 className="mt-4 break-words text-[25px] font-extrabold leading-tight tracking-tight text-[#17202A] sm:text-[31px]">{product.name}</h1>
               <div className="mt-5"><ProductPrice price={product.price} originalPrice={product.originalPrice} large /></div>
-              <div className="mt-5 flex flex-wrap items-center gap-2"><span className={`rounded-full px-3 py-1.5 text-[10px] font-bold ${availability.className}`}>{availability.label}</span>{product.stockQuantity !== null && product.stockQuantity > 0 && <span className="text-[10px] text-[#756B61]">Limited to available stock</span>}</div>
+              <div className="mt-5 flex flex-wrap items-center gap-2"><span className={`rounded-full px-3 py-1.5 text-[10px] font-bold ${availability.className}`}>{availability.label}</span></div>
               <p className="mt-2 text-[11px] leading-5 text-[#756B61]">{availability.description}</p>
               <div className="mt-5 grid grid-cols-2 gap-2">
                 <button type="button" onClick={() => void toggleSavedProduct()} disabled={saving || savedLoading} aria-pressed={saved} className={`inline-flex min-h-11 items-center justify-center gap-2 rounded-xl border px-3 py-2.5 text-xs font-bold transition disabled:cursor-not-allowed disabled:opacity-60 ${saved ? "border-[#FFB39F] bg-[#FFF1ED] text-[#9F2D18]" : "border-[#EAE6DF] bg-white text-[#514840] hover:border-[#FFB39F] hover:text-[#9F2D18]"}`}>
@@ -520,9 +571,8 @@ function ProductPageContent({ id }: { id: string }) {
               <div><h2 className="mb-3 text-sm font-extrabold text-[#292522]">Purchase this product</h2><AddToCartButton productId={product.id} availability={product.availability} price={product.price} stockQuantity={product.stockQuantity} /></div>
               <div className="mt-5 rounded-xl border border-[#EAE6DF] bg-[#FCFAF6] p-3.5"><div className="flex min-w-0 items-center gap-3">
                 <div className="flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-xl border border-[#EAE6DF] bg-white text-[#9F2D18]">{product.seller.imageUrl ? <img src={product.seller.imageUrl} alt="" loading="lazy" className="h-full w-full object-cover" /> : <Store className="h-5 w-5" />}</div>
-                <div className="min-w-0 flex-1"><p className="text-[9px] font-medium uppercase tracking-wide text-[#91877E]">Sold by</p><div className="mt-0.5 flex min-w-0 items-center gap-1.5"><p className="truncate text-xs font-bold text-[#514840]">{product.seller.name}</p>{product.seller.verified && <BadgeCheck className="h-3.5 w-3.5 shrink-0 text-[#168A62]" aria-label="Verified seller" />}</div><p className="mt-1 flex items-center gap-1 text-[10px] text-[#91877E]"><MapPin className="h-3 w-3 shrink-0 text-[#FF5A36]" /><span className="truncate">{area ?? "Location not listed"}</span></p></div>
+                <div className="min-w-0 flex-1"><p className="text-[9px] font-medium uppercase tracking-wide text-[#91877E]">Sold by</p><div className="mt-0.5 flex min-w-0 items-center gap-1.5"><p className="truncate text-xs font-bold text-[#514840]">{product.seller.name}</p></div><p className="mt-1 flex items-center gap-1 text-[10px] text-[#91877E]"><MapPin className="h-3 w-3 shrink-0 text-[#FF5A36]" /><span className="truncate">{area ?? "Location not listed"}</span></p></div>
               </div><Link href={sellerProfileHref} className="mt-4 flex min-h-10 w-full items-center justify-center gap-2 rounded-xl border border-[#FFD1C5] bg-white px-4 py-2.5 text-xs font-bold text-[#9F2D18] hover:border-[#FF5A36] hover:bg-[#FFF1ED]">View Seller<ArrowRight className="h-4 w-4" /></Link></div>
-              {listedDate && <p className="mt-4 text-[10px] text-[#91877E]">Listed on {listedDate}</p>}
             </div></section>
           </div>
 
@@ -532,10 +582,8 @@ function ProductPageContent({ id }: { id: string }) {
               {product.keywords.length > 0 && <div className="mt-6 border-t border-[#F0ECE7] pt-5"><h3 className="text-xs font-extrabold text-[#292522]">Product tags</h3><div className="mt-3 flex flex-wrap gap-2">{product.keywords.map((keyword, index) => <span key={`${product.id}-${keyword}-${index}`} className="rounded-full bg-[#F5F2ED] px-3 py-1.5 text-[10px] font-semibold text-[#6F675F]">{keyword}</span>)}</div></div>}
             </div>
             <aside className="h-fit rounded-[22px] border border-[#EAE6DF] bg-[#FCFAF6] p-5"><h2 className="text-sm font-extrabold text-[#292522]">Product details</h2><div className="mt-4 divide-y divide-[#EAE6DF]">
-              <div className="flex items-start justify-between gap-3 py-3"><span className="text-[11px] text-[#756B61]">Category</span><span className="text-right text-[11px] font-semibold text-[#514840]">{formatCategoryName(product.category)}</span></div>
-              <div className="flex items-start justify-between gap-3 py-3"><span className="text-[11px] text-[#756B61]">Availability</span><span className="text-right text-[11px] font-semibold text-[#514840]">{availability.label}</span></div>
-              <div className="flex items-start justify-between gap-3 py-3"><span className="text-[11px] text-[#756B61]">Stock</span><span className="text-right text-[11px] font-semibold text-[#514840]">{product.stockQuantity === null ? "Not specified" : product.stockQuantity}</span></div>
-              <div className="flex items-start justify-between gap-3 py-3"><span className="text-[11px] text-[#756B61]">Seller verification</span><span className={`text-right text-[11px] font-bold ${product.seller.verified ? "text-[#168A62]" : "text-[#756B61]"}`}>{product.seller.verified ? "Verified" : "Not verified"}</span></div>
+              <div className="flex items-start justify-between gap-3 py-3"><span className="text-[11px] text-[#756B61]">Stock quantity</span><span className="text-right text-[11px] font-semibold text-[#514840]">{product.stockQuantity === null ? "Not specified" : `${product.stockQuantity} units`}</span></div>
+              {listedDate && <div className="flex items-start justify-between gap-3 py-3"><span className="text-[11px] text-[#756B61]">Date listed</span><span className="text-right text-[11px] font-semibold text-[#514840]">{listedDate}</span></div>}
             </div></aside>
           </section>
 
@@ -546,7 +594,7 @@ function ProductPageContent({ id }: { id: string }) {
         </div>
       </main>
 
-      {imageViewerOpen && images.length > 0 && <div className="fixed inset-0 z-[150] flex items-center justify-center bg-[#17120F]/95 p-3 sm:p-6"><button type="button" aria-label="Close image viewer" onClick={() => setImageViewerOpen(false)} className="absolute right-4 top-4 z-10 flex h-11 w-11 items-center justify-center rounded-full border border-white/20 bg-white/10 text-white hover:bg-white/20"><X className="h-5 w-5" /></button><div className="relative flex h-full w-full max-w-[1200px] items-center justify-center"><img src={images[activeImageIndex]} alt={product.name} className="max-h-[85dvh] max-w-full object-contain" />{images.length > 1 && <><button type="button" onClick={showPreviousImage} aria-label="Previous image" className="absolute left-0 flex h-11 w-11 items-center justify-center rounded-full bg-white/15 text-white hover:bg-white/25"><ChevronLeft className="h-6 w-6" /></button><button type="button" onClick={showNextImage} aria-label="Next image" className="absolute right-0 flex h-11 w-11 items-center justify-center rounded-full bg-white/15 text-white hover:bg-white/25"><ChevronRight className="h-6 w-6" /></button></>}<div className="absolute bottom-3 left-1/2 -translate-x-1/2 rounded-full bg-black/50 px-4 py-2 text-xs font-bold text-white">{activeImageIndex + 1} / {images.length}</div></div></div>}
+      {imageViewerOpen && images.length > 0 && <div className="fixed inset-0 z-[150] flex items-center justify-center bg-[#17120F]/95 p-3 sm:p-6" onMouseDown={(event) => { if (event.target === event.currentTarget) setImageViewerOpen(false); }}><button type="button" aria-label="Close image viewer" onClick={() => setImageViewerOpen(false)} className="absolute right-4 top-4 z-10 flex h-11 w-11 items-center justify-center rounded-full border border-white/20 bg-white/10 text-white hover:bg-white/20"><X className="h-5 w-5" /></button><div className="relative flex h-full w-full max-w-[1200px] items-center justify-center"><img src={images[activeImageIndex]} alt={product.name} className="max-h-[85dvh] max-w-full object-contain" />{images.length > 1 && <><button type="button" onClick={showPreviousImage} aria-label="Previous image" className="absolute left-0 flex h-11 w-11 items-center justify-center rounded-full bg-white/15 text-white hover:bg-white/25"><ChevronLeft className="h-6 w-6" /></button><button type="button" onClick={showNextImage} aria-label="Next image" className="absolute right-0 flex h-11 w-11 items-center justify-center rounded-full bg-white/15 text-white hover:bg-white/25"><ChevronRight className="h-6 w-6" /></button></>}<div className="absolute bottom-3 left-1/2 -translate-x-1/2 rounded-full bg-black/50 px-4 py-2 text-xs font-bold text-white">{activeImageIndex + 1} / {images.length}</div></div></div>}
       <MobileBottomNav />
     </>
   );
@@ -554,6 +602,6 @@ function ProductPageContent({ id }: { id: string }) {
 
 export default function ProductPage() {
   const params = useParams();
-  const id = typeof params.id === "string" ? params.id : "";
+  const id = typeof params.id === "string" ? params.id : Array.isArray(params.id) ? params.id[0] ?? "" : "";
   return <ProductPageContent key={id} id={id} />;
 }

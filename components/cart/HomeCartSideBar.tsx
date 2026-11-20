@@ -38,6 +38,7 @@ const EMPTY_CART: CartSnapshot = {
   subtotal: 0,
 };
 
+const CART_CHANGED_EVENT = "remarket-cart-changed";
 const MAX_QUANTITY_PER_PRODUCT = 50;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -45,15 +46,13 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 function cleanString(value: unknown): string | null {
-  return typeof value === "string" && value.trim()
-    ? value.trim()
-    : null;
+  if (typeof value !== "string") return null;
+  const cleaned = value.trim();
+  return cleaned.length > 0 ? cleaned : null;
 }
 
 function numberOrNull(value: unknown): number | null {
-  return typeof value === "number" && Number.isFinite(value)
-    ? value
-    : null;
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
 }
 
 function parseCartSnapshot(value: unknown): CartSnapshot | null {
@@ -65,24 +64,38 @@ function parseCartSnapshot(value: unknown): CartSnapshot | null {
     const id = cleanString(raw.id);
     const productId = cleanString(raw.productId);
     const name = cleanString(raw.name);
-    const quantity = numberOrNull(raw.quantity);
+    const rawQuantity = numberOrNull(raw.quantity);
 
-    if (!id || !productId || !name || quantity === null || quantity < 1) {
+    if (
+      !id ||
+      !productId ||
+      !name ||
+      rawQuantity === null ||
+      !Number.isFinite(rawQuantity) ||
+      rawQuantity < 1
+    ) {
       return [];
     }
 
-    return [{
-      id,
-      productId,
-      name,
-      unitPrice: numberOrNull(raw.unitPrice),
-      quantity: Math.floor(quantity),
-      lineTotal: numberOrNull(raw.lineTotal),
-      imageUrl: cleanString(raw.imageUrl),
-      stockQuantity: numberOrNull(raw.stockQuantity),
-      purchasable: raw.purchasable === true,
-      unavailableReason: cleanString(raw.unavailableReason),
-    }];
+    const quantity = Math.floor(rawQuantity);
+    if (quantity < 1) return [];
+
+    const stockQuantity = numberOrNull(raw.stockQuantity);
+
+    return [
+      {
+        id,
+        productId,
+        name,
+        unitPrice: numberOrNull(raw.unitPrice),
+        quantity,
+        lineTotal: numberOrNull(raw.lineTotal),
+        imageUrl: cleanString(raw.imageUrl),
+        stockQuantity: stockQuantity === null ? null : Math.max(0, Math.floor(stockQuantity)),
+        purchasable: raw.purchasable === true,
+        unavailableReason: cleanString(raw.unavailableReason),
+      },
+    ];
   });
 
   const parsedCount = numberOrNull(value.itemCount);
@@ -90,17 +103,21 @@ function parseCartSnapshot(value: unknown): CartSnapshot | null {
 
   return {
     items,
-    itemCount: parsedCount === null
-      ? items.reduce((total, item) => total + item.quantity, 0)
-      : Math.max(0, Math.floor(parsedCount)),
-    subtotal: parsedSubtotal === null
-      ? items.reduce((total, item) => total + (item.lineTotal ?? 0), 0)
-      : Math.max(0, parsedSubtotal),
+    itemCount:
+      parsedCount === null
+        ? items.reduce((total, item) => total + item.quantity, 0)
+        : Math.max(0, Math.floor(parsedCount)),
+    subtotal:
+      parsedSubtotal === null
+        ? items.reduce((total, item) => total + (item.lineTotal ?? 0), 0)
+        : Math.max(0, parsedSubtotal),
   };
 }
 
 function formatNaira(amount: number): string {
-  return `₦${amount.toLocaleString("en-NG")}`;
+  return `₦${amount.toLocaleString("en-NG", {
+    maximumFractionDigits: 2,
+  })}`;
 }
 
 export default function HomeCartSidebar() {
@@ -113,6 +130,7 @@ export default function HomeCartSidebar() {
 
   useEffect(() => {
     let active = true;
+    const controller = new AbortController();
 
     async function loadCart(showLoading: boolean) {
       if (showLoading && active) setLoading(true);
@@ -124,6 +142,7 @@ export default function HomeCartSidebar() {
           credentials: "same-origin",
           cache: "no-store",
           headers: { Accept: "application/json" },
+          signal: controller.signal,
         });
 
         if (response.status === 401 || response.status === 403) {
@@ -137,14 +156,17 @@ export default function HomeCartSidebar() {
         const payload: unknown = await response.json().catch(() => null);
 
         if (!response.ok) {
-          const message = isRecord(payload) && typeof payload.error === "string"
-            ? payload.error
-            : "Unable to load your cart.";
+          const message =
+            isRecord(payload) && typeof payload.error === "string"
+              ? payload.error
+              : "Unable to load your cart.";
           throw new Error(message);
         }
 
         const parsed = parseCartSnapshot(payload);
-        if (!parsed) throw new Error("The cart response could not be read.");
+        if (!parsed) {
+          throw new Error("The cart response could not be read.");
+        }
 
         if (active) {
           setCart(parsed);
@@ -152,7 +174,10 @@ export default function HomeCartSidebar() {
           setLoadError("");
         }
       } catch (error) {
-        if (active) {
+        if (
+          active &&
+          !(error instanceof Error && error.name === "AbortError")
+        ) {
           setLoadError(
             error instanceof Error ? error.message : "Unable to load your cart.",
           );
@@ -166,21 +191,24 @@ export default function HomeCartSidebar() {
       void loadCart(false);
     }
 
-    window.addEventListener("remarket-cart-changed", handleCartChanged);
+    window.addEventListener(CART_CHANGED_EVENT, handleCartChanged);
     window.addEventListener("focus", handleCartChanged);
     void loadCart(true);
 
     return () => {
       active = false;
-      window.removeEventListener("remarket-cart-changed", handleCartChanged);
+      controller.abort();
+      window.removeEventListener(CART_CHANGED_EVENT, handleCartChanged);
       window.removeEventListener("focus", handleCartChanged);
     };
   }, []);
 
   const canCheckout = useMemo(
-    () => cart.items.length > 0 && cart.items.every(
-      (item) => item.purchasable && item.lineTotal !== null,
-    ),
+    () =>
+      cart.items.length > 0 &&
+      cart.items.every(
+        (item) => item.purchasable && item.lineTotal !== null,
+      ),
     [cart.items],
   );
 
@@ -211,9 +239,13 @@ export default function HomeCartSidebar() {
           credentials: "same-origin",
           headers: {
             Accept: "application/json",
-            ...(method === "PATCH" ? { "Content-Type": "application/json" } : {}),
+            ...(method === "PATCH"
+              ? { "Content-Type": "application/json" }
+              : {}),
           },
-          ...(method === "PATCH" ? { body: JSON.stringify({ quantity }) } : {}),
+          ...(method === "PATCH"
+            ? { body: JSON.stringify({ quantity }) }
+            : {}),
         },
       );
 
@@ -227,15 +259,16 @@ export default function HomeCartSidebar() {
       }
 
       if (!response.ok) {
-        const message = isRecord(payload) && typeof payload.error === "string"
-          ? payload.error
-          : method === "PATCH"
-            ? "Unable to update the quantity."
-            : "Unable to remove this product.";
+        const message =
+          isRecord(payload) && typeof payload.error === "string"
+            ? payload.error
+            : method === "PATCH"
+              ? "Unable to update the quantity."
+              : "Unable to remove this product.";
         throw new Error(message);
       }
 
-      window.dispatchEvent(new Event("remarket-cart-changed"));
+      window.dispatchEvent(new Event(CART_CHANGED_EVENT));
     } catch (error) {
       setLoadError(
         error instanceof Error ? error.message : "Unable to update your cart.",
@@ -247,16 +280,20 @@ export default function HomeCartSidebar() {
 
   if (!expanded) {
     return (
-      <aside className="fixed bottom-6 right-4 z-30 hidden lg:block">
+      <aside
+        aria-label="Shopping cart"
+        className="fixed bottom-6 right-4 z-30 hidden lg:block"
+      >
         <button
           type="button"
           onClick={() => setExpanded(true)}
-          aria-label={`Open cart, ${cart.itemCount} items`}
-          className="flex min-h-12 items-center gap-2 rounded-l-xl rounded-r-md border border-[#EAE6DF] bg-white px-3 py-3 text-xs font-bold text-[#9F2D18] shadow-[0_8px_26px_rgba(23,32,42,0.14)] transition hover:bg-[#FFF1ED]"
+          aria-label={`Open cart, ${cart.itemCount} ${cart.itemCount === 1 ? "item" : "items"}`}
+          aria-expanded={false}
+          className="flex min-h-12 items-center gap-2.5 rounded-xl border border-[#EAE6DF] bg-white px-4 py-3 text-sm font-semibold text-[#9F2D18] shadow-[0_8px_26px_rgba(23,32,42,0.14)] transition hover:border-[#FFD0C3] hover:bg-[#FFF7F4] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#FF5A36] focus-visible:ring-offset-2"
         >
-          <ShoppingCart className="h-4 w-4" />
-          Cart
-          <span className="flex h-5 min-w-5 items-center justify-center rounded-full bg-[#FF5A36] px-1.5 text-[10px] text-white">
+          <ShoppingCart className="h-[18px] w-[18px]" aria-hidden="true" />
+          <span>Cart</span>
+          <span className="flex h-5 min-w-5 items-center justify-center rounded-full bg-[#FF5A36] px-1.5 text-[10px] font-bold text-white">
             {cart.itemCount > 99 ? "99+" : cart.itemCount}
           </span>
         </button>
@@ -265,106 +302,141 @@ export default function HomeCartSidebar() {
   }
 
   return (
-    <aside className="fixed bottom-4 right-4 top-[92px] z-30 hidden w-[312px] lg:block">
-      <section className="flex h-full min-h-0 flex-col overflow-hidden rounded-2xl border border-[#EAE6DF] bg-white shadow-[0_12px_36px_rgba(23,32,42,0.14)]">
-        <header className="flex shrink-0 items-center justify-between border-b border-[#EAE6DF] bg-[#FCFAF6] px-4 py-3">
-          <div className="flex min-w-0 items-center gap-2">
-            <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-[#FFF0EB] text-[#9F2D18]">
-              <ShoppingCart className="h-4 w-4" />
+    <aside
+      aria-label="Shopping cart preview"
+      className="fixed bottom-4 right-4 top-[140px] z-30 hidden w-[296px] lg:block xl:w-[312px]"
+    >
+      <section
+        aria-labelledby="home-cart-title"
+        className="flex h-full min-h-0 flex-col overflow-hidden rounded-xl border border-[#EAE6DF] bg-white shadow-[0_10px_30px_rgba(23,32,42,0.12)]"
+      >
+        <header className="flex shrink-0 items-center justify-between border-b border-[#EAE6DF] bg-[#FCFAF6] px-4 py-3.5">
+          <div className="flex min-w-0 items-center gap-2.5">
+            <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-[#FFF0EB] text-[#9F2D18]">
+              <ShoppingCart className="h-[17px] w-[17px]" aria-hidden="true" />
             </span>
             <div className="min-w-0">
-              <h2 className="text-sm font-extrabold text-[#401B13]">Your cart</h2>
-              <p className="text-[10px] text-[#756B61]">
+              <h2 id="home-cart-title" className="text-sm font-bold text-[#17202A]">
+                Your cart
+              </h2>
+              <p className="mt-0.5 text-[11px] text-[#756B61]" aria-live="polite">
                 {cart.itemCount} {cart.itemCount === 1 ? "item" : "items"}
               </p>
             </div>
           </div>
 
-          <div className="flex items-center gap-1">
+          <div className="flex shrink-0 items-center gap-1">
             <button
               type="button"
               onClick={() => setExpanded(false)}
               aria-label="Collapse cart panel"
-              className="flex h-8 w-8 items-center justify-center rounded-lg text-[#756B61] transition hover:bg-white hover:text-[#9F2D18]"
+              aria-expanded={true}
+              className="flex h-8 w-8 items-center justify-center rounded-lg text-[#756B61] transition hover:bg-white hover:text-[#9F2D18] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#FF5A36]"
             >
-              <ChevronDown className="h-4 w-4" />
+              <ChevronDown className="h-4 w-4" aria-hidden="true" />
             </button>
             <Link
               href="/cart"
               aria-label="Open full cart page"
-              className="flex h-8 w-8 items-center justify-center rounded-lg text-[#756B61] transition hover:bg-white hover:text-[#9F2D18]"
+              title="Open full cart"
+              className="flex h-8 w-8 items-center justify-center rounded-lg text-[#756B61] transition hover:bg-white hover:text-[#9F2D18] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#FF5A36]"
             >
-              <ChevronRight className="h-4 w-4" />
+              <ChevronRight className="h-4 w-4" aria-hidden="true" />
             </Link>
           </div>
         </header>
 
         {loadError && (
-          <div role="alert" className="mx-3 mt-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-[10px] leading-4 text-red-700">
-            {loadError}
+          <div
+            role="alert"
+            className="mx-3 mt-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs leading-5 text-red-700"
+          >
+            <p>{loadError}</p>
             <button
               type="button"
-              onClick={() => window.dispatchEvent(new Event("remarket-cart-changed"))}
-              className="ml-1 font-bold underline"
+              onClick={() => window.dispatchEvent(new Event(CART_CHANGED_EVENT))}
+              className="mt-1 font-semibold underline underline-offset-2"
             >
-              Retry
+              Try again
             </button>
           </div>
         )}
 
-        <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-3 py-3">
+        <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-3.5 py-3">
           {loading ? (
-            <div className="flex h-40 items-center justify-center text-[#9F2D18]">
-              <Loader2 className="h-5 w-5 animate-spin" />
+            <div
+              role="status"
+              className="flex h-40 items-center justify-center text-[#9F2D18]"
+            >
+              <Loader2 className="h-5 w-5 animate-spin" aria-hidden="true" />
               <span className="ml-2 text-xs text-[#756B61]">Loading cart...</span>
             </div>
           ) : needsBuyerSignIn ? (
             <div className="flex h-full min-h-48 flex-col items-center justify-center px-3 text-center">
-              <ShoppingCart className="h-8 w-8 text-[#C7B9AE]" />
-              <p className="mt-3 text-sm font-bold text-[#401B13]">Sign in to view your cart</p>
-              <p className="mt-1 text-[10px] leading-4 text-[#756B61]">
+              <span className="flex h-12 w-12 items-center justify-center rounded-full bg-[#FCFAF6] text-[#9F2D18]">
+                <ShoppingCart className="h-6 w-6" aria-hidden="true" />
+              </span>
+              <p className="mt-3 text-sm font-bold text-[#17202A]">
+                Sign in to view your cart
+              </p>
+              <p className="mt-1 text-xs leading-5 text-[#756B61]">
                 Use a buyer account to add and manage products.
               </p>
               <Link
                 href={`/buyer/login?callbackUrl=${encodeURIComponent("/cart")}`}
-                className="mt-4 rounded-lg bg-[#FF5A36] px-4 py-2.5 text-xs font-bold text-white hover:bg-[#E94A28]"
+                className="mt-4 inline-flex min-h-10 items-center justify-center rounded-lg bg-[#FF5A36] px-4 py-2.5 text-xs font-bold text-white transition hover:bg-[#E94A28] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#FF5A36] focus-visible:ring-offset-2"
               >
                 Sign in
               </Link>
             </div>
           ) : cart.items.length === 0 ? (
             <div className="flex h-full min-h-48 flex-col items-center justify-center px-3 text-center">
-              <span className="flex h-14 w-14 items-center justify-center rounded-2xl bg-[#FCFAF6] text-[#C7B9AE]">
-                <Package className="h-7 w-7" />
+              <span className="flex h-12 w-12 items-center justify-center rounded-full bg-[#FCFAF6] text-[#A69B91]">
+                <Package className="h-6 w-6" aria-hidden="true" />
               </span>
-              <p className="mt-3 text-sm font-bold text-[#401B13]">Your cart is empty</p>
-              <p className="mt-1 text-[10px] leading-4 text-[#756B61]">
-                Add a product from the homepage and it will appear here.
+              <p className="mt-3 text-sm font-bold text-[#17202A]">
+                Your cart is empty
               </p>
-              <Link href="/shop" className="mt-4 text-xs font-bold text-[#9F2D18] hover:text-[#FF5A36]">
+              <p className="mt-1 text-xs leading-5 text-[#756B61]">
+                Products you add will appear here.
+              </p>
+              <Link
+                href="/shop"
+                className="mt-4 text-xs font-semibold text-[#9F2D18] transition hover:text-[#FF5A36]"
+              >
                 Explore products
               </Link>
             </div>
           ) : (
-            <div className="space-y-3">
+            <div className="space-y-3.5">
               {cart.items.map((item) => {
                 const canIncrease =
                   item.purchasable &&
                   item.quantity < MAX_QUANTITY_PER_PRODUCT &&
-                  (item.stockQuantity === null || item.quantity < item.stockQuantity);
+                  (item.stockQuantity === null ||
+                    item.quantity < item.stockQuantity);
+                const isBusy = busyItemId === item.id;
 
                 return (
-                  <article key={item.id} className="flex gap-2.5 border-b border-[#F0ECE7] pb-3 last:border-0">
+                  <article
+                    key={item.id}
+                    className="flex gap-3 border-b border-[#F0ECE7] pb-3.5 last:border-0 last:pb-0"
+                  >
                     <Link
                       href={`/product/${encodeURIComponent(item.productId)}`}
                       aria-label={`View ${item.name}`}
-                      className="h-[62px] w-[62px] shrink-0 overflow-hidden rounded-lg bg-[#FCFAF6]"
+                      className="h-[68px] w-[68px] shrink-0 overflow-hidden rounded-lg bg-[#FCFAF6] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#FF5A36]"
                     >
                       {item.imageUrl ? (
-                        <img src={item.imageUrl} alt={item.name} className="h-full w-full object-cover" />
+                        <img
+                          src={item.imageUrl}
+                          alt={item.name}
+                          loading="lazy"
+                          className="h-full w-full object-cover"
+                        />
                       ) : (
                         <span className="flex h-full w-full items-center justify-center text-[#B9AEA4]">
-                          <Package className="h-5 w-5" />
+                          <Package className="h-6 w-6" aria-hidden="true" />
                         </span>
                       )}
                     </Link>
@@ -372,57 +444,81 @@ export default function HomeCartSidebar() {
                     <div className="min-w-0 flex-1">
                       <Link
                         href={`/product/${encodeURIComponent(item.productId)}`}
-                        className="line-clamp-2 text-[11px] font-semibold leading-4 text-[#26313B] hover:text-[#9F2D18]"
+                        className="line-clamp-2 text-xs font-semibold leading-[1.4] text-[#26313B] transition hover:text-[#9F2D18] focus-visible:outline-none focus-visible:underline"
                       >
                         {item.name}
                       </Link>
-                      <p className="mt-1 text-xs font-extrabold text-[#9F2D18]">
-                        {item.unitPrice === null ? "Price unavailable" : formatNaira(item.unitPrice)}
-                      </p>
+
+                      <div className="mt-1 flex min-w-0 items-baseline justify-between gap-2">
+                        <p className="truncate text-[13px] font-bold text-[#9F2D18]">
+                          {item.unitPrice === null
+                            ? "Price unavailable"
+                            : formatNaira(item.unitPrice)}
+                        </p>
+                        {item.lineTotal !== null && item.quantity > 1 && (
+                          <p className="shrink-0 text-[10px] font-medium text-[#756B61]">
+                            {formatNaira(item.lineTotal)} total
+                          </p>
+                        )}
+                      </div>
 
                       <div className="mt-2 flex items-center justify-between gap-2">
-                        <div className="inline-flex h-7 items-center rounded-lg border border-[#EAE6DF] bg-white">
+                        <div
+                          className="inline-flex h-[30px] items-center overflow-hidden rounded-md border border-[#EAE6DF] bg-white"
+                          aria-label={`Quantity controls for ${item.name}`}
+                        >
                           <button
                             type="button"
-                            disabled={busyItemId === item.id || !item.purchasable || item.quantity <= 1}
-                            onClick={() => void changeItem(item, "PATCH", item.quantity - 1)}
+                            disabled={
+                              isBusy || !item.purchasable || item.quantity <= 1
+                            }
+                            onClick={() =>
+                              void changeItem(item, "PATCH", item.quantity - 1)
+                            }
                             aria-label={`Decrease ${item.name} quantity`}
-                            className="flex h-7 w-7 items-center justify-center text-[#756B61] hover:text-[#9F2D18] disabled:opacity-35"
+                            className="flex h-[30px] w-[30px] items-center justify-center text-[#756B61] transition hover:bg-[#FFF7F4] hover:text-[#9F2D18] disabled:cursor-not-allowed disabled:opacity-35"
                           >
-                            <Minus className="h-3 w-3" />
+                            <Minus className="h-3.5 w-3.5" aria-hidden="true" />
                           </button>
-                          <span className="min-w-6 text-center text-[10px] font-bold tabular-nums text-[#17202A]">
+                          <span
+                            className="min-w-7 px-1 text-center text-[11px] font-semibold tabular-nums text-[#17202A]"
+                            aria-live="polite"
+                          >
                             {item.quantity}
                           </span>
                           <button
                             type="button"
-                            disabled={busyItemId === item.id || !canIncrease}
-                            onClick={() => void changeItem(item, "PATCH", item.quantity + 1)}
+                            disabled={isBusy || !canIncrease}
+                            onClick={() =>
+                              void changeItem(item, "PATCH", item.quantity + 1)
+                            }
                             aria-label={`Increase ${item.name} quantity`}
-                            className="flex h-7 w-7 items-center justify-center text-[#756B61] hover:text-[#9F2D18] disabled:opacity-35"
+                            className="flex h-[30px] w-[30px] items-center justify-center text-[#756B61] transition hover:bg-[#FFF7F4] hover:text-[#9F2D18] disabled:cursor-not-allowed disabled:opacity-35"
                           >
-                            <Plus className="h-3 w-3" />
+                            <Plus className="h-3.5 w-3.5" aria-hidden="true" />
                           </button>
                         </div>
 
                         <button
                           type="button"
-                          disabled={busyItemId === item.id}
+                          disabled={isBusy}
                           onClick={() => void changeItem(item, "DELETE")}
                           aria-label={`Remove ${item.name} from cart`}
-                          className="flex h-7 w-7 items-center justify-center rounded-lg text-[#9A8E84] transition hover:bg-[#FFF1ED] hover:text-[#9F2D18] disabled:opacity-40"
+                          title="Remove item"
+                          className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-[#94877D] transition hover:bg-[#FFF1ED] hover:text-[#9F2D18] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#FF5A36] disabled:cursor-not-allowed disabled:opacity-40"
                         >
-                          {busyItemId === item.id ? (
-                            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                          {isBusy ? (
+                            <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
                           ) : (
-                            <Trash2 className="h-3.5 w-3.5" />
+                            <Trash2 className="h-4 w-4" aria-hidden="true" />
                           )}
                         </button>
                       </div>
 
                       {!item.purchasable && (
-                        <p className="mt-1 text-[9px] leading-3 text-[#B42318]">
-                          {item.unavailableReason ?? "This product cannot currently be checked out."}
+                        <p className="mt-1.5 text-[10px] leading-4 text-[#B42318]">
+                          {item.unavailableReason ??
+                            "This product cannot currently be checked out."}
                         </p>
                       )}
                     </div>
@@ -433,26 +529,30 @@ export default function HomeCartSidebar() {
           )}
         </div>
 
-        <footer className="shrink-0 border-t border-[#EAE6DF] bg-[#FCFAF6] p-3">
+        <footer className="shrink-0 border-t border-[#EAE6DF] bg-[#FCFAF6] p-3.5">
           <div className="mb-3 flex items-center justify-between gap-3">
-            <span className="text-xs font-semibold text-[#756B61]">Subtotal</span>
-            <span className="text-base font-extrabold text-[#401B13]">{formatNaira(cart.subtotal)}</span>
+            <p className="text-xs font-semibold text-[#756B61]">Items subtotal</p>
+            <p className="text-base font-bold tabular-nums text-[#17202A]">
+              {formatNaira(cart.subtotal)}
+            </p>
           </div>
+
           <Link
             href="/cart"
-            className="flex min-h-10 w-full items-center justify-center rounded-lg border border-[#FFD0C3] bg-white px-3 py-2 text-xs font-bold text-[#9F2D18] transition hover:bg-[#FFF1ED]"
+            className="flex min-h-10 w-full items-center justify-center rounded-lg border border-[#FFD0C3] bg-white px-3 py-2.5 text-xs font-semibold text-[#9F2D18] transition hover:bg-[#FFF1ED] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#FF5A36] focus-visible:ring-offset-2"
           >
             View cart
           </Link>
+
           {canCheckout ? (
             <Link
               href="/checkout"
-              className="mt-2 flex min-h-10 w-full items-center justify-center rounded-lg bg-[#FF5A36] px-3 py-2 text-xs font-bold text-white transition hover:bg-[#E94A28]"
+              className="mt-2 flex min-h-10 w-full items-center justify-center rounded-lg bg-[#FF5A36] px-3 py-2.5 text-xs font-bold text-white transition hover:bg-[#E94A28] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#FF5A36] focus-visible:ring-offset-2"
             >
               Continue to checkout
             </Link>
           ) : (
-            <p className="mt-2 text-center text-[9px] leading-4 text-[#8B7E74]">
+            <p className="mt-2 text-center text-[10px] leading-4 text-[#8B7E74]">
               {cart.items.length === 0
                 ? "Add a product to begin checkout."
                 : "Review unavailable products in your cart before checkout."}

@@ -3,9 +3,17 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import {
-  ArrowRight, BadgeCheck, Check, ChevronRight, MapPin, Package,
-  Search, Share2, ShoppingCart, Star,
+  ArrowRight,
+  BadgeCheck,
+  Check,
+  ChevronRight,
+  MapPin,
+  Package,
+  Share2,
+  ShoppingCart,
+  Star,
 } from "lucide-react";
+
 import SiteHeader from "@/components/layout/SiteHeader";
 import MobileBottomNav from "@/components/layout/MobileBottomNav";
 import HomeCartSidebar from "@/components/cart/HomeCartSideBar";
@@ -16,6 +24,7 @@ import {
 } from "@/lib/categories";
 
 type Availability = "AVAILABLE" | "ASK_SELLER" | "UNAVAILABLE";
+
 type RecentProduct = {
   id: string;
   name: string;
@@ -31,9 +40,15 @@ type RecentProduct = {
   area: string | null;
   verified: boolean;
 };
+
 type JsonResult = Record<string, unknown> | null;
 type FeedResult = { data: JsonResult; failed: boolean };
-type CartFeedback = { productId: string; kind: "success" | "error"; message: string } | null;
+type CartFeedback = {
+  productId: string;
+  kind: "success" | "error";
+  message: string;
+} | null;
+
 type HomeCategory = ReMarketCategory & {
   parentId: string | null;
   imageUrl: string | null;
@@ -43,7 +58,7 @@ type HomeCategoryNode = HomeCategory & { children: HomeCategoryNode[] };
 
 const PRODUCT_FEED_URL = "/api/recent-products?page=1&pageSize=12";
 const MAX_HOME_PRODUCTS = 12;
-const MAX_HOME_CATEGORIES = 10;
+const MAX_HOME_CATEGORIES = 8;
 const CART_CHANGED_EVENT = "remarket-cart-changed";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -57,13 +72,17 @@ function cleanString(value: unknown): string | null {
 }
 
 function parseOptionalNumber(value: unknown): number | null {
-  if (typeof value === "number") return Number.isFinite(value) && value >= 0 ? value : null;
+  if (typeof value === "number") {
+    return Number.isFinite(value) && value >= 0 ? value : null;
+  }
+
   if (typeof value === "string") {
     const cleaned = value.trim().replace(/,/g, "");
     if (!cleaned) return null;
     const parsed = Number(cleaned);
     return Number.isFinite(parsed) && parsed >= 0 ? parsed : null;
   }
+
   return null;
 }
 
@@ -81,22 +100,37 @@ function parseCategoryName(value: unknown): string | null {
 function canAddProductToCart(
   product: Pick<RecentProduct, "availability" | "price" | "stockQuantity">,
 ): boolean {
-  return product.availability === "AVAILABLE" && product.price !== null &&
-    product.price > 0 && product.stockQuantity !== 0;
+  return product.availability === "AVAILABLE" &&
+    product.price !== null &&
+    product.price > 0 &&
+    product.stockQuantity !== 0;
+}
+
+function isProductOutOfStock(
+  product: Pick<RecentProduct, "availability" | "stockQuantity">,
+): boolean {
+  return product.availability === "UNAVAILABLE" || product.stockQuantity === 0;
 }
 
 function parseRecentProduct(value: unknown): RecentProduct | null {
   if (!isRecord(value)) return null;
+
   const id = cleanString(value.id);
   const name = cleanString(value.name);
   if (!id || !name) return null;
 
   const price = parseOptionalNumber(value.price);
   const candidateOriginalPrice = parseOptionalNumber(value.originalPrice);
-  const originalPrice = price !== null && candidateOriginalPrice !== null && candidateOriginalPrice > price
-    ? candidateOriginalPrice
-    : null;
-  const seller = isRecord(value.seller) ? value.seller : isRecord(value.business) ? value.business : null;
+  const originalPrice =
+    price !== null && candidateOriginalPrice !== null && candidateOriginalPrice > price
+      ? candidateOriginalPrice
+      : null;
+
+  const seller = isRecord(value.seller)
+    ? value.seller
+    : isRecord(value.business)
+      ? value.business
+      : null;
   const location = seller && isRecord(seller.location) ? seller.location : null;
   const rawRating = parseOptionalNumber(value.rating) ?? parseOptionalNumber(value.averageRating);
   const rating = rawRating !== null && rawRating <= 5 ? rawRating : null;
@@ -140,7 +174,10 @@ function parseHomeCategoryRecords(value: unknown): Array<{
 
   function visit(items: unknown[], inheritedParentId: string | null = null) {
     for (const item of items) {
-      if (!isRecord(item) || typeof item.id !== "string" || typeof item.name !== "string") continue;
+      if (!isRecord(item) || typeof item.id !== "string" || typeof item.name !== "string") {
+        continue;
+      }
+
       const id = item.id.trim();
       const name = item.name.trim();
       if (!id || !name) continue;
@@ -151,7 +188,9 @@ function parseHomeCategoryRecords(value: unknown): Array<{
         name,
         iconKey: cleanString(item.iconKey),
         isActive: typeof item.isActive === "boolean" ? item.isActive : true,
-        sortOrder: typeof item.sortOrder === "number" && Number.isFinite(item.sortOrder) ? item.sortOrder : 0,
+        sortOrder: typeof item.sortOrder === "number" && Number.isFinite(item.sortOrder)
+          ? item.sortOrder
+          : 0,
         parentId,
         imageUrl: cleanString(item.imageUrl),
       });
@@ -178,6 +217,7 @@ function parseHomeCategories(value: unknown): HomeCategoryNode[] {
     isActive: item.isActive,
     sortOrder: item.sortOrder,
   }));
+
   const merged = mergeCategories(apiCategories);
   const mergedById = new Map(merged.map((category) => [category.id, category]));
   const nodes = new Map<string, HomeCategoryNode>();
@@ -185,6 +225,7 @@ function parseHomeCategories(value: unknown): HomeCategoryNode[] {
   for (const item of records) {
     const display = mergedById.get(item.id);
     if (!display) continue;
+
     nodes.set(item.id, {
       ...display,
       parentId: item.parentId,
@@ -207,12 +248,19 @@ function parseHomeCategories(value: unknown): HomeCategoryNode[] {
 
 async function fetchHomepageProducts(signal: AbortSignal): Promise<FeedResult> {
   try {
-    const response = await fetch(PRODUCT_FEED_URL, { cache: "no-store", signal });
+    const response = await fetch(PRODUCT_FEED_URL, {
+      cache: "no-store",
+      credentials: "same-origin",
+      headers: { Accept: "application/json" },
+      signal,
+    });
+
     if (response.status === 404) return { data: null, failed: false };
     if (!response.ok) {
       console.error(`Homepage products returned HTTP ${response.status}.`);
       return { data: null, failed: true };
     }
+
     const data: unknown = await response.json();
     if (!isRecord(data)) return { data: null, failed: true };
     return { data, failed: false };
@@ -227,40 +275,38 @@ function formatNaira(amount: number): string {
 }
 
 function getDiscountPercentage(product: RecentProduct): number | null {
-  if (product.price === null || product.originalPrice === null || product.originalPrice <= product.price) return null;
+  if (
+    product.price === null ||
+    product.originalPrice === null ||
+    product.originalPrice <= product.price
+  ) {
+    return null;
+  }
+
   return Math.round(((product.originalPrice - product.price) / product.originalPrice) * 100);
 }
 
 function getStockLabel(product: RecentProduct): { label: string; className: string } {
-  if (product.availability === "UNAVAILABLE" || product.stockQuantity === 0) {
-    return { label: "Out of stock", className: "bg-[#F3E8E8] text-[#9F2D18]" };
+  if (isProductOutOfStock(product)) {
+    return { label: "Out of stock", className: "bg-[#FCE8E6] text-[#A12A20]" };
   }
+
   if (product.availability === "AVAILABLE") {
-    return {
-      label: product.stockQuantity !== null ? `${product.stockQuantity} available` : "Available",
-      className: "bg-[#DDF5EA] text-[#137A59]",
-    };
+    return { label: "Available", className: "bg-[#E3F3E9] text-[#176B48]" };
   }
-  return { label: "Confirm availability", className: "bg-[#FFF0C7] text-[#8A671D]" };
+
+  return { label: "Confirm availability", className: "bg-[#FFF1D6] text-[#805D16]" };
 }
 
 function ProductPrice({ product }: { product: RecentProduct }) {
-  const discount = getDiscountPercentage(product);
   return (
-    <div className="min-w-0">
-      <div className="flex flex-wrap items-baseline gap-x-1.5 gap-y-0.5">
-        <span className="text-[13px] font-extrabold leading-5 text-[#9F2D18] sm:text-sm">
-          {product.price !== null ? formatNaira(product.price) : "Price unavailable"}
-        </span>
-        {product.originalPrice !== null && (
-          <span className="text-[9px] text-[#958B83] line-through sm:text-[10px]">
-            {formatNaira(product.originalPrice)}
-          </span>
-        )}
-      </div>
-      {discount !== null && (
-        <span className="mt-0.5 inline-flex rounded bg-[#FFF0EA] px-1.5 py-0.5 text-[8px] font-bold text-[#9F2D18]">
-          {discount}% off
+    <div className="flex min-w-0 flex-wrap items-baseline gap-x-2 gap-y-0.5">
+      <span className="text-[15px] font-bold leading-5 text-[#17202A] sm:text-base">
+        {product.price !== null ? formatNaira(product.price) : "Ask seller"}
+      </span>
+      {product.originalPrice !== null && (
+        <span className="text-xs text-[#8B8178] line-through">
+          {formatNaira(product.originalPrice)}
         </span>
       )}
     </div>
@@ -269,21 +315,36 @@ function ProductPrice({ product }: { product: RecentProduct }) {
 
 function ProductRating({ product }: { product: RecentProduct }) {
   if (product.rating === null || product.reviewCount < 1) return null;
+
   const filledStars = Math.round(product.rating);
   return (
-    <div className="mt-1 flex min-w-0 items-center gap-1" aria-label={`${product.rating.toFixed(1)} out of 5 stars from ${product.reviewCount} reviews`}>
-      <span className="flex shrink-0 items-center gap-[1px]">
+    <div
+      className="mt-1 flex min-w-0 items-center gap-1.5"
+      aria-label={`${product.rating.toFixed(1)} out of 5 stars from ${product.reviewCount} reviews`}
+    >
+      <span className="flex shrink-0 items-center gap-px">
         {Array.from({ length: 5 }).map((_, index) => (
-          <Star key={index} className={`h-2.5 w-2.5 ${index < filledStars ? "fill-[#F5B942] text-[#F5B942]" : "fill-none text-[#C8BFB5]"}`} aria-hidden="true" />
+          <Star
+            key={index}
+            className={`h-3 w-3 ${index < filledStars
+              ? "fill-[#E7A52E] text-[#E7A52E]"
+              : "fill-none text-[#C9C1B9]"}`}
+            aria-hidden="true"
+          />
         ))}
       </span>
-      <span className="truncate text-[8px] text-[#756B61]">{product.rating.toFixed(1)} ({product.reviewCount})</span>
+      <span className="truncate text-[11px] text-[#71675F]">
+        {product.rating.toFixed(1)} ({product.reviewCount})
+      </span>
     </div>
   );
 }
 
 function ProductCard({
-  product, adding, feedback, onAddToCart,
+  product,
+  adding,
+  feedback,
+  onAddToCart,
 }: {
   product: RecentProduct;
   adding: boolean;
@@ -291,49 +352,122 @@ function ProductCard({
   onAddToCart: (product: RecentProduct) => void;
 }) {
   const canAdd = canAddProductToCart(product);
+  const soldOut = isProductOutOfStock(product);
   const stock = getStockLabel(product);
   const discount = getDiscountPercentage(product);
   const productHref = `/product/${encodeURIComponent(product.id)}`;
+  const currentFeedback = feedback?.productId === product.id ? feedback : null;
 
   return (
-    <article className="group flex min-w-0 flex-col overflow-hidden rounded-lg border border-[#EAE6DF] bg-white shadow-[0_2px_9px_rgba(23,32,42,0.035)] transition hover:-translate-y-0.5 hover:border-[#FFD0C3] hover:shadow-[0_6px_16px_rgba(23,32,42,0.07)]">
-      <Link href={productHref} aria-label={`View ${product.name}`} className="relative block aspect-[4/3] overflow-hidden bg-[#FCFAF6] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[#FF5A36]">
+    <article className="group flex h-full min-w-0 flex-col overflow-hidden rounded-xl border border-[#E8E4DE] bg-white transition-colors hover:border-[#F3B6A5]">
+      <Link
+        href={productHref}
+        aria-label={`View ${product.name}`}
+        className="relative block aspect-square overflow-hidden bg-[#F8F7F4] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[#FF5A36]"
+      >
         {product.imageUrl ? (
-          <img src={product.imageUrl} alt={product.name} loading="lazy" className="h-full w-full object-cover transition-transform duration-300 group-hover:scale-[1.035]" />
+          <img
+            src={product.imageUrl}
+            alt={product.name}
+            loading="lazy"
+            className="h-full w-full object-contain p-2.5 transition-transform duration-200 group-hover:scale-[1.025] sm:p-3"
+          />
         ) : (
-          <span className="flex h-full w-full items-center justify-center text-[#C3B9AE]"><Package className="h-7 w-7" /></span>
+          <span className="flex h-full w-full items-center justify-center text-[#B9AEA4]">
+            <Package className="h-9 w-9" aria-hidden="true" />
+          </span>
         )}
-        {discount !== null && <span className="absolute bottom-1.5 left-1.5 rounded bg-[#9F2D18] px-1.5 py-0.5 text-[8px] font-bold text-white">-{discount}%</span>}
-        <span className={`absolute right-1.5 top-1.5 max-w-[calc(100%-0.75rem)] truncate rounded-full px-1.5 py-0.5 text-[8px] font-bold ${stock.className}`}>{stock.label}</span>
+
+        <span className={`absolute left-2 top-2 max-w-[calc(100%-1rem)] truncate rounded-full px-2 py-1 text-[10px] font-semibold ${stock.className}`}>
+          {stock.label}
+        </span>
+
+        {discount !== null && (
+          <span className="absolute right-2 top-2 rounded-md bg-[#9F2D18] px-2 py-1 text-[10px] font-bold text-white">
+            -{discount}%
+          </span>
+        )}
       </Link>
 
-      <div className="flex min-w-0 flex-1 flex-col p-2 sm:p-2.5">
-        <div className="flex min-h-3.5 items-center justify-between gap-1.5">
-          <p className="truncate text-[8px] font-bold uppercase tracking-wide text-[#9F2D18]">{product.category ?? "Product"}</p>
-          {product.verified && <span title="Verified seller" aria-label="Verified seller" className="inline-flex shrink-0 items-center gap-0.5 text-[8px] font-semibold text-[#137A59]"><BadgeCheck className="h-3 w-3" />Verified</span>}
+      <div className="flex min-w-0 flex-1 flex-col p-2.5 sm:p-3">
+        <div className="flex min-h-5 items-center justify-between gap-2">
+          <p className="min-w-0 truncate text-[10px] font-semibold uppercase tracking-wide text-[#8A4A38]">
+            {product.category ?? "Products"}
+          </p>
+          {product.verified && (
+            <span
+              title="Verified seller"
+              aria-label="Verified seller"
+              className="inline-flex shrink-0 items-center gap-1 text-[10px] font-medium text-[#176B48]"
+            >
+              <BadgeCheck className="h-3.5 w-3.5" aria-hidden="true" />
+              <span className="hidden sm:inline">Verified</span>
+            </span>
+          )}
         </div>
-        <Link href={productHref} className="mt-1 line-clamp-2 min-h-8 text-[11px] font-semibold leading-4 text-[#26313B] transition hover:text-[#9F2D18] sm:text-xs">{product.name}</Link>
-        <div className="mt-1.5"><ProductPrice product={product} /></div>
-        <ProductRating product={product} />
 
-        <div className="mt-auto border-t border-[#F0ECE7] pt-2">
-          <div className="flex min-w-0 items-center justify-between gap-1.5">
-            <p className="flex min-w-0 items-center gap-0.5 text-[8px] text-[#8A8077]"><MapPin className="h-2.5 w-2.5 shrink-0" /><span className="truncate">{product.area ?? "Nearby listing"}</span></p>
-            <Link href={productHref} className="shrink-0 text-[9px] font-bold text-[#9F2D18] hover:text-[#FF5A36]">Details</Link>
+        <Link
+          href={productHref}
+          className="mt-1 line-clamp-2 min-h-[2.65rem] text-[13px] font-medium leading-[1.3rem] text-[#202A33] hover:text-[#9F2D18] sm:text-sm"
+        >
+          {product.name}
+        </Link>
+
+        <div className="mt-1.5">
+          <ProductPrice product={product} />
+          <ProductRating product={product} />
+        </div>
+
+        <div className="mt-auto pt-3">
+          <div className="mb-2 flex min-w-0 items-center gap-1.5 text-[11px] text-[#71675F]">
+            <MapPin className="h-3.5 w-3.5 shrink-0 text-[#9A8B80]" aria-hidden="true" />
+            <span className="truncate">{product.area ?? "Area not listed"}</span>
           </div>
-          <button
-            type="button"
-            disabled={!canAdd || adding}
-            onClick={() => onAddToCart(product)}
-            className={`mt-2 flex min-h-8 w-full items-center justify-center gap-1.5 rounded-md px-2 py-1.5 text-[9px] font-bold transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#FF5A36] focus-visible:ring-offset-2 sm:text-[10px] ${!canAdd ? "cursor-not-allowed bg-[#EEEAE6] text-[#A69B91]" : "bg-[#FF5A36] text-white hover:bg-[#E94A28] active:scale-[0.99]"}`}
-            aria-label={canAdd ? `Add ${product.name} to cart` : `${product.name} is not available for online checkout`}
-            title={canAdd ? "Add to cart" : "This product requires confirmed availability and a fixed price."}
-          >
-            {adding ? <span className="h-3 w-3 animate-spin rounded-full border-2 border-white/40 border-t-white" /> : feedback?.productId === product.id && feedback.kind === "success" ? <Check className="h-3 w-3" /> : <ShoppingCart className="h-3 w-3" />}
-            {!canAdd ? "Unavailable" : adding ? "Adding..." : "Add to cart"}
-          </button>
-          {feedback?.productId === product.id && feedback.kind === "error" && <p role="alert" className="mt-1 text-[8px] leading-3 text-[#B42318]">{feedback.message}</p>}
-          {feedback?.productId === product.id && feedback.kind === "success" && <p role="status" className="mt-1 text-[8px] leading-3 text-[#267344]">{feedback.message}</p>}
+
+          {canAdd ? (
+            <button
+              type="button"
+              disabled={adding}
+              onClick={() => onAddToCart(product)}
+              className="flex min-h-10 w-full items-center justify-center gap-2 rounded-lg bg-[#FF5A36] px-3 py-2 text-xs font-bold text-white transition hover:bg-[#E94A28] disabled:cursor-wait disabled:opacity-70 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#FF5A36] focus-visible:ring-offset-2"
+              aria-label={`Add ${product.name} to cart`}
+            >
+              {adding ? (
+                <span className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-white/40 border-t-white" />
+              ) : currentFeedback?.kind === "success" ? (
+                <Check className="h-3.5 w-3.5" aria-hidden="true" />
+              ) : (
+                <ShoppingCart className="h-3.5 w-3.5" aria-hidden="true" />
+              )}
+              {adding ? "Adding..." : currentFeedback?.kind === "success" ? "Added" : "Add to cart"}
+            </button>
+          ) : soldOut ? (
+            <button
+              type="button"
+              disabled
+              className="flex min-h-10 w-full items-center justify-center rounded-lg bg-[#F0EEEB] px-3 py-2 text-xs font-semibold text-[#8E857D]"
+            >
+              Out of stock
+            </button>
+          ) : (
+            <Link
+              href={productHref}
+              className="flex min-h-10 w-full items-center justify-center rounded-lg border border-[#E7D5CE] bg-white px-3 py-2 text-xs font-bold text-[#9F2D18] transition hover:bg-[#FFF5F1]"
+            >
+              {product.price === null ? "Check price" : "Confirm availability"}
+            </Link>
+          )}
+
+          {currentFeedback?.kind === "error" && (
+            <p role="alert" className="mt-1.5 text-[11px] leading-4 text-[#B42318]">
+              {currentFeedback.message}
+            </p>
+          )}
+          {currentFeedback?.kind === "success" && (
+            <p role="status" className="mt-1.5 text-[11px] leading-4 text-[#176B48]">
+              {feedback?.message}
+            </p>
+          )}
         </div>
       </div>
     </article>
@@ -341,38 +475,60 @@ function ProductCard({
 }
 
 function getCategoryHref(category: HomeCategory): string {
-  const params = new URLSearchParams({ type: "product", categoryId: category.id, category: category.name });
+  const params = new URLSearchParams({
+    type: "product",
+    categoryId: category.id,
+    category: category.name,
+  });
   return `/search?${params.toString()}`;
 }
 
 function CategoryTile({ category }: { category: HomeCategoryNode }) {
   const Icon = category.icon;
+
   return (
-    <div className="min-w-0 overflow-hidden rounded-lg border border-[#EEE8E1] bg-white transition hover:border-[#FFC2B2] hover:shadow-sm">
-      <Link href={getCategoryHref(category)} className="group flex min-w-0 items-center gap-2.5 px-3 py-3 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[#FF5A36]">
-        <span className="flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-full" style={{ backgroundColor: category.bg }}>
+    <article className="min-w-0 overflow-hidden rounded-xl border border-[#E8E4DE] bg-white transition-colors hover:border-[#F3B6A5]">
+      <Link
+        href={getCategoryHref(category)}
+        className="group flex min-w-0 items-center gap-2.5 p-2.5 sm:p-3"
+      >
+        <span
+          className="flex h-9 w-9 shrink-0 items-center justify-center overflow-hidden rounded-lg sm:h-10 sm:w-10"
+          style={{ backgroundColor: category.bg }}
+        >
           {category.imageUrl ? (
             <img src={category.imageUrl} alt="" loading="lazy" className="h-full w-full object-cover" />
           ) : (
-            <Icon className="h-5 w-5 text-[#6F5144]" />
+            <Icon className="h-5 w-5 text-[#6F5144]" aria-hidden="true" />
           )}
         </span>
+
         <span className="min-w-0 flex-1">
-          <span className="block truncate text-[11px] font-bold text-[#401B13] group-hover:text-[#9F2D18]">{category.name}</span>
-          <span className="mt-0.5 block text-[9px] text-[#81766D]">{category.children.length ? `${category.children.length} subcategories` : "Browse products"}</span>
+          <span className="block truncate text-xs font-semibold text-[#2B2927] group-hover:text-[#9F2D18] sm:text-sm">
+            {category.name}
+          </span>
+          <span className="mt-0.5 block text-[10px] text-[#81766D]">
+            {category.children.length > 0 ? `${category.children.length} subcategories` : "Browse products"}
+          </span>
         </span>
-        <ChevronRight className="h-4 w-4 shrink-0 text-[#A69B91] transition group-hover:translate-x-0.5 group-hover:text-[#9F2D18]" />
+
+        <ChevronRight className="h-4 w-4 shrink-0 text-[#A69B91] transition group-hover:translate-x-0.5 group-hover:text-[#9F2D18]" aria-hidden="true" />
       </Link>
+
       {category.children.length > 0 && (
-        <div className="flex flex-wrap gap-1.5 border-t border-[#F0ECE7] px-3 py-2.5">
-          {category.children.map((child) => (
-            <Link key={child.id} href={getCategoryHref(child)} className="max-w-full rounded-full border border-[#EEE8E1] bg-[#FCFAF6] px-2.5 py-1 text-[9px] font-medium text-[#62574E] transition hover:border-[#FFC2B2] hover:bg-[#FFF1ED] hover:text-[#9F2D18]">
+        <div className="hidden flex-wrap gap-1.5 border-t border-[#F0ECE7] px-3 py-2.5 sm:flex">
+          {category.children.slice(0, 4).map((child) => (
+            <Link
+              key={child.id}
+              href={getCategoryHref(child)}
+              className="max-w-full rounded-full border border-[#EEE8E1] bg-[#FCFAF6] px-2.5 py-1 text-[10px] font-medium text-[#62574E] transition hover:border-[#FFC2B2] hover:bg-[#FFF1ED] hover:text-[#9F2D18]"
+            >
               <span className="block truncate">{child.name}</span>
             </Link>
           ))}
         </div>
       )}
-    </div>
+    </article>
   );
 }
 
@@ -395,10 +551,13 @@ export default function HomePage() {
     async function loadHomepageProducts() {
       const result = await fetchHomepageProducts(controller.signal);
       if (controller.signal.aborted) return;
+
       const rawProducts = Array.isArray(result.data?.products) ? result.data.products : [];
-      const parsedProducts = rawProducts.map(parseRecentProduct)
+      const parsedProducts = rawProducts
+        .map(parseRecentProduct)
         .filter((item): item is RecentProduct => item !== null)
         .slice(0, MAX_HOME_PRODUCTS);
+
       setProducts(parsedProducts);
       setProductsFailed(result.failed);
       setProductsLoading(false);
@@ -415,17 +574,24 @@ export default function HomePage() {
       try {
         const response = await fetch("/api/categories?type=product", {
           cache: "no-store",
+          credentials: "same-origin",
+          headers: { Accept: "application/json" },
           signal: controller.signal,
         });
+
         if (!response.ok) throw new Error("Unable to load categories.");
         const data: unknown = await response.json();
         if (!isRecord(data)) throw new Error("Invalid categories response.");
 
-        const navigationCategories = Array.isArray(data.navigationCategories) && data.navigationCategories.length > 0
-          ? data.navigationCategories
-          : data.categories;
+        const navigationCategories =
+          Array.isArray(data.navigationCategories) && data.navigationCategories.length > 0
+            ? data.navigationCategories
+            : data.categories;
+
         if (!controller.signal.aborted) {
-          setCategories(parseHomeCategories(navigationCategories).slice(0, MAX_HOME_CATEGORIES));
+          setCategories(
+            parseHomeCategories(navigationCategories).slice(0, MAX_HOME_CATEGORIES),
+          );
         }
       } catch (error) {
         if (!controller.signal.aborted) {
@@ -443,6 +609,7 @@ export default function HomePage() {
 
   async function handleAddToCart(product: RecentProduct) {
     if (addingProductId || !canAddProductToCart(product)) return;
+
     setAddingProductId(product.id);
     setCartFeedback(null);
 
@@ -450,25 +617,36 @@ export default function HomePage() {
       const response = await fetch("/api/cart/items", {
         method: "POST",
         credentials: "same-origin",
-        headers: { "Content-Type": "application/json", Accept: "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          Accept: "application/json",
+        },
         body: JSON.stringify({ productId: product.id, quantity: 1 }),
       });
+
       const result: unknown = await response.json().catch(() => null);
       if (!response.ok) {
-        const serverMessage = isRecord(result) ? cleanString(result.error) ?? cleanString(result.message) : null;
+        const serverMessage = isRecord(result)
+          ? cleanString(result.error) ?? cleanString(result.message)
+          : null;
         let message = serverMessage ?? "Unable to add this product to your cart.";
+
         if (response.status === 401) message = "Sign in to add products to your cart.";
         else if (response.status === 403) message = "Your account cannot add products to the cart.";
         else if (response.status === 409) message = serverMessage ?? "This product is no longer available.";
+
         throw new Error(message);
       }
-      setCartFeedback({ productId: product.id, kind: "success", message: "Added to cart" });
+
+      setCartFeedback({ productId: product.id, kind: "success", message: "Added to cart." });
       window.dispatchEvent(new Event(CART_CHANGED_EVENT));
     } catch (error) {
       setCartFeedback({
         productId: product.id,
         kind: "error",
-        message: error instanceof Error ? error.message : "Unable to add this product to your cart.",
+        message: error instanceof Error
+          ? error.message
+          : "Unable to add this product to your cart.",
       });
     } finally {
       setAddingProductId(null);
@@ -482,6 +660,7 @@ export default function HomePage() {
       text: "Discover products available around you on ReMarket.",
       url: shareUrl,
     };
+
     setShareFeedback("");
 
     if (typeof navigator !== "undefined" && typeof navigator.share === "function") {
@@ -503,140 +682,202 @@ export default function HomePage() {
     } catch (error) {
       console.error("Unable to copy ReMarket link:", error);
     }
+
     setShareFeedback(`Copy this website address to share: ${shareUrl}`);
   }
 
   const retryProducts = () => setReloadKey((current) => current + 1);
-  const productGridClass = "grid min-w-0 grid-cols-2 gap-2 sm:grid-cols-3 sm:gap-3 md:grid-cols-4 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5";
-  const categoryGridClass = "grid grid-cols-1 gap-2 sm:grid-cols-2 sm:gap-3 xl:grid-cols-3";
+
+  const productGridClass =
+    "grid min-w-0 grid-cols-2 gap-3 sm:gap-4 md:grid-cols-3 lg:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4";
+  const categoryGridClass =
+    "grid min-w-0 grid-cols-2 gap-2 sm:grid-cols-3 sm:gap-3 lg:grid-cols-2 2xl:grid-cols-3";
 
   return (
     <div className="remarket-home-page min-h-dvh bg-[#FFF7ED]">
       <SiteHeader searchMode="PRODUCTS" />
-      <main id="main-content" className="min-h-dvh overflow-x-clip bg-[#FFFDFC] pb-28 text-[#17202A] lg:pb-8">
-        <div className="mx-auto max-w-[1600px] px-3 pb-7 pt-4 sm:px-5 sm:pt-5 lg:pl-7 lg:pr-[340px] lg:pt-6 xl:pl-8 xl:pr-[340px]">
-          <section className="mt-1" aria-labelledby="categories-heading">
+
+      <main
+        id="main-content"
+        className="min-h-dvh overflow-x-clip bg-[#FFFDFC] pb-28 text-[#17202A] lg:pb-8"
+      >
+        <div className="mx-auto w-full max-w-[1600px] px-3 pb-8 pt-5 sm:px-5 sm:pt-6 lg:pl-7 lg:pr-[340px] xl:pt-7">
+          <section className="mb-7 flex flex-col gap-3 border-b border-[#EAE6DF] pb-5 sm:flex-row sm:items-end sm:justify-between sm:gap-5">
+            <div className="min-w-0">
+              <p className="text-[10px] font-bold uppercase tracking-[0.13em] text-[#9F2D18]">
+                ReMarket · Find it nearby
+              </p>
+              <h1 className="mt-1.5 text-[23px] font-bold leading-tight tracking-tight text-[#17202A] sm:text-2xl lg:text-[27px]">
+                Discover products from local businesses
+              </h1>
+              <p className="mt-1.5 max-w-2xl text-xs leading-5 text-[#756B61] sm:text-sm">
+                Explore products listed by businesses around you.
+              </p>
+            </div>
+
+          </section>
+
+          <section aria-labelledby="categories-heading" className="mb-8">
             <div className="mb-3 flex items-end justify-between gap-3">
               <div>
-                <p className="text-[9px] font-bold uppercase tracking-[0.15em] text-[#9F2D18]">Explore the catalogue</p>
-                <h2 id="categories-heading" className="mt-1 text-lg font-extrabold tracking-tight text-[#401B13] sm:text-xl">Shop by category</h2>
+                <h2 id="categories-heading" className="text-base font-bold tracking-tight text-[#202A33] sm:text-lg">
+                  Shop by category
+                </h2>
+                <p className="mt-0.5 text-[11px] text-[#81766D] sm:text-xs">
+                  Browse products by type.
+                </p>
               </div>
-              <Link href="/shop" className="inline-flex shrink-0 items-center gap-1 text-[10px] font-bold text-[#9F2D18] hover:text-[#FF5A36] sm:text-[11px]">
-                All products <ChevronRight className="h-3.5 w-3.5" />
+              <Link
+                href="/shop"
+                className="inline-flex shrink-0 items-center gap-1 text-xs font-semibold text-[#9F2D18] hover:text-[#FF5A36]"
+              >
+                All categories
+                <ChevronRight className="h-3.5 w-3.5" aria-hidden="true" />
               </Link>
             </div>
 
             {categoriesLoading ? (
               <div className={categoryGridClass}>
-                {Array.from({ length: 6 }).map((_, index) => <div key={index} className="h-[105px] animate-pulse rounded-lg border border-[#EAE6DF] bg-white" />)}
+                {Array.from({ length: 6 }).map((_, index) => (
+                  <div
+                    key={`home-category-skeleton-${index}`}
+                    className="h-[66px] animate-pulse rounded-xl border border-[#EAE6DF] bg-white"
+                  />
+                ))}
               </div>
             ) : categories.length > 0 ? (
               <div className={categoryGridClass}>
-                {categories.map((category) => <CategoryTile key={category.id} category={category} />)}
+                {categories.map((category) => (
+                  <CategoryTile key={category.id} category={category} />
+                ))}
               </div>
             ) : (
               <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-[#EAE6DF] bg-[#FCFAF6] px-4 py-4">
-                <p className="text-xs text-[#756B61]">Browse the full product catalogue to explore available categories.</p>
-                <Link href="/shop" className="text-xs font-bold text-[#9F2D18]">Browse products <ArrowRight className="ml-1 inline h-3.5 w-3.5" /></Link>
+                <p className="text-xs text-[#756B61]">
+                  Browse the product catalogue to explore available categories.
+                </p>
+                <Link href="/shop" className="text-xs font-semibold text-[#9F2D18]">
+                  Browse products <ArrowRight className="ml-1 inline h-3.5 w-3.5" aria-hidden="true" />
+                </Link>
               </div>
             )}
           </section>
 
-          {products.some((product) => getDiscountPercentage(product) !== null) && (
-            <section className="mt-7" aria-labelledby="special-prices-heading">
-              <div className="mb-3 flex items-end justify-between gap-3">
-                <div>
-                  <p className="text-[9px] font-bold uppercase tracking-[0.15em] text-[#9F2D18]">Marked-down listings</p>
-                  <h2 id="special-prices-heading" className="mt-1 text-lg font-extrabold tracking-tight text-[#401B13] sm:text-xl">Special prices</h2>
-                  <p className="mt-1 text-[10px] text-[#756B61] sm:text-[11px]">Products with a listed original price above their current price.</p>
-                </div>
-                <Link href="/shop" className="inline-flex shrink-0 items-center gap-1 text-[10px] font-bold text-[#9F2D18] hover:text-[#FF5A36] sm:text-[11px]">Explore <ChevronRight className="h-3.5 w-3.5" /></Link>
+          <section
+            id="recent-products"
+            className="scroll-mt-28"
+            aria-labelledby="recent-products-heading"
+          >
+            <div className="mb-4 flex items-end justify-between gap-3">
+              <div className="min-w-0">
+                <h2 id="recent-products-heading" className="text-base font-bold tracking-tight text-[#202A33] sm:text-lg">
+                  Recently listed
+                </h2>
+                <p className="mt-0.5 text-[11px] text-[#81766D] sm:text-xs">
+                  The latest products added to ReMarket.
+                </p>
               </div>
-              <div className={productGridClass}>
-                {products.filter((product) => getDiscountPercentage(product) !== null).slice(0, 6).map((product) => (
-                  <ProductCard key={`price-highlight-${product.id}`} product={product} adding={addingProductId === product.id} feedback={cartFeedback} onAddToCart={handleAddToCart} />
-                ))}
-              </div>
-            </section>
-          )}
-
-          <section id="recent-products" className="mt-7 scroll-mt-24 sm:mt-9" aria-labelledby="recent-products-heading">
-            <div className="mb-3 flex items-end justify-between gap-3">
-              <div>
-                <div className="mb-1.5 inline-flex items-center gap-1.5 rounded-full border border-[#FFD9CE] bg-[#FFF1ED] px-2 py-1 text-[8px] font-bold uppercase tracking-[0.13em] text-[#9F2D18]"><span className="h-1.5 w-1.5 rounded-full bg-[#FF5A36]" />Recently listed</div>
-                <h2 id="recent-products-heading" className="text-lg font-extrabold tracking-tight text-[#401B13] sm:text-xl">Fresh finds for you</h2>
-                <p className="mt-1 text-[10px] text-[#756B61] sm:text-xs">The latest products added to ReMarket.</p>
-              </div>
-              <Link href="/shop" className="inline-flex shrink-0 items-center gap-1 rounded-full px-2.5 py-1.5 text-[10px] font-bold text-[#9F2D18] transition hover:bg-[#FFF1ED] sm:text-xs">View all <ArrowRight className="h-3 w-3" /></Link>
+              <Link
+                href="/shop"
+                className="inline-flex shrink-0 items-center gap-1 text-xs font-semibold text-[#9F2D18] hover:text-[#FF5A36]"
+              >
+                View all
+                <ArrowRight className="h-3.5 w-3.5" aria-hidden="true" />
+              </Link>
             </div>
 
             {productsLoading && (
               <div className={productGridClass}>
-                {Array.from({ length: 12 }).map((_, index) => (
-                  <div key={`home-product-skeleton-${index}`} className="overflow-hidden rounded-lg border border-[#EAE6DF] bg-white">
-                    <div className="aspect-[4/3] animate-pulse bg-[#F2EEE9]" />
-                    <div className="space-y-2 p-2.5"><div className="h-2.5 w-4/5 animate-pulse rounded bg-[#F2EEE9]" /><div className="h-3 w-2/5 animate-pulse rounded bg-[#F2EEE9]" /><div className="h-7 w-full animate-pulse rounded-md bg-[#F2EEE9]" /></div>
+                {Array.from({ length: MAX_HOME_PRODUCTS }).map((_, index) => (
+                  <div
+                    key={`home-product-skeleton-${index}`}
+                    className="overflow-hidden rounded-xl border border-[#EAE6DF] bg-white"
+                  >
+                    <div className="aspect-square animate-pulse bg-[#F2EEE9]" />
+                    <div className="space-y-2 p-3">
+                      <div className="h-3 w-2/5 animate-pulse rounded bg-[#F2EEE9]" />
+                      <div className="h-3 w-4/5 animate-pulse rounded bg-[#F2EEE9]" />
+                      <div className="h-4 w-1/2 animate-pulse rounded bg-[#F2EEE9]" />
+                      <div className="h-9 w-full animate-pulse rounded-lg bg-[#F2EEE9]" />
+                    </div>
                   </div>
                 ))}
               </div>
             )}
 
             {!productsLoading && productsFailed && (
-              <div className="rounded-2xl border border-[#F2D2C9] bg-[#FFF7F4] px-5 py-8 text-center">
-                <p className="text-sm font-bold text-[#9F2D18]">We couldn't load products.</p>
+              <div className="rounded-xl border border-[#F2D2C9] bg-[#FFF7F4] px-5 py-8 text-center">
+                <p className="text-sm font-semibold text-[#9F2D18]">We couldn’t load products.</p>
                 <p className="mt-1 text-xs text-[#756B61]">Please try again.</p>
-                <button type="button" onClick={retryProducts} className="mt-4 rounded-lg bg-[#FF5A36] px-5 py-2 text-xs font-bold text-white hover:bg-[#E94A28]">Try again</button>
+                <button
+                  type="button"
+                  onClick={retryProducts}
+                  className="mt-4 min-h-10 rounded-lg bg-[#FF5A36] px-5 py-2 text-xs font-bold text-white transition hover:bg-[#E94A28]"
+                >
+                  Try again
+                </button>
               </div>
             )}
 
             {!productsLoading && !productsFailed && products.length > 0 && (
               <div className={productGridClass}>
-                {products.map((product) => <ProductCard key={product.id} product={product} adding={addingProductId === product.id} feedback={cartFeedback} onAddToCart={handleAddToCart} />)}
+                {products.map((product) => (
+                  <ProductCard
+                    key={product.id}
+                    product={product}
+                    adding={addingProductId === product.id}
+                    feedback={cartFeedback}
+                    onAddToCart={handleAddToCart}
+                  />
+                ))}
               </div>
             )}
 
             {!productsLoading && !productsFailed && products.length === 0 && (
-              <div className="rounded-2xl border border-dashed border-[#E8E4DE] bg-[#FCFAF6] px-5 py-9 text-center">
-                <div className="mx-auto flex h-11 w-11 items-center justify-center rounded-xl bg-white text-[#FF5A36] shadow-sm"><Package className="h-5 w-5" /></div>
-                <p className="mt-3 text-sm font-bold text-[#17202A]">No products to display yet</p>
-                <p className="mx-auto mt-1 max-w-md text-xs leading-5 text-[#756B61]">New products will appear here when they are published.</p>
-                <Link href="/shop" className="mt-4 inline-flex min-h-9 items-center justify-center gap-2 rounded-lg bg-[#FF5A36] px-4 py-2 text-xs font-bold text-white transition hover:bg-[#E94A28]">Explore products <ArrowRight className="h-3.5 w-3.5" /></Link>
+              <div className="rounded-xl border border-dashed border-[#E8E4DE] bg-[#FCFAF6] px-5 py-10 text-center">
+                <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-xl bg-white text-[#FF5A36]">
+                  <Package className="h-6 w-6" aria-hidden="true" />
+                </div>
+                <p className="mt-3 text-sm font-semibold text-[#202A33]">No products to display yet</p>
+                <p className="mx-auto mt-1 max-w-md text-xs leading-5 text-[#756B61]">
+                  New products will appear here when sellers publish their listings.
+                </p>
+                <Link
+                  href="/shop"
+                  className="mt-4 inline-flex min-h-10 items-center justify-center gap-2 rounded-lg bg-[#FF5A36] px-4 py-2 text-xs font-bold text-white transition hover:bg-[#E94A28]"
+                >
+                  Explore products
+                  <ArrowRight className="h-3.5 w-3.5" aria-hidden="true" />
+                </Link>
               </div>
             )}
           </section>
 
-          <section className="mt-7 grid gap-2 sm:mt-9 sm:grid-cols-3 sm:gap-3">
-            <div className="flex items-center gap-3 rounded-lg border border-[#EEE8E1] bg-[#FCFAF6] p-3">
-              <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-[#FFF0E9] text-[#9F2D18]"><Search className="h-4 w-4" /></span>
-              <div><p className="text-[11px] font-bold text-[#514840]">Search products</p><p className="mt-0.5 text-[9px] leading-4 text-[#81766D]">Find items by name or category.</p></div>
+          <footer className="mt-9 flex flex-col gap-3 border-t border-[#EAE6DF] pt-5 text-xs text-[#81766D] sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <p className="font-semibold text-[#514840]">ReMarket</p>
+              <p className="mt-0.5">Find it nearby.</p>
             </div>
-            <div className="flex items-center gap-3 rounded-lg border border-[#EEE8E1] bg-[#FCFAF6] p-3">
-              <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-[#FFF0E9] text-[#9F2D18]"><MapPin className="h-4 w-4" /></span>
-              <div><p className="text-[11px] font-bold text-[#514840]">Find it nearby</p><p className="mt-0.5 text-[9px] leading-4 text-[#81766D]">Explore products by area.</p></div>
-            </div>
-            <div className="flex items-center gap-3 rounded-lg border border-[#EEE8E1] bg-[#FCFAF6] p-3">
-              <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-[#FFF0E9] text-[#9F2D18]"><ShoppingCart className="h-4 w-4" /></span>
-              <div><p className="text-[11px] font-bold text-[#514840]">Build your cart</p><p className="mt-0.5 text-[9px] leading-4 text-[#81766D]">Keep selected products together.</p></div>
-            </div>
-          </section>
 
-          <section className="relative mt-7 overflow-hidden rounded-xl bg-gradient-to-r from-[#FF713F] via-[#FF5A36] to-[#F04B2B] px-4 py-5 text-white shadow-[0_8px_22px_rgba(255,90,54,0.12)] sm:mt-9 sm:px-7 sm:py-6">
-            <div aria-hidden="true" className="pointer-events-none absolute -right-12 -top-20 h-56 w-56 rounded-full border-[28px] border-white/10" />
-            <div className="relative z-10 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-              <div className="flex items-center gap-3">
-                <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-white/15 text-white ring-1 ring-white/20 sm:h-12 sm:w-12"><Share2 className="h-5 w-5 sm:h-6 sm:w-6" /></div>
-                <div><h2 className="text-base font-extrabold tracking-tight sm:text-lg">Good finds are worth sharing</h2><p className="mt-1 max-w-lg text-[10px] leading-4 text-white/90 sm:text-xs sm:leading-5">Share ReMarket and help more people discover products around them.</p></div>
-              </div>
-              <button type="button" onClick={() => void handleShareReMarket()} className="inline-flex min-h-10 shrink-0 items-center justify-center gap-2 rounded-full bg-white px-5 py-2.5 text-[10px] font-extrabold text-[#9F2D18] transition hover:bg-[#FFF7ED] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white focus-visible:ring-offset-2 focus-visible:ring-offset-[#FF5A36] sm:text-xs">Share ReMarket <ArrowRight className="h-3.5 w-3.5" /></button>
+            <div className="flex flex-col items-start gap-1.5 sm:items-end">
+              <button
+                type="button"
+                onClick={() => void handleShareReMarket()}
+                className="inline-flex min-h-9 items-center gap-2 rounded-lg px-2.5 py-1.5 font-semibold text-[#9F2D18] transition hover:bg-[#FFF1ED]"
+              >
+                <Share2 className="h-3.5 w-3.5" aria-hidden="true" />
+                Share ReMarket
+              </button>
+              {shareFeedback && (
+                <p role="status" className="max-w-full break-words text-[11px] text-[#71675F]">
+                  {shareFeedback}
+                </p>
+              )}
             </div>
-            {shareFeedback && <p role="status" className="relative z-10 mt-3 text-[10px] text-white">{shareFeedback}</p>}
-          </section>
-
-          <footer className="mt-7 flex items-center justify-center gap-3 pb-3 text-[9px] text-[#9B9188]">
-            <span className="h-px w-10 bg-[#EAE6DF]" /><span>ReMarket · Find it nearby</span><span className="h-px w-10 bg-[#EAE6DF]" />
           </footer>
         </div>
       </main>
+
       <MobileBottomNav />
       <HomeCartSidebar />
     </div>

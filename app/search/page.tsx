@@ -6,25 +6,26 @@ import {
   useEffect,
   useMemo,
   useState,
-  type FormEvent,
 } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import {
-  Search,
-  SlidersHorizontal,
-  X,
-  ChevronDown,
+  ArrowRight,
+  BadgeCheck,
   Check,
-  Package,
-  Bookmark,
+  ChevronDown,
   ChevronLeft,
   ChevronRight,
+  Filter,
+  Heart,
   Loader2,
   MapPin,
-  ArrowRight,
-  ArrowUpDown,
-  BadgeCheck,
+  Package,
+  RotateCcw,
+  Search,
+  ShoppingCart,
+  SlidersHorizontal,
+  X,
 } from "lucide-react";
 
 import SiteHeader from "@/components/layout/SiteHeader";
@@ -32,7 +33,6 @@ import MobileBottomNav from "@/components/layout/MobileBottomNav";
 import AreaAutocomplete, {
   type AreaSelection,
 } from "@/components/filters/AreaAutocomplete";
-
 import {
   DEFAULT_CATEGORIES,
   mergeCategories,
@@ -41,7 +41,11 @@ import {
 } from "@/lib/categories";
 
 const PAGE_SIZE = 12;
+const MAX_SEARCH_RESULTS = 120;
+const MAX_SEARCH_PAGE = 100_000;
+const MAX_PRICE_VALUE = 1_000_000_000;
 const SAVED_ITEMS_CHANGED_EVENT = "remarket-saved-items-changed";
+const CART_CHANGED_EVENT = "remarket-cart-changed";
 
 type Availability = "AVAILABLE" | "ASK_SELLER" | "UNAVAILABLE";
 type SortMode = "relevance" | "newest" | "price-asc" | "price-desc";
@@ -72,8 +76,14 @@ type ListingCategory = {
 } | null;
 
 type ProductSellerContext = {
+  id: string;
+  name: string;
   verified: boolean;
-  location: { area: string | null } | null;
+  location: {
+    area: string | null;
+    lga: string | null;
+    state: string | null;
+  } | null;
 };
 
 type ProductSearchResult = {
@@ -121,11 +131,6 @@ type SearchPageViewProps = {
   initialSort: SortMode;
 };
 
-type SavedListingMaps = {
-  products: Record<string, string>;
-  services: Record<string, string>;
-};
-
 type SearchResultMeta = {
   totalProducts: number;
   returnedResults: number;
@@ -143,23 +148,38 @@ type LocationFilterOptions = {
   lgasByState: Record<string, string[]>;
 };
 
+type RawCategory = {
+  id: string;
+  name: string;
+  iconKey: string | null;
+  isActive: boolean;
+  sortOrder: number;
+  parentId: string | null;
+  imageUrl: string | null;
+};
+
+type SaveFeedback = {
+  message: string;
+  error: boolean;
+} | null;
+
+type CartFeedback = {
+  productId: string;
+  message: string;
+  error: boolean;
+} | null;
+
 /* -------------------------------------------------------------------------- */
 /* GENERAL HELPERS                                                            */
 /* -------------------------------------------------------------------------- */
 
 function isRecord(value: unknown): value is Record<string, unknown> {
-  return (
-    typeof value === "object" &&
-    value !== null &&
-    !Array.isArray(value)
-  );
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function cleanString(value: unknown): string | null {
   if (typeof value !== "string") return null;
-
   const cleaned = value.trim();
-
   return cleaned.length > 0 ? cleaned : null;
 }
 
@@ -170,136 +190,309 @@ function parseNumber(value: unknown): number | null {
 
   if (typeof value === "string") {
     const cleaned = value.trim().replace(/,/g, "");
-
     if (!cleaned) return null;
-
     const parsed = Number(cleaned);
-
-    return Number.isFinite(parsed) && parsed >= 0
-      ? parsed
-      : null;
+    return Number.isFinite(parsed) && parsed >= 0 ? parsed : null;
   }
 
   return null;
 }
 
-function parseAvailability(value: unknown): Availability {
-  if (
-    value === "AVAILABLE" ||
-    value === "ASK_SELLER" ||
-    value === "UNAVAILABLE"
-  ) {
-    return value;
-  }
+function isValidPriceFilterInput(rawValue: string): boolean {
+  const raw = rawValue.trim();
+  if (!raw) return true;
+  if (!/^\d+$/.test(raw)) return false;
 
-  return "ASK_SELLER";
+  const parsed = Number(raw);
+  return Number.isSafeInteger(parsed) && parsed >= 0 && parsed <= MAX_PRICE_VALUE;
+}
+
+function parseAvailability(value: unknown): Availability {
+  return value === "AVAILABLE" || value === "ASK_SELLER" || value === "UNAVAILABLE"
+    ? value
+    : "ASK_SELLER";
 }
 
 function parseSortMode(value: string | null): SortMode {
-  if (
-    value === "newest" ||
-    value === "price-asc" ||
-    value === "price-desc" ||
-    value === "relevance"
-  ) {
-    return value;
-  }
-
-  return "relevance";
+  return value === "newest" || value === "price-asc" || value === "price-desc" || value === "relevance"
+    ? value
+    : "relevance";
 }
 
-function parseCategory(value: unknown): ListingCategory {
-  if (
-    !isRecord(value) ||
-    typeof value.id !== "string" ||
-    typeof value.name !== "string"
-  ) {
+function parseAvailabilityFilter(value: string): Availability | "" {
+  return value === "AVAILABLE" || value === "ASK_SELLER" || value === "UNAVAILABLE"
+    ? value
+    : "";
+}
+
+function getPositivePage(value: string | null): number {
+  if (!value || !/^\d+$/.test(value)) return 1;
+  const parsed = Number(value);
+  return Number.isSafeInteger(parsed) && parsed >= 1 && parsed <= MAX_SEARCH_PAGE
+    ? parsed
+    : 1;
+}
+
+function getApiError(value: unknown): string {
+  return isRecord(value) && typeof value.error === "string"
+    ? value.error
+    : "Something went wrong. Please try again.";
+}
+
+function formatNaira(amount: number): string {
+  return `₦${amount.toLocaleString("en-NG")}`;
+}
+
+function getDiscountPercentage(
+  price: number | null,
+  originalPrice: number | null,
+): number | null {
+  if (price === null || price <= 0 || originalPrice === null || originalPrice <= price) {
     return null;
   }
+  return Math.round(((originalPrice - price) / originalPrice) * 100);
+}
 
+/* -------------------------------------------------------------------------- */
+/* CATEGORY HELPERS                                                           */
+/* -------------------------------------------------------------------------- */
+
+function parseCategoryOptions(payload: unknown): Category[] {
+  if (!isRecord(payload)) return [];
+
+  const source = Array.isArray(payload.navigationCategories) && payload.navigationCategories.length > 0
+    ? payload.navigationCategories
+    : payload.categories;
+  if (!Array.isArray(source)) return [];
+
+  const rows: RawCategory[] = [];
+  const visited = new Set<string>();
+
+  function visit(items: unknown[], inheritedParentId: string | null = null) {
+    for (const raw of items) {
+      if (!isRecord(raw)) continue;
+      const id = cleanString(raw.id);
+      const name = cleanString(raw.name);
+      if (!id || !name || visited.has(id)) continue;
+      visited.add(id);
+
+      rows.push({
+        id,
+        name,
+        iconKey: cleanString(raw.iconKey),
+        isActive: raw.isActive !== false,
+        sortOrder: typeof raw.sortOrder === "number" && Number.isFinite(raw.sortOrder)
+          ? raw.sortOrder
+          : 0,
+        parentId: cleanString(raw.parentId) ?? inheritedParentId,
+        imageUrl: cleanString(raw.imageUrl),
+      });
+
+      if (Array.isArray(raw.children)) visit(raw.children, id);
+    }
+  }
+
+  visit(source);
+
+  const activeRows = rows.filter((item) => item.isActive);
+  const apiCategories: ApiCategory[] = activeRows.map((item) => ({
+    id: item.id,
+    name: item.name,
+    iconKey: item.iconKey,
+    isActive: item.isActive,
+    sortOrder: item.sortOrder,
+  }));
+
+  const merged = mergeCategories(apiCategories);
+  const mergedById = new Map(merged.map((item) => [item.id, item] as const));
+
+  return activeRows.flatMap((item) => {
+    const display = mergedById.get(item.id);
+    if (!display) return [];
+
+    return [{
+      ...display,
+      id: item.id,
+      name: item.name,
+      parentId: item.parentId,
+      imageUrl: item.imageUrl,
+      sortOrder: item.sortOrder,
+    }];
+  });
+}
+
+function buildCategoryTree(categories: Category[]): CategoryTreeNode[] {
+  const nodes: CategoryTreeNode[] = categories.map((category) => ({
+    ...category,
+    children: [],
+  }));
+  const nodesById = new Map(nodes.map((item) => [item.id, item] as const));
+  const roots: CategoryTreeNode[] = [];
+
+  for (const category of nodes) {
+    const parent = category.parentId ? nodesById.get(category.parentId) : undefined;
+    if (parent && parent.id !== category.id) parent.children.push(category);
+    else roots.push(category);
+  }
+
+  function sortNodes(items: CategoryTreeNode[]) {
+    items.sort((a, b) => a.sortOrder - b.sortOrder || a.name.localeCompare(b.name));
+    for (const item of items) sortNodes(item.children);
+  }
+
+  sortNodes(roots);
+  return roots;
+}
+
+function getCategoryBackground(categoryName: string, categories: Category[]): string {
+  const normalized = categoryName.trim().toLocaleLowerCase();
+  return categories.find((item) => item.name.toLocaleLowerCase() === normalized)?.bg ??
+    DEFAULT_CATEGORIES.find((item) => item.name.toLocaleLowerCase() === normalized)?.bg ??
+    "#EEF1F4";
+}
+
+/* -------------------------------------------------------------------------- */
+/* LOCATION HELPERS                                                           */
+/* -------------------------------------------------------------------------- */
+
+function parseStringList(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+
+  const names = value.flatMap((item) => {
+    if (typeof item === "string") {
+      const cleaned = item.trim();
+      return cleaned ? [cleaned] : [];
+    }
+
+    if (isRecord(item)) {
+      const name = cleanString(item.lga) ?? cleanString(item.name) ?? cleanString(item.state) ?? cleanString(item.value);
+      return name ? [name] : [];
+    }
+
+    return [];
+  });
+
+  return Array.from(new Set(names)).sort((a, b) => a.localeCompare(b));
+}
+
+function parseStateGroups(value: unknown): LocationFilterOptions {
+  const result: LocationFilterOptions = { states: [], lgasByState: {} };
+  if (!isRecord(value)) return result;
+
+  if (isRecord(value.lgasByState)) {
+    for (const [stateName, rawLgas] of Object.entries(value.lgasByState)) {
+      const state = stateName.trim();
+      const lgas = parseStringList(rawLgas);
+      if (state && lgas.length) result.lgasByState[state] = lgas;
+    }
+  }
+
+  const stateGroups = Array.isArray(value.stateGroups) ? value.stateGroups : [];
+  for (const rawGroup of stateGroups) {
+    if (!isRecord(rawGroup)) continue;
+    const state = cleanString(rawGroup.state) ?? cleanString(rawGroup.name);
+    if (!state) continue;
+
+    const rawLgas = Array.isArray(rawGroup.lgas)
+      ? rawGroup.lgas
+      : Array.isArray(rawGroup.groups)
+        ? rawGroup.groups
+        : [];
+    const names = parseStringList(rawLgas);
+    if (names.length) {
+      result.lgasByState[state] = Array.from(new Set([
+        ...(result.lgasByState[state] ?? []),
+        ...names,
+      ])).sort((a, b) => a.localeCompare(b));
+    }
+  }
+
+  // Support the legacy Lagos-only /api/areas shape: { groups: [{ lga, areas }] }.
+  if (Object.keys(result.lgasByState).length === 0 && Array.isArray(value.groups)) {
+    const legacyLgas = value.groups.flatMap((item) => {
+      if (!isRecord(item)) return [];
+      const lga = cleanString(item.lga);
+      return lga ? [lga] : [];
+    });
+    if (legacyLgas.length) result.lgasByState.Lagos = Array.from(new Set(legacyLgas)).sort();
+  }
+
+  const explicitStates = parseStringList(value.states);
+  result.states = Array.from(new Set([
+    ...explicitStates,
+    ...Object.keys(result.lgasByState),
+  ])).sort((a, b) => a.localeCompare(b));
+
+  return result;
+}
+
+function getLgasForState(options: LocationFilterOptions, state: string): string[] {
+  if (!state) return [];
+  const entry = Object.entries(options.lgasByState).find(
+    ([name]) => name.toLocaleLowerCase() === state.toLocaleLowerCase(),
+  );
+  return entry?.[1] ?? [];
+}
+
+/* -------------------------------------------------------------------------- */
+/* PRODUCT RESPONSE PARSING                                                   */
+/* -------------------------------------------------------------------------- */
+
+function parseCategory(value: unknown): ListingCategory {
+  if (!isRecord(value) || typeof value.id !== "string" || typeof value.name !== "string") {
+    return null;
+  }
   return {
     id: value.id,
     name: value.name,
     iconKey: cleanString(value.iconKey) ?? undefined,
-    isActive:
-      typeof value.isActive === "boolean"
-        ? value.isActive
-        : undefined,
-    sortOrder:
-      typeof value.sortOrder === "number"
-        ? value.sortOrder
-        : undefined,
+    isActive: typeof value.isActive === "boolean" ? value.isActive : undefined,
+    sortOrder: typeof value.sortOrder === "number" ? value.sortOrder : undefined,
   };
 }
 
 function parseImages(value: unknown): ListingImage[] {
   if (!Array.isArray(value)) return [];
 
-  return value.flatMap((item) => {
-    if (
-      !isRecord(item) ||
-      typeof item.id !== "string" ||
-      typeof item.url !== "string" ||
-      !item.url.trim()
-    ) {
-      return [];
-    }
-
-    return [
-      {
-        id: item.id,
-        url: item.url,
-        publicId: cleanString(item.publicId),
-        sortOrder:
-          typeof item.sortOrder === "number"
-            ? item.sortOrder
-            : 0,
-      },
-    ];
-  });
+  return value.flatMap((raw): ListingImage[] => {
+    if (!isRecord(raw) || typeof raw.url !== "string" || !raw.url.trim()) return [];
+    return [{
+      id: typeof raw.id === "string" ? raw.id : "",
+      url: raw.url,
+      publicId: cleanString(raw.publicId),
+      sortOrder: typeof raw.sortOrder === "number" && Number.isFinite(raw.sortOrder)
+        ? raw.sortOrder
+        : 0,
+    }];
+  }).sort((a, b) => a.sortOrder - b.sortOrder);
 }
 
-function parseSellerContext(value: unknown): ProductSellerContext {
-  if (!isRecord(value)) {
-    return {
-      verified: false,
-      location: null,
-    };
-  }
-
-  const rawLocation = isRecord(value.location)
-    ? value.location
-    : null;
-
-  return {
-    verified: value.verified === true,
-    location: rawLocation
-      ? {
-          area: cleanString(rawLocation.area),
-        }
-      : null,
-  };
-}
-
-function parseSearchProduct(
-  value: unknown,
-): ProductSearchResult | null {
+function parseProduct(value: unknown): ProductSearchResult | null {
   if (!isRecord(value)) return null;
+
+  const seller = isRecord(value.seller)
+    ? value.seller
+    : isRecord(value.business)
+      ? value.business
+      : null;
 
   const id = cleanString(value.id);
   const name = cleanString(value.name);
+  const sellerId = seller ? cleanString(seller.id) : null;
+  const sellerName = seller ? cleanString(seller.name) : null;
 
-  if (!id || !name) return null;
+  if (!id || !name || !seller || !sellerId || !sellerName) return null;
 
-  const price = parseNumber(value.price);
-  const parsedOriginalPrice = parseNumber(value.originalPrice);
+  const images = parseImages(value.images);
+  const price = parseNumber(value.price) ?? parseNumber(value.salePrice) ?? parseNumber(value.currentPrice);
+  const originalCandidate = parseNumber(value.originalPrice) ?? parseNumber(value.compareAtPrice) ??
+    parseNumber(value.regularPrice) ?? parseNumber(value.oldPrice);
+  const originalPrice = price !== null && originalCandidate !== null && originalCandidate > price
+    ? originalCandidate
+    : null;
 
-  const originalPrice =
-    price !== null &&
-    parsedOriginalPrice !== null &&
-    parsedOriginalPrice > price
-      ? parsedOriginalPrice
-      : null;
+  const rawLocation = isRecord(seller.location) ? seller.location : null;
+  const verification = cleanString(seller.verification);
 
   return {
     id,
@@ -309,228 +502,26 @@ function parseSearchProduct(
     originalPrice,
     stockQuantity: parseNumber(value.stockQuantity),
     availability: parseAvailability(value.availability),
-    imageUrl: cleanString(value.imageUrl),
-    images: parseImages(value.images),
+    imageUrl: cleanString(value.imageUrl) ?? images[0]?.url ?? null,
+    images,
     category: parseCategory(value.category),
     keywords: Array.isArray(value.keywords)
-      ? value.keywords.filter(
-          (item): item is string => typeof item === "string",
-        )
+      ? value.keywords.filter((item): item is string => typeof item === "string")
       : [],
     matchScore: parseNumber(value.matchScore) ?? 0,
-    seller: parseSellerContext(value.seller),
+    seller: {
+      id: sellerId,
+      name: sellerName,
+      verified: seller.verified === true || verification === "VERIFIED",
+      location: rawLocation
+        ? {
+            area: cleanString(rawLocation.area),
+            lga: cleanString(rawLocation.lga),
+            state: cleanString(rawLocation.state),
+          }
+        : null,
+    },
   };
-}
-
-/* -------------------------------------------------------------------------- */
-/* LOCATION OPTION HELPERS                                                    */
-/* -------------------------------------------------------------------------- */
-
-function parseLocationNameList(value: unknown): string[] {
-  if (!Array.isArray(value)) return [];
-
-  const names = value.flatMap((item) => {
-    if (typeof item === "string") {
-      const name = item.trim();
-      return name ? [name] : [];
-    }
-
-    if (isRecord(item)) {
-      const name =
-        cleanString(item.lga) ??
-        cleanString(item.name) ??
-        cleanString(item.state) ??
-        cleanString(item.value);
-
-      return name ? [name] : [];
-    }
-
-    return [];
-  });
-
-  return Array.from(new Set(names));
-}
-
-function parseLocationOptions(value: unknown): LocationFilterOptions {
-  const result: LocationFilterOptions = {
-    states: [],
-    lgasByState: {},
-  };
-
-  if (!isRecord(value)) return result;
-
-  const rawLgasByState = isRecord(value.lgasByState)
-    ? value.lgasByState
-    : {};
-
-  for (const [stateName, rawLgas] of Object.entries(rawLgasByState)) {
-    result.lgasByState[stateName] = parseLocationNameList(rawLgas);
-  }
-
-  const stateGroups = Array.isArray(value.stateGroups)
-    ? value.stateGroups
-    : [];
-
-  for (const group of stateGroups) {
-    if (!isRecord(group)) continue;
-
-    const stateName = cleanString(group.state);
-
-    if (!stateName) continue;
-
-    const groupLgas = parseLocationNameList(
-      group.lgas ?? group.groups,
-    );
-
-    if (groupLgas.length > 0) {
-      result.lgasByState[stateName] = Array.from(
-        new Set([
-          ...(result.lgasByState[stateName] ?? []),
-          ...groupLgas,
-        ]),
-      );
-    }
-  }
-
-  const listedStates = parseLocationNameList(value.states);
-
-  result.states = Array.from(
-    new Set([
-      ...listedStates,
-      ...Object.keys(result.lgasByState),
-    ]),
-  ).sort((a, b) => a.localeCompare(b));
-
-  return result;
-}
-
-function getLgasForState(
-  options: LocationFilterOptions,
-  state: string,
-): string[] {
-  if (!state) return [];
-
-  const matchingEntry = Object.entries(options.lgasByState).find(
-    ([stateName]) =>
-      stateName.toLowerCase() === state.toLowerCase(),
-  );
-
-  return matchingEntry?.[1] ?? [];
-}
-
-/* -------------------------------------------------------------------------- */
-/* CATEGORY AND RESULT HELPERS                                                */
-/* -------------------------------------------------------------------------- */
-
-function parseCategoryOptions(value: unknown): Category[] {
-  if (!Array.isArray(value)) return [];
-
-  const rawCategories = value.flatMap((item) => {
-    if (
-      !isRecord(item) ||
-      typeof item.id !== "string" ||
-      typeof item.name !== "string"
-    ) {
-      return [];
-    }
-
-    return [
-      {
-        id: item.id,
-        name: item.name,
-        iconKey: cleanString(item.iconKey),
-        isActive:
-          typeof item.isActive === "boolean"
-            ? item.isActive
-            : true,
-        sortOrder:
-          typeof item.sortOrder === "number"
-            ? item.sortOrder
-            : 0,
-        parentId: cleanString(item.parentId),
-        imageUrl: cleanString(item.imageUrl),
-      },
-    ];
-  });
-
-  const apiCategories: ApiCategory[] = rawCategories.map((item) => ({
-    id: item.id,
-    name: item.name,
-    iconKey: item.iconKey,
-    isActive: item.isActive,
-    sortOrder: item.sortOrder,
-  }));
-
-  const mergedCategories = mergeCategories(apiCategories);
-
-  const mergedById = new Map(
-    mergedCategories.map((item) => [item.id, item]),
-  );
-
-  return rawCategories.flatMap((item) => {
-    const displayCategory = mergedById.get(item.id);
-
-    if (!displayCategory) {
-      return [];
-    }
-
-    return [
-      {
-        ...displayCategory,
-        id: item.id,
-        name: item.name,
-        parentId: item.parentId,
-        imageUrl: item.imageUrl,
-        sortOrder: item.sortOrder,
-      },
-    ];
-  });
-}
-
-function buildCategoryTree(
-  categories: Category[],
-): CategoryTreeNode[] {
-  const nodes: CategoryTreeNode[] = categories.map((category) => ({
-    ...category,
-    children: [],
-  }));
-
-  const nodesById = new Map(
-    nodes.map((category) => [category.id, category]),
-  );
-
-  const roots: CategoryTreeNode[] = [];
-
-  for (const category of nodes) {
-    const parent = category.parentId
-      ? nodesById.get(category.parentId)
-      : undefined;
-
-    if (parent && parent.id !== category.id) {
-      parent.children.push(category);
-    } else {
-      roots.push(category);
-    }
-  }
-
-  function sortNodes(items: CategoryTreeNode[]) {
-    items.sort((a, b) => {
-      const aOrder = Number(a.sortOrder ?? 0);
-      const bOrder = Number(b.sortOrder ?? 0);
-
-      if (aOrder !== bOrder) return aOrder - bOrder;
-
-      return a.name.localeCompare(b.name);
-    });
-
-    for (const item of items) {
-      sortNodes(item.children);
-    }
-  }
-
-  sortNodes(roots);
-
-  return roots;
 }
 
 function parseResultMeta(
@@ -540,350 +531,98 @@ function parseResultMeta(
 ): SearchResultMeta {
   const meta = isRecord(value) ? value : {};
 
-  const readInteger = (
-    key: string,
-    fallback: number,
-    minimum = 0,
-  ) => {
+  function readInteger(key: string, fallback: number, minimum = 0): number {
     const candidate = meta[key];
-
-    return typeof candidate === "number" &&
-      Number.isSafeInteger(candidate) &&
-      candidate >= minimum
+    return typeof candidate === "number" && Number.isSafeInteger(candidate) && candidate >= minimum
       ? candidate
       : fallback;
-  };
+  }
 
-  const totalProducts = readInteger(
-    "totalProducts",
-    productCount,
-  );
-
-  const pageSize = readInteger(
-    "pageSize",
-    PAGE_SIZE,
-    1,
-  );
-
+  const totalProducts = readInteger("totalProducts", productCount);
+  const pageSize = readInteger("pageSize", PAGE_SIZE, 1);
+  const cappedTotal = Math.min(totalProducts, MAX_SEARCH_RESULTS);
   const totalPages = readInteger(
     "totalPages",
-    Math.max(1, Math.ceil(totalProducts / pageSize)),
-    1,
+    Math.ceil(cappedTotal / pageSize),
   );
-
   const rawSort = meta.sort;
 
   return {
     totalProducts,
-    returnedResults: readInteger(
-      "returnedResults",
-      productCount,
-    ),
+    returnedResults: readInteger("returnedResults", productCount),
     page: readInteger("page", fallbackPage, 1),
     pageSize,
-    totalPages,
+    totalPages: Math.max(1, totalPages),
     hasMore: meta.hasMore === true,
-    maxResults: readInteger("maxResults", 120, 1),
+    maxResults: readInteger("maxResults", MAX_SEARCH_RESULTS, 1),
     truncated: meta.truncated === true,
-    sort:
-      rawSort === "newest" ||
-      rawSort === "price-asc" ||
-      rawSort === "price-desc" ||
-      rawSort === "relevance"
-        ? rawSort
-        : "relevance",
+    sort: rawSort === "newest" || rawSort === "price-asc" || rawSort === "price-desc" || rawSort === "relevance"
+      ? rawSort
+      : "relevance",
   };
 }
 
-function getApiError(value: unknown): string {
-  return isRecord(value) && typeof value.error === "string"
-    ? value.error
-    : "Something went wrong. Please try again.";
-}
-
 /* -------------------------------------------------------------------------- */
-/* PRICE AND PRODUCT DISPLAY HELPERS                                          */
+/* URL AND SAVED-LISTING HELPERS                                              */
 /* -------------------------------------------------------------------------- */
 
-function formatNaira(amount: number): string {
-  return `₦${amount.toLocaleString("en-NG")}`;
-}
-
-function getProductPrice(product: ProductSearchResult): string {
-  return product.price !== null
-    ? formatNaira(product.price)
-    : "Price unavailable";
-}
-
-function getDiscountPercentage(
-  price: number | null,
-  originalPrice: number | null,
-): number | null {
-  if (
-    price === null ||
-    originalPrice === null ||
-    originalPrice <= price
-  ) {
-    return null;
-  }
-
-  return Math.round(
-    ((originalPrice - price) / originalPrice) * 100,
-  );
-}
-
-function getProductImage(
-  product: ProductSearchResult,
-): string | null {
-  return product.images[0]?.url ?? product.imageUrl;
-}
-
-function getAvailabilityStatus(product: ProductSearchResult) {
-  if (product.availability === "UNAVAILABLE") {
-    return {
-      label: "Out of stock",
-      className: "bg-[#F3E8E8] text-[#9F2D18]",
-    };
-  }
-
-  if (
-    product.stockQuantity !== null &&
-    product.stockQuantity <= 0
-  ) {
-    return {
-      label: "Out of stock",
-      className: "bg-[#F3E8E8] text-[#9F2D18]",
-    };
-  }
-
-  if (product.availability === "AVAILABLE") {
-    return {
-      label:
-        product.stockQuantity !== null
-          ? `${product.stockQuantity} in stock`
-          : "Available",
-      className: "bg-[#DDF5EA] text-[#137A59]",
-    };
-  }
-
-  return {
-    label: "Confirm availability",
-    className: "bg-[#FFF0C7] text-[#8A671D]",
-  };
-}
-
-function getPositivePage(value: string | null): number {
-  if (!value) return 1;
-
-  const parsed = Number(value);
-
-  return Number.isSafeInteger(parsed) && parsed >= 1
-    ? parsed
-    : 1;
-}
-
-/* -------------------------------------------------------------------------- */
-/* SEARCH PARAMETER HELPERS                                                   */
-/* -------------------------------------------------------------------------- */
-
-function buildSearchParams(
-  values: SearchFilterValues,
-  page = 1,
-): URLSearchParams {
+function buildSearchParams(values: SearchFilterValues, page = 1): URLSearchParams {
   const params = new URLSearchParams();
+  const fields: Array<[string, string]> = [
+    ["q", values.query],
+    ["category", values.category],
+    ["categoryId", values.categoryId],
+    ["state", values.state],
+    ["lga", values.lga],
+    ["area", values.area],
+    ["minPrice", values.minPrice],
+    ["maxPrice", values.maxPrice],
+    ["availability", values.availability],
+  ];
 
-  if (values.query.trim()) {
-    params.set("q", values.query.trim());
+  for (const [key, raw] of fields) {
+    const value = raw.trim();
+    if (value) params.set(key, value);
   }
 
-  if (values.category.trim()) {
-    params.set("category", values.category.trim());
-  }
-
-  if (values.categoryId.trim()) {
-    params.set("categoryId", values.categoryId.trim());
-  }
-
-  if (values.state.trim()) {
-    params.set("state", values.state.trim());
-  }
-
-  if (values.lga.trim()) {
-    params.set("lga", values.lga.trim());
-  }
-
-  if (values.area.trim()) {
-    params.set("area", values.area.trim());
-  }
-
-  if (values.minPrice.trim()) {
-    params.set("minPrice", values.minPrice.trim());
-  }
-
-  if (values.maxPrice.trim()) {
-    params.set("maxPrice", values.maxPrice.trim());
-  }
-
-  if (values.availability) {
-    params.set("availability", values.availability);
-  }
-
-  if (values.verified) {
-    params.set("verified", "true");
-  }
-
+  if (values.verified) params.set("verified", "true");
   params.set("type", "product");
   params.set("pageSize", String(PAGE_SIZE));
-
-  if (page > 1) {
-    params.set("page", String(page));
-  }
-
-  if (values.sort !== "relevance") {
-    params.set("sort", values.sort);
-  }
+  if (page > 1) params.set("page", String(page));
+  if (values.sort !== "relevance") params.set("sort", values.sort);
 
   return params;
 }
 
-/* -------------------------------------------------------------------------- */
-/* SAVED PRODUCT RESPONSE HELPERS                                             */
-/* -------------------------------------------------------------------------- */
+function parseSavedProductMap(value: unknown): Record<string, string> {
+  if (!isRecord(value)) return {};
 
-function getCollectionHint(
-  key: string,
-): "PRODUCT" | "SERVICE" | undefined {
-  const normalized = key.toLowerCase();
+  const result: Record<string, string> = {};
+  const collections = [value.items, value.savedListings, value.savedProducts];
 
-  if (normalized.includes("product")) return "PRODUCT";
-  if (normalized.includes("service")) return "SERVICE";
+  for (const collection of collections) {
+    if (!Array.isArray(collection)) continue;
 
-  return undefined;
-}
+    for (const raw of collection) {
+      if (!isRecord(raw)) continue;
 
-function normalizeListingKind(
-  value: unknown,
-): "PRODUCT" | "SERVICE" | undefined {
-  if (typeof value !== "string") return undefined;
-
-  const normalized = value.trim().toUpperCase();
-
-  if (normalized.includes("PRODUCT")) return "PRODUCT";
-  if (normalized.includes("SERVICE")) return "SERVICE";
-
-  return undefined;
-}
-
-function parseSavedListingMaps(value: unknown): SavedListingMaps {
-  const result: SavedListingMaps = {
-    products: {},
-    services: {},
-  };
-
-  const visited = new WeakSet<object>();
-
-  function visit(
-    item: unknown,
-    inheritedKind?: "PRODUCT" | "SERVICE",
-    collectionHint?: "PRODUCT" | "SERVICE",
-  ) {
-    if (!item || typeof item !== "object") return;
-
-    if (visited.has(item as object)) return;
-
-    visited.add(item as object);
-
-    if (Array.isArray(item)) {
-      item.forEach((child) =>
-        visit(child, inheritedKind, collectionHint),
-      );
-      return;
-    }
-
-    const record = item as Record<string, unknown>;
-
-    const nestedProduct = isRecord(record.product)
-      ? record.product
-      : null;
-
-    const nestedService = isRecord(record.service)
-      ? record.service
-      : null;
-
-    const nestedSaved = isRecord(record.savedListing)
-      ? record.savedListing
-      : isRecord(record.savedItem)
-        ? record.savedItem
-        : isRecord(record.saved)
-          ? record.saved
-          : null;
-
-    const nestedListing = isRecord(record.listing)
-      ? record.listing
-      : isRecord(record.item)
-        ? record.item
-        : null;
-
-    const explicitKind = normalizeListingKind(
-      record.type ??
-        record.listingType ??
-        record.entityType ??
-        record.savedType,
-    );
-
-    const kind =
-      explicitKind ??
-      (nestedProduct ? "PRODUCT" : undefined) ??
-      (nestedService ? "SERVICE" : undefined) ??
-      inheritedKind ??
-      collectionHint;
-
-    const nestedEntity =
-      nestedProduct ?? nestedService ?? nestedListing;
-
-    const listingId =
-      (kind === "PRODUCT"
-        ? cleanString(record.productId)
-        : null) ??
-      (kind === "SERVICE"
-        ? cleanString(record.serviceId)
-        : null) ??
-      cleanString(record.listingId) ??
-      cleanString(record.entityId) ??
-      cleanString(nestedEntity?.id) ??
-      (kind ? cleanString(record.id) : null);
-
-    const explicitSavedId =
-      cleanString(nestedSaved?.id) ??
-      cleanString(record.savedListingId) ??
-      cleanString(record.savedItemId) ??
-      cleanString(record.savedId);
-
-    const recordId =
-      explicitSavedId ??
-      (listingId && cleanString(record.id) !== listingId
-        ? cleanString(record.id)
-        : null);
-
-    if (
-      kind &&
-      listingId &&
-      recordId &&
-      listingId !== recordId
-    ) {
-      if (kind === "PRODUCT") {
-        result.products[listingId] = recordId;
-      } else {
-        result.services[listingId] = recordId;
+      // Current /api/saved GET shape: { id, type: "PRODUCT", listing: { id } }.
+      if (raw.type === "PRODUCT" && isRecord(raw.listing)) {
+        const productId = cleanString(raw.listing.id);
+        const savedId = cleanString(raw.id);
+        if (productId && savedId) result[productId] = savedId;
+        continue;
       }
-    }
 
-    for (const [key, child] of Object.entries(record)) {
-      visit(child, kind, getCollectionHint(key) ?? kind);
+      // Retain compatibility with older product-only response shapes.
+      const nestedProduct = isRecord(raw.product) ? raw.product : null;
+      const productId = cleanString(raw.productId) ?? cleanString(raw.listingId) ??
+        (nestedProduct ? cleanString(nestedProduct.id) : null);
+      const savedId = cleanString(raw.savedListingId) ?? cleanString(raw.savedId) ??
+        (productId ? cleanString(raw.id) : null);
+      if (productId && savedId) result[productId] = savedId;
     }
   }
-
-  visit(value);
 
   return result;
 }
@@ -891,177 +630,155 @@ function parseSavedListingMaps(value: unknown): SavedListingMaps {
 function getCreatedSavedRecordId(value: unknown): string | null {
   if (!isRecord(value)) return null;
 
-  if (isRecord(value.savedListing)) {
-    return cleanString(value.savedListing.id);
+  // Current POST response uses { item: { id, productId } }.
+  for (const key of ["item", "savedListing", "savedItem", "saved"]) {
+    if (isRecord(value[key])) {
+      const id = cleanString(value[key].id);
+      if (id) return id;
+    }
   }
 
-  if (isRecord(value.savedItem)) {
-    return cleanString(value.savedItem.id);
-  }
-
-  if (isRecord(value.saved)) {
-    return cleanString(value.saved.id);
-  }
-
-  return (
-    cleanString(value.savedListingId) ??
-    cleanString(value.savedItemId) ??
-    cleanString(value.savedId)
-  );
+  return cleanString(value.savedListingId) ?? cleanString(value.savedItemId) ?? cleanString(value.savedId);
 }
 
 /* -------------------------------------------------------------------------- */
-/* PRODUCT RESULT CARD                                                        */
+/* PRODUCT DISPLAY HELPERS                                                    */
+/* -------------------------------------------------------------------------- */
+
+function getProductImage(product: ProductSearchResult): string | null {
+  return product.images[0]?.url ?? product.imageUrl;
+}
+
+function getAvailabilityStatus(product: ProductSearchResult) {
+  if (product.availability === "UNAVAILABLE" || product.stockQuantity === 0) {
+    return { label: "Out of stock", className: "bg-[#F3E8E8] text-[#9F2D18]" };
+  }
+  if (product.availability === "AVAILABLE") {
+    return {
+      label: product.stockQuantity !== null ? `${product.stockQuantity} in stock` : "Available",
+      className: "bg-[#DDF5EA] text-[#137A59]",
+    };
+  }
+  return { label: "Confirm availability", className: "bg-[#FFF0C7] text-[#8A671D]" };
+}
+
+function canAddToCart(product: ProductSearchResult): boolean {
+  return product.availability === "AVAILABLE" && product.price !== null && product.price > 0 && product.stockQuantity !== 0;
+}
+
+/* -------------------------------------------------------------------------- */
+/* PRODUCT CARD                                                               */
 /* -------------------------------------------------------------------------- */
 
 function ProductResultCard({
   product,
   saved,
   saving,
+  adding,
+  cartFeedback,
   categoryBackground,
   onToggleSaved,
+  onAddToCart,
 }: {
   product: ProductSearchResult;
   saved: boolean;
   saving: boolean;
+  adding: boolean;
+  cartFeedback: CartFeedback;
   categoryBackground: string;
   onToggleSaved: (product: ProductSearchResult) => void;
+  onAddToCart: (product: ProductSearchResult) => void;
 }) {
   const image = getProductImage(product);
-  const categoryName = product.category?.name ?? "Products";
-  const availability = getAvailabilityStatus(product);
-
-  const discount = getDiscountPercentage(
-    product.price,
-    product.originalPrice,
-  );
-
+  const status = getAvailabilityStatus(product);
+  const discount = getDiscountPercentage(product.price, product.originalPrice);
   const productHref = `/product/${encodeURIComponent(product.id)}`;
-  const area = product.seller.location?.area;
+  const canAdd = canAddToCart(product);
+  const feedback = cartFeedback?.productId === product.id ? cartFeedback : null;
 
   return (
-    <article className="group flex min-w-0 flex-col overflow-hidden rounded-2xl border border-[#EAE6DF] bg-white transition hover:-translate-y-0.5 hover:border-[#FFB5A3] hover:shadow-lg hover:shadow-[#9F2D18]/5">
-      <div
-        className="relative aspect-square overflow-hidden"
-        style={{ backgroundColor: categoryBackground }}
-      >
-        <Link
-          href={productHref}
-          aria-label={`View ${product.name}`}
-          className="absolute inset-0"
-        >
+    <article className="group flex min-w-0 flex-col overflow-hidden rounded-xl border border-[#EAE6DF] bg-white transition duration-200 hover:-translate-y-0.5 hover:border-[#FFB5A3] hover:shadow-[0_8px_22px_rgba(23,32,42,0.08)]">
+      <div className="relative aspect-square overflow-hidden" style={{ backgroundColor: categoryBackground }}>
+        <Link href={productHref} aria-label={`View ${product.name}`} className="absolute inset-0">
           {image ? (
-            <img
-              src={image}
-              alt={product.name}
-              loading="lazy"
-              className="h-full w-full object-cover transition duration-300 group-hover:scale-[1.03]"
-            />
+            <img src={image} alt={product.name} loading="lazy" className="h-full w-full object-cover transition-transform duration-300 group-hover:scale-[1.035]" />
           ) : (
-            <div className="flex h-full w-full items-center justify-center">
-              <Package className="h-11 w-11 text-[#C7BDB3]" />
-            </div>
+            <div className="flex h-full w-full items-center justify-center text-[#B9AEA4]"><Package className="h-9 w-9" /></div>
           )}
         </Link>
 
-        <span
-          className={`absolute left-2.5 top-2.5 max-w-[calc(100%-58px)] truncate rounded-full px-2.5 py-1 text-[9px] font-bold sm:left-3 sm:top-3 sm:text-[10px] ${availability.className}`}
-        >
-          {availability.label}
+        <span className={`absolute left-2 top-2 max-w-[calc(100%-52px)] truncate rounded-full px-2 py-1 text-[8px] font-bold sm:left-3 sm:top-3 sm:text-[9px] ${status.className}`}>
+          {status.label}
         </span>
 
         {discount !== null && (
-          <span className="absolute bottom-2.5 left-2.5 rounded-md bg-[#9F2D18] px-2 py-1 text-[9px] font-bold text-white sm:bottom-3 sm:left-3 sm:text-[10px]">
-            -{discount}%
-          </span>
+          <span className="absolute bottom-2 left-2 rounded bg-[#9F2D18] px-2 py-1 text-[9px] font-bold text-white sm:bottom-3 sm:left-3">-{discount}%</span>
         )}
 
         <button
           type="button"
-          aria-label={
-            saved
-              ? `Remove ${product.name} from Saved`
-              : `Save ${product.name}`
-          }
+          aria-label={saved ? `Remove ${product.name} from Saved` : `Save ${product.name}`}
           aria-pressed={saved}
           disabled={saving}
           onClick={() => onToggleSaved(product)}
-          className={`absolute right-2.5 top-2.5 flex h-8 w-8 items-center justify-center rounded-full bg-white/95 shadow-sm transition disabled:opacity-60 sm:right-3 sm:top-3 sm:h-9 sm:w-9 ${
-            saved
-              ? "text-[#FF5A36]"
-              : "text-[#6F675F] hover:text-[#FF5A36]"
-          }`}
+          className={`absolute right-2 top-2 flex h-8 w-8 items-center justify-center rounded-full border border-white/80 bg-white/95 shadow-sm transition hover:scale-105 disabled:opacity-60 sm:right-3 sm:top-3 sm:h-9 sm:w-9 ${saved ? "text-[#FF5A36]" : "text-[#756B61] hover:text-[#FF5A36]"}`}
         >
-          {saving ? (
-            <Loader2 className="h-4 w-4 animate-spin" />
-          ) : (
-            <Bookmark
-              className="h-4 w-4"
-              fill={saved ? "currentColor" : "none"}
-            />
-          )}
+          {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Heart className="h-4 w-4" fill={saved ? "currentColor" : "none"} />}
         </button>
       </div>
 
-      <div className="flex min-w-0 flex-1 flex-col p-3 sm:p-4">
-        <p className="truncate text-[9px] font-bold uppercase tracking-wide text-[#9F2D18] sm:text-[10px]">
-          {categoryName}
-        </p>
+      <div className="flex min-w-0 flex-1 flex-col p-2.5 sm:p-3.5">
+        <div className="flex min-w-0 items-center justify-between gap-1.5">
+          <p className="truncate text-[8px] font-bold uppercase tracking-[0.08em] text-[#9F2D18] sm:text-[9px]">{product.category?.name ?? "Product"}</p>
+          {product.seller.verified && (
+            <span className="inline-flex shrink-0 items-center gap-0.5 text-[8px] font-semibold text-[#137A59] sm:text-[9px]" title="Verified seller">
+              <BadgeCheck className="h-3 w-3" /> Verified
+            </span>
+          )}
+        </div>
 
-        <Link
-          href={productHref}
-          className="mt-1 line-clamp-2 min-h-10 text-xs font-bold leading-5 text-[#292421] hover:text-[#9F2D18] sm:text-sm"
-        >
+        <Link href={productHref} className="mt-1 line-clamp-2 min-h-9 text-[11px] font-semibold leading-4 text-[#252D35] transition hover:text-[#9F2D18] sm:text-xs sm:leading-5">
           {product.name}
         </Link>
 
-        <div className="mt-2 flex min-w-0 flex-wrap items-baseline gap-x-2 gap-y-1">
-          <p className="text-sm font-extrabold text-[#9F2D18] sm:text-base">
-            {getProductPrice(product)}
-          </p>
-
-          {product.originalPrice !== null && (
-            <p className="text-[10px] text-[#91877E] line-through sm:text-xs">
-              {formatNaira(product.originalPrice)}
-            </p>
+        <div className="mt-1.5 flex min-w-0 flex-wrap items-baseline gap-x-2 gap-y-0.5">
+          <span className="text-[13px] font-extrabold leading-5 text-[#9F2D18] sm:text-sm">{product.price !== null ? formatNaira(product.price) : "Price unavailable"}</span>
+          {product.originalPrice !== null && product.price !== null && (
+            <del className="whitespace-nowrap text-[9px] text-[#958B83] sm:text-[10px]">{formatNaira(product.originalPrice)}</del>
           )}
         </div>
 
         {product.description && (
-          <p className="mt-2 line-clamp-2 text-[10px] leading-4 text-[#81766D] sm:text-xs sm:leading-5">
-            {product.description}
-          </p>
+          <p className="mt-1.5 line-clamp-2 text-[9px] leading-4 text-[#81766D] sm:text-[10px]">{product.description}</p>
         )}
 
-        <div className="mt-auto border-t border-[#F0ECE6] pt-3">
+        <div className="mt-auto border-t border-[#F0ECE7] pt-2.5">
           <div className="flex min-w-0 items-center justify-between gap-2">
-            <p className="flex min-w-0 items-center gap-1 text-[9px] text-[#91877E] sm:text-[10px]">
-              <MapPin className="h-3 w-3 shrink-0" />
-
-              <span className="truncate">
-                {area ?? "Location not listed"}
-              </span>
+            <Link href={`/seller/${encodeURIComponent(product.seller.id)}`} className="min-w-0 truncate text-[9px] font-medium text-[#62574E] hover:text-[#9F2D18] sm:text-[10px]" title={product.seller.name}>
+              {product.seller.name}
+            </Link>
+            <p className="flex min-w-0 shrink-0 items-center gap-0.5 text-[8px] text-[#91877E] sm:text-[9px]">
+              <MapPin className="h-2.5 w-2.5 shrink-0" />
+              <span className="max-w-[78px] truncate">{product.seller.location?.area ?? "Nearby"}</span>
             </p>
-
-            {product.seller.verified && (
-              <span
-                title="Verified seller"
-                aria-label="Verified seller"
-                className="inline-flex shrink-0 items-center gap-1 rounded-full bg-[#DDF5EA] px-2 py-1 text-[9px] font-bold text-[#137A59]"
-              >
-                <BadgeCheck className="h-3 w-3" />
-                Verified
-              </span>
-            )}
           </div>
 
-          <Link
-            href={productHref}
-            className="mt-3 flex min-h-9 items-center justify-center gap-2 rounded-xl bg-[#FFF1ED] px-3 py-2 text-[10px] font-bold text-[#9F2D18] transition hover:bg-[#FFE0D6] sm:min-h-10 sm:text-xs"
+          <button
+            type="button"
+            disabled={!canAdd || adding}
+            onClick={() => onAddToCart(product)}
+            title={!canAdd ? "This product requires a confirmed price and availability." : "Add to cart"}
+            className={`mt-2.5 flex min-h-9 w-full items-center justify-center gap-1.5 rounded-lg px-2 py-2 text-[9px] font-bold transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#FF5A36] focus-visible:ring-offset-2 sm:min-h-10 sm:text-[10px] ${!canAdd ? "cursor-not-allowed bg-[#EEEAE6] text-[#9A9087]" : "bg-[#FF5A36] text-white hover:bg-[#E94A28] active:scale-[0.99]"}`}
           >
-            View product
-            <ArrowRight className="h-3.5 w-3.5" />
-          </Link>
+            {adding ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <ShoppingCart className="h-3.5 w-3.5" />}
+            {!canAdd ? "Not available to buy" : adding ? "Adding..." : "Add to cart"}
+          </button>
+
+          {feedback && (
+            <p role={feedback.error ? "alert" : "status"} className={`mt-1.5 text-[9px] leading-4 ${feedback.error ? "text-[#B42318]" : "text-[#267344]"}`}>
+              {feedback.message}
+            </p>
+          )}
         </div>
       </div>
     </article>
@@ -1069,63 +786,110 @@ function ProductResultCard({
 }
 
 /* -------------------------------------------------------------------------- */
-/* CATEGORY DISPLAY HELPERS                                                   */
+/* CATEGORY FILTER CONTROLS                                                   */
 /* -------------------------------------------------------------------------- */
 
-function CategoryImageOrIcon({
-  category,
-}: {
-  category: Category;
-}) {
+function CategoryIcon({ category }: { category: Category }) {
   const Icon = category.icon;
-
   if (category.imageUrl) {
-    return (
-      <img
-        src={category.imageUrl}
-        alt=""
-        loading="lazy"
-        className="h-full w-full rounded-full object-cover"
-      />
-    );
+    return <img src={category.imageUrl} alt="" loading="lazy" className="h-full w-full object-cover" />;
   }
-
   return <Icon className="h-3.5 w-3.5" />;
 }
 
+function CategoryFilterList({
+  categories,
+  selectedCategoryId,
+  selectedCategory,
+  onSelect,
+}: {
+  categories: CategoryTreeNode[];
+  selectedCategoryId: string;
+  selectedCategory: string;
+  onSelect: (category: CategoryTreeNode | null) => void;
+}) {
+  const isActive = (item: CategoryTreeNode) => selectedCategoryId
+    ? selectedCategoryId === item.id
+    : selectedCategory.toLocaleLowerCase() === item.name.toLocaleLowerCase();
+
+  return (
+    <div className="space-y-2">
+      <button
+        type="button"
+        aria-pressed={!selectedCategory && !selectedCategoryId}
+        onClick={() => onSelect(null)}
+        className={`flex min-h-9 w-full items-center justify-between rounded-lg px-2.5 py-2 text-left text-xs font-semibold transition ${!selectedCategory && !selectedCategoryId ? "bg-[#FFF0EB] text-[#9F2D18]" : "text-[#62574E] hover:bg-white"}`}
+      >
+        All categories
+        {!selectedCategory && !selectedCategoryId && <Check className="h-3.5 w-3.5" />}
+      </button>
+
+      {categories.map((parent) => (
+        <div key={parent.id} className="rounded-lg border border-[#EEE8E1] bg-white p-2">
+          <button
+            type="button"
+            aria-pressed={isActive(parent)}
+            onClick={() => onSelect(isActive(parent) ? null : parent)}
+            className={`flex min-h-9 w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs font-bold transition ${isActive(parent) ? "bg-[#FFF0EB] text-[#9F2D18]" : "text-[#514840] hover:bg-[#FCFAF6]"}`}
+          >
+            <span className="flex h-7 w-7 shrink-0 items-center justify-center overflow-hidden rounded-full" style={{ backgroundColor: parent.bg }}>
+              <CategoryIcon category={parent} />
+            </span>
+            <span className="min-w-0 flex-1 truncate">{parent.name}</span>
+            {isActive(parent) && <Check className="h-3.5 w-3.5 shrink-0" />}
+          </button>
+
+          {parent.children.length > 0 && (
+            <div className="ml-4 mt-1 space-y-0.5 border-l border-[#EAE6DF] pl-2">
+              {parent.children.map((child) => (
+                <button
+                  key={child.id}
+                  type="button"
+                  aria-pressed={isActive(child)}
+                  onClick={() => onSelect(isActive(child) ? parent : child)}
+                  className={`flex min-h-8 w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-[11px] transition ${isActive(child) ? "bg-[#FFF0EB] font-semibold text-[#9F2D18]" : "text-[#756B61] hover:bg-[#FCFAF6]"}`}
+                >
+                  <span className="flex h-5 w-5 shrink-0 items-center justify-center overflow-hidden rounded-full" style={{ backgroundColor: child.bg }}>
+                    <CategoryIcon category={child} />
+                  </span>
+                  <span className="min-w-0 flex-1 truncate">{child.name}</span>
+                  {isActive(child) && <Check className="h-3 w-3 shrink-0" />}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      ))}
+
+      {categories.length === 0 && <p className="px-2 py-2 text-[11px] text-[#91877E]">No product categories are available.</p>}
+    </div>
+  );
+}
+
 /* -------------------------------------------------------------------------- */
-/* SEARCH PAGE URL                                                            */
+/* SEARCH PARAMETER WRAPPER                                                   */
 /* -------------------------------------------------------------------------- */
 
 function SearchPageContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
 
+  const allSearchParams = searchParams.toString();
   const initialQuery = searchParams.get("q") ?? "";
   const initialCategory = searchParams.get("category") ?? "";
   const initialCategoryId = searchParams.get("categoryId") ?? "";
-
   const initialState = searchParams.get("state") ?? "";
   const initialLga = searchParams.get("lga") ?? "";
-
-  const initialArea =
-    searchParams.get("area") ??
-    searchParams.get("location") ??
-    "";
-
+  const initialArea = searchParams.get("area") ?? searchParams.get("location") ?? "";
   const initialMinPrice = searchParams.get("minPrice") ?? "";
   const initialMaxPrice = searchParams.get("maxPrice") ?? "";
-  const initialAvailability = searchParams.get("availability") ?? "";
+  const initialAvailability = parseAvailabilityFilter(searchParams.get("availability") ?? "");
   const initialVerified = searchParams.get("verified") === "true";
-
   const initialPage = getPositivePage(searchParams.get("page"));
   const initialSort = parseSortMode(searchParams.get("sort"));
 
-  const allSearchParams = searchParams.toString();
-
   const stableParams = new URLSearchParams(allSearchParams);
   stableParams.delete("page");
-
   const searchKey = stableParams.toString();
 
   useEffect(() => {
@@ -1137,28 +901,21 @@ function SearchPageContent() {
       changed = true;
     }
 
-    if (
-      params.has("location") &&
-      !params.has("area")
-    ) {
+    // Keep accepting the old `location` query parameter, but store it as `area`.
+    if (params.has("location") && !params.has("area")) {
       const legacyLocation = params.get("location");
-
-      if (legacyLocation?.trim()) {
-        params.set("area", legacyLocation.trim());
-      }
-
+      if (legacyLocation?.trim()) params.set("area", legacyLocation.trim());
       params.delete("location");
       changed = true;
     }
 
     const rawPage = params.get("page");
-
     if (rawPage !== null) {
-      const parsedPage = Number(rawPage);
-
+      const parsedPage = /^\d+$/.test(rawPage) ? Number(rawPage) : Number.NaN;
       if (
         !Number.isSafeInteger(parsedPage) ||
-        parsedPage < 1
+        parsedPage < 1 ||
+        parsedPage > MAX_SEARCH_PAGE
       ) {
         params.delete("page");
         changed = true;
@@ -1166,14 +923,8 @@ function SearchPageContent() {
     }
 
     if (changed) {
-      const queryString = params.toString();
-
-      router.replace(
-        queryString
-          ? `/search?${queryString}`
-          : "/search",
-        { scroll: false },
-      );
+      const next = params.toString();
+      router.replace(next ? `/search?${next}` : "/search", { scroll: false });
     }
   }, [allSearchParams, router]);
 
@@ -1197,7 +948,7 @@ function SearchPageContent() {
 }
 
 /* -------------------------------------------------------------------------- */
-/* SEARCH PAGE VIEW                                                           */
+/* MAIN SEARCH PAGE                                                           */
 /* -------------------------------------------------------------------------- */
 
 function SearchPageView({
@@ -1216,14 +967,11 @@ function SearchPageView({
 }: SearchPageViewProps) {
   const router = useRouter();
 
-  const [query, setQuery] = useState(initialQuery);
   const [category, setCategory] = useState(initialCategory);
   const [categoryId, setCategoryId] = useState(initialCategoryId);
-
   const [state, setState] = useState(initialState);
   const [lga, setLga] = useState(initialLga);
   const [area, setArea] = useState(initialArea);
-
   const [minPrice, setMinPrice] = useState(initialMinPrice);
   const [maxPrice, setMaxPrice] = useState(initialMaxPrice);
   const [availability, setAvailability] = useState(initialAvailability);
@@ -1231,33 +979,16 @@ function SearchPageView({
 
   const [categories, setCategories] = useState<Category[]>([]);
   const [categoriesLoading, setCategoriesLoading] = useState(true);
-
-  const [locationOptions, setLocationOptions] =
-    useState<LocationFilterOptions>({
-      states: [],
-      lgasByState: {},
-    });
-
-  const [locationOptionsLoading, setLocationOptionsLoading] =
-    useState(true);
-
-  const [locationOptionsError, setLocationOptionsError] =
-    useState("");
+  const [locationOptions, setLocationOptions] = useState<LocationFilterOptions>({ states: [], lgasByState: {} });
+  const [locationOptionsLoading, setLocationOptionsLoading] = useState(true);
+  const [locationOptionsError, setLocationOptionsError] = useState("");
 
   const [products, setProducts] = useState<ProductSearchResult[]>([]);
-
-  const [savedListings, setSavedListings] =
-    useState<SavedListingMaps>({
-      products: {},
-      services: {},
-    });
-
-  const [savingListings, setSavingListings] = useState<
-    Record<string, boolean>
-  >({});
-
-  const [saveFeedback, setSaveFeedback] = useState("");
-  const [saveFeedbackError, setSaveFeedbackError] = useState(false);
+  const [savedProducts, setSavedProducts] = useState<Record<string, string>>({});
+  const [savingProductIds, setSavingProductIds] = useState<Record<string, boolean>>({});
+  const [addingProductIds, setAddingProductIds] = useState<Record<string, boolean>>({});
+  const [saveFeedback, setSaveFeedback] = useState<SaveFeedback>(null);
+  const [cartFeedback, setCartFeedback] = useState<CartFeedback>(null);
 
   const [resultMeta, setResultMeta] = useState<SearchResultMeta>({
     totalProducts: 0,
@@ -1266,7 +997,7 @@ function SearchPageView({
     pageSize: PAGE_SIZE,
     totalPages: 1,
     hasMore: false,
-    maxResults: 120,
+    maxResults: MAX_SEARCH_RESULTS,
     truncated: false,
     sort: initialSort,
   });
@@ -1274,331 +1005,158 @@ function SearchPageView({
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [showFilters, setShowFilters] = useState(false);
+  const [filterValidationError, setFilterValidationError] = useState("");
   const [retryCount, setRetryCount] = useState(0);
 
-  const appliedFilters = useMemo<SearchFilterValues>(
-    () => ({
-      query: initialQuery,
-      category: initialCategory,
-      categoryId: initialCategoryId,
-      state: initialState,
-      lga: initialLga,
-      area: initialArea,
-      minPrice: initialMinPrice,
-      maxPrice: initialMaxPrice,
-      availability: initialAvailability,
-      verified: initialVerified,
-      sort: initialSort,
-    }),
-    [
-      initialQuery,
-      initialCategory,
-      initialCategoryId,
-      initialState,
-      initialLga,
-      initialArea,
-      initialMinPrice,
-      initialMaxPrice,
-      initialAvailability,
-      initialVerified,
-      initialSort,
-    ],
-  );
+  const appliedFilters = useMemo<SearchFilterValues>(() => ({
+    query: initialQuery,
+    category: initialCategory,
+    categoryId: initialCategoryId,
+    state: initialState,
+    lga: initialLga,
+    area: initialArea,
+    minPrice: initialMinPrice,
+    maxPrice: initialMaxPrice,
+    availability: initialAvailability,
+    verified: initialVerified,
+    sort: initialSort,
+  }), [
+    initialQuery,
+    initialCategory,
+    initialCategoryId,
+    initialState,
+    initialLga,
+    initialArea,
+    initialMinPrice,
+    initialMaxPrice,
+    initialAvailability,
+    initialVerified,
+    initialSort,
+  ]);
 
-  const availableLgas = useMemo(
-    () => getLgasForState(locationOptions, state),
-    [locationOptions, state],
-  );
+  const categoryTree = useMemo(() => buildCategoryTree(categories), [categories]);
+  const availableLgas = useMemo(() => getLgasForState(locationOptions, state), [locationOptions, state]);
+  const activeFilterCount =
+    Number(Boolean(initialCategory || initialCategoryId)) +
+    Number(Boolean(initialState)) +
+    Number(Boolean(initialLga)) +
+    Number(Boolean(initialArea)) +
+    Number(Boolean(initialMinPrice)) +
+    Number(Boolean(initialMaxPrice)) +
+    Number(Boolean(initialAvailability)) +
+    Number(initialVerified);
 
-  const categoryTree = useMemo(
-    () => buildCategoryTree(categories),
-    [categories],
-  );
-
-  const selectedCategoryId = useMemo(() => {
-    if (categoryId) return categoryId;
-
-    return (
-      categories.find(
-        (item) =>
-          item.name.toLowerCase() ===
-          initialCategory.toLowerCase(),
-      )?.id ?? ""
-    );
-  }, [categories, categoryId, initialCategory]);
+  const totalPages = Math.max(1, resultMeta.totalPages);
+  const currentPage = Math.min(Math.max(1, initialPage), totalPages);
+  const hasResults = products.length > 0;
+  const effectivePageSize = resultMeta.pageSize || PAGE_SIZE;
+  const pageStart = hasResults ? (currentPage - 1) * effectivePageSize + 1 : 0;
+  const pageEnd = hasResults ? pageStart + products.length - 1 : 0;
 
   /* ------------------------------------------------------------------------ */
-  /* NAVIGATION                                                               */
-  /* ------------------------------------------------------------------------ */
-
-  const navigateToSearch = useCallback(
-    (values: SearchFilterValues) => {
-      const params = buildSearchParams(values, 1);
-      const queryString = params.toString();
-
-      router.push(
-        queryString
-          ? `/search?${queryString}`
-          : "/search",
-        { scroll: false },
-      );
-    },
-    [router],
-  );
-
-  const navigateToPage = useCallback(
-    (requestedPage: number, replace = false) => {
-      const params = buildSearchParams(
-        appliedFilters,
-        requestedPage,
-      );
-
-      const queryString = params.toString();
-      const url = queryString
-        ? `/search?${queryString}`
-        : "/search";
-
-      if (replace) {
-        router.replace(url, { scroll: false });
-      } else {
-        router.push(url, { scroll: false });
-      }
-    },
-    [appliedFilters, router],
-  );
-
-  function applyAppliedFilterChanges(
-    overrides: Partial<SearchFilterValues>,
-  ) {
-    navigateToSearch({
-      ...appliedFilters,
-      ...overrides,
-    });
-  }
-
-  function isCategorySelected(item: Category): boolean {
-    if (selectedCategoryId) {
-      return selectedCategoryId === item.id;
-    }
-
-    return (
-      initialCategory.toLowerCase() ===
-      item.name.toLowerCase()
-    );
-  }
-
-  function toggleAppliedCategory(item: Category) {
-    const active = isCategorySelected(item);
-
-    applyAppliedFilterChanges({
-      category: active ? "" : item.name,
-      categoryId: active ? "" : item.id,
-    });
-  }
-
-  /* ------------------------------------------------------------------------ */
-  /* PRODUCT CATEGORIES                                                       */
+  /* DATA LOADING                                                             */
   /* ------------------------------------------------------------------------ */
 
   useEffect(() => {
     const controller = new AbortController();
 
-    setCategories([]);
-    setCategoriesLoading(true);
-
     async function loadCategories() {
+      setCategoriesLoading(true);
       try {
-        const response = await fetch(
-          "/api/categories?type=product",
-          {
-            cache: "no-store",
-            signal: controller.signal,
-          },
-        );
-
-        if (!response.ok) {
-          throw new Error("Unable to load product categories.");
-        }
+        const response = await fetch("/api/categories?type=product&includeEmpty=true", {
+          cache: "no-store",
+          headers: { Accept: "application/json" },
+          signal: controller.signal,
+        });
+        if (!response.ok) throw new Error("Unable to load product categories.");
 
         const data: unknown = await response.json();
-
-        if (!isRecord(data)) {
-          throw new Error("Invalid categories response.");
-        }
-
-        if (!controller.signal.aborted) {
-          setCategories(
-            parseCategoryOptions(data.categories),
-          );
-        }
-      } catch (categoryError) {
+        if (!isRecord(data)) throw new Error("Invalid category response.");
+        if (!controller.signal.aborted) setCategories(parseCategoryOptions(data));
+      } catch (loadError) {
         if (controller.signal.aborted) return;
-
-        console.error(
-          "Failed to load product categories:",
-          categoryError,
-        );
-
+        console.error("Product category loading error:", loadError);
         setCategories([]);
       } finally {
-        if (!controller.signal.aborted) {
-          setCategoriesLoading(false);
+        if (!controller.signal.aborted) setCategoriesLoading(false);
+      }
+    }
+
+    async function loadLocationOptions() {
+      setLocationOptionsLoading(true);
+      setLocationOptionsError("");
+      try {
+        const response = await fetch("/api/areas", {
+          cache: "force-cache",
+          headers: { Accept: "application/json" },
+          signal: controller.signal,
+        });
+        if (!response.ok) throw new Error("Unable to load location options.");
+
+        const data: unknown = await response.json();
+        if (!isRecord(data)) throw new Error("Invalid location response.");
+        const parsed = parseStateGroups(data);
+        if (controller.signal.aborted) return;
+
+        setLocationOptions(parsed);
+        if (parsed.states.length === 0) {
+          setLocationOptionsError("No supported states were returned by the location API.");
         }
+      } catch (loadError) {
+        if (controller.signal.aborted) return;
+        console.error("Location option loading error:", loadError);
+        setLocationOptions({ states: [], lgasByState: {} });
+        setLocationOptionsError(loadError instanceof Error ? loadError.message : "Unable to load location options.");
+      } finally {
+        if (!controller.signal.aborted) setLocationOptionsLoading(false);
       }
     }
 
     void loadCategories();
-
-    return () => controller.abort();
-  }, []);
-
-  /* ------------------------------------------------------------------------ */
-  /* LOCATION OPTIONS                                                         */
-  /* ------------------------------------------------------------------------ */
-
-  useEffect(() => {
-    const controller = new AbortController();
-
-    setLocationOptionsLoading(true);
-    setLocationOptionsError("");
-
-    async function loadLocationOptions() {
-      try {
-        const response = await fetch("/api/areas", {
-          cache: "no-store",
-          signal: controller.signal,
-        });
-
-        if (!response.ok) {
-          throw new Error("Unable to load location options.");
-        }
-
-        const data: unknown = await response.json();
-
-        if (!isRecord(data)) {
-          throw new Error("Invalid location options response.");
-        }
-
-        const parsedOptions = parseLocationOptions(data);
-
-        if (!controller.signal.aborted) {
-          setLocationOptions(parsedOptions);
-
-          if (parsedOptions.states.length === 0) {
-            setLocationOptionsError(
-              "No supported states were returned by the location API.",
-            );
-          }
-        }
-      } catch (locationError) {
-        if (controller.signal.aborted) return;
-
-        console.error(
-          "Failed to load location options:",
-          locationError,
-        );
-
-        setLocationOptions({
-          states: [],
-          lgasByState: {},
-        });
-
-        setLocationOptionsError(
-          locationError instanceof Error
-            ? locationError.message
-            : "Unable to load location options.",
-        );
-      } finally {
-        if (!controller.signal.aborted) {
-          setLocationOptionsLoading(false);
-        }
-      }
-    }
-
     void loadLocationOptions();
-
     return () => controller.abort();
   }, []);
 
-  /* ------------------------------------------------------------------------ */
-  /* SAVED PRODUCTS                                                           */
-  /* ------------------------------------------------------------------------ */
+  const loadSavedProducts = useCallback(async (signal?: AbortSignal) => {
+    try {
+      const response = await fetch("/api/saved?type=PRODUCT", {
+        method: "GET",
+        cache: "no-store",
+        headers: { Accept: "application/json" },
+        signal,
+      });
 
-  const loadSavedListings = useCallback(
-    async (signal?: AbortSignal) => {
-      try {
-        const response = await fetch("/api/saved", {
-          method: "GET",
-          cache: "no-store",
-          headers: {
-            Accept: "application/json",
-          },
-          signal,
-        });
-
-        if (!response.ok) return null;
-
-        const data: unknown = await response.json();
-        const parsed = parseSavedListingMaps(data);
-
-        if (!signal?.aborted) {
-          setSavedListings(parsed);
-        }
-
-        return parsed;
-      } catch (savedError) {
-        if (
-          savedError instanceof DOMException &&
-          savedError.name === "AbortError"
-        ) {
-          return null;
-        }
-
-        console.error(
-          "Unable to load saved products:",
-          savedError,
-        );
-
-        return null;
+      if (response.status === 401 || response.status === 403) {
+        if (!signal?.aborted) setSavedProducts({});
+        return {};
       }
-    },
-    [],
-  );
+      if (!response.ok) throw new Error("Unable to load saved products.");
+
+      const data: unknown = await response.json();
+      const parsed = parseSavedProductMap(data);
+      if (!signal?.aborted) setSavedProducts(parsed);
+      return parsed;
+    } catch (loadError) {
+      if (loadError instanceof DOMException && loadError.name === "AbortError") return null;
+      console.error("Saved product loading error:", loadError);
+      return null;
+    }
+  }, []);
 
   useEffect(() => {
     const controller = new AbortController();
+    const refreshSaved = () => { void loadSavedProducts(); };
 
-    const refreshSaved = () => {
-      void loadSavedListings();
-    };
-
-    void loadSavedListings(controller.signal);
-
-    window.addEventListener(
-      SAVED_ITEMS_CHANGED_EVENT,
-      refreshSaved,
-    );
-
+    void loadSavedProducts(controller.signal);
+    window.addEventListener(SAVED_ITEMS_CHANGED_EVENT, refreshSaved);
     window.addEventListener("storage", refreshSaved);
 
     return () => {
       controller.abort();
-
-      window.removeEventListener(
-        SAVED_ITEMS_CHANGED_EVENT,
-        refreshSaved,
-      );
-
-      window.removeEventListener(
-        "storage",
-        refreshSaved,
-      );
+      window.removeEventListener(SAVED_ITEMS_CHANGED_EVENT, refreshSaved);
+      window.removeEventListener("storage", refreshSaved);
     };
-  }, [loadSavedListings]);
-
-  /* ------------------------------------------------------------------------ */
-  /* PRODUCT SEARCH RESULTS                                                   */
-  /* ------------------------------------------------------------------------ */
+  }, [loadSavedProducts]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -1606,71 +1164,33 @@ function SearchPageView({
     async function loadSearchResults() {
       setLoading(true);
       setError("");
+      setCartFeedback(null);
 
       try {
-        const params = buildSearchParams(
-          appliedFilters,
-          initialPage,
-        );
+        const params = buildSearchParams(appliedFilters, initialPage);
+        const response = await fetch(`/api/search?${params.toString()}`, {
+          method: "GET",
+          cache: "no-store",
+          headers: { Accept: "application/json" },
+          signal: controller.signal,
+        });
+        const data: unknown = await response.json().catch(() => null);
 
-        const queryString = params.toString();
-
-        const response = await fetch(
-          `/api/search?${queryString}`,
-          {
-            cache: "no-store",
-            signal: controller.signal,
-          },
-        );
-
-        const data: unknown = await response.json();
-
-        if (!response.ok) {
-          throw new Error(getApiError(data));
-        }
-
-        if (!isRecord(data)) {
-          throw new Error(
-            "The search API returned an invalid response.",
-          );
-        }
-
+        if (!response.ok) throw new Error(getApiError(data));
+        if (!isRecord(data)) throw new Error("The search API returned an invalid response.");
         if (controller.signal.aborted) return;
 
-        const rawProducts = Array.isArray(data.products)
-          ? data.products
-          : [];
-
+        const rawProducts = Array.isArray(data.products) ? data.products : [];
         const parsedProducts = rawProducts
-          .map(parseSearchProduct)
-          .filter(
-            (item): item is ProductSearchResult =>
-              item !== null,
-          );
-
-        const parsedMeta = parseResultMeta(
-          data.resultMeta,
-          parsedProducts.length,
-          initialPage,
-        );
+          .map(parseProduct)
+          .filter((item): item is ProductSearchResult => item !== null);
 
         setProducts(parsedProducts);
-        setResultMeta(parsedMeta);
+        setResultMeta(parseResultMeta(data.resultMeta, parsedProducts.length, initialPage));
       } catch (searchError) {
-        if (
-          searchError instanceof DOMException &&
-          searchError.name === "AbortError"
-        ) {
-          return;
-        }
-
-        console.error(
-          "Product search loading error:",
-          searchError,
-        );
-
+        if (searchError instanceof DOMException && searchError.name === "AbortError") return;
+        console.error("Product search loading error:", searchError);
         setProducts([]);
-
         setResultMeta({
           totalProducts: 0,
           returnedResults: 0,
@@ -1678,43 +1198,72 @@ function SearchPageView({
           pageSize: PAGE_SIZE,
           totalPages: 1,
           hasMore: false,
-          maxResults: 120,
+          maxResults: MAX_SEARCH_RESULTS,
           truncated: false,
           sort: initialSort,
         });
-
-        setError(
-          searchError instanceof Error && searchError.message
-            ? searchError.message
-            : "We couldn't complete your search right now.",
-        );
+        setError(searchError instanceof Error && searchError.message
+          ? searchError.message
+          : "We couldn't complete your search right now.");
       } finally {
-        if (!controller.signal.aborted) {
-          setLoading(false);
-        }
+        if (!controller.signal.aborted) setLoading(false);
       }
     }
 
     void loadSearchResults();
-
     return () => controller.abort();
-  }, [
-    appliedFilters,
-    initialPage,
-    initialSort,
-    retryCount,
-  ]);
+  }, [appliedFilters, initialPage, initialSort, retryCount]);
+
+  /* Close the mobile filter sheet with Escape and prevent background scrolling. */
+  useEffect(() => {
+    if (!showFilters) return;
+
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      setCategory(initialCategory);
+      setCategoryId(initialCategoryId);
+      setState(initialState);
+      setLga(initialLga);
+      setArea(initialArea);
+      setMinPrice(initialMinPrice);
+      setMaxPrice(initialMaxPrice);
+      setAvailability(initialAvailability);
+      setVerified(initialVerified);
+      setFilterValidationError("");
+      setShowFilters(false);
+    };
+    document.addEventListener("keydown", handleKeyDown);
+
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+    // closeFilters only restores state from the current route values.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [showFilters]);
 
   /* ------------------------------------------------------------------------ */
-  /* SEARCH AND FILTER ACTIONS                                                */
+  /* ROUTING AND FILTER ACTIONS                                               */
   /* ------------------------------------------------------------------------ */
 
-  function submitSearch(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
+  const navigateToSearch = useCallback((values: SearchFilterValues, page = 1) => {
+    const params = buildSearchParams(values, page);
+    const queryString = params.toString();
+    router.push(queryString ? `/search?${queryString}` : "/search", { scroll: false });
+  }, [router]);
 
-    navigateToSearch({
+  const navigateToPage = useCallback((requestedPage: number) => {
+    const params = buildSearchParams(appliedFilters, requestedPage);
+    const queryString = params.toString();
+    router.push(queryString ? `/search?${queryString}` : "/search", { scroll: false });
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  }, [appliedFilters, router]);
+
+  function getDraftFilters(): SearchFilterValues {
+    return {
       ...appliedFilters,
-      query,
       category,
       categoryId,
       state,
@@ -1724,60 +1273,51 @@ function SearchPageView({
       maxPrice,
       availability,
       verified,
-    });
+    };
   }
 
   function applyFilters() {
-    navigateToSearch({
-      ...appliedFilters,
-      query,
-      category,
-      categoryId,
-      state,
-      lga,
-      area,
-      minPrice,
-      maxPrice,
-      availability,
-      verified,
-    });
+    const minimumRaw = minPrice.trim();
+    const maximumRaw = maxPrice.trim();
+    const minimum = minimumRaw ? Number(minimumRaw) : null;
+    const maximum = maximumRaw ? Number(maximumRaw) : null;
 
+    // Match the API's digit-only whole-number price validation.
+    if (!isValidPriceFilterInput(minimumRaw)) {
+      setFilterValidationError("Minimum price must be a whole number between ₦0 and ₦1,000,000,000.");
+      return;
+    }
+    if (!isValidPriceFilterInput(maximumRaw)) {
+      setFilterValidationError("Maximum price must be a whole number between ₦0 and ₦1,000,000,000.");
+      return;
+    }
+    if (minimum !== null && maximum !== null && minimum > maximum) {
+      setFilterValidationError("Minimum price cannot be greater than maximum price.");
+      return;
+    }
+
+    setFilterValidationError("");
+    navigateToSearch(getDraftFilters());
     setShowFilters(false);
   }
 
   function closeFilters() {
     setCategory(initialCategory);
     setCategoryId(initialCategoryId);
-
     setState(initialState);
     setLga(initialLga);
     setArea(initialArea);
-
     setMinPrice(initialMinPrice);
     setMaxPrice(initialMaxPrice);
     setAvailability(initialAvailability);
     setVerified(initialVerified);
-
+    setFilterValidationError("");
     setShowFilters(false);
   }
 
   function clearFilters() {
-    setQuery(initialQuery);
-    setCategory("");
-    setCategoryId("");
-
-    setState("");
-    setLga("");
-    setArea("");
-
-    setMinPrice("");
-    setMaxPrice("");
-    setAvailability("");
-    setVerified(false);
-
-    navigateToSearch({
+    const cleared: SearchFilterValues = {
       ...appliedFilters,
-      query: initialQuery,
       category: "",
       categoryId: "",
       state: "",
@@ -1787,9 +1327,26 @@ function SearchPageView({
       maxPrice: "",
       availability: "",
       verified: false,
-    });
+      sort: "relevance",
+    };
 
+    setCategory("");
+    setCategoryId("");
+    setState("");
+    setLga("");
+    setArea("");
+    setMinPrice("");
+    setMaxPrice("");
+    setAvailability("");
+    setVerified(false);
+    setFilterValidationError("");
     setShowFilters(false);
+    navigateToSearch(cleared);
+  }
+
+  function selectCategory(item: CategoryTreeNode | null) {
+    setCategory(item?.name ?? "");
+    setCategoryId(item?.id ?? "");
   }
 
   function handleAreaChange(value: string) {
@@ -1802,244 +1359,328 @@ function SearchPageView({
     setArea(selected.area);
   }
 
-  function toggleDraftCategory(item: Category) {
-    const active =
-      categoryId === item.id ||
-      (!categoryId &&
-        category.toLowerCase() === item.name.toLowerCase());
-
-    setCategory(active ? "" : item.name);
-    setCategoryId(active ? "" : item.id);
-  }
 
   /* ------------------------------------------------------------------------ */
-  /* SAVE / UNSAVE PRODUCT                                                    */
+  /* SAVE AND ADD-TO-CART ACTIONS                                             */
   /* ------------------------------------------------------------------------ */
 
-  const toggleSavedProduct = useCallback(
-    async (product: ProductSearchResult) => {
-      const key = `PRODUCT:${product.id}`;
+  async function toggleSavedProduct(product: ProductSearchResult) {
+    if (savingProductIds[product.id]) return;
 
-      if (savingListings[key]) return;
+    setSaveFeedback(null);
+    setSavingProductIds((current) => ({ ...current, [product.id]: true }));
 
-      setSaveFeedback("");
-      setSaveFeedbackError(false);
+    const callbackUrl = `${window.location.pathname}${window.location.search}`;
 
-      setSavingListings((current) => ({
-        ...current,
-        [key]: true,
-      }));
+    try {
+      const currentSavedId = savedProducts[product.id];
 
-      try {
-        const currentSavedId =
-          savedListings.products[product.id];
+      if (currentSavedId) {
+        const response = await fetch(`/api/saved/${encodeURIComponent(currentSavedId)}`, {
+          method: "DELETE",
+          cache: "no-store",
+          headers: { Accept: "application/json" },
+        });
+        const data: unknown = await response.json().catch(() => null);
 
-        if (currentSavedId) {
-          const response = await fetch(
-            `/api/saved/${encodeURIComponent(currentSavedId)}`,
-            {
-              method: "DELETE",
-              cache: "no-store",
-              headers: {
-                Accept: "application/json",
-              },
-            },
-          );
-
-          const data: unknown = await response
-            .json()
-            .catch(() => null);
-
-          if (
-            response.status === 401 ||
-            response.status === 403
-          ) {
-            router.push(
-              `/buyer/login?callbackUrl=${encodeURIComponent("/search")}`,
-            );
-            return;
-          }
-
-          if (!response.ok) {
-            throw new Error(getApiError(data));
-          }
-
-          setSavedListings((current) => {
-            const next = {
-              products: { ...current.products },
-              services: { ...current.services },
-            };
-
-            delete next.products[product.id];
-
-            return next;
-          });
-
-          setSaveFeedback(
-            `${product.name} removed from Saved.`,
-          );
-        } else {
-          const response = await fetch("/api/saved", {
-            method: "POST",
-            cache: "no-store",
-            headers: {
-              "Content-Type": "application/json",
-              Accept: "application/json",
-            },
-            body: JSON.stringify({
-              type: "PRODUCT",
-              listingId: product.id,
-            }),
-          });
-
-          const data: unknown = await response
-            .json()
-            .catch(() => null);
-
-          if (
-            response.status === 401 ||
-            response.status === 403
-          ) {
-            router.push(
-              `/buyer/login?callbackUrl=${encodeURIComponent("/search")}`,
-            );
-            return;
-          }
-
-          if (response.status === 409) {
-            const refreshed = await loadSavedListings();
-
-            if (refreshed?.products[product.id]) {
-              setSaveFeedback(
-                `${product.name} is already in Saved.`,
-              );
-              return;
-            }
-          }
-
-          if (!response.ok) {
-            throw new Error(getApiError(data));
-          }
-
-          let createdId = getCreatedSavedRecordId(data);
-
-          if (!createdId) {
-            const refreshed = await loadSavedListings();
-
-            createdId =
-              refreshed?.products[product.id] ?? null;
-          }
-
-          if (createdId) {
-            setSavedListings((current) => ({
-              ...current,
-              products: {
-                ...current.products,
-                [product.id]: createdId!,
-              },
-            }));
-          }
-
-          setSaveFeedback(
-            `${product.name} added to Saved.`,
-          );
+        if (response.status === 401 || response.status === 403) {
+          router.push(`/buyer/login?callbackUrl=${encodeURIComponent(callbackUrl)}`);
+          return;
         }
+        if (!response.ok) throw new Error(getApiError(data));
 
-        window.dispatchEvent(
-          new Event(SAVED_ITEMS_CHANGED_EVENT),
-        );
-      } catch (saveError) {
-        console.error(
-          "Unable to update saved product:",
-          saveError,
-        );
-
-        setSaveFeedbackError(true);
-
-        setSaveFeedback(
-          saveError instanceof Error
-            ? saveError.message
-            : "Unable to update Saved.",
-        );
-      } finally {
-        setSavingListings((current) => {
+        setSavedProducts((current) => {
           const next = { ...current };
-
-          delete next[key];
-
+          delete next[product.id];
           return next;
         });
+        setSaveFeedback({ message: `${product.name} removed from Saved.`, error: false });
+      } else {
+        const response = await fetch("/api/saved", {
+          method: "POST",
+          cache: "no-store",
+          headers: {
+            "Content-Type": "application/json",
+            Accept: "application/json",
+          },
+          body: JSON.stringify({ type: "PRODUCT", listingId: product.id }),
+        });
+        const data: unknown = await response.json().catch(() => null);
+
+        if (response.status === 401 || response.status === 403) {
+          router.push(`/buyer/login?callbackUrl=${encodeURIComponent(callbackUrl)}`);
+          return;
+        }
+
+        if (response.status === 409) {
+          const refreshed = await loadSavedProducts();
+          if (refreshed && refreshed[product.id]) {
+            setSaveFeedback({ message: `${product.name} is already in Saved.`, error: false });
+            return;
+          }
+        }
+        if (!response.ok) throw new Error(getApiError(data));
+
+        let savedId = getCreatedSavedRecordId(data);
+        if (!savedId) {
+          const refreshed = await loadSavedProducts();
+          savedId = refreshed?.[product.id] ?? null;
+        }
+
+        if (savedId) {
+          setSavedProducts((current) => ({ ...current, [product.id]: savedId! }));
+        }
+        setSaveFeedback({ message: `${product.name} added to Saved.`, error: false });
       }
-    },
-    [
-      loadSavedListings,
-      router,
-      savedListings,
-      savingListings,
-    ],
-  );
 
-  /* ------------------------------------------------------------------------ */
-  /* SERVER PAGINATION                                                        */
-  /* ------------------------------------------------------------------------ */
-
-  const totalPages = Math.max(1, resultMeta.totalPages);
-
-  const currentPage = Math.min(
-    Math.max(1, initialPage),
-    totalPages,
-  );
-
-  const pageStart = (currentPage - 1) * PAGE_SIZE;
-  const pageEnd = pageStart + products.length;
-  const hasResults = products.length > 0;
-
-  useEffect(() => {
-    if (loading || currentPage === initialPage) return;
-
-    navigateToPage(currentPage, true);
-  }, [
-    loading,
-    currentPage,
-    initialPage,
-    navigateToPage,
-  ]);
-
-  const activeFilterCount =
-    Number(Boolean(initialCategory || initialCategoryId)) +
-    Number(Boolean(initialState)) +
-    Number(Boolean(initialLga)) +
-    Number(Boolean(initialArea)) +
-    Number(Boolean(initialMinPrice)) +
-    Number(Boolean(initialMaxPrice)) +
-    Number(Boolean(initialAvailability)) +
-    Number(initialVerified);
-
-  function getCategoryBackground(
-    categoryName: string,
-  ): string {
-    const normalized = categoryName.toLowerCase();
-
-    return (
-      categories.find(
-        (item) =>
-          item.name.toLowerCase() === normalized,
-      )?.bg ??
-      DEFAULT_CATEGORIES.find(
-        (item) =>
-          item.name.toLowerCase() === normalized,
-      )?.bg ??
-      "#EEF1F4"
-    );
+      window.dispatchEvent(new Event(SAVED_ITEMS_CHANGED_EVENT));
+    } catch (saveError) {
+      console.error("Saved product action error:", saveError);
+      setSaveFeedback({
+        message: saveError instanceof Error ? saveError.message : "Unable to update Saved.",
+        error: true,
+      });
+    } finally {
+      setSavingProductIds((current) => {
+        const next = { ...current };
+        delete next[product.id];
+        return next;
+      });
+    }
   }
 
-  const resultSummary = `${resultMeta.totalProducts.toLocaleString(
-    "en-NG",
-  )} ${
-    resultMeta.totalProducts === 1
-      ? "product"
-      : "products"
-  } found`;
+  async function addProductToCart(product: ProductSearchResult) {
+    if (addingProductIds[product.id] || !canAddToCart(product)) return;
+
+    setCartFeedback(null);
+    setAddingProductIds((current) => ({ ...current, [product.id]: true }));
+    const callbackUrl = `${window.location.pathname}${window.location.search}`;
+
+    try {
+      const response = await fetch("/api/cart/items", {
+        method: "POST",
+        credentials: "same-origin",
+        headers: {
+          "Content-Type": "application/json",
+          Accept: "application/json",
+        },
+        body: JSON.stringify({ productId: product.id, quantity: 1 }),
+      });
+      const data: unknown = await response.json().catch(() => null);
+
+      if (response.status === 401 || response.status === 403) {
+        router.push(`/buyer/login?callbackUrl=${encodeURIComponent(callbackUrl)}`);
+        return;
+      }
+      if (!response.ok) throw new Error(getApiError(data));
+
+      setCartFeedback({ productId: product.id, message: "Added to cart.", error: false });
+      window.dispatchEvent(new Event(CART_CHANGED_EVENT));
+    } catch (cartError) {
+      console.error("Add-to-cart error:", cartError);
+      setCartFeedback({
+        productId: product.id,
+        message: cartError instanceof Error ? cartError.message : "Unable to add this product to your cart.",
+        error: true,
+      });
+    } finally {
+      setAddingProductIds((current) => {
+        const next = { ...current };
+        delete next[product.id];
+        return next;
+      });
+    }
+  }
+
+  /* Keep pagination within the result count returned by the API. */
+  useEffect(() => {
+    if (loading || currentPage === initialPage) return;
+    const params = buildSearchParams(appliedFilters, currentPage);
+    router.replace(`/search?${params.toString()}`, { scroll: false });
+  }, [loading, currentPage, initialPage, appliedFilters, router]);
+
+  const selectedCategoryName =
+    categories.find((item) => item.id === initialCategoryId)?.name ?? initialCategory;
+  const resultTitle = initialQuery
+    ? `Results for “${initialQuery}”`
+    : selectedCategoryName || "Search products";
+  const resultSummary = `${resultMeta.totalProducts.toLocaleString("en-NG")} ${resultMeta.totalProducts === 1 ? "product" : "products"} found`;
+
+  /* ------------------------------------------------------------------------ */
+  /* FILTER PANEL CONTENT                                                     */
+  /* ------------------------------------------------------------------------ */
+
+  function renderFilterControls(idPrefix: "desktop" | "mobile") {
+    const stateId = `${idPrefix}-search-state-filter`;
+    const lgaId = `${idPrefix}-search-lga-filter`;
+    const areaId = `${idPrefix}-search-area-filter`;
+    const minPriceId = `${idPrefix}-search-min-price`;
+    const maxPriceId = `${idPrefix}-search-max-price`;
+    const availabilityId = `${idPrefix}-search-availability`;
+
+    return (
+      <div className="space-y-5">
+        <section>
+          <div className="mb-2 flex items-center justify-between gap-2">
+            <h3 className="text-xs font-bold text-[#514840]">Category</h3>
+            {(category || categoryId) && (
+              <button type="button" onClick={() => selectCategory(null)} className="text-[10px] font-semibold text-[#9F2D18] hover:underline">Clear</button>
+            )}
+          </div>
+          {categoriesLoading ? (
+            <div className="space-y-2">
+              {Array.from({ length: 4 }, (_, index) => <div key={index} className="h-9 animate-pulse rounded-lg bg-[#F1EDE8]" />)}
+            </div>
+          ) : (
+            <CategoryFilterList
+              categories={categoryTree}
+              selectedCategoryId={categoryId}
+              selectedCategory={category}
+              onSelect={selectCategory}
+            />
+          )}
+        </section>
+
+        <section className="border-t border-[#EAE6DF] pt-4">
+          <label htmlFor={stateId} className="mb-2 block text-xs font-bold text-[#514840]">State</label>
+          <div className="relative">
+            <select
+              id={stateId}
+              value={state}
+              onChange={(event) => {
+                setState(event.target.value);
+                setLga("");
+                setArea("");
+              }}
+              disabled={locationOptionsLoading}
+              className="h-10 w-full appearance-none rounded-lg border border-[#E8E4DE] bg-white px-3 pr-9 text-xs text-[#292421] outline-none transition focus:border-[#FF9B82] disabled:cursor-wait disabled:bg-[#FCFAF6]"
+            >
+              <option value="">All supported states</option>
+              {locationOptions.states.map((stateName) => <option key={stateName} value={stateName}>{stateName}</option>)}
+            </select>
+            <ChevronDown className="pointer-events-none absolute right-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-[#91877E]" />
+          </div>
+          {locationOptionsLoading && <p className="mt-1.5 text-[10px] text-[#91877E]">Loading locations...</p>}
+          {locationOptionsError && <p role="status" className="mt-1.5 text-[10px] leading-4 text-[#9F2D18]">{locationOptionsError}</p>}
+        </section>
+
+        <section>
+          <label htmlFor={lgaId} className="mb-2 block text-xs font-bold text-[#514840]">Local Government Area</label>
+          <div className="relative">
+            <select
+              id={lgaId}
+              value={lga}
+              onChange={(event) => {
+                setLga(event.target.value);
+                setArea("");
+              }}
+              disabled={!state || locationOptionsLoading}
+              className="h-10 w-full appearance-none rounded-lg border border-[#E8E4DE] bg-white px-3 pr-9 text-xs text-[#292421] outline-none transition focus:border-[#FF9B82] disabled:cursor-not-allowed disabled:bg-[#FCFAF6]"
+            >
+              <option value="">{state ? "All LGAs in selected state" : "Select a state first"}</option>
+              {availableLgas.map((lgaName) => <option key={lgaName} value={lgaName}>{lgaName}</option>)}
+            </select>
+            <ChevronDown className="pointer-events-none absolute right-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-[#91877E]" />
+          </div>
+        </section>
+
+        <section>
+          <label htmlFor={areaId} className="mb-2 block text-xs font-bold text-[#514840]">Area or neighbourhood</label>
+          <AreaAutocomplete
+            id={areaId}
+            value={area}
+            state={state || undefined}
+            lga={lga || undefined}
+            onChange={handleAreaChange}
+            onSelect={handleAreaSelect}
+            placeholder="Search an area, e.g. Ogba or Epe"
+          />
+          <p className="mt-1.5 text-[10px] leading-4 text-[#91877E]">Choose a state and LGA to narrow the suggestions, or search supported locations.</p>
+        </section>
+
+        <section>
+          <h3 className="mb-2 text-xs font-bold text-[#514840]">Price range (₦)</h3>
+          <div className="grid grid-cols-2 gap-2">
+            <div>
+              <label htmlFor={minPriceId} className="mb-1 block text-[10px] text-[#756B61]">Minimum</label>
+              <input
+                id={minPriceId}
+                type="number"
+                min="0"
+                max="1000000000"
+                step="1"
+                inputMode="numeric"
+                value={minPrice}
+                onChange={(event) => setMinPrice(event.target.value)}
+                placeholder="Min price"
+                className="h-10 w-full min-w-0 rounded-lg border border-[#E8E4DE] bg-white px-2.5 text-xs outline-none transition focus:border-[#FF9B82]"
+              />
+            </div>
+            <div>
+              <label htmlFor={maxPriceId} className="mb-1 block text-[10px] text-[#756B61]">Maximum</label>
+              <input
+                id={maxPriceId}
+                type="number"
+                min="0"
+                max="1000000000"
+                step="1"
+                inputMode="numeric"
+                value={maxPrice}
+                onChange={(event) => setMaxPrice(event.target.value)}
+                placeholder="Max price"
+                className="h-10 w-full min-w-0 rounded-lg border border-[#E8E4DE] bg-white px-2.5 text-xs outline-none transition focus:border-[#FF9B82]"
+              />
+            </div>
+          </div>
+        </section>
+
+        <section>
+          <label htmlFor={availabilityId} className="mb-2 block text-xs font-bold text-[#514840]">Availability</label>
+          <div className="relative">
+            <select
+              id={availabilityId}
+              value={availability}
+              onChange={(event) => setAvailability(parseAvailabilityFilter(event.target.value))}
+              className="h-10 w-full appearance-none rounded-lg border border-[#E8E4DE] bg-white px-3 pr-9 text-xs text-[#514840] outline-none transition focus:border-[#FF9B82]"
+            >
+              <option value="">Any availability</option>
+              <option value="AVAILABLE">Available now</option>
+              <option value="ASK_SELLER">Confirm availability</option>
+              <option value="UNAVAILABLE">Out of stock</option>
+            </select>
+            <ChevronDown className="pointer-events-none absolute right-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-[#91877E]" />
+          </div>
+        </section>
+
+        <button
+          type="button"
+          aria-pressed={verified}
+          onClick={() => setVerified((current) => !current)}
+          className={`flex w-full items-center justify-between gap-3 rounded-lg border px-3 py-3 text-left transition ${verified ? "border-[#BFE7D0] bg-[#F0FBF5]" : "border-[#E8E4DE] bg-white hover:bg-[#FCFAF6]"}`}
+        >
+          <span className="flex min-w-0 items-center gap-2.5">
+            <BadgeCheck className={`h-4 w-4 shrink-0 ${verified ? "text-[#137A59]" : "text-[#91877E]"}`} />
+            <span>
+              <span className="block text-xs font-semibold text-[#514840]">Verified sellers</span>
+              <span className="mt-0.5 block text-[10px] text-[#91877E]">Only show verified businesses</span>
+            </span>
+          </span>
+          <span className={`flex h-5 w-9 shrink-0 items-center rounded-full p-0.5 transition-colors ${verified ? "bg-[#FF5A36]" : "bg-[#D8D4CF]"}`}>
+            <span className={`h-4 w-4 rounded-full bg-white shadow-sm transition-transform ${verified ? "translate-x-4" : "translate-x-0"}`} />
+          </span>
+        </button>
+
+        {filterValidationError && (
+          <p role="alert" className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-[11px] leading-4 text-red-700">{filterValidationError}</p>
+        )}
+
+        <div className="flex gap-2 border-t border-[#EAE6DF] pt-4">
+          <button type="button" onClick={clearFilters} className="flex-1 rounded-lg border border-[#E8E4DE] bg-white px-3 py-2.5 text-xs font-bold text-[#6F675F] transition hover:bg-[#FCFAF6]">Clear all</button>
+          <button type="button" onClick={applyFilters} className="flex-[1.35] rounded-lg bg-[#FF5A36] px-3 py-2.5 text-xs font-bold text-white transition hover:bg-[#E94A28]">Apply filters</button>
+        </div>
+      </div>
+    );
+  }
 
   /* ------------------------------------------------------------------------ */
   /* PAGE UI                                                                  */
@@ -2049,899 +1690,185 @@ function SearchPageView({
     <div className="min-h-dvh bg-[#FFF7ED]">
       <SiteHeader searchMode="PRODUCTS" />
 
-      <main
-        id="main-content"
-        className="min-h-[calc(100dvh-66px)] overflow-x-clip bg-[#FFFDFC] pb-28 text-[#17202A] lg:pb-10"
-      >
-        <div className="mx-auto w-full max-w-[1600px] px-4 pb-8 pt-5 sm:px-6 lg:px-8 lg:pt-8 xl:px-10">
-          {/* SEARCH INTRO */}
-          <section className="relative overflow-hidden rounded-[24px] border border-[#FFE0D5] bg-gradient-to-r from-[#FFF0E7] via-[#FFF5EE] to-[#FFE4D9] px-5 py-6 sm:px-8 sm:py-8">
-            <div
-              aria-hidden="true"
-              className="pointer-events-none absolute -right-20 -top-24 hidden h-64 w-64 rounded-full bg-[#FF5A36]/10 sm:block"
-            />
-
-            <div className="relative z-10 max-w-3xl">
-              <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-[#9F2D18]">
-                ReMarket product search
-              </p>
-
-              <h1 className="mt-2 text-2xl font-extrabold tracking-tight text-[#401B13] sm:text-4xl">
-                Find what you need
+      <main id="main-content" className="min-h-[calc(100dvh-66px)] overflow-x-clip bg-[#FFFDFC] pb-28 text-[#17202A] lg:pb-10">
+        <div className="mx-auto w-full max-w-[1600px] px-3 pb-8 pt-4 sm:px-5 sm:pt-5 lg:px-7 lg:pt-6 xl:px-9">
+          {/* Compact results heading. Search itself stays in the shared site header. */}
+          <section className="mb-5 flex flex-col gap-3 border-b border-[#EAE6DF] pb-4 sm:flex-row sm:items-end sm:justify-between">
+            <div className="min-w-0">
+              <div className="mb-1.5 flex items-center gap-2 text-[10px] text-[#91877E]">
+                <Link href="/" className="transition hover:text-[#9F2D18]">Home</Link>
+                <ChevronRight className="h-3 w-3" />
+                <span className="font-semibold text-[#756B61]">Products</span>
+              </div>
+              <h1 className="truncate text-xl font-extrabold tracking-tight text-[#25211E] sm:text-2xl">
+                {resultTitle}
               </h1>
-
-              <p className="mt-2 max-w-2xl text-sm leading-6 text-[#66564C] sm:text-base">
-                Search products nearby, compare prices and check
-                availability before choosing what to buy.
+              <p className="mt-1 text-xs text-[#756B61] sm:text-sm">
+                {loading ? "Finding matching products..." : error ? "Products could not be loaded." : resultSummary}
               </p>
+            </div>
 
-              <form
-                onSubmit={submitSearch}
-                role="search"
-                className="mt-5 flex h-[52px] w-full max-w-2xl items-center rounded-2xl border border-[#F0D8CE] bg-white p-1.5 shadow-sm focus-within:border-[#FF9A81] focus-within:ring-2 focus-within:ring-[#FF5A36]/10"
-              >
-                <Search
-                  className="ml-3 h-5 w-5 shrink-0 text-[#81766C]"
-                  aria-hidden="true"
-                />
-
-                <input
-                  value={query}
-                  onChange={(event) =>
-                    setQuery(event.target.value)
-                  }
-                  placeholder="Search products, names or categories..."
-                  aria-label="Search products"
-                  maxLength={100}
-                  className="min-w-0 flex-1 bg-transparent px-3 text-sm text-[#17202A] outline-none placeholder:text-[#91877E]"
-                />
-
-                {query && (
-                  <button
-                    type="button"
-                    onClick={() => setQuery("")}
-                    aria-label="Clear search text"
-                    className="mr-1 flex h-8 w-8 items-center justify-center rounded-full text-[#91877E] hover:bg-[#FCFAF6]"
-                  >
-                    <X className="h-4 w-4" />
-                  </button>
-                )}
-
-                <button
-                  type="submit"
-                  className="flex h-10 shrink-0 items-center gap-2 rounded-xl bg-[#FF5A36] px-4 text-xs font-bold text-white transition hover:bg-[#E94A28] sm:px-5"
+            <div className="flex w-full items-center gap-2 sm:w-auto">
+              <label htmlFor="search-sort" className="shrink-0 text-[11px] font-medium text-[#756B61]">Sort by</label>
+              <div className="relative min-w-0 flex-1 sm:flex-none">
+                <select
+                  id="search-sort"
+                  value={initialSort}
+                  onChange={(event) => navigateToSearch({ ...appliedFilters, sort: parseSortMode(event.target.value) })}
+                  className="h-10 w-full appearance-none rounded-lg border border-[#E8E4DE] bg-white pl-3 pr-9 text-xs font-semibold text-[#514840] outline-none transition focus:border-[#FF9B82] sm:min-w-[190px]"
                 >
-                  Search
-                  <ArrowRight className="h-4 w-4" />
-                </button>
-              </form>
+                  <option value="relevance">Best match</option>
+                  <option value="newest">Newest first</option>
+                  <option value="price-asc">Price: low to high</option>
+                  <option value="price-desc">Price: high to low</option>
+                </select>
+                <ChevronDown className="pointer-events-none absolute right-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-[#91877E]" />
+              </div>
+
+              <button
+                type="button"
+                onClick={() => setShowFilters(true)}
+                aria-label={`Open filters${activeFilterCount > 0 ? `, ${activeFilterCount} active` : ""}`}
+                className="inline-flex min-h-10 shrink-0 items-center justify-center gap-2 rounded-lg border border-[#E8E4DE] bg-white px-3 text-xs font-bold text-[#514840] transition hover:border-[#FF9A81] hover:text-[#9F2D18] lg:hidden"
+              >
+                <SlidersHorizontal className="h-4 w-4" />
+                Filters
+                {activeFilterCount > 0 && <span className="flex h-5 min-w-5 items-center justify-center rounded-full bg-[#FF5A36] px-1.5 text-[10px] text-white">{activeFilterCount}</span>}
+              </button>
             </div>
           </section>
 
-          {/* PRODUCT CATEGORY CHIPS */}
-          {categoryTree.length > 0 && (
-            <section
-              aria-label="Product categories"
-              className="mt-5"
-            >
-              <div className="mb-2 flex items-center justify-between gap-3">
-                <h2 className="text-xs font-bold text-[#514840]">
-                  Browse categories
-                </h2>
+          {saveFeedback && (
+            <div role={saveFeedback.error ? "alert" : "status"} className={`mb-4 flex items-center justify-between gap-3 rounded-lg border px-3.5 py-3 text-xs ${saveFeedback.error ? "border-red-200 bg-red-50 text-red-700" : "border-[#FFD9CE] bg-[#FFF1ED] text-[#9F2D18]"}`}>
+              <span>{saveFeedback.message}</span>
+              <button type="button" onClick={() => setSaveFeedback(null)} aria-label="Dismiss saved message"><X className="h-4 w-4" /></button>
+            </div>
+          )}
 
-                {(initialCategory || initialCategoryId) && (
-                  <button
-                    type="button"
-                    onClick={() =>
-                      applyAppliedFilterChanges({
-                        category: "",
-                        categoryId: "",
-                      })
-                    }
-                    className="text-[10px] font-semibold text-[#9F2D18] hover:underline"
-                  >
-                    Clear category
-                  </button>
+
+          {resultMeta.truncated && !loading && !error && (
+            <div role="status" className="mb-4 rounded-lg border border-[#F1D7A7] bg-[#FFF8E8] px-3.5 py-3 text-xs leading-5 text-[#76551A]">
+              More than {resultMeta.maxResults} products match these filters. ReMarket is showing a limited result set; add a location, category or price filter to narrow your search.
+            </div>
+          )}
+
+          <div className="grid min-w-0 grid-cols-1 gap-5 lg:grid-cols-[248px_minmax(0,1fr)] xl:grid-cols-[260px_minmax(0,1fr)] xl:gap-6">
+            {/* Desktop filter sidebar */}
+            <aside className="hidden min-w-0 lg:block">
+              <div className="sticky top-[145px] max-h-[calc(100dvh-160px)] overflow-y-auto rounded-xl border border-[#EAE6DF] bg-[#FCFAF6] p-4">
+                <div className="mb-4 flex items-center justify-between gap-2 border-b border-[#EAE6DF] pb-3">
+                  <div className="flex items-center gap-2">
+                    <Filter className="h-4 w-4 text-[#FF5A36]" />
+                    <h2 className="text-sm font-bold text-[#25211E]">Filter results</h2>
+                  </div>
+                  {activeFilterCount > 0 && <span className="rounded-full bg-[#FFF0EB] px-2 py-1 text-[9px] font-bold text-[#9F2D18]">{activeFilterCount} active</span>}
+                </div>
+                {renderFilterControls("desktop")}
+              </div>
+            </aside>
+
+            {/* Product results */}
+            <section className="min-w-0" aria-label="Product search results">
+              <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+                <h2 className="text-sm font-bold text-[#25211E]">
+                  {initialQuery ? "Matching products" : "Explore products"}
+                </h2>
+                {!loading && !error && hasResults && (
+                  <span className="text-[10px] text-[#91877E]">Showing {pageStart.toLocaleString("en-NG")}–{pageEnd.toLocaleString("en-NG")} of {resultMeta.totalProducts.toLocaleString("en-NG")}</span>
                 )}
               </div>
 
-              <div className="flex gap-2 overflow-x-auto pb-2 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-                <button
-                  type="button"
-                  aria-pressed={!initialCategory && !initialCategoryId}
-                  onClick={() =>
-                    applyAppliedFilterChanges({
-                      category: "",
-                      categoryId: "",
-                    })
-                  }
-                  className={`shrink-0 rounded-full border px-4 py-2 text-xs font-bold transition ${
-                    !initialCategory && !initialCategoryId
-                      ? "border-[#FF5A36] bg-[#FF5A36] text-white"
-                      : "border-[#EAE6DF] bg-white text-[#514840] hover:border-[#FF9A81]"
-                  }`}
-                >
-                  All categories
-                </button>
-
-                {categoryTree.map((parent) => (
-                  <div
-                    key={parent.id}
-                    className="flex shrink-0 items-center gap-1.5"
-                  >
-                    <button
-                      type="button"
-                      aria-pressed={isCategorySelected(parent)}
-                      onClick={() => toggleAppliedCategory(parent)}
-                      className={`inline-flex shrink-0 items-center gap-2 rounded-full border px-3.5 py-2 text-xs font-semibold transition ${
-                        isCategorySelected(parent)
-                          ? "border-[#FF5A36] bg-[#FFF0EB] text-[#9F2D18]"
-                          : "border-[#EAE6DF] bg-white text-[#514840] hover:border-[#FF9A81]"
-                      }`}
-                    >
-                      <span
-                        className="flex h-5 w-5 items-center justify-center overflow-hidden rounded-full"
-                        style={{ backgroundColor: parent.bg }}
-                      >
-                        <CategoryImageOrIcon category={parent} />
-                      </span>
-
-                      {parent.name}
-                    </button>
-
-                    {parent.children.map((child) => (
-                      <button
-                        key={child.id}
-                        type="button"
-                        aria-pressed={isCategorySelected(child)}
-                        onClick={() => toggleAppliedCategory(child)}
-                        className={`inline-flex shrink-0 items-center gap-2 rounded-full border px-3 py-2 text-[11px] font-medium transition ${
-                          isCategorySelected(child)
-                            ? "border-[#FF5A36] bg-[#FFF0EB] text-[#9F2D18]"
-                            : "border-[#EAE6DF] bg-white text-[#756B61] hover:border-[#FF9A81]"
-                        }`}
-                      >
-                        <span
-                          className="flex h-4 w-4 items-center justify-center overflow-hidden rounded-full"
-                          style={{ backgroundColor: child.bg }}
-                        >
-                          <CategoryImageOrIcon category={child} />
-                        </span>
-
-                        {child.name}
-                      </button>
-                    ))}
-                  </div>
-                ))}
-              </div>
-            </section>
-          )}
-
-          {categoriesLoading && (
-            <p className="mt-3 text-[11px] text-[#91877E]">
-              Loading product categories...
-            </p>
-          )}
-
-          {/* RESULTS HEADER, SORT AND FILTERS */}
-          <section className="mt-6 min-w-0">
-            <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
-              <div className="min-w-0">
-                <h2 className="text-xl font-extrabold tracking-tight text-[#401B13] sm:text-2xl">
-                  Products
-                </h2>
-
-                <p className="mt-1 text-xs text-[#756B61] sm:text-sm">
-                  {loading
-                    ? "Searching products..."
-                    : resultSummary}
-                </p>
-              </div>
-
-              <div className="flex flex-wrap items-center gap-2">
-                <label className="relative flex min-h-10 min-w-0 flex-1 items-center gap-2 rounded-xl border border-[#EAE6DF] bg-white px-3 text-xs text-[#514840] sm:flex-none">
-                  <ArrowUpDown className="h-3.5 w-3.5 shrink-0 text-[#91877E]" />
-
-                  <span className="shrink-0 font-semibold">
-                    Sort:
-                  </span>
-
-                  <select
-                    value={initialSort}
-                    onChange={(event) =>
-                      applyAppliedFilterChanges({
-                        sort: event.target.value as SortMode,
-                      })
-                    }
-                    aria-label="Sort products"
-                    className="min-w-0 flex-1 appearance-none bg-transparent py-2 pr-4 font-semibold outline-none sm:flex-none"
-                  >
-                    <option value="relevance">
-                      Best match
-                    </option>
-                    <option value="newest">
-                      Newest
-                    </option>
-                    <option value="price-asc">
-                      Price: low to high
-                    </option>
-                    <option value="price-desc">
-                      Price: high to low
-                    </option>
-                  </select>
-
-                  <ChevronDown className="pointer-events-none absolute right-3 h-3.5 w-3.5 text-[#91877E]" />
-                </label>
-
-                <button
-                  type="button"
-                  onClick={() => setShowFilters(true)}
-                  aria-label={`Open filters${
-                    activeFilterCount > 0
-                      ? `, ${activeFilterCount} active`
-                      : ""
-                  }`}
-                  className="inline-flex min-h-10 items-center justify-center gap-2 rounded-xl border border-[#EAE6DF] bg-white px-4 py-2.5 text-xs font-bold text-[#514840] transition hover:border-[#FF9A81] hover:text-[#9F2D18]"
-                >
-                  <SlidersHorizontal className="h-4 w-4" />
-
-                  Filters
-
-                  {activeFilterCount > 0 && (
-                    <span className="flex h-5 min-w-5 items-center justify-center rounded-full bg-[#FF5A36] px-1.5 text-[10px] text-white">
-                      {activeFilterCount}
-                    </span>
-                  )}
-                </button>
-              </div>
-            </div>
-
-            {saveFeedback && (
-              <div
-                role={saveFeedbackError ? "alert" : "status"}
-                className={`mt-4 flex items-center justify-between gap-3 rounded-xl border px-4 py-3 text-xs ${
-                  saveFeedbackError
-                    ? "border-red-200 bg-red-50 text-red-700"
-                    : "border-[#FFD9CE] bg-[#FFF1ED] text-[#9F2D18]"
-                }`}
-              >
-                <span>{saveFeedback}</span>
-
-                <button
-                  type="button"
-                  onClick={() => setSaveFeedback("")}
-                  aria-label="Dismiss saved message"
-                >
-                  <X className="h-4 w-4" />
-                </button>
-              </div>
-            )}
-
-            {!loading &&
-              !error &&
-              resultMeta.truncated && (
-                <div
-                  role="status"
-                  className="mt-4 rounded-xl border border-[#F1D7A7] bg-[#FFF8E8] px-4 py-3 text-xs leading-5 text-[#76551A]"
-                >
-                  More than {resultMeta.maxResults} products
-                  match these filters. This search currently
-                  sorts a limited set of the newest matches.
-                  Add a category, location or price filter to
-                  narrow your results.
+              {loading && (
+                <div className="grid min-w-0 grid-cols-2 gap-2.5 sm:gap-3.5 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5">
+                  {Array.from({ length: PAGE_SIZE }, (_, index) => (
+                    <div key={`search-skeleton-${index}`} className="overflow-hidden rounded-xl border border-[#EAE6DF] bg-white">
+                      <div className="aspect-square animate-pulse bg-[#F0ECE7]" />
+                      <div className="space-y-2 p-3"><div className="h-2.5 w-1/3 animate-pulse rounded bg-[#F0ECE7]" /><div className="h-3 w-4/5 animate-pulse rounded bg-[#F0ECE7]" /><div className="h-4 w-2/5 animate-pulse rounded bg-[#F0ECE7]" /><div className="h-9 w-full animate-pulse rounded-lg bg-[#F0ECE7]" /></div>
+                    </div>
+                  ))}
                 </div>
               )}
-          </section>
 
-          {/* PRODUCT RESULTS */}
-          <section className="mt-5 min-w-0">
-            {loading && (
-              <div className="grid min-w-0 grid-cols-2 gap-3 sm:gap-4 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5">
-                {Array.from(
-                  { length: 10 },
-                  (_, index) => (
-                    <div
-                      key={index}
-                      className="h-[280px] animate-pulse rounded-2xl border border-[#EAE6DF] bg-white sm:h-[340px]"
-                    />
-                  ),
-                )}
-              </div>
-            )}
-
-            {!loading && error && (
-              <div className="rounded-2xl border border-red-200 bg-red-50 px-5 py-12 text-center">
-                <Search className="mx-auto h-9 w-9 text-red-400" />
-
-                <h3 className="mt-3 text-sm font-bold text-red-800">
-                  Search unavailable
-                </h3>
-
-                <p className="mt-2 text-xs leading-5 text-red-700">
-                  {error}
-                </p>
-
-                <button
-                  type="button"
-                  onClick={() =>
-                    setRetryCount((value) => value + 1)
-                  }
-                  className="mt-5 rounded-xl bg-[#FF5A36] px-5 py-2.5 text-xs font-bold text-white hover:bg-[#E94A28]"
-                >
-                  Try again
-                </button>
-              </div>
-            )}
-
-            {!loading && !error && !hasResults && (
-              <div className="rounded-2xl border border-dashed border-[#E8E4DE] bg-[#FCFAF6] px-5 py-14 text-center">
-                <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-white text-[#FF5A36] shadow-sm">
-                  <Package className="h-7 w-7" />
+              {!loading && error && (
+                <div className="rounded-xl border border-red-200 bg-red-50 px-5 py-12 text-center">
+                  <Search className="mx-auto h-9 w-9 text-red-400" />
+                  <h3 className="mt-3 text-sm font-bold text-red-800">Search unavailable</h3>
+                  <p className="mt-2 text-xs leading-5 text-red-700">{error}</p>
+                  <button type="button" onClick={() => setRetryCount((current) => current + 1)} className="mt-5 rounded-lg bg-[#FF5A36] px-5 py-2.5 text-xs font-bold text-white transition hover:bg-[#E94A28]">Try again</button>
                 </div>
+              )}
 
-                <h3 className="mt-4 text-sm font-bold text-[#17202A]">
-                  No products found
-                </h3>
+              {!loading && !error && !hasResults && (
+                <div className="rounded-xl border border-dashed border-[#E8E4DE] bg-[#FCFAF6] px-5 py-14 text-center">
+                  <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-xl bg-white text-[#FF5A36]"><Package className="h-7 w-7" /></div>
+                  <h3 className="mt-4 text-sm font-bold text-[#17202A]">No products found</h3>
+                  <p className="mx-auto mt-2 max-w-sm text-xs leading-5 text-[#756B61]">Try a different product name or adjust your category, location or price filters.</p>
+                  {activeFilterCount > 0 ? (
+                    <button type="button" onClick={clearFilters} className="mt-5 inline-flex min-h-10 items-center gap-2 rounded-lg bg-[#FF5A36] px-5 py-2.5 text-xs font-bold text-white transition hover:bg-[#E94A28]">Clear filters <RotateCcw className="h-3.5 w-3.5" /></button>
+                  ) : (
+                    <Link href="/shop" className="mt-5 inline-flex min-h-10 items-center gap-2 rounded-lg bg-[#FF5A36] px-5 py-2.5 text-xs font-bold text-white transition hover:bg-[#E94A28]">Browse all products <ArrowRight className="h-3.5 w-3.5" /></Link>
+                  )}
+                </div>
+              )}
 
-                <p className="mx-auto mt-2 max-w-sm text-xs leading-5 text-[#756B61]">
-                  Try another product name or adjust your
-                  category, location or price filters.
-                </p>
-
-                <button
-                  type="button"
-                  onClick={() => setShowFilters(true)}
-                  className="mt-5 inline-flex items-center gap-2 rounded-xl bg-[#FF5A36] px-5 py-2.5 text-xs font-bold text-white"
-                >
-                  Adjust filters
-                  <SlidersHorizontal className="h-3.5 w-3.5" />
-                </button>
-              </div>
-            )}
-
-            {!loading &&
-              !error &&
-              products.length > 0 && (
+              {!loading && !error && hasResults && (
                 <>
-                  <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-                    <h3 className="text-sm font-bold text-[#17202A]">
-                      {initialQuery
-                        ? `Results for “${initialQuery}”`
-                        : "Explore products"}
-                    </h3>
-
-                    <span className="text-[10px] text-[#91877E]">
-                      Showing {pageStart + 1}–{pageEnd} of{" "}
-                      {resultMeta.totalProducts.toLocaleString(
-                        "en-NG",
-                      )}
-                    </span>
-                  </div>
-
-                  <div className="grid min-w-0 grid-cols-2 gap-3 sm:gap-4 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5">
+                  <div className="grid min-w-0 grid-cols-2 gap-2.5 sm:gap-3.5 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5">
                     {products.map((product) => (
                       <ProductResultCard
                         key={product.id}
                         product={product}
-                        saved={Boolean(
-                          savedListings.products[product.id],
-                        )}
-                        saving={Boolean(
-                          savingListings[
-                            `PRODUCT:${product.id}`
-                          ],
-                        )}
-                        categoryBackground={getCategoryBackground(
-                          product.category?.name ?? "Products",
-                        )}
-                        onToggleSaved={(item) => {
-                          void toggleSavedProduct(item);
-                        }}
+                        saved={Boolean(savedProducts[product.id])}
+                        saving={Boolean(savingProductIds[product.id])}
+                        adding={Boolean(addingProductIds[product.id])}
+                        cartFeedback={cartFeedback}
+                        categoryBackground={getCategoryBackground(product.category?.name ?? "Products", categories)}
+                        onToggleSaved={(item) => { void toggleSavedProduct(item); }}
+                        onAddToCart={(item) => { void addProductToCart(item); }}
                       />
                     ))}
                   </div>
+
+                  {resultMeta.totalPages > 1 && (
+                    <nav aria-label="Product search result pages" className="mt-7 flex flex-wrap items-center justify-between gap-3 border-t border-[#EAE6DF] pt-5">
+                      <p className="text-[10px] text-[#756B61] sm:text-xs">Page {currentPage} of {totalPages}</p>
+                      <div className="flex items-center gap-2">
+                        <button type="button" disabled={currentPage <= 1} onClick={() => navigateToPage(currentPage - 1)} className="inline-flex min-h-9 items-center gap-1.5 rounded-lg border border-[#E8E4DE] bg-white px-3 py-2 text-[10px] font-semibold text-[#6F675F] transition hover:border-[#FFB09B] hover:text-[#9F2D18] disabled:cursor-not-allowed disabled:opacity-40 sm:text-xs">
+                          <ChevronLeft className="h-4 w-4" /> Previous
+                        </button>
+                        <span aria-live="polite" className="min-w-[78px] text-center text-[11px] font-semibold text-[#756B61]">{currentPage} / {totalPages}</span>
+                        <button type="button" disabled={currentPage >= totalPages || !resultMeta.hasMore} onClick={() => navigateToPage(currentPage + 1)} className="inline-flex min-h-9 items-center gap-1.5 rounded-lg border border-[#E8E4DE] bg-white px-3 py-2 text-[10px] font-semibold text-[#6F675F] transition hover:border-[#FFB09B] hover:text-[#9F2D18] disabled:cursor-not-allowed disabled:opacity-40 sm:text-xs">
+                          Next <ChevronRight className="h-4 w-4" />
+                        </button>
+                      </div>
+                    </nav>
+                  )}
                 </>
               )}
+            </section>
+          </div>
 
-            {!loading &&
-              !error &&
-              resultMeta.totalPages > 1 && (
-                <nav
-                  aria-label="Product search result pages"
-                  className="mt-8 flex flex-wrap items-center justify-center gap-3 border-t border-[#EAE6DF] pt-5"
-                >
-                  <button
-                    type="button"
-                    disabled={currentPage <= 1}
-                    onClick={() =>
-                      navigateToPage(currentPage - 1)
-                    }
-                    className="inline-flex items-center gap-1.5 rounded-xl border border-[#E8E4DE] bg-white px-4 py-2.5 text-xs font-semibold text-[#6F675F] transition hover:border-[#FFB09B] hover:text-[#9F2D18] disabled:cursor-not-allowed disabled:opacity-40"
-                  >
-                    <ChevronLeft className="h-4 w-4" />
-                    Previous
-                  </button>
-
-                  <span
-                    aria-live="polite"
-                    className="text-xs font-medium text-[#756B61]"
-                  >
-                    Page {currentPage} of {totalPages}
-                  </span>
-
-                  <button
-                    type="button"
-                    disabled={
-                      currentPage >= totalPages ||
-                      !resultMeta.hasMore
-                    }
-                    onClick={() =>
-                      navigateToPage(currentPage + 1)
-                    }
-                    className="inline-flex items-center gap-1.5 rounded-xl border border-[#E8E4DE] bg-white px-4 py-2.5 text-xs font-semibold text-[#6F675F] transition hover:border-[#FFB09B] hover:text-[#9F2D18] disabled:cursor-not-allowed disabled:opacity-40"
-                  >
-                    Next
-                    <ChevronRight className="h-4 w-4" />
-                  </button>
-                </nav>
-              )}
-
-            {!loading &&
-              !error &&
-              resultMeta.totalProducts > 0 && (
-                <p className="mt-4 text-center text-[10px] text-[#91877E]">
-                  {resultMeta.totalProducts.toLocaleString(
-                    "en-NG",
-                  )}{" "}
-                  matching products
-                </p>
-              )}
-          </section>
-
-          <footer className="mt-10 flex items-center justify-center gap-3 pb-3 text-[10px] text-[#9B9188]">
-            <span className="h-px w-12 bg-[#EAE6DF]" />
+          <footer className="mt-9 flex items-center justify-center gap-3 pb-2 text-[10px] text-[#9B9188]">
+            <span className="h-px w-10 bg-[#EAE6DF]" />
             <span>ReMarket · Find it nearby</span>
-            <span className="h-px w-12 bg-[#EAE6DF]" />
+            <span className="h-px w-10 bg-[#EAE6DF]" />
           </footer>
         </div>
       </main>
 
-      {/* FILTER DRAWER */}
+      {/* Mobile filters: desktop uses the persistent sidebar above. */}
       {showFilters && (
-        <div className="fixed inset-0 z-[100]">
-          <button
-            type="button"
-            aria-label="Close filters"
-            onClick={closeFilters}
-            className="absolute inset-0 bg-black/40 backdrop-blur-[1px]"
-          />
-
-          <section
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="search-filters-title"
-            className="absolute bottom-0 left-0 right-0 max-h-[88dvh] overflow-y-auto overscroll-contain rounded-t-[24px] border-t border-[#E8E4DE] bg-[#FFFDFC] p-5 pb-[max(20px,env(safe-area-inset-bottom))] shadow-2xl sm:bottom-4 sm:left-auto sm:right-4 sm:top-4 sm:max-h-none sm:w-[390px] sm:rounded-[22px] sm:border sm:p-5"
-          >
-            <div className="flex items-center justify-between gap-3">
+        <div className="fixed inset-0 z-[100] lg:hidden">
+          <button type="button" aria-label="Close filters" onClick={closeFilters} className="absolute inset-0 bg-black/40 backdrop-blur-[1px]" />
+          <section role="dialog" aria-modal="true" aria-labelledby="mobile-search-filters-title" className="absolute bottom-0 left-0 right-0 max-h-[90dvh] overflow-y-auto overscroll-contain rounded-t-[22px] border-t border-[#E8E4DE] bg-[#FFFDFC] p-4 pb-[max(18px,env(safe-area-inset-bottom))] shadow-2xl sm:bottom-4 sm:left-auto sm:right-4 sm:top-4 sm:max-h-none sm:w-[390px] sm:rounded-xl sm:border sm:p-5">
+            <div className="mb-5 flex items-center justify-between gap-3 border-b border-[#EAE6DF] pb-4">
               <div>
-                <h2
-                  id="search-filters-title"
-                  className="text-base font-extrabold text-[#17202A]"
-                >
-                  Product filters
-                </h2>
-
-                <p className="mt-0.5 text-[11px] text-[#81766D]">
-                  Narrow down your product results
-                </p>
+                <h2 id="mobile-search-filters-title" className="text-base font-extrabold text-[#17202A]">Filter products</h2>
+                <p className="mt-0.5 text-[11px] text-[#81766D]">Narrow down your product results.</p>
               </div>
-
-              <button
-                type="button"
-                onClick={closeFilters}
-                className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-[#FCFAF6] text-[#6F675F] hover:bg-[#FFF1ED]"
-                aria-label="Close filters"
-              >
-                <X className="h-4 w-4" />
-              </button>
+              <button type="button" onClick={closeFilters} aria-label="Close filters" className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-[#FCFAF6] text-[#6F675F] transition hover:bg-[#FFF1ED] hover:text-[#9F2D18]"><X className="h-4 w-4" /></button>
             </div>
-
-            {/* CATEGORY */}
-            <div className="mt-6">
-              <label className="text-xs font-bold text-[#514840]">
-                Category
-              </label>
-
-              <div className="mt-2 space-y-3">
-                {categoryTree.map((parent) => {
-                  const ParentIcon = parent.icon;
-
-                  const parentActive =
-                    categoryId === parent.id ||
-                    (!categoryId &&
-                      category.toLowerCase() ===
-                        parent.name.toLowerCase());
-
-                  return (
-                    <div
-                      key={parent.id}
-                      className="rounded-xl border border-[#EAE6DF] bg-white p-2"
-                    >
-                      <button
-                        type="button"
-                        aria-pressed={parentActive}
-                        onClick={() =>
-                          toggleDraftCategory(parent)
-                        }
-                        className={`flex w-full items-center gap-2 rounded-lg border px-2.5 py-2.5 text-left text-[11px] font-bold transition ${
-                          parentActive
-                            ? "border-[#FFB09B] bg-[#FFF1ED] text-[#9F2D18]"
-                            : "border-transparent text-[#514840] hover:bg-[#FCFAF6]"
-                        }`}
-                      >
-                        <span
-                          className="flex h-7 w-7 shrink-0 items-center justify-center overflow-hidden rounded-full"
-                          style={{
-                            backgroundColor: parent.bg,
-                          }}
-                        >
-                          {parent.imageUrl ? (
-                            <img
-                              src={parent.imageUrl}
-                              alt=""
-                              className="h-full w-full object-cover"
-                            />
-                          ) : (
-                            <ParentIcon className="h-4 w-4" />
-                          )}
-                        </span>
-
-                        <span className="min-w-0 flex-1">
-                          {parent.name}
-                        </span>
-
-                        {parentActive && (
-                          <Check className="h-3.5 w-3.5" />
-                        )}
-                      </button>
-
-                      {parent.children.length > 0 && (
-                        <div className="ml-5 mt-1 space-y-1 border-l border-[#EAE6DF] pl-3">
-                          {parent.children.map((child) => {
-                            const ChildIcon = child.icon;
-
-                            const childActive =
-                              categoryId === child.id ||
-                              (!categoryId &&
-                                category.toLowerCase() ===
-                                  child.name.toLowerCase());
-
-                            return (
-                              <button
-                                key={child.id}
-                                type="button"
-                                aria-pressed={childActive}
-                                onClick={() =>
-                                  toggleDraftCategory(child)
-                                }
-                                className={`flex w-full items-center gap-2 rounded-lg border px-2 py-2 text-left text-[10px] font-semibold transition ${
-                                  childActive
-                                    ? "border-[#FFB09B] bg-[#FFF1ED] text-[#9F2D18]"
-                                    : "border-transparent text-[#756B61] hover:bg-[#FCFAF6]"
-                                }`}
-                              >
-                                <span
-                                  className="flex h-6 w-6 shrink-0 items-center justify-center overflow-hidden rounded-full"
-                                  style={{
-                                    backgroundColor: child.bg,
-                                  }}
-                                >
-                                  {child.imageUrl ? (
-                                    <img
-                                      src={child.imageUrl}
-                                      alt=""
-                                      className="h-full w-full object-cover"
-                                    />
-                                  ) : (
-                                    <ChildIcon className="h-3.5 w-3.5" />
-                                  )}
-                                </span>
-
-                                <span className="min-w-0 flex-1">
-                                  {child.name}
-                                </span>
-
-                                {childActive && (
-                                  <Check className="h-3 w-3" />
-                                )}
-                              </button>
-                            );
-                          })}
-                        </div>
-                      )}
-                    </div>
-                  );
-                })}
-
-                {categories.length === 0 && (
-                  <p className="text-[11px] text-[#91877E]">
-                    No product categories are available.
-                  </p>
-                )}
-              </div>
-            </div>
-
-            {/* STATE */}
-            <div className="mt-5">
-              <label
-                htmlFor="search-state-filter"
-                className="text-xs font-bold text-[#514840]"
-              >
-                State
-              </label>
-
-              <div className="relative mt-2">
-                <select
-                  id="search-state-filter"
-                  value={state}
-                  onChange={(event) => {
-                    setState(event.target.value);
-                    setLga("");
-                    setArea("");
-                  }}
-                  disabled={locationOptionsLoading}
-                  className="h-11 w-full appearance-none rounded-xl border border-[#E8E4DE] bg-white px-3 pr-9 text-xs text-[#292421] outline-none focus:border-[#FF9B82] disabled:cursor-wait disabled:bg-[#FCFAF6] disabled:text-[#91877E]"
-                >
-                  <option value="">
-                    All supported states
-                  </option>
-
-                  {locationOptions.states.map((stateName) => (
-                    <option
-                      key={stateName}
-                      value={stateName}
-                    >
-                      {stateName}
-                    </option>
-                  ))}
-                </select>
-
-                <ChevronDown className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[#91877E]" />
-              </div>
-
-              {locationOptionsLoading && (
-                <p className="mt-1.5 text-[10px] text-[#91877E]">
-                  Loading states...
-                </p>
-              )}
-
-              {locationOptionsError && (
-                <p
-                  role="status"
-                  className="mt-1.5 text-[10px] leading-4 text-[#9F2D18]"
-                >
-                  {locationOptionsError}
-                </p>
-              )}
-            </div>
-
-            {/* LGA */}
-            <div className="mt-5">
-              <label
-                htmlFor="search-lga-filter"
-                className="text-xs font-bold text-[#514840]"
-              >
-                Local Government Area (LGA)
-              </label>
-
-              <div className="relative mt-2">
-                <select
-                  id="search-lga-filter"
-                  value={lga}
-                  onChange={(event) => {
-                    setLga(event.target.value);
-                    setArea("");
-                  }}
-                  disabled={!state || locationOptionsLoading}
-                  className="h-11 w-full appearance-none rounded-xl border border-[#E8E4DE] bg-white px-3 pr-9 text-xs text-[#292421] outline-none focus:border-[#FF9B82] disabled:cursor-not-allowed disabled:bg-[#FCFAF6] disabled:text-[#91877E]"
-                >
-                  <option value="">
-                    {state
-                      ? "All LGAs in selected state"
-                      : "Select a state first"}
-                  </option>
-
-                  {availableLgas.map((lgaName) => (
-                    <option
-                      key={lgaName}
-                      value={lgaName}
-                    >
-                      {lgaName}
-                    </option>
-                  ))}
-                </select>
-
-                <ChevronDown className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[#91877E]" />
-              </div>
-            </div>
-
-            {/* AREA AUTOCOMPLETE */}
-            <div className="mt-5">
-              <label className="text-xs font-bold text-[#514840]">
-                Area
-              </label>
-
-              <div className="mt-2">
-                <AreaAutocomplete
-                  id="search-area-filter"
-                  value={area}
-                  state={state || undefined}
-                  lga={lga || undefined}
-                  onChange={handleAreaChange}
-                  onSelect={handleAreaSelect}
-                />
-              </div>
-
-              <p className="mt-1.5 text-[10px] leading-4 text-[#91877E]">
-                Select a state and LGA first to narrow the
-                area suggestions, or search across supported
-                locations.
-              </p>
-            </div>
-
-            {/* PRICE */}
-            <div className="mt-5">
-              <label
-                htmlFor="search-min-price"
-                className="text-xs font-bold text-[#514840]"
-              >
-                Price range (₦)
-              </label>
-
-              <div className="mt-2 grid grid-cols-2 gap-2">
-                <input
-                  id="search-min-price"
-                  type="number"
-                  min="0"
-                  max="1000000000"
-                  step="1"
-                  value={minPrice}
-                  onChange={(event) =>
-                    setMinPrice(event.target.value)
-                  }
-                  inputMode="numeric"
-                  placeholder="Min price"
-                  aria-label="Minimum price"
-                  className="h-11 w-full min-w-0 rounded-xl border border-[#E8E4DE] bg-white px-3 text-xs text-[#292421] outline-none focus:border-[#FF9B82]"
-                />
-
-                <input
-                  id="search-max-price"
-                  type="number"
-                  min="0"
-                  max="1000000000"
-                  step="1"
-                  value={maxPrice}
-                  onChange={(event) =>
-                    setMaxPrice(event.target.value)
-                  }
-                  inputMode="numeric"
-                  placeholder="Max price"
-                  aria-label="Maximum price"
-                  className="h-11 w-full min-w-0 rounded-xl border border-[#E8E4DE] bg-white px-3 text-xs text-[#292421] outline-none focus:border-[#FF9B82]"
-                />
-              </div>
-            </div>
-
-            {/* AVAILABILITY */}
-            <div className="mt-5">
-              <label
-                htmlFor="search-availability"
-                className="text-xs font-bold text-[#514840]"
-              >
-                Availability
-              </label>
-
-              <div className="relative mt-2">
-                <select
-                  id="search-availability"
-                  value={availability}
-                  onChange={(event) =>
-                    setAvailability(event.target.value)
-                  }
-                  className="h-11 w-full appearance-none rounded-xl border border-[#E8E4DE] bg-white px-3 pr-9 text-xs text-[#514840] outline-none focus:border-[#FF9B82]"
-                >
-                  <option value="">
-                    Any availability
-                  </option>
-
-                  <option value="AVAILABLE">
-                    Available now
-                  </option>
-
-                  <option value="ASK_SELLER">
-                    Confirm availability
-                  </option>
-
-                  <option value="UNAVAILABLE">
-                    Out of stock
-                  </option>
-                </select>
-
-                <ChevronDown className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[#91877E]" />
-              </div>
-            </div>
-
-            {/* VERIFIED SELLERS */}
-            <button
-              type="button"
-              aria-pressed={verified}
-              onClick={() =>
-                setVerified((current) => !current)
-              }
-              className={`mt-5 flex w-full items-center justify-between gap-3 rounded-xl border px-4 py-3 ${
-                verified
-                  ? "border-[#BFE7D0] bg-[#F0FBF5]"
-                  : "border-[#E8E4DE] bg-white"
-              }`}
-            >
-              <div className="flex min-w-0 items-center gap-3">
-                <div
-                  className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full ${
-                    verified
-                      ? "bg-[#DDF5EA] text-[#137A59]"
-                      : "bg-gray-100 text-gray-500"
-                  }`}
-                >
-                  <BadgeCheck className="h-4 w-4" />
-                </div>
-
-                <div className="min-w-0 text-left">
-                  <p className="text-xs font-bold text-[#514840]">
-                    Verified sellers
-                  </p>
-
-                  <p className="mt-0.5 text-[10px] text-[#91877E]">
-                    Show products from verified sellers only
-                  </p>
-                </div>
-              </div>
-
-              <div
-                className={`flex h-5 w-9 shrink-0 items-center rounded-full p-0.5 transition-colors ${
-                  verified
-                    ? "bg-[#FF5A36]"
-                    : "bg-gray-200"
-                }`}
-              >
-                <div
-                  className={`h-4 w-4 rounded-full bg-white shadow-sm transition-transform ${
-                    verified
-                      ? "translate-x-4"
-                      : "translate-x-0"
-                  }`}
-                />
-              </div>
-            </button>
-
-            {/* FILTER ACTIONS */}
-            <div className="mt-6 flex gap-2 border-t border-[#EAE6DF] pt-5">
-              <button
-                type="button"
-                onClick={clearFilters}
-                className="flex-1 rounded-xl border border-[#E8E4DE] bg-white py-3 text-xs font-bold text-[#6F675F] transition hover:bg-[#FCFAF6]"
-              >
-                Clear
-              </button>
-
-              <button
-                type="button"
-                onClick={applyFilters}
-                className="flex-[1.5] rounded-xl bg-[#FF5A36] py-3 text-xs font-bold text-white transition hover:bg-[#E94A28]"
-              >
-                Apply filters
-              </button>
-            </div>
+            {renderFilterControls("mobile")}
           </section>
         </div>
       )}
@@ -2957,22 +1884,18 @@ function SearchPageView({
 
 export default function SearchPage() {
   return (
-    <Suspense
-      fallback={
-        <div className="min-h-dvh bg-[#FFF7ED]">
-          <SiteHeader searchMode="PRODUCTS" />
-
-          <main className="flex min-h-[60dvh] items-center justify-center bg-[#FFFDFC] px-4 pb-24">
-            <div className="flex items-center gap-2 rounded-xl border border-[#E8E4DE] bg-white px-5 py-4 text-xs text-[#756B61] shadow-sm">
-              <Loader2 className="h-4 w-4 animate-spin text-[#FF5A36]" />
-              Loading product search...
-            </div>
-          </main>
-
-          <MobileBottomNav />
-        </div>
-      }
-    >
+    <Suspense fallback={
+      <div className="min-h-dvh bg-[#FFF7ED]">
+        <SiteHeader searchMode="PRODUCTS" />
+        <main className="flex min-h-[60dvh] items-center justify-center bg-[#FFFDFC] px-4 pb-24">
+          <div role="status" className="flex items-center gap-2 rounded-lg border border-[#E8E4DE] bg-white px-5 py-4 text-xs text-[#756B61]">
+            <Loader2 className="h-4 w-4 animate-spin text-[#FF5A36]" />
+            Loading product search...
+          </div>
+        </main>
+        <MobileBottomNav />
+      </div>
+    }>
       <SearchPageContent />
     </Suspense>
   );

@@ -1,5 +1,6 @@
 import {
   Availability,
+  BusinessStatus,
   Prisma,
   VerificationStatus,
 } from "@prisma/client";
@@ -19,11 +20,7 @@ const DEFAULT_PAGE_SIZE = 12;
 const MAX_PAGE_SIZE = 48;
 const PRODUCT_IMAGE_LIMIT = 1;
 
-type SortMode =
-  | "relevance"
-  | "newest"
-  | "price-asc"
-  | "price-desc";
+type SortMode = "relevance" | "newest" | "price-asc" | "price-desc";
 
 type SearchFilters = {
   query: string;
@@ -51,6 +48,14 @@ type ParsedValue<T> = {
 
 type ParsedPrice = ParsedValue<number>;
 
+type ResolvedCategory = {
+  id: string;
+  name: string;
+  isActive: boolean;
+  parentId: string | null;
+  children: Array<{ id: string }>;
+};
+
 const ALLOWED_AVAILABILITY = new Set<Availability>([
   Availability.AVAILABLE,
   Availability.ASK_SELLER,
@@ -64,11 +69,13 @@ const ALLOWED_SORTS = new Set<SortMode>([
   "price-desc",
 ]);
 
+/* -------------------------------------------------------------------------- */
+/* DATABASE SELECT                                                            */
+/* -------------------------------------------------------------------------- */
+
 /*
- * Product data selected for the public search page.
- *
- * State, LGA and area are included in the returned seller location.
- * Exact latitude and longitude are never exposed.
+ * This selection is intentionally limited to fields that exist in the
+ * ReMarket Prisma schema. Exact latitude/longitude are never returned.
  */
 const productSearchSelect = {
   id: true,
@@ -110,7 +117,6 @@ const productSearchSelect = {
       id: true,
       name: true,
       verification: true,
-
       location: {
         select: {
           area: true,
@@ -134,11 +140,7 @@ type SearchProduct = Prisma.ProductGetPayload<{
 function noStoreHeaders(baseHeaders?: HeadersInit): Headers {
   const headers = new Headers(baseHeaders);
 
-  headers.set(
-    "Cache-Control",
-    "no-store, max-age=0, must-revalidate",
-  );
-
+  headers.set("Cache-Control", "no-store, max-age=0, must-revalidate");
   headers.set("Pragma", "no-cache");
   headers.set("Expires", "0");
 
@@ -272,12 +274,11 @@ function parseMoneyAmount(input: string): number | null {
 
 function parseInlineBudget(rawQuery: string): InlineBudget {
   let query = rawQuery.trim();
-
   let minPrice: number | null = null;
   let maxPrice: number | null = null;
 
   const betweenPattern =
-    /\bbetween\s+([\d,]+(?:\.\d+)?\s*k?)\s+and\s+([\d,]+(?:\.\d+)?\s*k?)\b/i;
+    /\bbetween\s+(?:₦\s*)?([\d,]+(?:\.\d+)?\s*k?)\s+and\s+(?:₦\s*)?([\d,]+(?:\.\d+)?\s*k?)\b/i;
 
   const betweenMatch = query.match(betweenPattern);
 
@@ -294,11 +295,7 @@ function parseInlineBudget(rawQuery: string): InlineBudget {
         .replace(/\s+/g, " ")
         .trim();
 
-      return {
-        query,
-        minPrice,
-        maxPrice,
-      };
+      return { query, minPrice, maxPrice };
     }
   }
 
@@ -338,11 +335,7 @@ function parseInlineBudget(rawQuery: string): InlineBudget {
     }
   }
 
-  return {
-    query,
-    minPrice,
-    maxPrice,
-  };
+  return { query, minPrice, maxPrice };
 }
 
 /* -------------------------------------------------------------------------- */
@@ -389,19 +382,24 @@ function stemToken(token: string): string {
   return token;
 }
 
-function getSearchTerms(query: string): string[] {
-  const tokens = normalizeText(query)
-    .split(" ")
-    .filter(Boolean);
-
-  return Array.from(
-    new Set(
-      tokens.flatMap((token) => [
-        token,
-        stemToken(token),
-      ]),
-    ),
+/*
+ * Each query word becomes one group of equivalent terms. For example,
+ * "shoes" becomes ["shoes", "shoe"]. The database query requires a match
+ * for each original query word, but accepts either spelling in its group.
+ * This avoids the old behaviour that required both variants simultaneously.
+ */
+function getSearchTermGroups(query: string): string[][] {
+  const tokens = Array.from(
+    new Set(normalizeText(query).split(" ").filter(Boolean)),
   );
+
+  return tokens.map((token) =>
+    Array.from(new Set([token, stemToken(token)])),
+  );
+}
+
+function getSearchTerms(query: string): string[] {
+  return Array.from(new Set(getSearchTermGroups(query).flat()));
 }
 
 /* -------------------------------------------------------------------------- */
@@ -409,33 +407,12 @@ function getSearchTerms(query: string): string[] {
 /* -------------------------------------------------------------------------- */
 
 /*
- * Category selection supports:
+ * ReMarket's current category hierarchy is two levels:
+ * - Parent category: itself plus its active direct subcategories.
+ * - Subcategory: the selected subcategory only.
  *
- * 1. categoryId:
- *    The preferred new category selector.
- *
- * 2. category:
- *    The legacy category-name selector.
- *
- * Parent selection:
- *    Parent category ID + its active direct subcategory IDs.
- *
- * Subcategory selection:
- *    Only the selected subcategory ID.
- *
- * ReMarket supports a maximum hierarchy depth of two levels.
+ * categoryId is preferred. category remains supported for older URLs.
  */
-
-type ResolvedCategory = {
-  id: string;
-  name: string;
-  isActive: boolean;
-  parentId: string | null;
-  children: Array<{
-    id: string;
-  }>;
-};
-
 async function resolveCategorySelection(
   categoryId: string,
   categoryName: string,
@@ -444,10 +421,7 @@ async function resolveCategorySelection(
   categoryIds: string[];
 }> {
   if (!categoryId && !categoryName) {
-    return {
-      category: null,
-      categoryIds: [],
-    };
+    return { category: null, categoryIds: [] };
   }
 
   const select = {
@@ -456,12 +430,8 @@ async function resolveCategorySelection(
     isActive: true,
     parentId: true,
     children: {
-      where: {
-        isActive: true,
-      },
-      select: {
-        id: true,
-      },
+      where: { isActive: true },
+      select: { id: true },
     },
   } satisfies Prisma.CategorySelect;
 
@@ -469,9 +439,7 @@ async function resolveCategorySelection(
 
   if (categoryId) {
     selectedCategory = await prisma.category.findUnique({
-      where: {
-        id: categoryId,
-      },
+      where: { id: categoryId },
       select,
     });
   } else {
@@ -488,15 +456,9 @@ async function resolveCategorySelection(
   }
 
   if (!selectedCategory || !selectedCategory.isActive) {
-    return {
-      category: null,
-      categoryIds: [],
-    };
+    return { category: null, categoryIds: [] };
   }
 
-  /*
-   * A selected subcategory is filtered by its own ID only.
-   */
   if (selectedCategory.parentId !== null) {
     return {
       category: selectedCategory,
@@ -504,18 +466,12 @@ async function resolveCategorySelection(
     };
   }
 
-  /*
-   * A selected parent includes itself and its active
-   * direct subcategories.
-   */
-  const categoryIds = [
-    selectedCategory.id,
-    ...selectedCategory.children.map((child) => child.id),
-  ];
-
   return {
     category: selectedCategory,
-    categoryIds,
+    categoryIds: [
+      selectedCategory.id,
+      ...selectedCategory.children.map((child) => child.id),
+    ],
   };
 }
 
@@ -544,58 +500,42 @@ function buildProductPriceConditions(
   }
 
   if (minPrice !== null) {
-    return [
-      {
-        price: {
-          gte: minPrice,
-        },
-      },
-    ];
+    return [{ price: { gte: minPrice } }];
   }
 
-  return [
-    {
-      price: {
-        lte: maxPrice!,
-      },
-    },
-  ];
+  return [{ price: { lte: maxPrice! } }];
 }
 
 function productTextConditions(
-  terms: string[],
+  termGroups: string[][],
 ): Prisma.ProductWhereInput[] {
-  return terms.map((term) => ({
-    OR: [
+  return termGroups.map((alternatives) => ({
+    OR: alternatives.flatMap((term) => [
       {
         name: {
           contains: term,
-          mode: "insensitive",
+          mode: "insensitive" as const,
         },
       },
       {
         description: {
           contains: term,
-          mode: "insensitive",
+          mode: "insensitive" as const,
         },
       },
-      {
-        keywords: {
-          has: term,
-        },
-      },
+      { keywords: { has: term } },
       {
         category: {
           is: {
             isActive: true,
             name: {
               contains: term,
-              mode: "insensitive",
+              mode: "insensitive" as const,
             },
           },
         },
       },
-    ],
+    ]),
   }));
 }
 
@@ -604,14 +544,10 @@ function productTextConditions(
 /* -------------------------------------------------------------------------- */
 
 /*
- * State: exact, case-insensitive match.
- * LGA: exact, case-insensitive match.
- * Area: partial match against area, street or address.
- *
- * When multiple location values are provided,
- * all are applied together.
+ * State and LGA are exact case-insensitive matches.
+ * Area is a partial case-insensitive match against area, street or address.
+ * If multiple location values are supplied, all are applied together.
  */
-
 function buildLocationWhere(
   filters: Pick<SearchFilters, "state" | "lga" | "area">,
 ): Prisma.LocationWhereInput {
@@ -660,9 +596,7 @@ function buildLocationWhere(
     });
   }
 
-  return conditions.length > 0
-    ? { AND: conditions }
-    : {};
+  return conditions.length > 0 ? { AND: conditions } : {};
 }
 
 /* -------------------------------------------------------------------------- */
@@ -671,7 +605,7 @@ function buildLocationWhere(
 
 function buildProductWhere(
   filters: SearchFilters,
-  terms: string[],
+  termGroups: string[][],
 ): Prisma.ProductWhereInput {
   const locationFilter = Boolean(
     filters.state || filters.lga || filters.area,
@@ -679,21 +613,17 @@ function buildProductWhere(
 
   const conditions: Prisma.ProductWhereInput[] = [
     {
-      status: "ACTIVE",
+      status: BusinessStatus.ACTIVE,
       deletedAt: null,
     },
     {
       business: {
         is: {
-          status: "ACTIVE",
+          status: BusinessStatus.ACTIVE,
           deletedAt: null,
-
           ...(filters.verified
-            ? {
-                verification: VerificationStatus.VERIFIED,
-              }
+            ? { verification: VerificationStatus.VERIFIED }
             : {}),
-
           ...(locationFilter
             ? {
                 location: {
@@ -706,33 +636,21 @@ function buildProductWhere(
     },
   ];
 
-  if (terms.length > 0) {
-    conditions.push(...productTextConditions(terms));
+  if (termGroups.length > 0) {
+    conditions.push(...productTextConditions(termGroups));
   }
 
-  /*
-   * New hierarchy-aware filtering.
-   *
-   * When categoryIds are available, filter by IDs.
-   * This is what allows parent category searches
-   * to include products assigned to subcategories.
-   */
   if (filters.categoryIds.length > 0) {
     conditions.push({
       category: {
         is: {
           isActive: true,
-          id: {
-            in: filters.categoryIds,
-          },
+          id: { in: filters.categoryIds },
         },
       },
     });
   } else if (filters.category) {
-    /*
-     * Backward compatibility for category names
-     * that do not resolve to an active category ID.
-     */
+    /* Legacy name filter for older category URLs. */
     conditions.push({
       category: {
         is: {
@@ -747,18 +665,12 @@ function buildProductWhere(
   }
 
   if (filters.availability) {
-    conditions.push({
-      availability: filters.availability,
-    });
+    conditions.push({ availability: filters.availability });
   }
 
-  conditions.push(
-    ...buildProductPriceConditions(filters),
-  );
+  conditions.push(...buildProductPriceConditions(filters));
 
-  return {
-    AND: conditions,
-  };
+  return { AND: conditions };
 }
 
 /* -------------------------------------------------------------------------- */
@@ -792,8 +704,10 @@ function scoreText(
       score = Math.max(score, 80);
     }
 
+    const valueTokens = normalizedValue.split(" ");
+
     for (const term of queryTerms) {
-      if (normalizedValue.split(" ").includes(term)) {
+      if (valueTokens.includes(term)) {
         score += 10;
       } else if (normalizedValue.includes(term)) {
         score += 5;
@@ -804,18 +718,13 @@ function scoreText(
   return score;
 }
 
-function scoreProduct(
-  query: string,
-  product: SearchProduct,
-): number {
+function scoreProduct(query: string, product: SearchProduct): number {
   return (
     scoreText(query, [product.name]) * 2 +
     scoreText(query, [product.description]) +
     scoreText(query, [
       ...product.keywords,
-      product.category?.isActive
-        ? product.category.name
-        : "",
+      product.category?.isActive ? product.category.name : "",
     ])
   );
 }
@@ -832,31 +741,20 @@ function comparePrice(
   const aPrice = a.price;
   const bPrice = b.price;
 
-  if (aPrice == null && bPrice == null) {
-    return 0;
-  }
-
-  if (aPrice == null) {
-    return 1;
-  }
-
-  if (bPrice == null) {
-    return -1;
-  }
+  if (aPrice === null && bPrice === null) return 0;
+  if (aPrice === null) return 1;
+  if (bPrice === null) return -1;
 
   return direction === "asc"
-    ? Number(aPrice) - Number(bPrice)
-    : Number(bPrice) - Number(aPrice);
+    ? aPrice - bPrice
+    : bPrice - aPrice;
 }
 
 function sortProducts(
   products: SearchProduct[],
   query: string,
   sort: SortMode,
-): Array<{
-  product: SearchProduct;
-  matchScore: number;
-}> {
+): Array<{ product: SearchProduct; matchScore: number }> {
   const scored = products.map((product) => ({
     product,
     matchScore: scoreProduct(query, product),
@@ -866,48 +764,59 @@ function sortProducts(
     if (sort === "price-asc") {
       return (
         comparePrice(a.product, b.product, "asc") ||
-        b.product.updatedAt.getTime() -
-          a.product.updatedAt.getTime()
+        b.product.updatedAt.getTime() - a.product.updatedAt.getTime()
       );
     }
 
     if (sort === "price-desc") {
       return (
         comparePrice(a.product, b.product, "desc") ||
-        b.product.updatedAt.getTime() -
-          a.product.updatedAt.getTime()
+        b.product.updatedAt.getTime() - a.product.updatedAt.getTime()
       );
     }
 
     if (sort === "newest") {
       return (
-        b.product.updatedAt.getTime() -
-        a.product.updatedAt.getTime()
+        b.product.updatedAt.getTime() - a.product.updatedAt.getTime()
       );
     }
 
     return (
       b.matchScore - a.matchScore ||
-      b.product.updatedAt.getTime() -
-        a.product.updatedAt.getTime()
+      b.product.updatedAt.getTime() - a.product.updatedAt.getTime()
     );
   });
 
   return scored;
 }
 
+function getCandidateOrderBy(
+  sort: SortMode,
+): Prisma.ProductOrderByWithRelationInput[] {
+  if (sort === "price-asc") {
+    return [
+      { price: { sort: "asc", nulls: "last" } },
+      { updatedAt: "desc" },
+    ];
+  }
+
+  if (sort === "price-desc") {
+    return [
+      { price: { sort: "desc", nulls: "last" } },
+      { updatedAt: "desc" },
+    ];
+  }
+
+  return [{ updatedAt: "desc" }];
+}
+
 /* -------------------------------------------------------------------------- */
 /* PUBLIC PRODUCT FORMAT                                                      */
 /* -------------------------------------------------------------------------- */
 
-function formatProduct(
-  product: SearchProduct,
-  matchScore: number,
-) {
+function formatProduct(product: SearchProduct, matchScore: number) {
   const currentPrice =
-    product.price === null
-      ? null
-      : Number(product.price);
+    product.price === null ? null : Number(product.price);
 
   const previousPrice =
     product.originalPrice === null
@@ -920,34 +829,24 @@ function formatProduct(
     name: product.name,
     description: product.description,
     price: currentPrice,
-
     originalPrice:
       currentPrice !== null &&
       previousPrice !== null &&
       previousPrice > currentPrice
         ? previousPrice
         : null,
-
     stockQuantity: product.stockQuantity,
     availability: product.availability,
     imageUrl: product.imageUrl,
     keywords: product.keywords,
-
-    category: product.category?.isActive
-      ? product.category
-      : null,
-
+    category: product.category?.isActive ? product.category : null,
     images: product.images,
-
     seller: {
       id: product.business.id,
       name: product.business.name,
       verification: product.business.verification,
-
       verified:
-        product.business.verification ===
-        VerificationStatus.VERIFIED,
-
+        product.business.verification === VerificationStatus.VERIFIED,
       location: product.business.location
         ? {
             area: product.business.location.area,
@@ -957,7 +856,6 @@ function formatProduct(
           }
         : null,
     },
-
     matchScore,
   };
 }
@@ -981,43 +879,18 @@ export async function GET(request: NextRequest) {
     const searchParams = request.nextUrl.searchParams;
 
     const rawQuery = clean(searchParams.get("q"));
-
-    const category = clean(
-      searchParams.get("category"),
-    );
-
-    const categoryId = clean(
-      searchParams.get("categoryId"),
-    );
-
-    const state = clean(
-      searchParams.get("state"),
-    );
-
-    const lga = clean(
-      searchParams.get("lga"),
-    );
-
-    /*
-     * Backward compatibility:
-     * Older URLs used `location` instead of `area`.
-     */
+    const category = clean(searchParams.get("category"));
+    const categoryId = clean(searchParams.get("categoryId"));
+    const state = clean(searchParams.get("state"));
+    const lga = clean(searchParams.get("lga"));
     const area =
       clean(searchParams.get("area")) ||
       clean(searchParams.get("location"));
 
-    /* ---------------------------------------------------------------------- */
-    /* SEARCH TYPE                                                            */
-    /* ---------------------------------------------------------------------- */
+    /* Search type */
+    const rawType = clean(searchParams.get("type")).toLowerCase();
 
-    const rawType = clean(
-      searchParams.get("type"),
-    ).toLowerCase();
-
-    if (
-      rawType &&
-      !["all", "product", "service"].includes(rawType)
-    ) {
+    if (rawType && !["all", "product", "service"].includes(rawType)) {
       return jsonError(
         "Search type must be all, product or service.",
         400,
@@ -1025,9 +898,7 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    /*
-     * Service search is currently paused.
-     */
+    /* Service search is paused; this route currently searches products. */
     if (rawType === "service") {
       return NextResponse.json(
         {
@@ -1044,10 +915,7 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    /* ---------------------------------------------------------------------- */
-    /* TEXT VALIDATION                                                        */
-    /* ---------------------------------------------------------------------- */
-
+    /* Text and filter validation */
     if (rawQuery.length > MAX_SEARCH_LENGTH) {
       return jsonError(
         `Search text must not exceed ${MAX_SEARCH_LENGTH} characters.`,
@@ -1096,10 +964,7 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    /* ---------------------------------------------------------------------- */
-    /* PAGINATION                                                             */
-    /* ---------------------------------------------------------------------- */
-
+    /* Pagination */
     const pageInput = parseBoundedInteger(
       searchParams.get("page"),
       1,
@@ -1108,10 +973,7 @@ export async function GET(request: NextRequest) {
       "Page",
     );
 
-    if (
-      pageInput.error ||
-      pageInput.value === null
-    ) {
+    if (pageInput.error || pageInput.value === null) {
       return jsonError(
         pageInput.error ?? "Page is invalid.",
         400,
@@ -1127,10 +989,7 @@ export async function GET(request: NextRequest) {
       "Page size",
     );
 
-    if (
-      pageSizeInput.error ||
-      pageSizeInput.value === null
-    ) {
+    if (pageSizeInput.error || pageSizeInput.value === null) {
       return jsonError(
         pageSizeInput.error ?? "Page size is invalid.",
         400,
@@ -1138,19 +997,10 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    /* ---------------------------------------------------------------------- */
-    /* SORT VALIDATION                                                        */
-    /* ---------------------------------------------------------------------- */
+    /* Sort validation */
+    const rawSort = clean(searchParams.get("sort")).toLowerCase();
 
-    const rawSort = clean(
-      searchParams.get("sort"),
-    ).toLowerCase();
-
-    const sort: SortMode = rawSort
-      ? (rawSort as SortMode)
-      : "relevance";
-
-    if (rawSort && !ALLOWED_SORTS.has(sort)) {
+    if (rawSort && !ALLOWED_SORTS.has(rawSort as SortMode)) {
       return jsonError(
         "Sort must be relevance, newest, price-asc or price-desc.",
         400,
@@ -1158,10 +1008,11 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    /* ---------------------------------------------------------------------- */
-    /* PRICE VALIDATION                                                       */
-    /* ---------------------------------------------------------------------- */
+    const sort: SortMode = rawSort
+      ? (rawSort as SortMode)
+      : "relevance";
 
+    /* Price validation */
     const minimumPriceInput = parsePriceParameter(
       searchParams.get("minPrice"),
       "Minimum price",
@@ -1188,19 +1039,14 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    /* ---------------------------------------------------------------------- */
-    /* AVAILABILITY VALIDATION                                                */
-    /* ---------------------------------------------------------------------- */
-
+    /* Availability validation */
     const availabilityRaw = clean(
       searchParams.get("availability"),
     );
 
     if (
       availabilityRaw &&
-      !ALLOWED_AVAILABILITY.has(
-        availabilityRaw as Availability,
-      )
+      !ALLOWED_AVAILABILITY.has(availabilityRaw as Availability)
     ) {
       return jsonError(
         "Availability filter is invalid.",
@@ -1209,13 +1055,8 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    /* ---------------------------------------------------------------------- */
-    /* VERIFICATION VALIDATION                                                */
-    /* ---------------------------------------------------------------------- */
-
-    const verifiedRaw = clean(
-      searchParams.get("verified"),
-    );
+    /* Verification validation */
+    const verifiedRaw = clean(searchParams.get("verified"));
 
     if (
       verifiedRaw &&
@@ -1229,25 +1070,7 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    /* ---------------------------------------------------------------------- */
-    /* CATEGORY RESOLUTION                                                    */
-    /* ---------------------------------------------------------------------- */
-
-    /*
-     * categoryId takes priority.
-     *
-     * When only the older category-name parameter is supplied,
-     * resolve the name to its active category record.
-     *
-     * Parent category:
-     *   Parent ID + active child IDs.
-     *
-     * Subcategory:
-     *   Subcategory ID only.
-     *
-     * If an old category name does not resolve to an active
-     * category, retain the original name-based filtering.
-     */
+    /* Category hierarchy resolution */
     const resolvedCategory = await resolveCategorySelection(
       categoryId,
       category,
@@ -1263,38 +1086,25 @@ export async function GET(request: NextRequest) {
 
     const resolvedCategoryName =
       resolvedCategory.category?.name ?? category;
+    const categoryIds = resolvedCategory.categoryIds;
 
-    const categoryIds =
-      resolvedCategory.categoryIds;
-
-    /* ---------------------------------------------------------------------- */
-    /* BUILD SEARCH FILTERS                                                   */
-    /* ---------------------------------------------------------------------- */
-
+    /* Build normalized filters, including inline price expressions. */
     const inlineBudget = parseInlineBudget(rawQuery);
 
     const filters: SearchFilters = {
       query: inlineBudget.query,
-
       category: resolvedCategoryName,
       categoryIds,
-
       state,
       lga,
       area,
-
       minPrice:
-        minimumPriceInput.value ??
-        inlineBudget.minPrice,
-
+        minimumPriceInput.value ?? inlineBudget.minPrice,
       maxPrice:
-        maximumPriceInput.value ??
-        inlineBudget.maxPrice,
-
+        maximumPriceInput.value ?? inlineBudget.maxPrice,
       availability: availabilityRaw
         ? (availabilityRaw as Availability)
         : null,
-
       verified: verifiedRaw === "true",
     };
 
@@ -1310,40 +1120,25 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    /* ---------------------------------------------------------------------- */
-    /* BUILD DATABASE FILTERS                                                 */
-    /* ---------------------------------------------------------------------- */
+    /* Build the Prisma where clause. */
+    const termGroups = getSearchTermGroups(filters.query);
+    const productWhere = buildProductWhere(filters, termGroups);
 
-    const terms = getSearchTerms(filters.query);
-
-    const productWhere = buildProductWhere(
-      filters,
-      terms,
-    );
-
-    /* ---------------------------------------------------------------------- */
-    /* FETCH MATCHING PRODUCTS                                                */
-    /* ---------------------------------------------------------------------- */
-
-    const [totalProducts, matchedProducts] =
-      await Promise.all([
-        prisma.product.count({
-          where: productWhere,
-        }),
-
-        prisma.product.findMany({
-          where: productWhere,
-          select: productSearchSelect,
-          orderBy: {
-            updatedAt: "desc",
-          },
-          take: MAX_SEARCH_RESULTS,
-        }),
-      ]);
-
-    /* ---------------------------------------------------------------------- */
-    /* SORT PRODUCTS                                                          */
-    /* ---------------------------------------------------------------------- */
+    /*
+     * Fetch a bounded candidate set. Price sorts are applied by the database
+     * before the cap so the cheapest/highest-priced candidates are not simply
+     * chosen from the newest 120 products. Relevance is ranked in memory
+     * within the newest 120 matching candidates.
+     */
+    const [totalProducts, matchedProducts] = await Promise.all([
+      prisma.product.count({ where: productWhere }),
+      prisma.product.findMany({
+        where: productWhere,
+        select: productSearchSelect,
+        orderBy: getCandidateOrderBy(sort),
+        take: MAX_SEARCH_RESULTS,
+      }),
+    ]);
 
     const sortedProducts = sortProducts(
       matchedProducts,
@@ -1351,112 +1146,59 @@ export async function GET(request: NextRequest) {
       sort,
     );
 
-    /* ---------------------------------------------------------------------- */
-    /* SERVER-SIDE PAGINATION                                                 */
-    /* ---------------------------------------------------------------------- */
-
-    const offset =
-      (pageInput.value - 1) *
-      pageSizeInput.value;
-
+    /* Pagination is applied after sorting the capped candidate set. */
+    const offset = (pageInput.value - 1) * pageSizeInput.value;
     const pageProducts = sortedProducts.slice(
       offset,
       offset + pageSizeInput.value,
     );
 
-    const products = pageProducts.map(
-      ({ product, matchScore }) =>
-        formatProduct(product, matchScore),
+    const products = pageProducts.map(({ product, matchScore }) =>
+      formatProduct(product, matchScore),
     );
 
-    /* ---------------------------------------------------------------------- */
-    /* SEARCH EVENT TRACKING                                                  */
-    /* ---------------------------------------------------------------------- */
-
-    /*
-     * Search tracking should never prevent a successful
-     * product search response.
-     *
-     * The existing SearchEvent model has one `location`
-     * field, so save the most specific available value.
-     */
+    /* Best-effort search analytics; tracking must not fail the search. */
     try {
       await prisma.searchEvent.create({
         data: {
           query: rawQuery,
-
           category: resolvedCategoryName || null,
-
           resultCount: totalProducts,
-
-          location:
-            area ||
-            lga ||
-            state ||
-            null,
-
+          location: area || lga || state || null,
           minPrice: filters.minPrice,
           maxPrice: filters.maxPrice,
         },
       });
     } catch (trackingError) {
-      console.error(
-        "Search event tracking error:",
-        trackingError,
-      );
+      console.error("Search event tracking error:", trackingError);
     }
 
-    /* ---------------------------------------------------------------------- */
-    /* RESULT METADATA                                                        */
-    /* ---------------------------------------------------------------------- */
-
-    const cappedTotal = Math.min(
-      totalProducts,
-      MAX_SEARCH_RESULTS,
-    );
-
-    const totalPages = Math.ceil(
-      cappedTotal / pageSizeInput.value,
-    );
-
-    const hasMore =
-      offset + products.length < cappedTotal;
-
-    /* ---------------------------------------------------------------------- */
-    /* RESPONSE                                                               */
-    /* ---------------------------------------------------------------------- */
+    /* Result metadata */
+    const cappedTotal = Math.min(totalProducts, MAX_SEARCH_RESULTS);
+    const totalPages = Math.ceil(cappedTotal / pageSizeInput.value);
+    const hasMore = offset + products.length < cappedTotal;
 
     return NextResponse.json(
       {
         products,
         services: [],
         listings: products,
-
         resultMeta: {
           type: "product",
-
           totalProducts,
           totalServices: 0,
           totalResults: totalProducts,
           returnedResults: products.length,
-
           page: pageInput.value,
           pageSize: pageSizeInput.value,
           totalPages,
           hasMore,
-
           maxResults: MAX_SEARCH_RESULTS,
-
-          truncated:
-            totalProducts > MAX_SEARCH_RESULTS,
-
+          truncated: totalProducts > MAX_SEARCH_RESULTS,
           sort,
-
           filters: {
             category: resolvedCategoryName || null,
-            categoryId:
-              resolvedCategory?.category?.id ?? null,
-
+            categoryId: resolvedCategory.category?.id ?? null,
             state: state || null,
             lga: lga || null,
             area: area || null,
@@ -1468,10 +1210,7 @@ export async function GET(request: NextRequest) {
       },
     );
   } catch (error) {
-    console.error(
-      "Product search API error:",
-      error,
-    );
+    console.error("Product search API error:", error);
 
     return jsonError(
       "Unable to complete search. Please try again.",

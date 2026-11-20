@@ -394,7 +394,7 @@ export default function SiteHeader(_props: SiteHeaderProps) {
     pathname.startsWith("/product/") ||
     pathname === "/search" ||
     pathname.startsWith("/search/");
-  const showDesktopNavigation = pathname !== "/";
+  const showDesktopNavigation = true;
 
   function desktopLinkClass(active: boolean) {
     return `rounded-full px-3 py-2.5 text-sm font-semibold transition ${
@@ -465,12 +465,6 @@ export default function SiteHeader(_props: SiteHeaderProps) {
             </Link>
           )}
 
-          {account.role !== "ADMIN" && (
-            <Link href="/saved" onClick={closeAccountMenu} className="flex items-center gap-3 px-4 py-3 text-sm text-[#17202A] transition hover:bg-[#FCFAF6] hover:text-[#9F2D18]">
-              <ShoppingBag className="h-4 w-4 text-[#756B61]" aria-hidden="true" />
-              Saved products
-            </Link>
-          )}
 
           {account.role === "BUYER" && (
             <div className="border-t border-[#EAE6DF] p-3">
@@ -584,18 +578,43 @@ export default function SiteHeader(_props: SiteHeaderProps) {
           }}
         >
           <div className="flex h-[50px] items-center gap-1">
-            <span className="mr-2 shrink-0 text-[11px] font-bold uppercase tracking-[0.12em] text-[#91877E]">Categories</span>
+            <span className="mr-2 shrink-0 text-[11px] font-bold uppercase tracking-[0.12em] text-[#91877E]">
+              Categories
+            </span>
             <div className="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
               {categories.map((category) => {
+                const hasChildren = category.children.length > 0;
                 const isOpen = openCategoryId === category.id;
+
                 return (
-                  <div key={category.id} className="flex shrink-0 items-center" onMouseEnter={() => setOpenCategoryId(category.id)} onFocus={() => setOpenCategoryId(category.id)}>
-                    <Link href={categorySearchHref(category)} onClick={closeCategoryMenus} className={`rounded-full px-3 py-2 text-[13px] font-semibold transition ${isOpen ? "bg-[#FFF0EB] text-[#9F2D18]" : "text-[#514840] hover:bg-[#FFF0EB] hover:text-[#9F2D18]"}`}>
+                  <div
+                    key={category.id}
+                    className="flex shrink-0 items-center"
+                    onMouseEnter={() => {
+                      if (hasChildren) setOpenCategoryId(category.id);
+                    }}
+                    onFocus={() => {
+                      if (hasChildren) setOpenCategoryId(category.id);
+                    }}
+                  >
+                    <Link
+                      href={categorySearchHref(category)}
+                      onClick={closeCategoryMenus}
+                      className={`rounded-full px-3 py-2 text-[13px] font-semibold transition ${isOpen ? "bg-[#FFF0EB] text-[#9F2D18]" : "text-[#514840] hover:bg-[#FFF0EB] hover:text-[#9F2D18]"}`}
+                    >
                       {category.name}
                     </Link>
-                    <button type="button" aria-label={`Open ${category.name} category menu`} aria-expanded={isOpen} onClick={() => setOpenCategoryId((current) => current === category.id ? null : category.id)} className={`-ml-2 mr-1 flex h-7 w-6 items-center justify-center rounded-full transition hover:bg-[#FFF0EB] ${isOpen ? "text-[#9F2D18]" : "text-[#81766C]"}`}>
-                      <ChevronDown className={`h-3.5 w-3.5 transition-transform ${isOpen ? "rotate-180" : ""}`} aria-hidden="true" />
-                    </button>
+                    {hasChildren && (
+                      <button
+                        type="button"
+                        aria-label={`Open ${category.name} subcategories`}
+                        aria-expanded={isOpen}
+                        onClick={() => setOpenCategoryId((current) => current === category.id ? null : category.id)}
+                        className={`-ml-2 mr-1 flex h-7 w-6 items-center justify-center rounded-full transition hover:bg-[#FFF0EB] ${isOpen ? "text-[#9F2D18]" : "text-[#81766C]"}`}
+                      >
+                        <ChevronDown className={`h-3.5 w-3.5 transition-transform ${isOpen ? "rotate-180" : ""}`} aria-hidden="true" />
+                      </button>
+                    )}
                   </div>
                 );
               })}
@@ -635,21 +654,14 @@ export default function SiteHeader(_props: SiteHeaderProps) {
                       <Link href={categorySearchHref(activeCategory)} onClick={closeCategoryMenus} className="text-xs font-bold text-[#9F2D18] transition hover:text-[#FF5A36]">View all</Link>
                     </div>
 
-                    {activeCategory.children.length > 0 ? (
-                      <div className="grid grid-cols-3 gap-x-6 gap-y-2 pt-4 xl:grid-cols-4">
-                        {activeCategory.children.map((child) => (
-                          <Link key={child.id} href={categorySearchHref(child)} onClick={closeCategoryMenus} className="group flex min-h-11 items-center justify-between gap-2 rounded-xl px-3 py-2.5 text-sm font-medium text-[#514840] transition hover:bg-[#FFF7ED] hover:text-[#9F2D18]">
-                            <span className="min-w-0 truncate">{child.name}</span>
-                            <ArrowRight className="h-3.5 w-3.5 shrink-0 text-[#B7A99D] transition group-hover:translate-x-0.5 group-hover:text-[#FF5A36]" aria-hidden="true" />
-                          </Link>
-                        ))}
-                      </div>
-                    ) : (
-                      <div className="mt-4 rounded-xl border border-dashed border-[#EAE6DF] bg-[#FCFAF6] p-5">
-                        <p className="text-sm font-semibold text-[#514840]">Explore {activeCategory.name}</p>
-                        <p className="mt-1 text-xs leading-5 text-[#81766C]">Browse all available products in this category.</p>
-                      </div>
-                    )}
+                    <div className="grid grid-cols-3 gap-x-6 gap-y-2 pt-4 xl:grid-cols-4">
+                      {activeCategory.children.map((child) => (
+                        <Link key={child.id} href={categorySearchHref(child)} onClick={closeCategoryMenus} className="group flex min-h-11 items-center justify-between gap-2 rounded-xl px-3 py-2.5 text-sm font-medium text-[#514840] transition hover:bg-[#FFF7ED] hover:text-[#9F2D18]">
+                          <span className="min-w-0 truncate">{child.name}</span>
+                          <ArrowRight className="h-3.5 w-3.5 shrink-0 text-[#B7A99D] transition group-hover:translate-x-0.5 group-hover:text-[#FF5A36]" aria-hidden="true" />
+                        </Link>
+                      ))}
+                    </div>
                   </div>
                 </div>
                 <div className="flex items-center justify-between border-t border-[#F0ECE7] bg-[#FCFAF6] px-6 py-3 xl:px-8">
@@ -663,59 +675,97 @@ export default function SiteHeader(_props: SiteHeaderProps) {
       </div>
 
       <div className="border-t border-[#EAE6DF] bg-[#FFFDFC] lg:hidden">
-        <div className="px-3 sm:px-6">
-          <div className="flex min-h-[48px] items-center gap-2">
-            <span className="shrink-0 text-[10px] font-bold uppercase tracking-[0.1em] text-[#91877E]">Shop</span>
-            <div className="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto py-2 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+        <div className="mx-auto max-w-[1600px] px-3 sm:px-6">
+          <div className="flex min-h-[48px] items-center gap-2.5">
+            <span className="shrink-0 text-[10px] font-bold uppercase tracking-[0.1em] text-[#91877E]">
+              Shop
+            </span>
+            <nav
+              aria-label="Shop categories"
+              className="flex min-w-0 flex-1 items-center gap-2 overflow-x-auto py-2 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+            >
+              <Link
+                href="/shop"
+                onClick={closeCategoryMenus}
+                className="inline-flex min-h-9 shrink-0 items-center rounded-full border border-[#EAE6DF] bg-white px-3 text-[11px] font-semibold text-[#514840] transition hover:border-[#FFB5A2] hover:bg-[#FFF7ED] hover:text-[#9F2D18]"
+              >
+                All products
+              </Link>
+
               {categories.map((category) => {
+                const hasChildren = category.children.length > 0;
                 const isExpanded = mobileCategoryId === category.id;
+
                 return (
-                  <div key={category.id} className="flex shrink-0 items-center rounded-full border border-[#EAE6DF] bg-white">
-                    <Link href={categorySearchHref(category)} onClick={closeCategoryMenus} className="py-2 pl-3 text-xs font-semibold text-[#514840] transition hover:text-[#9F2D18]">{category.name}</Link>
-                    <button type="button" aria-label={`Show ${category.name} subcategories`} aria-expanded={isExpanded} onClick={() => setMobileCategoryId((current) => current === category.id ? null : category.id)} className="flex h-8 w-8 items-center justify-center rounded-full text-[#81766C] transition hover:bg-[#FFF0EB] hover:text-[#9F2D18]">
-                      <ChevronDown className={`h-3.5 w-3.5 transition-transform ${isExpanded ? "rotate-180" : ""}`} aria-hidden="true" />
-                    </button>
+                  <div
+                    key={category.id}
+                    className="flex h-9 shrink-0 items-center overflow-hidden rounded-full border border-[#EAE6DF] bg-white"
+                  >
+                    <Link
+                      href={categorySearchHref(category)}
+                      onClick={closeCategoryMenus}
+                      className={`inline-flex h-full items-center ${hasChildren ? "pl-3" : "px-3"} text-[11px] font-semibold text-[#514840] transition hover:text-[#9F2D18]`}
+                    >
+                      {category.name}
+                    </Link>
+                    {hasChildren && (
+                      <button
+                        type="button"
+                        aria-label={`${isExpanded ? "Hide" : "Show"} ${category.name} subcategories`}
+                        aria-expanded={isExpanded}
+                        aria-controls={`mobile-category-${category.id}`}
+                        onClick={() => setMobileCategoryId((current) => current === category.id ? null : category.id)}
+                        className="flex h-8 w-8 items-center justify-center rounded-full text-[#81766C] transition hover:bg-[#FFF0EB] hover:text-[#9F2D18]"
+                      >
+                        <ChevronDown className={`h-3.5 w-3.5 transition-transform ${isExpanded ? "rotate-180" : ""}`} aria-hidden="true" />
+                      </button>
+                    )}
                   </div>
                 );
               })}
-            </div>
-            <Link href="/saved" aria-label="Saved products" className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-[#FFF0EB] text-[#9F2D18]">
-              <Bookmark className="h-4 w-4" aria-hidden="true" />
-            </Link>
+            </nav>
           </div>
 
           {categories.map((category) => {
             if (mobileCategoryId !== category.id) return null;
+
             return (
-              <div key={category.id} className="border-t border-[#F0ECE7] py-3">
+              <section
+                id={`mobile-category-${category.id}`}
+                key={category.id}
+                aria-label={`${category.name} subcategories`}
+                className="border-t border-[#F0ECE7] pb-3 pt-3"
+              >
                 <div className="mb-2 flex items-center justify-between gap-3">
-                  <h3 className="text-xs font-extrabold text-[#9F2D18]">{category.name}</h3>
-                  <Link href={categorySearchHref(category)} onClick={closeCategoryMenus} className="text-[11px] font-bold text-[#9F2D18]">View all</Link>
-                </div>
-                {category.children.length > 0 ? (
-                  <div className="grid grid-cols-2 gap-2 pb-2">
-                    {category.children.map((child) => (
-                      <Link key={child.id} href={categorySearchHref(child)} onClick={closeCategoryMenus} className="flex min-h-10 items-center justify-between gap-2 rounded-xl border border-[#EAE6DF] bg-white px-3 py-2 text-xs font-medium text-[#514840] transition hover:border-[#FFB5A2] hover:bg-[#FFF7ED] hover:text-[#9F2D18]">
-                        <span className="min-w-0 truncate">{child.name}</span>
-                        <ArrowRight className="h-3 w-3 shrink-0 text-[#B7A99D]" aria-hidden="true" />
-                      </Link>
-                    ))}
+                  <div className="min-w-0">
+                    <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-[#A1968C]">Browse category</p>
+                    <h3 className="mt-0.5 truncate text-sm font-extrabold text-[#9F2D18]">{category.name}</h3>
                   </div>
-                ) : (
-                  <Link href={categorySearchHref(category)} onClick={closeCategoryMenus} className="flex min-h-10 items-center justify-between rounded-xl bg-[#FFF7ED] px-3 py-2 text-xs font-semibold text-[#9F2D18]">
-                    Browse {category.name}<ArrowRight className="h-3.5 w-3.5" aria-hidden="true" />
+                  <Link
+                    href={categorySearchHref(category)}
+                    onClick={closeCategoryMenus}
+                    className="shrink-0 text-[11px] font-bold text-[#9F2D18] hover:underline"
+                  >
+                    View all
                   </Link>
-                )}
-              </div>
+                </div>
+
+                <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+                  {category.children.map((child) => (
+                    <Link
+                      key={child.id}
+                      href={categorySearchHref(child)}
+                      onClick={closeCategoryMenus}
+                      className="flex min-h-10 min-w-0 items-center justify-between gap-2 rounded-xl border border-[#EAE6DF] bg-white px-3 py-2 text-xs font-medium text-[#514840] transition hover:border-[#FFB5A2] hover:bg-[#FFF7ED] hover:text-[#9F2D18]"
+                    >
+                      <span className="min-w-0 truncate">{child.name}</span>
+                      <ArrowRight className="h-3 w-3 shrink-0 text-[#B7A99D]" aria-hidden="true" />
+                    </Link>
+                  ))}
+                </div>
+              </section>
             );
           })}
-
-          <div className="flex items-center justify-between border-t border-[#F0ECE7] py-2">
-            <Link href="/shop" className="flex items-center gap-1.5 py-1 text-[11px] font-semibold text-[#756B61] hover:text-[#9F2D18]">
-              <MapPin className="h-3.5 w-3.5 text-[#FF5A36]" aria-hidden="true" />Find products nearby
-            </Link>
-            <Link href="/shop" className="text-[11px] font-bold text-[#9F2D18]">Explore all products</Link>
-          </div>
         </div>
       </div>
     </header>
