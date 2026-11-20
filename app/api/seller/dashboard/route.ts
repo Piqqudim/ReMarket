@@ -14,10 +14,7 @@ const noStore = {
   Expires: "0",
 };
 
-function response(
-  data: unknown,
-  status = 200,
-) {
+function response(data: unknown, status = 200) {
   return NextResponse.json(data, {
     status,
     headers: noStore,
@@ -27,21 +24,15 @@ function response(
 function zeroDashboard() {
   return {
     hasBusiness: false,
-
-    message:
-      "Complete your seller onboarding to access your dashboard.",
-
+    message: "Complete your seller onboarding to access your dashboard.",
     business: null,
-
     listings: {
       products: {
         total: 0,
         active: 0,
       },
-
       totalActive: 0,
     },
-
     inventory: {
       trackedProducts: 0,
       untrackedProducts: 0,
@@ -49,7 +40,6 @@ function zeroDashboard() {
       outOfStockProducts: 0,
       totalTrackedUnits: 0,
     },
-
     orders: {
       total: 0,
       pendingAcceptance: 0,
@@ -62,7 +52,6 @@ function zeroDashboard() {
       rejected: 0,
       cancelled: 0,
     },
-
     recentOrders: [],
   };
 }
@@ -73,29 +62,17 @@ function zeroDashboard() {
 
 export async function GET() {
   try {
-    /*
-     * --------------------------------------------------
-     * 1. SELLER AUTHENTICATION
-     * --------------------------------------------------
-     */
-
+    /* 1. SELLER AUTHENTICATION */
     const access = await requireSellerAccount();
-
     if (!access.authorized) {
       return access.response;
     }
 
-    /*
-     * --------------------------------------------------
-     * 2. FIND SELLER BUSINESS
-     * --------------------------------------------------
-     */
-
+    /* 2. FIND SELLER BUSINESS */
     const business = await prisma.business.findUnique({
       where: {
         ownerId: access.user.id,
       },
-
       select: {
         id: true,
         name: true,
@@ -107,7 +84,6 @@ export async function GET() {
         availability: true,
         showContactInfo: true,
         deletedAt: true,
-
         location: {
           select: {
             area: true,
@@ -124,8 +100,7 @@ export async function GET() {
     if (business.ownerId !== access.user.id) {
       return response(
         {
-          error:
-            "You are not allowed to access this business dashboard.",
+          error: "You are not allowed to access this business dashboard.",
         },
         403,
       );
@@ -143,12 +118,7 @@ export async function GET() {
     const businessId = business.id;
     const sellerId = access.user.id;
 
-    /*
-     * --------------------------------------------------
-     * 3. DATABASE FILTERS
-     * --------------------------------------------------
-     */
-
+    /* 3. DATABASE FILTERS */
     const productWhere = {
       businessId,
       deletedAt: null,
@@ -164,30 +134,7 @@ export async function GET() {
       sellerId,
     };
 
-    /*
-     * --------------------------------------------------
-     * 4. LOAD DASHBOARD STATISTICS
-     * --------------------------------------------------
-     *
-     * Products:
-     * - Total products.
-     * - Active products.
-     *
-     * Inventory:
-     * - Tracked products.
-     * - Untracked products.
-     * - In-stock products.
-     * - Out-of-stock products.
-     * - Total tracked units.
-     *
-     * Orders:
-     * - Counts grouped by seller order status.
-     *
-     * Recent orders:
-     * - Latest ten seller orders.
-     * --------------------------------------------------
-     */
-
+    /* 4. LOAD DASHBOARD STATISTICS AND RECENT ORDERS */
     const [
       totalProducts,
       activeProducts,
@@ -199,25 +146,13 @@ export async function GET() {
       groupedOrders,
       recentOrders,
     ] = await Promise.all([
-      /*
-       * TOTAL PRODUCTS
-       */
-
       prisma.product.count({
         where: productWhere,
       }),
 
-      /*
-       * ACTIVE PRODUCTS
-       */
-
       prisma.product.count({
         where: activeProductWhere,
       }),
-
-      /*
-       * PRODUCTS WITH INVENTORY TRACKING ENABLED
-       */
 
       prisma.product.count({
         where: {
@@ -228,20 +163,12 @@ export async function GET() {
         },
       }),
 
-      /*
-       * PRODUCTS WITHOUT INVENTORY TRACKING
-       */
-
       prisma.product.count({
         where: {
           ...productWhere,
           stockQuantity: null,
         },
       }),
-
-      /*
-       * PRODUCTS WITH AVAILABLE STOCK
-       */
 
       prisma.product.count({
         where: {
@@ -252,20 +179,12 @@ export async function GET() {
         },
       }),
 
-      /*
-       * TRACKED PRODUCTS THAT ARE OUT OF STOCK
-       */
-
       prisma.product.count({
         where: {
           ...productWhere,
           stockQuantity: 0,
         },
       }),
-
-      /*
-       * TOTAL REMAINING TRACKED UNITS
-       */
 
       prisma.product.aggregate({
         where: {
@@ -274,33 +193,21 @@ export async function GET() {
             not: null,
           },
         },
-
         _sum: {
           stockQuantity: true,
         },
       }),
 
-      /*
-       * ORDER COUNTS GROUPED BY STATUS
-       */
-
       prisma.sellerOrder.groupBy({
         by: ["status"],
-
         where: sellerOrderWhere,
-
         _count: {
           _all: true,
         },
       }),
 
-      /*
-       * RECENT SELLER ORDERS
-       */
-
       prisma.sellerOrder.findMany({
         where: sellerOrderWhere,
-
         orderBy: [
           {
             createdAt: "desc",
@@ -309,61 +216,103 @@ export async function GET() {
             id: "desc",
           },
         ],
-
         take: 10,
-
         select: {
           id: true,
           sellerOrderCode: true,
           status: true,
           subtotal: true,
-
           acceptedAt: true,
           rejectedAt: true,
           dispatchedAt: true,
           deliveredAt: true,
           completedAt: true,
           cancelledAt: true,
-
           createdAt: true,
           updatedAt: true,
 
           /*
-           * PARENT ORDER AND DELIVERY DETAILS
+           * SHIPMENT DETAILS
+           *
+           * Include provider identifiers, courier details and safe tracking
+           * URLs so the seller dashboard can restore these details after a
+           * page refresh. Never return raw provider responses or webhook data.
            */
+          shipments: {
+            orderBy: [
+              {
+                createdAt: "desc",
+              },
+              {
+                id: "desc",
+              },
+            ],
+            take: 5,
+            select: {
+              id: true,
+              provider: true,
+              providerOrderId: true,
+              status: true,
+              courierName: true,
+              trackingCode: true,
+              trackingUrl: true,
+              waybillUrl: true,
+              estimatedDelivery: true,
+              shippingFee: true,
+              currency: true,
+              bookedAt: true,
+              pickedUpAt: true,
+              inTransitAt: true,
+              deliveredAt: true,
+              cancelledAt: true,
+              failureReason: true,
+              createdAt: true,
+              updatedAt: true,
+            },
+          },
 
+          /* PARENT ORDER, DELIVERY DETAILS AND VERIFIED PAYMENT STATE */
           order: {
             select: {
               id: true,
               orderCode: true,
               status: true,
               createdAt: true,
-
+              paidAt: true,
               deliveryRecipient: true,
               deliveryPhone: true,
               deliveryAddress: true,
               deliveryArea: true,
               deliveryLandmark: true,
               deliveryNotes: true,
-
               buyer: {
                 select: {
                   id: true,
                   name: true,
                 },
               },
+              payments: {
+                where: {
+                  provider: "PAYSTACK",
+                  status: "SUCCESS",
+                  paidAt: {
+                    not: null,
+                  },
+                },
+                select: {
+                  id: true,
+                  paidAt: true,
+                },
+                take: 1,
+              },
             },
           },
 
-          /*
-           * ORDERED PRODUCT SNAPSHOTS
-           */
-
+          /* ORDERED PRODUCT SNAPSHOTS */
           items: {
             orderBy: {
               createdAt: "asc",
             },
-
             select: {
               id: true,
               productId: true,
@@ -379,24 +328,14 @@ export async function GET() {
       }),
     ]);
 
-    /*
-     * --------------------------------------------------
-     * 5. PROCESS ORDER COUNTS
-     * --------------------------------------------------
-     */
-
-    const orderStatusCounts: Partial<
-      Record<SellerOrderStatus, number>
-    > = {};
+    /* 5. PROCESS ORDER COUNTS */
+    const orderStatusCounts: Partial<Record<SellerOrderStatus, number>> = {};
 
     for (const row of groupedOrders) {
-      orderStatusCounts[row.status] =
-        row._count._all;
+      orderStatusCounts[row.status] = row._count._all;
     }
 
-    function getOrderCount(
-      status: SellerOrderStatus,
-    ): number {
+    function getOrderCount(status: SellerOrderStatus): number {
       return orderStatusCounts[status] ?? 0;
     }
 
@@ -406,14 +345,37 @@ export async function GET() {
     );
 
     /*
-     * --------------------------------------------------
-     * 6. SUCCESSFUL DASHBOARD RESPONSE
-     * --------------------------------------------------
+     * Derive a boolean server-side rather than trusting the order status
+     * alone. Seller fulfilment is unlocked only if both the parent order's
+     * paidAt and a successful, paid Paystack record exist.
+     *
+     * Strip payment internals from the API response; expose only the boolean.
      */
+    const recentOrdersWithPaymentState = recentOrders.map((sellerOrder) => {
+      const {
+        paidAt,
+        payments,
+        ...publicOrderFields
+      } = sellerOrder.order;
 
+      const paymentVerified = Boolean(
+        sellerOrder.order.status !== "PENDING_PAYMENT" &&
+        paidAt &&
+        payments.some((payment) => payment.paidAt),
+      );
+
+      return {
+        ...sellerOrder,
+        order: {
+          ...publicOrderFields,
+          paymentVerified,
+        },
+      };
+    });
+
+    /* 6. SUCCESSFUL DASHBOARD RESPONSE */
     return response({
       hasBusiness: true,
-
       business: {
         id: business.id,
         name: business.name,
@@ -426,89 +388,39 @@ export async function GET() {
         location: business.location,
       },
 
-      /*
-       * PRODUCT LISTINGS
-       */
-
       listings: {
         products: {
           total: totalProducts,
           active: activeProducts,
         },
-
         totalActive: activeProducts,
       },
-
-      /*
-       * INVENTORY STATISTICS
-       */
 
       inventory: {
         trackedProducts,
         untrackedProducts,
         inStockProducts,
         outOfStockProducts,
-
-        totalTrackedUnits:
-          inventoryAggregate._sum.stockQuantity ?? 0,
+        totalTrackedUnits: inventoryAggregate._sum.stockQuantity ?? 0,
       },
-
-      /*
-       * SELLER ORDER STATISTICS
-       */
 
       orders: {
         total: totalOrders,
-
-        pendingAcceptance: getOrderCount(
-          SellerOrderStatus.PENDING_ACCEPTANCE,
-        ),
-
-        accepted: getOrderCount(
-          SellerOrderStatus.ACCEPTED,
-        ),
-
-        processing: getOrderCount(
-          SellerOrderStatus.PROCESSING,
-        ),
-
-        readyForDispatch: getOrderCount(
-          SellerOrderStatus.READY_FOR_DISPATCH,
-        ),
-
-        dispatched: getOrderCount(
-          SellerOrderStatus.DISPATCHED,
-        ),
-
-        delivered: getOrderCount(
-          SellerOrderStatus.DELIVERED,
-        ),
-
-        completed: getOrderCount(
-          SellerOrderStatus.COMPLETED,
-        ),
-
-        rejected: getOrderCount(
-          SellerOrderStatus.REJECTED,
-        ),
-
-        cancelled: getOrderCount(
-          SellerOrderStatus.CANCELLED,
-        ),
+        pendingAcceptance: getOrderCount(SellerOrderStatus.PENDING_ACCEPTANCE),
+        accepted: getOrderCount(SellerOrderStatus.ACCEPTED),
+        processing: getOrderCount(SellerOrderStatus.PROCESSING),
+        readyForDispatch: getOrderCount(SellerOrderStatus.READY_FOR_DISPATCH),
+        dispatched: getOrderCount(SellerOrderStatus.DISPATCHED),
+        delivered: getOrderCount(SellerOrderStatus.DELIVERED),
+        completed: getOrderCount(SellerOrderStatus.COMPLETED),
+        rejected: getOrderCount(SellerOrderStatus.REJECTED),
+        cancelled: getOrderCount(SellerOrderStatus.CANCELLED),
       },
 
-      /*
-       * RECENT ORDERS
-       */
-
-      recentOrders,
+      recentOrders: recentOrdersWithPaymentState,
     });
   } catch (error) {
-    console.error(
-      "Seller dashboard GET error:",
-      error,
-    );
-
+    console.error("Seller dashboard GET error:", error);
     return response(
       {
         error: "Unable to load seller dashboard.",

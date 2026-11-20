@@ -1,15 +1,10 @@
-
 import {
   DeliveryFeeStatus,
   OrderStatus,
   PaymentStatus,
   Prisma,
 } from "@prisma/client";
-
-import {
-  NextRequest,
-  NextResponse,
-} from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 
 import { requireAdmin } from "@/lib/admin-auth";
 import { prisma } from "@/lib/prisma";
@@ -24,8 +19,7 @@ const MAX_PAGE = 100_000;
 const MAX_QUERY_LENGTH = 100;
 
 const noStore = {
-  "Cache-Control":
-    "private, no-store, max-age=0, must-revalidate",
+  "Cache-Control": "private, no-store, max-age=0, must-revalidate",
   Pragma: "no-cache",
   Expires: "0",
 };
@@ -33,10 +27,7 @@ const noStore = {
 function jsonError(message: string, status: number) {
   return NextResponse.json(
     { error: message },
-    {
-      status,
-      headers: noStore,
-    },
+    { status, headers: noStore },
   );
 }
 
@@ -45,59 +36,55 @@ function parsePositiveInteger(
   fallback: number,
   maximum: number,
 ): number | null {
-  if (value === null) {
-    return fallback;
-  }
-
-  if (!/^\d+$/.test(value.trim())) {
-    return null;
-  }
+  if (value === null) return fallback;
+  if (!/^\d+$/.test(value.trim())) return null;
 
   const parsed = Number(value);
-
-  if (
-    !Number.isSafeInteger(parsed) ||
-    parsed < 1 ||
-    parsed > maximum
-  ) {
+  if (!Number.isSafeInteger(parsed) || parsed < 1 || parsed > maximum) {
     return null;
   }
 
   return parsed;
 }
 
-function isOrderStatus(
-  value: string,
-): value is OrderStatus {
-  return Object.values(OrderStatus).includes(
-    value as OrderStatus,
-  );
+function isOrderStatus(value: string): value is OrderStatus {
+  return Object.values(OrderStatus).includes(value as OrderStatus);
 }
 
-function isPaymentStatus(
-  value: string,
-): value is PaymentStatus {
-  return Object.values(PaymentStatus).includes(
-    value as PaymentStatus,
-  );
+function isPaymentStatus(value: string): value is PaymentStatus {
+  return Object.values(PaymentStatus).includes(value as PaymentStatus);
 }
 
-function isDeliveryFeeStatus(
-  value: string,
-): value is DeliveryFeeStatus {
+function isDeliveryFeeStatus(value: string): value is DeliveryFeeStatus {
   return Object.values(DeliveryFeeStatus).includes(
     value as DeliveryFeeStatus,
   );
 }
 
+/**
+ * A successful Payment row is not sufficient on its own to display
+ * provider verification. For Paystack, require the transaction ID and
+ * paidAt timestamp written by the server-side verification flow.
+ */
+function hasVerifiedPaystackPayment(payment: {
+  provider: string | null;
+  providerTransactionId: string | null;
+  status: PaymentStatus;
+  paidAt: Date | null;
+}): boolean {
+  return (
+    payment.provider?.trim().toUpperCase() === "PAYSTACK" &&
+    payment.status === PaymentStatus.SUCCESS &&
+    Boolean(payment.providerTransactionId?.trim()) &&
+    payment.paidAt !== null
+  );
+}
+
 export async function GET(request: NextRequest) {
-  const auth = await requireAdmin();
-
-  if (!auth.authorized) {
-    return auth.response;
-  }
-
   try {
+    const auth = await requireAdmin();
+    if (!auth.authorized) return auth.response;
+
     const { searchParams } = request.nextUrl;
 
     const page = parsePositiveInteger(
@@ -105,7 +92,6 @@ export async function GET(request: NextRequest) {
       1,
       MAX_PAGE,
     );
-
     const pageSize = parsePositiveInteger(
       searchParams.get("pageSize"),
       DEFAULT_PAGE_SIZE,
@@ -120,23 +106,13 @@ export async function GET(request: NextRequest) {
     }
 
     const skip = (page - 1) * pageSize;
-
     if (!Number.isSafeInteger(skip)) {
-      return jsonError(
-        "The requested page is too large.",
-        400,
-      );
+      return jsonError("The requested page is too large.", 400);
     }
 
-    const q =
-      searchParams.get("q")?.trim() ?? "";
-
-    const statusParam =
-      searchParams.get("status") ?? "";
-
-    const paymentStatusParam =
-      searchParams.get("paymentStatus") ?? "";
-
+    const q = searchParams.get("q")?.trim() ?? "";
+    const statusParam = searchParams.get("status") ?? "";
+    const paymentStatusParam = searchParams.get("paymentStatus") ?? "";
     const deliveryFeeStatusParam =
       searchParams.get("deliveryFeeStatus") ?? "";
 
@@ -147,66 +123,39 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    if (
-      statusParam &&
-      !isOrderStatus(statusParam)
-    ) {
-      return jsonError(
-        "Invalid order status.",
-        400,
-      );
+    if (statusParam && !isOrderStatus(statusParam)) {
+      return jsonError("Invalid order status.", 400);
     }
 
-    if (
-      paymentStatusParam &&
-      !isPaymentStatus(paymentStatusParam)
-    ) {
-      return jsonError(
-        "Invalid payment status.",
-        400,
-      );
+    if (paymentStatusParam && !isPaymentStatus(paymentStatusParam)) {
+      return jsonError("Invalid payment status.", 400);
     }
 
     if (
       deliveryFeeStatusParam &&
       !isDeliveryFeeStatus(deliveryFeeStatusParam)
     ) {
-      return jsonError(
-        "Invalid delivery fee status.",
-        400,
-      );
+      return jsonError("Invalid delivery fee status.", 400);
     }
 
-    const status = statusParam
-      ? statusParam as OrderStatus
-      : undefined;
-
+    const status = statusParam ? (statusParam as OrderStatus) : undefined;
     const paymentStatus = paymentStatusParam
-      ? paymentStatusParam as PaymentStatus
+      ? (paymentStatusParam as PaymentStatus)
       : undefined;
-
-    const deliveryFeeStatus =
-      deliveryFeeStatusParam
-        ? deliveryFeeStatusParam as DeliveryFeeStatus
-        : undefined;
+    const deliveryFeeStatus = deliveryFeeStatusParam
+      ? (deliveryFeeStatusParam as DeliveryFeeStatus)
+      : undefined;
 
     const where: Prisma.OrderWhereInput = {
       ...(status ? { status } : {}),
-
-      ...(deliveryFeeStatus
-        ? { deliveryFeeStatus }
-        : {}),
-
+      ...(deliveryFeeStatus ? { deliveryFeeStatus } : {}),
       ...(paymentStatus
         ? {
             payments: {
-              some: {
-                status: paymentStatus,
-              },
+              some: { status: paymentStatus },
             },
           }
         : {}),
-
       ...(q
         ? {
             OR: [
@@ -265,186 +214,180 @@ export async function GET(request: NextRequest) {
         : {}),
     };
 
-    const [
-      orders,
-      total,
-      orderStatusRows,
-      paymentStatusRows,
-    ] = await Promise.all([
-      prisma.order.findMany({
-        where,
+    const [orders, total, orderStatusRows, paymentStatusRows] =
+      await Promise.all([
+        prisma.order.findMany({
+          where,
+          orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+          skip,
+          take: pageSize,
+          select: {
+            id: true,
+            orderCode: true,
+            status: true,
 
-        orderBy: [
-          {
-            createdAt: "desc",
-          },
-          {
-            id: "desc",
-          },
-        ],
+            itemsSubtotal: true,
+            deliveryFee: true,
+            deliveryFeeStatus: true,
+            totalAmount: true,
+            currency: true,
 
-        skip,
-        take: pageSize,
+            deliveryRecipient: true,
+            deliveryPhone: true,
+            deliveryAddress: true,
+            deliveryArea: true,
+            deliveryLandmark: true,
+            deliveryNotes: true,
 
-        select: {
-          id: true,
-          orderCode: true,
-          status: true,
+            paidAt: true,
+            paymentExpiresAt: true,
+            completedAt: true,
+            cancelledAt: true,
+            createdAt: true,
+            updatedAt: true,
 
-          itemsSubtotal: true,
-          deliveryFee: true,
-          deliveryFeeStatus: true,
-          totalAmount: true,
-          currency: true,
-
-          deliveryRecipient: true,
-          deliveryPhone: true,
-          deliveryAddress: true,
-          deliveryArea: true,
-          deliveryLandmark: true,
-          deliveryNotes: true,
-
-          completedAt: true,
-          cancelledAt: true,
-
-          createdAt: true,
-          updatedAt: true,
-
-          buyer: {
-            select: {
-              id: true,
-              name: true,
-              email: true,
+            buyer: {
+              select: {
+                id: true,
+                name: true,
+                email: true,
+              },
             },
-          },
 
-          sellerOrders: {
-            orderBy: [
-              {
-                createdAt: "asc",
-              },
-              {
-                id: "asc",
-              },
-            ],
+            sellerOrders: {
+              orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+              select: {
+                id: true,
+                sellerOrderCode: true,
+                status: true,
+                subtotal: true,
+                sellerNote: true,
 
-            select: {
-              id: true,
-              sellerOrderCode: true,
-              status: true,
-              subtotal: true,
-              sellerNote: true,
+                acceptedAt: true,
+                rejectedAt: true,
+                dispatchedAt: true,
+                deliveredAt: true,
+                completedAt: true,
+                cancelledAt: true,
 
-              acceptedAt: true,
-              rejectedAt: true,
-              dispatchedAt: true,
-              deliveredAt: true,
-              completedAt: true,
-              cancelledAt: true,
-
-              seller: {
-                select: {
-                  id: true,
-                  name: true,
-                  email: true,
+                seller: {
+                  select: {
+                    id: true,
+                    name: true,
+                    email: true,
+                  },
                 },
-              },
 
-              business: {
-                select: {
-                  id: true,
-                  name: true,
+                business: {
+                  select: {
+                    id: true,
+                    name: true,
+                    location: {
+                      select: {
+                        area: true,
+                        address: true,
+                      },
+                    },
+                  },
+                },
 
-                  location: {
-                    select: {
-                      area: true,
-                      address: true,
+                items: {
+                  orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+                  select: {
+                    id: true,
+                    productId: true,
+                    productName: true,
+                    productImageUrl: true,
+                    unitPrice: true,
+                    quantity: true,
+                    lineTotal: true,
+                    inventoryReserved: true,
+                    createdAt: true,
+                  },
+                },
+
+                // Shipment summaries are included for Admin monitoring.
+                // Full tracking-event history is loaded by the order
+                // operations/details endpoint when an order is opened.
+                shipments: {
+                  orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+                  select: {
+                    id: true,
+                    provider: true,
+                    providerOrderId: true,
+                    courierId: true,
+                    courierName: true,
+                    trackingCode: true,
+                    trackingUrl: true,
+                    waybillUrl: true,
+                    status: true,
+                    shippingFee: true,
+                    currency: true,
+                    estimatedDelivery: true,
+                    failureReason: true,
+                    bookedAt: true,
+                    pickedUpAt: true,
+                    inTransitAt: true,
+                    deliveredAt: true,
+                    cancelledAt: true,
+                    createdAt: true,
+                    updatedAt: true,
+                    _count: {
+                      select: { trackingEvents: true },
                     },
                   },
                 },
               },
+            },
 
-              items: {
-                orderBy: [
-                  {
-                    createdAt: "asc",
-                  },
-                  {
-                    id: "asc",
-                  },
-                ],
-
-                select: {
-                  id: true,
-                  productId: true,
-                  productName: true,
-                  productImageUrl: true,
-                  unitPrice: true,
-                  quantity: true,
-                  lineTotal: true,
-                  inventoryReserved: true,
-                  createdAt: true,
-                },
+            payments: {
+              orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+              select: {
+                id: true,
+                amount: true,
+                currency: true,
+                status: true,
+                method: true,
+                provider: true,
+                providerReference: true,
+                providerTransactionId: true,
+                failureReason: true,
+                paidAt: true,
+                createdAt: true,
+                updatedAt: true,
               },
             },
           },
+        }),
 
-          payments: {
-            orderBy: [
-              {
-                createdAt: "desc",
-              },
-              {
-                id: "desc",
-              },
-            ],
+        prisma.order.count({ where }),
 
-            select: {
-              id: true,
-              amount: true,
-              currency: true,
-              status: true,
-              method: true,
-              provider: true,
-              providerReference: true,
-              failureReason: true,
-              paidAt: true,
-              createdAt: true,
-              updatedAt: true,
-            },
-          },
-        },
-      }),
+        // These are global counts, independent of the active filters.
+        prisma.order.groupBy({
+          by: ["status"],
+          _count: { _all: true },
+        }),
 
-      prisma.order.count({
-        where,
-      }),
+        prisma.payment.groupBy({
+          by: ["status"],
+          _count: { _all: true },
+        }),
+      ]);
 
-      prisma.order.groupBy({
-        by: ["status"],
-        _count: {
-          _all: true,
-        },
-      }),
+    const totalPages = Math.ceil(total / pageSize);
 
-      prisma.payment.groupBy({
-        by: ["status"],
-        _count: {
-          _all: true,
-        },
-      }),
-    ]);
-
-    const totalPages = Math.ceil(
-      total / pageSize,
-    );
+    const ordersWithPaymentVerification = orders.map((order) => ({
+      ...order,
+      payments: order.payments.map((payment) => ({
+        ...payment,
+        providerVerified: hasVerifiedPaystackPayment(payment),
+      })),
+    }));
 
     return NextResponse.json(
       {
         success: true,
-
-        orders,
-
+        orders: ordersWithPaymentVerification,
         pagination: {
           page,
           pageSize,
@@ -453,21 +396,14 @@ export async function GET(request: NextRequest) {
           hasPreviousPage: page > 1,
           hasNextPage: page < totalPages,
         },
-
-        statusCounts: orderStatusRows.map(
-          (row) => ({
-            status: row.status,
-            count: row._count._all,
-          }),
-        ),
-
-        paymentStatusCounts: paymentStatusRows.map(
-          (row) => ({
-            status: row.status,
-            count: row._count._all,
-          }),
-        ),
-
+        statusCounts: orderStatusRows.map((row) => ({
+          status: row.status,
+          count: row._count._all,
+        })),
+        paymentStatusCounts: paymentStatusRows.map((row) => ({
+          status: row.status,
+          count: row._count._all,
+        })),
         generatedAt: new Date().toISOString(),
       },
       {
@@ -476,14 +412,7 @@ export async function GET(request: NextRequest) {
       },
     );
   } catch (error) {
-    console.error(
-      "Admin orders GET error:",
-      error,
-    );
-
-    return jsonError(
-      "Unable to load marketplace orders.",
-      500,
-    );
+    console.error("Admin orders GET error:", error);
+    return jsonError("Unable to load marketplace orders.", 500);
   }
 }

@@ -1,14 +1,28 @@
+import { FinancialJournalStatus, Prisma } from "@prisma/client";
 import { NextRequest, NextResponse } from "next/server";
-import { Prisma } from "@prisma/client";
+
 import { requireAdmin } from "@/lib/admin-auth";
+import { createDraftJournal, FinancialLedgerError } from "@/lib/finance/ledger";
 import { prisma } from "@/lib/prisma";
-import {
-  createDraftJournal,
-  FinancialLedgerError,
-} from "@/lib/finance/ledger";
 
 export const dynamic = "force-dynamic";
+export const revalidate = 0;
 export const runtime = "nodejs";
+
+const DEFAULT_PAGE_SIZE = 25;
+const MAX_PAGE_SIZE = 100;
+const MAX_PAGE = 100_000;
+const MAX_QUERY_LENGTH = 100;
+const MAX_ID_LENGTH = 100;
+const MAX_SOURCE_TYPE_LENGTH = 50;
+const MAX_BODY_BYTES = 64 * 1024;
+const MAX_LINES = 200;
+
+const noStore = {
+  "Cache-Control": "private, no-store, max-age=0, must-revalidate",
+  Pragma: "no-cache",
+  Expires: "0",
+};
 
 type JournalLineInput = {
   accountId: string;
@@ -31,7 +45,7 @@ type CreateJournalBody = {
 
 const journalInclude = {
   lines: {
-    orderBy: { createdAt: "asc" },
+    orderBy: { createdAt: "asc" as const },
     include: {
       account: {
         select: {
@@ -52,65 +66,35 @@ type JournalWithRelations = Prisma.FinancialJournalGetPayload<{
   include: typeof journalInclude;
 }>;
 
+function jsonError(message: string, status: number) {
+  return NextResponse.json(
+    { success: false, error: message },
+    { status, headers: noStore },
+  );
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function getAdminId(context: unknown): string | null {
-  // Supports common requireAdmin() result shapes without assuming that the
-  // helper returns a specific session wrapper.
-  if (!isRecord(context)) return null;
-  const directCandidates = [context.id, context.adminId, context.userId];
-  for (const candidate of directCandidates) {
-    if (typeof candidate === "string" && candidate.trim()) return candidate;
+function rejectUnknownFields(value: Record<string, unknown>, allowed: readonly string[], label: string) {
+  const unknown = Object.keys(value).filter((key) => !allowed.includes(key));
+  if (unknown.length > 0) {
+    throw new Error(`${label} contains unsupported field(s): ${unknown.join(", ")}.`);
   }
-
-  for (const key of ["user", "admin", "session"]) {
-    const nested = context[key];
-    if (!isRecord(nested)) continue;
-    const candidates = [nested.id, nested.adminId, nested.userId];
-    for (const candidate of candidates) {
-      if (typeof candidate === "string" && candidate.trim()) return candidate;
-    }
-    if (isRecord(nested.user) && typeof nested.user.id === "string") {
-      return nested.user.id;
-    }
-  }
-  return null;
 }
 
-async function authorizeAdmin() {
-  const context = await requireAdmin();
-  if (context instanceof Response) {
-    return { response: context as Response, adminId: null as string | null };
-  }
-
-  const adminId = getAdminId(context);
-  if (!adminId) {
-    return {
-      response: NextResponse.json(
-        { error: "Unauthorized. An administrator session is required." },
-        { status: 401 },
-      ) as Response,
-      adminId: null as string | null,
-    };
-  }
-  return { response: null, adminId };
-}
-
-function cleanOptionalText(
-  value: unknown,
-  field: string,
-  maxLength: number,
-): string | null | undefined {
-  if (value === undefined) return undefined;
-  if (value === null) return null;
-  if (typeof value !== "string") throw new Error(`${field} must be a string.`);
+function parsePositiveInteger(
+  value: string | null,
+  fallback: number,
+  maximum: number,
+): number | null {
+  if (value === null) return fallback;
   const cleaned = value.trim();
-  if (cleaned.length > maxLength) {
-    throw new Error(`${field} cannot exceed ${maxLength} characters.`);
-  }
-  return cleaned || null;
+  if (!/^\d+$/.test(cleaned)) return null;
+  const parsed = Number(cleaned);
+  if (!Number.isSafeInteger(parsed) || parsed < 1 || parsed > maximum) return null;
+  return parsed;
 }
 
 function requiredText(value: unknown, field: string, maxLength: number): string {
@@ -124,9 +108,23 @@ function requiredText(value: unknown, field: string, maxLength: number): string 
   return cleaned;
 }
 
+function cleanOptionalText(
+  value: unknown,
+  field: string,
+  maxLength: number,
+): string | null | undefined {
+  if (value === undefined) return undefined;
+  if (value === null) return null;
+  if (typeof value !== "string") throw new Error(`${field} must be a string or null.`);
+  const cleaned = value.trim();
+  if (cleaned.length > maxLength) {
+    throw new Error(`${field} cannot exceed ${maxLength} characters.`);
+  }
+  return cleaned || null;
+}
+
 function decimalString(value: unknown, field: string): string {
-  // Amounts must remain decimal strings so JSON number conversion cannot
-  // introduce binary floating-point rounding.
+  // Decimal strings avoid floating-point rounding before Prisma.Decimal parses them.
   if (typeof value !== "string") {
     throw new Error(`${field} must be supplied as a decimal string.`);
   }
@@ -139,44 +137,53 @@ function decimalString(value: unknown, field: string): string {
 
 function parseCreateJournalBody(value: unknown): CreateJournalBody {
   if (!isRecord(value)) throw new Error("Request body must be a JSON object.");
+  rejectUnknownFields(
+    value,
+    ["reference", "sourceType", "sourceId", "description", "currency", "idempotencyKey", "lines"],
+    "Request body",
+  );
 
-  const reference = requiredText(value.reference, "reference", 120);
+  const reference = requiredText(value.reference, "reference", 100);
   const sourceType = value.sourceType === undefined
     ? "MANUAL"
-    : requiredText(value.sourceType, "sourceType", 50);
-  const sourceId = cleanOptionalText(value.sourceId, "sourceId", 100);
-  const description = cleanOptionalText(value.description, "description", 1000);
-  const currency = (value.currency === undefined
-    ? "NGN"
-    : requiredText(value.currency, "currency", 3)).toUpperCase();
+    : requiredText(value.sourceType, "sourceType", MAX_SOURCE_TYPE_LENGTH);
+  const sourceId = cleanOptionalText(value.sourceId, "sourceId", MAX_ID_LENGTH);
+  const description = cleanOptionalText(value.description, "description", 2_000);
+  const currency = (
+    value.currency === undefined
+      ? "NGN"
+      : requiredText(value.currency, "currency", 3)
+  ).toUpperCase();
 
   if (!/^[A-Z]{3}$/.test(currency)) {
     throw new Error("currency must be a 3-letter ISO currency code.");
   }
 
   const idempotencyKey = cleanOptionalText(value.idempotencyKey, "idempotencyKey", 200);
-  if (!Array.isArray(value.lines) || value.lines.length < 2 || value.lines.length > 200) {
-    throw new Error("lines must contain between 2 and 200 journal lines.");
+  if (!Array.isArray(value.lines) || value.lines.length < 2 || value.lines.length > MAX_LINES) {
+    throw new Error(`lines must contain between 2 and ${MAX_LINES} journal lines.`);
   }
 
   const lines = value.lines.map((rawLine, index): JournalLineInput => {
     if (!isRecord(rawLine)) throw new Error(`lines[${index}] must be an object.`);
-    const accountId = requiredText(rawLine.accountId, `lines[${index}].accountId`, 100);
+    rejectUnknownFields(
+      rawLine,
+      ["accountId", "debit", "credit", "description", "orderId", "sellerId"],
+      `lines[${index}]`,
+    );
+
+    const accountId = requiredText(rawLine.accountId, `lines[${index}].accountId`, MAX_ID_LENGTH);
     const debit = decimalString(rawLine.debit, `lines[${index}].debit`);
     const credit = decimalString(rawLine.credit, `lines[${index}].credit`);
-    const lineDescription = cleanOptionalText(
-      rawLine.description,
-      `lines[${index}].description`,
-      500,
-    );
-    const orderId = cleanOptionalText(rawLine.orderId, `lines[${index}].orderId`, 100);
-    const sellerId = cleanOptionalText(rawLine.sellerId, `lines[${index}].sellerId`, 100);
+    const description = cleanOptionalText(rawLine.description, `lines[${index}].description`, 500);
+    const orderId = cleanOptionalText(rawLine.orderId, `lines[${index}].orderId`, MAX_ID_LENGTH);
+    const sellerId = cleanOptionalText(rawLine.sellerId, `lines[${index}].sellerId`, MAX_ID_LENGTH);
 
     return {
       accountId,
       debit,
       credit,
-      ...(lineDescription !== undefined ? { description: lineDescription } : {}),
+      ...(description !== undefined ? { description } : {}),
       ...(orderId !== undefined ? { orderId } : {}),
       ...(sellerId !== undefined ? { sellerId } : {}),
     };
@@ -191,6 +198,51 @@ function parseCreateJournalBody(value: unknown): CreateJournalBody {
     ...(idempotencyKey !== undefined ? { idempotencyKey } : {}),
     lines,
   };
+}
+
+async function readJsonBody(request: Request): Promise<
+  | { valid: true; value: unknown }
+  | { valid: false; reason: "TOO_LARGE" | "INVALID_JSON" }
+> {
+  const contentLength = request.headers.get("content-length");
+  if (contentLength !== null) {
+    const declaredLength = Number(contentLength);
+    if (!Number.isSafeInteger(declaredLength) || declaredLength < 0) {
+      return { valid: false, reason: "INVALID_JSON" };
+    }
+    if (declaredLength > MAX_BODY_BYTES) return { valid: false, reason: "TOO_LARGE" };
+  }
+
+  try {
+    const raw = await request.text();
+    if (new TextEncoder().encode(raw).byteLength > MAX_BODY_BYTES) {
+      return { valid: false, reason: "TOO_LARGE" };
+    }
+    return { valid: true, value: JSON.parse(raw) as unknown };
+  } catch {
+    return { valid: false, reason: "INVALID_JSON" };
+  }
+}
+
+function parseDateBoundary(value: string | null, endOfDay = false): Date | null {
+  if (value === null) return null;
+  const cleaned = value.trim();
+  if (!cleaned) return null;
+
+  if (/^\d{4}-\d{2}-\d{2}$/.test(cleaned)) {
+    const date = new Date(`${cleaned}T00:00:00.000Z`);
+    if (Number.isNaN(date.getTime()) || date.toISOString().slice(0, 10) !== cleaned) return null;
+    if (endOfDay) date.setUTCHours(23, 59, 59, 999);
+    return date;
+  }
+
+  // Require an explicit timezone for timestamp filters so server timezone
+  // settings cannot silently change the requested reporting interval.
+  if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d{1,3})?)?(?:Z|[+-]\d{2}:\d{2})$/i.test(cleaned)) {
+    return null;
+  }
+  const date = new Date(cleaned);
+  return Number.isNaN(date.getTime()) ? null : date;
 }
 
 function decimalText(value: unknown): string {
@@ -246,12 +298,20 @@ function serializeJournal(value: unknown): Record<string, unknown> {
   };
 }
 
+type AmountLine = { debit: Prisma.Decimal; credit: Prisma.Decimal };
+
+function amountTotal(lines: AmountLine[], field: "debit" | "credit"): string {
+  return lines
+    .reduce((total, line) => total.plus(line[field]), new Prisma.Decimal(0))
+    .toFixed(2);
+}
+
 function ledgerErrorStatus(error: unknown): number {
   if (error instanceof FinancialLedgerError) {
-    const code = String((error as Error & { code?: string }).code ?? "").toUpperCase();
+    const code = error.code.toUpperCase();
     if (code.includes("NOT_FOUND")) return 404;
-    if (code.includes("FORBIDDEN") || code.includes("UNAUTHORIZED")) return 403;
-    if (code.includes("CONFLICT") || code.includes("DUPLICATE")) return 409;
+    if (code.includes("ADMIN_REQUIRED") || code.includes("FORBIDDEN") || code.includes("UNAUTHORIZED")) return 403;
+    if (code.includes("CONFLICT") || code.includes("DUPLICATE") || code.includes("ALREADY")) return 409;
     return 400;
   }
   if (error instanceof Prisma.PrismaClientKnownRequestError) {
@@ -261,76 +321,54 @@ function ledgerErrorStatus(error: unknown): number {
   return 500;
 }
 
-function getErrorMessage(error: unknown): string {
+function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : "The request could not be completed.";
 }
 
-function parseDateBoundary(value: string | null, endOfDay = false): Date | null {
-  if (!value) return null;
-  const input = /^\d{4}-\d{2}-\d{2}$/.test(value)
-    ? `${value}T${endOfDay ? "23:59:59.999" : "00:00:00.000"}`
-    : value;
-  const parsed = new Date(input);
-  return Number.isNaN(parsed.getTime()) ? null : parsed;
-}
-
-type JournalAmountLine = {
-  debit: Prisma.Decimal | string | number;
-  credit: Prisma.Decimal | string | number;
-};
-
-function amountTotal(lines: JournalAmountLine[], field: "debit" | "credit") {
-  return lines.reduce(
-    (total, line) => total.plus(line[field]),
-    new Prisma.Decimal(0),
-  ).toFixed(2);
-}
-
-/**
- * GET /api/admin/finance/ledger
- * Read-only journal history with filters and pagination.
- */
+/** GET /api/admin/finance/ledger — read-only, filtered journal history. */
 export async function GET(request: NextRequest) {
   try {
-    const auth = await authorizeAdmin();
-    if (auth.response) return auth.response;
+    const auth = await requireAdmin();
+    if (!auth.authorized) return auth.response;
 
     const params = request.nextUrl.searchParams;
-    const page = Math.max(1, Number.parseInt(params.get("page") ?? "1", 10) || 1);
-    const pageSize = Math.min(
-      100,
-      Math.max(1, Number.parseInt(params.get("pageSize") ?? "25", 10) || 25),
-    );
-    const q = params.get("q")?.trim();
-    const status = params.get("status")?.trim().toUpperCase();
-    const currency = params.get("currency")?.trim().toUpperCase();
-    const sourceType = params.get("sourceType")?.trim();
-    const accountId = params.get("accountId")?.trim();
-    const orderId = params.get("orderId")?.trim();
-    const sellerId = params.get("sellerId")?.trim();
+    const page = parsePositiveInteger(params.get("page"), 1, MAX_PAGE);
+    const pageSize = parsePositiveInteger(params.get("pageSize"), DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE);
+    if (page === null || pageSize === null) {
+      return jsonError("Invalid pagination. Page must be positive and pageSize must be between 1 and 100.", 400);
+    }
+
+    const skip = (page - 1) * pageSize;
+    if (!Number.isSafeInteger(skip)) return jsonError("The requested page is too large.", 400);
+
+    const q = params.get("q")?.trim() ?? "";
+    const status = params.get("status")?.trim().toUpperCase() ?? "";
+    const currency = params.get("currency")?.trim().toUpperCase() ?? "";
+    const sourceType = params.get("sourceType")?.trim() ?? "";
+    const accountId = params.get("accountId")?.trim() ?? "";
+    const orderId = params.get("orderId")?.trim() ?? "";
+    const sellerId = params.get("sellerId")?.trim() ?? "";
+
+    if (q.length > MAX_QUERY_LENGTH) return jsonError("Search query cannot exceed 100 characters.", 400);
+    if (status && status !== "ALL" && status !== FinancialJournalStatus.DRAFT && status !== FinancialJournalStatus.POSTED) {
+      return jsonError("status must be ALL, DRAFT or POSTED.", 400);
+    }
+    if (currency && !/^[A-Z]{3}$/.test(currency)) return jsonError("currency must be a 3-letter code.", 400);
+    if (sourceType.length > MAX_SOURCE_TYPE_LENGTH) return jsonError("sourceType is too long.", 400);
+    if (accountId.length > MAX_ID_LENGTH || orderId.length > MAX_ID_LENGTH || sellerId.length > MAX_ID_LENGTH) {
+      return jsonError("Account, order and seller references cannot exceed 100 characters.", 400);
+    }
+
+    const fromPresent = params.has("from");
+    const toPresent = params.has("to");
     const from = parseDateBoundary(params.get("from"));
     const to = parseDateBoundary(params.get("to"), true);
-
-    if (status && status !== "ALL" && status !== "DRAFT" && status !== "POSTED") {
-      return NextResponse.json({ error: "status must be ALL, DRAFT or POSTED." }, { status: 400 });
-    }
-    if (currency && !/^[A-Z]{3}$/.test(currency)) {
-      return NextResponse.json({ error: "currency must be a 3-letter code." }, { status: 400 });
-    }
-    if (params.has("from") && !from) {
-      return NextResponse.json({ error: "from must be a valid date." }, { status: 400 });
-    }
-    if (params.has("to") && !to) {
-      return NextResponse.json({ error: "to must be a valid date." }, { status: 400 });
-    }
-    if (from && to && from > to) {
-      return NextResponse.json({ error: "from cannot be later than to." }, { status: 400 });
-    }
+    if (fromPresent && !from) return jsonError("from must be a valid date or timezone-qualified timestamp.", 400);
+    if (toPresent && !to) return jsonError("to must be a valid date or timezone-qualified timestamp.", 400);
+    if (from && to && from > to) return jsonError("from cannot be later than to.", 400);
 
     const filters: Prisma.FinancialJournalWhereInput[] = [];
-    if (status && status !== "ALL") {
-      filters.push({ status: status as "DRAFT" | "POSTED" });
-    }
+    if (status && status !== "ALL") filters.push({ status: status as FinancialJournalStatus });
     if (currency) filters.push({ currency });
     if (sourceType) filters.push({ sourceType: { equals: sourceType, mode: "insensitive" } });
     if (from || to) {
@@ -358,54 +396,36 @@ export async function GET(request: NextRequest) {
       });
     }
 
-    const where: Prisma.FinancialJournalWhereInput = filters.length
-      ? { AND: filters }
-      : {};
-
-    // Separate count queries avoid Prisma groupBy generic inference issues
-    // while keeping the status totals consistent with the active filters.
-    const draftWhere: Prisma.FinancialJournalWhereInput = {
-      AND: [...filters, { status: "DRAFT" }],
-    };
-    const postedWhere: Prisma.FinancialJournalWhereInput = {
-      AND: [...filters, { status: "POSTED" }],
-    };
-
-    const totalPromise: Promise<number> = prisma.financialJournal.count({ where });
-    const draftCountPromise: Promise<number> = prisma.financialJournal.count({
-      where: draftWhere,
-    });
-    const postedCountPromise: Promise<number> = prisma.financialJournal.count({
-      where: postedWhere,
-    });
-    const journalsPromise: Promise<JournalWithRelations[]> =
+    const where: Prisma.FinancialJournalWhereInput = filters.length ? { AND: filters } : {};
+    const [total, statusGroups, journals] = await Promise.all([
+      prisma.financialJournal.count({ where }),
+      prisma.financialJournal.groupBy({
+        by: ["status"],
+        where,
+        _count: { _all: true },
+      }),
       prisma.financialJournal.findMany({
         where,
         orderBy: [{ createdAt: "desc" }, { id: "desc" }],
-        skip: (page - 1) * pageSize,
+        skip,
         take: pageSize,
         include: journalInclude,
-      });
-
-    const [total, draftCount, postedCount, journals] = await Promise.all([
-      totalPromise,
-      draftCountPromise,
-      postedCountPromise,
-      journalsPromise,
+      }),
     ]);
 
-    const serialized = journals.map((journal: JournalWithRelations) => {
-      const lines = journal.lines;
-      const serializedJournal = serializeJournal(journal);
-      return {
-        ...serializedJournal,
-        createdBy: journal.createdBy,
-        approvedBy: journal.approvedBy,
-        debitTotal: amountTotal(lines, "debit"),
-        creditTotal: amountTotal(lines, "credit"),
-        balanced: amountTotal(lines, "debit") === amountTotal(lines, "credit"),
-      };
-    });
+    const statusCounts = { DRAFT: 0, POSTED: 0 };
+    for (const group of statusGroups) {
+      statusCounts[group.status] = group._count._all;
+    }
+
+    const serialized = journals.map((journal: JournalWithRelations) => ({
+      ...serializeJournal(journal),
+      createdBy: journal.createdBy,
+      approvedBy: journal.approvedBy,
+      debitTotal: amountTotal(journal.lines, "debit"),
+      creditTotal: amountTotal(journal.lines, "credit"),
+      balanced: amountTotal(journal.lines, "debit") === amountTotal(journal.lines, "credit"),
+    }));
 
     return NextResponse.json(
       {
@@ -416,116 +436,94 @@ export async function GET(request: NextRequest) {
           pageSize,
           total,
           totalPages: Math.ceil(total / pageSize),
+          hasPreviousPage: page > 1,
+          hasNextPage: page < Math.ceil(total / pageSize),
         },
         summary: {
           total,
-          draftCount,
-          postedCount,
-          pageDebitTotal: journals.reduce(
-            (sum: Prisma.Decimal, journal: JournalWithRelations) =>
-              sum.plus(amountTotal(journal.lines, "debit")),
-            new Prisma.Decimal(0),
-          ).toFixed(2),
-          pageCreditTotal: journals.reduce(
-            (sum: Prisma.Decimal, journal: JournalWithRelations) =>
-              sum.plus(amountTotal(journal.lines, "credit")),
-            new Prisma.Decimal(0),
-          ).toFixed(2),
+          draftCount: statusCounts.DRAFT,
+          postedCount: statusCounts.POSTED,
+          pageDebitTotal: journals
+            .reduce((sum, journal) => sum.plus(amountTotal(journal.lines, "debit")), new Prisma.Decimal(0))
+            .toFixed(2),
+          pageCreditTotal: journals
+            .reduce((sum, journal) => sum.plus(amountTotal(journal.lines, "credit")), new Prisma.Decimal(0))
+            .toFixed(2),
         },
+        generatedAt: new Date().toISOString(),
       },
-      { headers: { "Cache-Control": "no-store" } },
+      { headers: noStore },
     );
   } catch (error) {
     console.error("Admin financial ledger GET failed:", error);
-    return NextResponse.json(
-      { error: "Unable to load financial journal history." },
-      { status: 500, headers: { "Cache-Control": "no-store" } },
-    );
+    return jsonError("Unable to load financial journal history.", 500);
   }
 }
 
-/**
- * POST /api/admin/finance/ledger
- * Creates a DRAFT journal only. Approval and posting are separate actions.
- */
+/** POST /api/admin/finance/ledger — creates a DRAFT journal only. */
 export async function POST(request: NextRequest) {
   try {
-    const auth = await authorizeAdmin();
-    if (auth.response) return auth.response;
+    const auth = await requireAdmin();
+    if (!auth.authorized) return auth.response;
 
-    let rawBody: unknown;
-    try {
-      rawBody = await request.json();
-    } catch {
-      return NextResponse.json({ error: "Request body must be valid JSON." }, { status: 400 });
+    const bodyResult = await readJsonBody(request);
+    if (!bodyResult.valid) {
+      return bodyResult.reason === "TOO_LARGE"
+        ? jsonError("Request body is too large.", 413)
+        : jsonError("Request body must contain valid JSON.", 400);
     }
 
     let body: CreateJournalBody;
     try {
-      body = parseCreateJournalBody(rawBody);
+      body = parseCreateJournalBody(bodyResult.value);
     } catch (error) {
-      return NextResponse.json({ error: getErrorMessage(error) }, { status: 400 });
+      return jsonError(errorMessage(error), 400);
     }
 
     const headerKey = request.headers.get("idempotency-key")?.trim();
     if (headerKey) {
-      if (headerKey.length > 200) {
-        return NextResponse.json(
-          { error: "Idempotency-Key header cannot exceed 200 characters." },
-          { status: 400 },
-        );
-      }
+      if (headerKey.length > 200) return jsonError("Idempotency-Key header cannot exceed 200 characters.", 400);
       if (body.idempotencyKey && body.idempotencyKey !== headerKey) {
-        return NextResponse.json(
-          { error: "The idempotency key in the header and body must match." },
-          { status: 400 },
-        );
+        return jsonError("The idempotency key in the header and body must match.", 400);
       }
       body.idempotencyKey = headerKey;
     }
 
-    const result = await prisma.$transaction((tx: Prisma.TransactionClient) =>
+    const result = await prisma.$transaction((tx) =>
       createDraftJournal(tx, {
         ...body,
-        createdById: auth.adminId!,
+        createdById: auth.user.id,
       }),
     );
-
-    // createDraftJournal returns { journal, alreadyExists }.
-    const replayed = result.alreadyExists;
 
     return NextResponse.json(
       {
         success: true,
-        replayed,
-        message: replayed
+        replayed: result.alreadyExists,
+        message: result.alreadyExists
           ? "The existing draft journal was returned for this idempotency key."
           : "Draft journal created. A different administrator must approve it before posting.",
         journal: serializeJournal(result.journal),
       },
       {
-        status: replayed ? 200 : 201,
-        headers: { "Cache-Control": "no-store" },
+        status: result.alreadyExists ? 200 : 201,
+        headers: noStore,
       },
     );
   } catch (error) {
     const status = ledgerErrorStatus(error);
     if (status >= 500) {
       console.error("Admin financial journal creation failed:", error);
-      return NextResponse.json(
-        { error: "Unable to create the financial journal. Please check the server logs." },
-        { status: 500, headers: { "Cache-Control": "no-store" } },
-      );
+      return jsonError("Unable to create the financial journal. Please check the server logs.", 500);
     }
 
     return NextResponse.json(
       {
-        error: getErrorMessage(error),
-        ...(error instanceof FinancialLedgerError
-          ? { code: (error as Error & { code?: string }).code }
-          : {}),
+        success: false,
+        error: errorMessage(error),
+        ...(error instanceof FinancialLedgerError ? { code: error.code } : {}),
       },
-      { status, headers: { "Cache-Control": "no-store" } },
+      { status, headers: noStore },
     );
   }
 }

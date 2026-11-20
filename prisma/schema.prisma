@@ -94,6 +94,7 @@ enum ReferralRewardStatus {
  */
 
 enum OrderStatus {
+  PENDING_PAYMENT
   PLACED
   PARTIALLY_ACCEPTED
   CONFIRMED
@@ -132,6 +133,55 @@ enum PaymentMethod {
   BANK_TRANSFER
   USSD
   OTHER
+}
+
+enum DeliveryQuoteStatus {
+  OPEN
+  SELECTED
+  CONSUMED
+  EXPIRED
+}
+
+enum ShipmentStatus {
+  BOOKING_PENDING
+  PENDING
+  CONFIRMED
+  COURIER_ASSIGNED
+  AWAITING_PICKUP
+  PICKED_UP
+  IN_TRANSIT
+  OUT_FOR_DELIVERY
+  DELIVERED
+  DELIVERY_FAILED
+  RETURNING
+  RETURNED
+  CANCELLED
+  FAILED
+}
+
+/**
+ * Seller settlements are created only after buyer-confirmed delivery.
+ */
+enum SellerSettlementStatus {
+  AWAITING_PAYOUT_ACCOUNT
+  READY
+  PAYOUT_PENDING
+  PAID
+  FAILED
+  REQUIRES_REVIEW
+}
+
+/**
+ * Provider-reported state of a bank transfer.
+ */
+enum SellerPayoutStatus {
+  QUEUED
+  INITIATING
+  PENDING
+  SUCCESS
+  FAILED
+  REVERSED
+  REQUIRES_REVIEW
 }
 
 /**
@@ -421,8 +471,18 @@ model User {
   // Seller orders assigned to this seller account.
   sellerOrders SellerOrder[] @relation("SellerOrders")
 
+  // Seller payout destination and delivery-triggered settlements.
+  payoutAccounts SellerPayoutAccount[] @relation("SellerPayoutAccountOwner")
+  settlements    SellerSettlement[]    @relation("SellerSettlementSeller")
+  payouts        SellerPayout[]        @relation("SellerPayoutSeller")
+
   // Reviews written for individual products.
   productReviews ProductReview[]
+
+  // Saved Shipbubble delivery quotes and validated address codes.
+  deliveryQuotes        DeliveryQuote[]
+  deliveryQuotePackages DeliveryQuotePackage[] @relation("DeliveryQuotePackageSeller")
+  shipbubbleAddresses   ShipbubbleAddress[]
 
   adminAuditLogs            AdminAuditLog[]    @relation("AdminAuditActor")
   financialJournalsCreated  FinancialJournal[] @relation("FinancialJournalCreatedBy")
@@ -637,42 +697,20 @@ model BusinessSocialLink {
 model Category {
   id String @id @default(cuid())
 
-  // Category name must be unique across ReMarket.
   name String @unique
 
-  // Lucide icon identifier, e.g. "Shirt", "Smartphone", "Store".
   iconKey String @default("Store")
 
-  // Optional image URL for category cards and navigation menus.
-  imageUrl String?
-
-  // Admin controls category visibility.
   isActive Boolean @default(true)
 
-  // Controls category display order.
   sortOrder Int @default(0)
 
-  // Optional parent category.
-  // null = top-level category.
-  // non-null = subcategory.
-  parentId String?
-
-  // Parent category relationship.
-  parent Category? @relation("CategoryHierarchy", fields: [parentId], references: [id], onDelete: SetNull)
-
-  // Categories belonging to this parent.
-  children Category[] @relation("CategoryHierarchy")
-
-  // Existing ReMarket relationships.
   business BusinessCategory[]
   products Product[]
   services Service[]
   requests BuyerRequest[]
 
-  // Existing active-category ordering.
   @@index([isActive, sortOrder])
-  // Efficient retrieval of active subcategories in display order.
-  @@index([parentId, isActive, sortOrder])
 }
 
 model BusinessCategory {
@@ -755,6 +793,15 @@ model Business {
    * Orders fulfilled by this business.
    */
   sellerOrders SellerOrder[]
+
+  // Shipbubble pickup address registered for this seller location.
+  // This is a provider address code, not ReMarket's own Location ID.
+  shipbubblePickupAddressCode Int?
+  shipbubblePickupValidatedAt DateTime?
+  pickupContactName           String?
+  pickupPhone                 String?
+
+  deliveryQuotePackages DeliveryQuotePackage[]
 
   @@index([status])
   @@index([verification])
@@ -849,6 +896,14 @@ model Product {
    */
 
   stockQuantity Int?
+
+  // Shipping measurements for one sellable unit.
+  // Weight is in kilograms; dimensions are in centimetres.
+  // Leave null until the seller provides real package measurements.
+  shippingWeightKg Float?
+  shippingLengthCm Float?
+  shippingWidthCm  Float?
+  shippingHeightCm Float?
 
   /**
    * CART AND ORDERS
@@ -1581,6 +1636,10 @@ model Order {
 
   deliveryFeeStatus DeliveryFeeStatus @default(UNCONFIRMED)
 
+  // Payment lifecycle is separate from fulfilment status.
+  paidAt           DateTime?
+  paymentExpiresAt DateTime?
+
   /**
    * DELIVERY INFORMATION SNAPSHOT
    * These values are copied into the order at checkout.
@@ -1603,6 +1662,9 @@ model Order {
   sellerOrders SellerOrder[]
 
   payments Payment[]
+
+  // The selected delivery quote used to create this order.
+  deliveryQuote DeliveryQuote?
 
   checkoutIdempotencyKey String? @unique
 
@@ -1657,6 +1719,12 @@ model SellerOrder {
   sellerNote String?
 
   items OrderItem[]
+
+  // A seller order may be fulfilled in one or more parcels.
+  shipments Shipment[]
+
+  // Created only after the buyer confirms delivery for this seller order.
+  settlement SellerSettlement?
 
   acceptedAt DateTime?
 
@@ -1723,10 +1791,9 @@ model OrderItem {
  * ============================================================
  * PAYMENTS
  * ============================================================
- * This model stores payment records and provider references.
- * It does not activate any payment provider.
- * Payment processing will be connected separately after
- * ReMarket settles its payment-provider arrangement.
+ * This model stores payment attempts, provider references and
+ * verified payment outcomes. A record is not proof of funds
+ * until the provider transaction is verified server-side.
  */
 
 model Payment {
@@ -1747,8 +1814,16 @@ model Payment {
   // Example: provider name when one is configured.
   provider String?
 
-  // External transaction reference.
+  // External transaction reference sent to and returned by Paystack.
   providerReference String? @unique
+
+  // Paystack transaction metadata returned during initialization.
+  // These are non-secret identifiers/URLs; secret API keys are never stored here.
+  providerAccessCode    String?
+  authorizationUrl      String?
+  providerTransactionId String?
+  initializedAt         DateTime?
+  expiresAt             DateTime?
 
   // Prevents duplicate payment attempts for the same operation.
   idempotencyKey String? @unique
@@ -1764,6 +1839,351 @@ model Payment {
 
   @@index([orderId, createdAt])
   @@index([status, createdAt])
+}
+
+/**
+ * ============================================================
+ * DELIVERY QUOTES
+ * ============================================================
+ * A quote belongs to one buyer checkout and contains one package
+ * per seller. Shipbubble rate tokens are short-lived and must be
+ * checked before checkout consumes the quote.
+ */
+
+model DeliveryQuote {
+  id        String @id @default(cuid())
+  quoteCode String @unique
+
+  buyerId String
+  buyer   User   @relation(fields: [buyerId], references: [id], onDelete: Restrict)
+
+  // Set only after the buyer's order has been created successfully.
+  orderId String? @unique
+  order   Order?  @relation(fields: [orderId], references: [id], onDelete: SetNull)
+
+  status DeliveryQuoteStatus @default(OPEN)
+
+  deliveryRecipient String
+  deliveryEmail     String
+  deliveryPhone     String
+  deliveryAddress   String
+  deliveryArea      String
+  deliveryLandmark  String?
+  deliveryNotes     String?
+
+  receiverAddressCode Int
+  receiverAddressData Json?
+
+  cartFingerprint String
+  itemsSubtotal   Int
+  deliveryFee     Int    @default(0)
+  totalAmount     Int    @default(0)
+  currency        String @default("NGN")
+
+  expiresAt  DateTime
+  selectedAt DateTime?
+  consumedAt DateTime?
+
+  packages DeliveryQuotePackage[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([buyerId, status, createdAt])
+  @@index([status, expiresAt])
+}
+
+/**
+ * One package and one set of Shipbubble rates for each seller
+ * represented in a buyer's multi-seller checkout.
+ */
+model DeliveryQuotePackage {
+  id String @id @default(cuid())
+
+  quoteId String
+  quote   DeliveryQuote @relation(fields: [quoteId], references: [id], onDelete: Cascade)
+
+  businessId String
+  business   Business @relation(fields: [businessId], references: [id], onDelete: Restrict)
+
+  sellerId String
+  seller   User   @relation("DeliveryQuotePackageSeller", fields: [sellerId], references: [id], onDelete: Restrict)
+
+  senderAddressCode Int
+  requestToken      String
+  categoryId        Int
+
+  packageWeightKg Float
+  packageLengthCm Float
+  packageWidthCm  Float
+  packageHeightCm Float
+  packageAmount   Int
+
+  availableRates Json
+
+  selectedCourierId   String?
+  selectedCourierName String?
+  selectedServiceCode String?
+  selectedDeliveryFee Int?
+  selectedDeliveryEta String?
+  selectedAt          DateTime?
+
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  shipment Shipment?
+
+  @@unique([quoteId, businessId])
+  @@index([businessId, expiresAt])
+  @@index([sellerId, createdAt])
+}
+
+/**
+ * A shipment is a physical parcel, not an order/payment record.
+ * A single parent order can therefore have several shipments.
+ */
+model Shipment {
+  id String @id @default(cuid())
+
+  sellerOrderId String
+  sellerOrder   SellerOrder @relation(fields: [sellerOrderId], references: [id], onDelete: Restrict)
+
+  quotePackageId String?               @unique
+  quotePackage   DeliveryQuotePackage? @relation(fields: [quotePackageId], references: [id], onDelete: SetNull)
+
+  provider        String  @default("SHIPBUBBLE")
+  providerOrderId String? @unique
+
+  courierId    String?
+  courierName  String?
+  trackingCode String?
+  trackingUrl  String?
+  waybillUrl   String?
+
+  status ShipmentStatus @default(BOOKING_PENDING)
+
+  shippingFee       Int
+  currency          String  @default("NGN")
+  estimatedDelivery String?
+
+  rawResponse   Json?
+  failureReason String?
+
+  bookedAt    DateTime?
+  pickedUpAt  DateTime?
+  inTransitAt DateTime?
+  deliveredAt DateTime?
+  cancelledAt DateTime?
+
+  trackingEvents ShipmentTrackingEvent[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([sellerOrderId, status])
+  @@index([provider, status, createdAt])
+}
+
+model ShipmentTrackingEvent {
+  id String @id @default(cuid())
+
+  shipmentId String
+  shipment   Shipment @relation(fields: [shipmentId], references: [id], onDelete: Cascade)
+
+  // Provider event ID where supplied; a stable hash may be used otherwise.
+  providerEventKey String?
+  status           ShipmentStatus
+  statusLabel      String
+  message          String?
+  location         String?
+  occurredAt       DateTime?
+  rawData          Json?
+
+  createdAt DateTime @default(now())
+
+  @@unique([shipmentId, providerEventKey])
+  @@index([shipmentId, occurredAt])
+  @@index([status, occurredAt])
+}
+
+/**
+ * A seller's Paystack transfer beneficiary. Full account numbers are never
+ * stored in ReMarket; only a masked suffix and Paystack recipient code remain.
+ */
+model SellerPayoutAccount {
+  id String @id @default(cuid())
+
+  sellerId String
+  seller   User   @relation("SellerPayoutAccountOwner", fields: [sellerId], references: [id], onDelete: Restrict)
+
+  provider           String   @default("PAYSTACK")
+  recipientCode      String
+  accountFingerprint String   @unique
+  bankCode           String
+  bankName           String
+  accountName        String
+  accountNumberLast4 String   @db.VarChar(4)
+  currency           String   @default("NGN") @db.VarChar(3)
+  isActive           Boolean  @default(true)
+  verifiedAt         DateTime
+
+  payouts SellerPayout[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([sellerId, isActive])
+}
+
+/**
+ * Immutable snapshot of the seller's completed product sales, ReMarket
+ * commission and net amount due. Delivery fees are deliberately excluded.
+ */
+model SellerSettlement {
+  id String @id @default(cuid())
+
+  sellerOrderId String      @unique
+  sellerOrder   SellerOrder @relation(fields: [sellerOrderId], references: [id], onDelete: Restrict)
+
+  sellerId String
+  seller   User   @relation("SellerSettlementSeller", fields: [sellerId], references: [id], onDelete: Restrict)
+
+  grossSalesAmount  Int
+  commissionRateBps Int                    @default(500)
+  commissionAmount  Int
+  adjustmentAmount  Int                    @default(0)
+  netPayoutAmount   Int
+  currency          String                 @default("NGN") @db.VarChar(3)
+  status            SellerSettlementStatus @default(AWAITING_PAYOUT_ACCOUNT)
+
+  deliveryConfirmedAt DateTime
+  paidAt              DateTime?
+  failureReason       String?
+
+  payout SellerPayout?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([sellerId, status, createdAt])
+  @@index([status, updatedAt])
+}
+
+/**
+ * Automated Paystack transfer. A payout is initiated by ReMarket only after
+ * the corresponding buyer-confirmed seller-order settlement exists.
+ */
+model SellerPayout {
+  id String @id @default(cuid())
+
+  settlementId String           @unique
+  settlement   SellerSettlement @relation(fields: [settlementId], references: [id], onDelete: Restrict)
+
+  sellerId String
+  seller   User   @relation("SellerPayoutSeller", fields: [sellerId], references: [id], onDelete: Restrict)
+
+  payoutAccountId String
+  payoutAccount   SellerPayoutAccount @relation(fields: [payoutAccountId], references: [id], onDelete: Restrict)
+
+  provider             String             @default("PAYSTACK")
+  reference            String             @unique
+  providerTransferCode String?            @unique
+  amount               Int
+  currency             String             @default("NGN") @db.VarChar(3)
+  status               SellerPayoutStatus @default(QUEUED)
+  attemptCount         Int                @default(0)
+  lastAttemptAt        DateTime?
+  nextAttemptAt        DateTime?
+  submittedAt          DateTime?
+  paidAt               DateTime?
+  reversedAt           DateTime?
+  failureReason        String?
+
+  attempts SellerPayoutAttempt[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([sellerId, status, createdAt])
+  @@index([status, nextAttemptAt])
+  @@index([payoutAccountId, createdAt])
+}
+
+/**
+ * One row per actual Paystack transfer attempt, preserving its unique reference.
+ */
+model SellerPayoutAttempt {
+  id String @id @default(cuid())
+
+  payoutId String
+  payout   SellerPayout @relation(fields: [payoutId], references: [id], onDelete: Restrict)
+
+  attemptNumber        Int
+  reference            String             @unique
+  providerTransferCode String?            @unique
+  status               SellerPayoutStatus @default(QUEUED)
+  failureReason        String?
+  submittedAt          DateTime?
+  paidAt               DateTime?
+  reversedAt           DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([payoutId, attemptNumber])
+  @@index([payoutId, status])
+}
+
+/**
+ * Deduplicates inbound Paystack and Shipbubble webhooks.
+ * Store the verified raw event before applying state transitions.
+ */
+model WebhookReceipt {
+  id String @id @default(cuid())
+
+  provider String
+  eventKey String @unique
+  payload  Json
+
+  receivedAt      DateTime  @default(now())
+  processedAt     DateTime?
+  processingError String?
+
+  @@index([provider, receivedAt])
+  @@index([processedAt, receivedAt])
+}
+
+/**
+ * Cache validated Shipbubble address codes. Reuse them for later
+ * rate requests instead of repeatedly validating identical addresses.
+ */
+model ShipbubbleAddress {
+  id String @id @default(cuid())
+
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  addressHash      String
+  addressCode      Int
+  contactName      String
+  email            String
+  phone            String
+  addressText      String
+  formattedAddress String?
+  state            String?
+  city             String?
+  postalCode       String?
+  latitude         Float?
+  longitude        Float?
+
+  validatedAt DateTime @default(now())
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@unique([userId, addressHash])
+  @@unique([addressCode])
+  @@index([userId, updatedAt])
 }
 
 model ProductReview {

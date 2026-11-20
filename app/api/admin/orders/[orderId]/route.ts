@@ -5,6 +5,7 @@ import {
   PaymentStatus,
   Prisma,
   SellerOrderStatus,
+  ShipmentStatus,
 } from "@prisma/client";
 import { NextResponse } from "next/server";
 
@@ -42,11 +43,19 @@ const ALREADY_FINAL_STATUSES = new Set<SellerOrderStatus>([
   SellerOrderStatus.CANCELLED,
 ]);
 
+// A successful payment is intentionally included. This endpoint does not
+// issue refunds, so an Admin must not cancel a paid order from this route.
 const PAYMENT_REVIEW_STATUSES = new Set<PaymentStatus>([
   PaymentStatus.PENDING,
   PaymentStatus.INITIATED,
   PaymentStatus.SUCCESS,
   PaymentStatus.PARTIALLY_REFUNDED,
+]);
+
+const CLOSED_PAYMENT_STATUSES = new Set<PaymentStatus>([
+  PaymentStatus.REFUNDED,
+  PaymentStatus.FAILED,
+  PaymentStatus.CANCELLED,
 ]);
 
 function jsonError(message: string, status: number) {
@@ -64,7 +73,9 @@ class AdminOrderCancellationError extends Error {
   }
 }
 
-async function readJsonBody(request: Request): Promise<
+async function readJsonBody(
+  request: Request,
+): Promise<
   | { valid: true; value: unknown }
   | { valid: false; reason: "TOO_LARGE" | "INVALID_JSON" }
 > {
@@ -79,14 +90,43 @@ async function readJsonBody(request: Request): Promise<
     }
   }
 
+  // Enforce the byte limit while reading, including requests without a
+  // Content-Length header (for example, streamed/chunked requests).
+  if (!request.body) {
+    return { valid: false, reason: "INVALID_JSON" };
+  }
+
+  const reader = request.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let totalBytes = 0;
+
   try {
-    const raw = await request.text();
-    if (new TextEncoder().encode(raw).byteLength > MAX_BODY_BYTES) {
-      return { valid: false, reason: "TOO_LARGE" };
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (!value) continue;
+
+      totalBytes += value.byteLength;
+      if (totalBytes > MAX_BODY_BYTES) {
+        await reader.cancel().catch(() => undefined);
+        return { valid: false, reason: "TOO_LARGE" };
+      }
+      chunks.push(value);
     }
+
+    const bytes = new Uint8Array(totalBytes);
+    let offset = 0;
+    for (const chunk of chunks) {
+      bytes.set(chunk, offset);
+      offset += chunk.byteLength;
+    }
+
+    const raw = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
     return { valid: true, value: JSON.parse(raw) as unknown };
   } catch {
     return { valid: false, reason: "INVALID_JSON" };
+  } finally {
+    reader.releaseLock();
   }
 }
 
@@ -148,10 +188,23 @@ type CancelledSellerOrder = {
   sellerId: string;
 };
 
+type ShipmentReviewItem = {
+  id: string;
+  provider: string;
+  providerOrderId: string | null;
+  status: ShipmentStatus;
+};
+
+type ShipmentReviewSellerOrder = {
+  sellerOrderCode: string;
+  shipments: ShipmentReviewItem[];
+};
+
 type CancellationResult =
   | { kind: "NOT_FOUND" }
   | { kind: "ALREADY_CANCELLED"; orderCode: string; status: OrderStatus }
-  | { kind: "PAYMENT_REVIEW"; statuses: PaymentStatus[] }
+  | { kind: "PAYMENT_REVIEW"; statuses: PaymentStatus[]; paidAt: Date | null }
+  | { kind: "SHIPMENT_REVIEW"; sellerOrders: ShipmentReviewSellerOrder[] }
   | { kind: "BLOCKED_STATUS"; statuses: SellerOrderStatus[] }
   | { kind: "CONFLICT" }
   | {
@@ -181,6 +234,7 @@ async function cancelAdminOrder(input: {
               orderCode: true,
               buyerId: true,
               status: true,
+              paidAt: true,
               payments: { select: { status: true } },
               sellerOrders: {
                 orderBy: { createdAt: "asc" },
@@ -191,6 +245,15 @@ async function cancelAdminOrder(input: {
                   businessId: true,
                   status: true,
                   inventoryReleasedAt: true,
+                  shipments: {
+                    orderBy: { createdAt: "asc" },
+                    select: {
+                      id: true,
+                      provider: true,
+                      providerOrderId: true,
+                      status: true,
+                    },
+                  },
                   items: {
                     select: {
                       productId: true,
@@ -220,8 +283,63 @@ async function cancelAdminOrder(input: {
           }
 
           const paymentStatuses = order.payments.map((payment) => payment.status);
-          if (paymentStatuses.some((status) => PAYMENT_REVIEW_STATUSES.has(status))) {
-            return { kind: "PAYMENT_REVIEW", statuses: paymentStatuses };
+          const hasRefundedPayment = paymentStatuses.includes(PaymentStatus.REFUNDED);
+          const allPaymentAttemptsClosed = paymentStatuses.every((status) =>
+            CLOSED_PAYMENT_STATUSES.has(status),
+          );
+
+          // Failed/cancelled attempts from earlier checkouts should not prevent
+          // cancellation after a successful payment has been fully refunded.
+          // But a paidAt timestamp still requires at least one REFUNDED record,
+          // and every other payment attempt must be in a closed state.
+          const paidWithoutRefundEvidence =
+            order.paidAt !== null &&
+            !(hasRefundedPayment && allPaymentAttemptsClosed);
+
+          if (
+            paymentStatuses.some((status) => PAYMENT_REVIEW_STATUSES.has(status)) ||
+            paidWithoutRefundEvidence
+          ) {
+            return {
+              kind: "PAYMENT_REVIEW",
+              statuses: paymentStatuses,
+              paidAt: order.paidAt,
+            };
+          }
+
+          // Shipbubble booking can create a paid courier label before the seller
+          // order status changes. Never cancel or restore stock while a booking
+          // is active, has a provider order ID, or has an uncertain outcome.
+          // FAILED/CANCELLED records without a provider order ID are safe to pass.
+          const shipmentReviewSellerOrders: ShipmentReviewSellerOrder[] = [];
+          for (const sellerOrder of order.sellerOrders) {
+            const unsafeShipments = sellerOrder.shipments.filter((shipment) => {
+              const hasProviderBooking = Boolean(shipment.providerOrderId?.trim());
+              const terminalWithoutBooking =
+                (shipment.status === ShipmentStatus.FAILED ||
+                  shipment.status === ShipmentStatus.CANCELLED) &&
+                !hasProviderBooking;
+              return !terminalWithoutBooking;
+            });
+
+            if (unsafeShipments.length > 0) {
+              shipmentReviewSellerOrders.push({
+                sellerOrderCode: sellerOrder.sellerOrderCode,
+                shipments: unsafeShipments.map((shipment) => ({
+                  id: shipment.id,
+                  provider: shipment.provider,
+                  providerOrderId: shipment.providerOrderId,
+                  status: shipment.status,
+                })),
+              });
+            }
+          }
+
+          if (shipmentReviewSellerOrders.length > 0) {
+            return {
+              kind: "SHIPMENT_REVIEW",
+              sellerOrders: shipmentReviewSellerOrders,
+            };
           }
 
           const blockedStatuses = order.sellerOrders
@@ -282,7 +400,11 @@ async function cancelAdminOrder(input: {
                 where: { id: item.productId },
                 select: { businessId: true, stockQuantity: true },
               });
-              if (!inventory) continue;
+              if (!inventory) {
+                throw new AdminOrderCancellationError(
+                  "A reserved product could not be found. Manual inventory reconciliation is required.",
+                );
+              }
               if (inventory.businessId !== sellerOrder.businessId) {
                 throw new AdminOrderCancellationError(
                   "A product does not belong to the expected seller. Inventory was not restored.",
@@ -357,6 +479,12 @@ async function cancelAdminOrder(input: {
                 sellerOrderCode: sellerOrder.sellerOrderCode,
                 status: sellerOrder.status,
                 inventoryReleasedAt: sellerOrder.inventoryReleasedAt?.toISOString() ?? null,
+                shipments: sellerOrder.shipments.map((shipment) => ({
+                  id: shipment.id,
+                  provider: shipment.provider,
+                  providerOrderId: shipment.providerOrderId,
+                  status: shipment.status,
+                })),
               })),
             } as Prisma.InputJsonValue,
             afterData: {
@@ -369,6 +497,8 @@ async function cancelAdminOrder(input: {
               orderCode: order.orderCode,
               inventoryRestoredLineItems,
               inventoryRestoredUnits,
+              paymentStatuses,
+              paidAt: order.paidAt?.toISOString() ?? null,
             } as Prisma.InputJsonValue,
           });
 
@@ -463,8 +593,20 @@ export async function PATCH(request: Request, context: RouteContext) {
       return NextResponse.json(
         {
           error:
-            "This order cannot be cancelled until its payment records have been reconciled.",
+            "This order cannot be cancelled until its payment records have been reconciled. Paid orders must be fully refunded through the approved refund workflow first.",
           paymentStatuses: result.statuses,
+          paidAt: result.paidAt,
+        },
+        { status: 409, headers: noStore },
+      );
+    }
+
+    if (result.kind === "SHIPMENT_REVIEW") {
+      return NextResponse.json(
+        {
+          error:
+            "This order has a Shipbubble booking or an unresolved shipment booking. Reconcile or cancel the courier booking before cancelling seller orders or restoring inventory.",
+          sellerOrders: result.sellerOrders,
         },
         { status: 409, headers: noStore },
       );

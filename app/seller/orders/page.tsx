@@ -943,14 +943,6 @@ export default function SellerOrdersPage() {
   ) {
     if (activeOrderId) return;
 
-    if (nextStatus === "REJECTED") {
-      const confirmed = window.confirm(
-        `Are you sure you want to reject ${order.sellerOrderCode}? The reserved stock will be restored where inventory tracking is enabled.`,
-      );
-
-      if (!confirmed) return;
-    }
-
     setActiveOrderId(order.id);
     setError("");
     setNotice("");
@@ -992,11 +984,7 @@ export default function SellerOrdersPage() {
         );
       }
 
-      setNotice(
-        nextStatus === "REJECTED"
-          ? `${order.sellerOrderCode} has been rejected. Reserved tracked stock has been restored by the server.`
-          : `${order.sellerOrderCode} has been updated successfully.`,
-      );
+      setNotice(`${order.sellerOrderCode} has been updated successfully.`);
 
       await loadOrders({
         refresh: true,
@@ -1716,7 +1704,7 @@ export default function SellerOrdersPage() {
                     <div className="text-xs leading-5 text-[#78716C]">
                       {order.status === "PENDING_ACCEPTANCE" && (
                         <span>
-                          Review the order and accept or reject it.
+                          Review the order and accept it. Rejection is temporarily unavailable while the refund workflow is being completed.
                         </span>
                       )}
 
@@ -1770,31 +1758,6 @@ export default function SellerOrdersPage() {
                     </div>
 
                     <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-                      {order.status === "PENDING_ACCEPTANCE" && (
-                        <button
-                          type="button"
-                          disabled={
-                            isUpdating ||
-                            anotherOrderIsUpdating
-                          }
-                          onClick={() =>
-                            void updateOrderStatus(
-                              order,
-                              "REJECTED",
-                            )
-                          }
-                          className="inline-flex min-h-10 items-center justify-center gap-2 rounded-xl border border-[#F1D5D0] bg-white px-4 py-2 text-sm font-semibold text-[#C5402D] transition hover:bg-[#FFF0EE] disabled:cursor-not-allowed disabled:opacity-50"
-                        >
-                          {isUpdating ? (
-                            <Loader2 className="h-4 w-4 animate-spin" />
-                          ) : (
-                            <XCircle className="h-4 w-4" />
-                          )}
-
-                          Reject
-                        </button>
-                      )}
-
                       {nextAction && (
                         <button
                           type="button"

@@ -1671,6 +1671,10 @@ export async function PATCH(request: Request) {
       priceMin?: number | null;
       priceMax?: number | null;
       showContactInfo?: boolean;
+      shipbubblePickupAddressCode?: number | null;
+      shipbubblePickupValidatedAt?: Date | null;
+      pickupContactName?: string | null;
+      pickupPhone?: string | null;
     } = {};
 
     if (name !== undefined) updateData.name = name;
@@ -1714,6 +1718,13 @@ export async function PATCH(request: Request) {
 
     await prisma.$transaction(async (tx) => {
       if (newLocationData) {
+        // A Shipbubble sender address code is tied to the address that was
+        // validated. Invalidate it whenever the seller changes that location.
+        updateData.shipbubblePickupAddressCode = null;
+        updateData.shipbubblePickupValidatedAt = null;
+        updateData.pickupContactName = null;
+        updateData.pickupPhone = null;
+
         const location = await tx.location.create({
           data: {
             area: newLocationData.area,

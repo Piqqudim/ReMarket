@@ -1,4 +1,3 @@
-
 "use client";
 
 import {
@@ -9,20 +8,20 @@ import {
   useState,
   type FormEvent,
 } from "react";
-
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-
 import {
   ArrowLeft,
   ArrowRight,
+  Check,
   CheckCircle2,
   ChevronRight,
-  CircleCheck,
+  Clock3,
+  CreditCard,
   LoaderCircle,
   MapPin,
   Package,
-  PackageOpen,
+  PackageCheck,
   RefreshCw,
   ShieldCheck,
   ShoppingBag,
@@ -40,11 +39,14 @@ import MobileBottomNav from "@/components/layout/MobileBottomNav";
 
 const MAX_QUANTITY_PER_PRODUCT = 50;
 const MAX_ORDER_TOTAL = 2_147_483_647;
-
 const CART_CHANGED_EVENT = "remarket-cart-changed";
+const CHECKOUT_IDEMPOTENCY_STORAGE_KEY = "remarket-checkout-idempotency";
+const QUOTE_EXPIRY_WARNING_MS = 5 * 60 * 1000;
 
-const CHECKOUT_IDEMPOTENCY_STORAGE_KEY =
-  "remarket-checkout-idempotency";
+const noStoreHeaders = {
+  Accept: "application/json",
+  "Cache-Control": "no-store",
+};
 
 /* =========================================================
    TYPES
@@ -53,19 +55,14 @@ const CHECKOUT_IDEMPOTENCY_STORAGE_KEY =
 type CheckoutCartItem = {
   id: string;
   productId: string;
-
   businessId: string;
   businessName: string;
-
   name: string;
   imageUrl: string | null;
-
   quantity: number;
-
   unitPrice: number | null;
   originalPrice: number | null;
   lineTotal: number | null;
-
   purchasable: boolean;
   unavailableReason: string | null;
 };
@@ -85,10 +82,54 @@ type DeliveryForm = {
   deliveryNotes: string;
 };
 
-type CheckoutResult = {
+type StoredCheckoutAttempt = {
+  key: string;
+  fingerprint: string;
+};
+
+type CourierRate = {
+  courierId: string;
+  courierName: string;
+  serviceCode: string;
+  serviceType: string | null;
+  amount: number;
+  currency: string;
+  eta: string | null;
+  pickupEta: string | null;
+};
+
+type DeliveryQuotePackage = {
+  id?: string;
+  businessId: string;
+  businessName: string;
+  items: Array<{ productId: string; productName: string; quantity: number }>;
+  rates: CourierRate[];
+  selectedCourierId?: string | null;
+  selectedServiceCode?: string | null;
+  selectedDeliveryFee?: number | null;
+  selectedCourierName?: string | null;
+  selectedDeliveryEta?: string | null;
+};
+
+type DeliveryQuote = {
+  id: string;
+  quoteCode: string;
+  expiresAt: string;
+  itemsSubtotal: number;
+  packages: DeliveryQuotePackage[];
+};
+
+type QuoteSelection = {
+  businessId: string;
+  courierId: string;
+  serviceCode: string;
+};
+
+type CheckoutApiResult = {
   orderId: string;
   orderCode: string;
-  sellerOrderCodes: string[];
+  authorizationUrl: string | null;
+  paymentStatus: string | null;
 };
 
 type CartResponse = {
@@ -98,13 +139,8 @@ type CartResponse = {
   currency: string;
 };
 
-type StoredCheckoutAttempt = {
-  key: string;
-  fingerprint: string;
-};
-
 /* =========================================================
-   INITIAL FORM
+   INITIAL STATE
 ========================================================= */
 
 const initialDeliveryForm: DeliveryForm = {
@@ -120,45 +156,26 @@ const initialDeliveryForm: DeliveryForm = {
    GENERAL HELPERS
 ========================================================= */
 
-function isRecord(
-  value: unknown,
-): value is Record<string, unknown> {
-  return (
-    typeof value === "object" &&
-    value !== null &&
-    !Array.isArray(value)
-  );
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function getString(
-  value: unknown,
-  fallback: string | null = null,
-): string | null {
-  if (typeof value !== "string") {
-    return fallback;
-  }
-
+function getString(value: unknown, fallback: string | null = null): string | null {
+  if (typeof value !== "string") return fallback;
   const cleaned = value.trim();
-
   return cleaned || fallback;
 }
 
-function getSafeInteger(
-  value: unknown,
-): number | null {
-  if (
-    typeof value !== "number" ||
-    !Number.isSafeInteger(value)
-  ) {
-    return null;
+function getSafeInteger(value: unknown): number | null {
+  if (typeof value === "number" && Number.isSafeInteger(value)) return value;
+  if (typeof value === "string" && value.trim() !== "") {
+    const parsed = Number(value);
+    return Number.isSafeInteger(parsed) ? parsed : null;
   }
-
-  return value;
+  return null;
 }
 
-function isNotDeleted(
-  value: unknown,
-): boolean {
+function isNotDeleted(value: unknown): boolean {
   return value === null || value === undefined;
 }
 
@@ -171,383 +188,281 @@ function formatNaira(amount: number): string {
 }
 
 function dispatchCartChanged() {
-  window.dispatchEvent(
-    new Event(CART_CHANGED_EVENT),
-  );
+  window.dispatchEvent(new Event(CART_CHANGED_EVENT));
+}
+
+function rateKey(rate: CourierRate): string {
+  return `${rate.courierId}::${rate.serviceCode}`;
+}
+
+function formatEta(value: string | null): string {
+  if (!value) return "Delivery estimate provided by courier";
+  return value;
+}
+
+function parseApiError(payload: unknown, fallback: string): string {
+  if (isRecord(payload) && typeof payload.error === "string") return payload.error;
+  if (isRecord(payload) && typeof payload.message === "string") return payload.message;
+  return fallback;
+}
+
+function createCartFingerprint(items: CheckoutCartItem[]): string {
+  const snapshot = items
+    .map((item) => ({
+      cartItemId: item.id,
+      productId: item.productId,
+      businessId: item.businessId,
+      quantity: item.quantity,
+      unitPrice: item.unitPrice,
+    }))
+    .sort((a, b) => a.cartItemId.localeCompare(b.cartItemId));
+  return JSON.stringify(snapshot);
+}
+
+function createCheckoutFingerprint(
+  cartFingerprint: string,
+  quoteId: string,
+  form: DeliveryForm,
+): string {
+  return JSON.stringify({
+    cartFingerprint,
+    quoteId,
+    deliveryRecipient: form.deliveryRecipient.trim(),
+    deliveryPhone: form.deliveryPhone.trim(),
+    deliveryAddress: form.deliveryAddress.trim(),
+    deliveryArea: form.deliveryArea.trim(),
+    deliveryLandmark: form.deliveryLandmark.trim(),
+    deliveryNotes: form.deliveryNotes.trim(),
+  });
 }
 
 /* =========================================================
-   ORIGINAL PRICE VALIDATION
-
-   originalPrice is only for displaying a discount.
-
-   It is never used in the checkout calculation.
+   CART RESPONSE PARSER
 ========================================================= */
 
-function getValidOriginalPrice(
-  rawOriginalPrice: unknown,
-  unitPrice: number | null,
-): number | null {
-  const originalPrice =
-    getSafeInteger(rawOriginalPrice);
-
+function getValidOriginalPrice(raw: unknown, unitPrice: number | null): number | null {
+  const originalPrice = getSafeInteger(raw);
   if (
     unitPrice === null ||
     unitPrice <= 0 ||
     originalPrice === null ||
     originalPrice <= unitPrice ||
     originalPrice > MAX_ORDER_TOTAL
-  ) {
-    return null;
-  }
-
+  ) return null;
   return originalPrice;
 }
 
-/* =========================================================
-   CART RESPONSE PARSER
-
-   Expected API response:
-
-   {
-     items: [
-       {
-         id,
-         productId,
-         quantity,
-         product: {
-           id,
-           name,
-           price,
-           originalPrice,
-           stockQuantity,
-           imageUrl,
-           status,
-           availability,
-           deletedAt,
-           images,
-           business: {
-             id,
-             name,
-             status,
-             deletedAt
-           }
-         },
-         lineTotal,
-         purchasable,
-         unavailableReason
-       }
-     ]
-   }
-========================================================= */
-
-function parseCheckoutCart(
-  value: unknown,
-): CartResponse | null {
-  if (
-    !isRecord(value) ||
-    !Array.isArray(value.items)
-  ) {
-    return null;
-  }
+function parseCheckoutCart(value: unknown): CartResponse | null {
+  if (!isRecord(value) || !Array.isArray(value.items)) return null;
 
   const items: CheckoutCartItem[] = [];
 
   for (const rawItem of value.items) {
-    if (!isRecord(rawItem)) {
-      continue;
-    }
+    if (!isRecord(rawItem)) continue;
+    const product = isRecord(rawItem.product) ? rawItem.product : null;
+    const business = product && isRecord(product.business) ? product.business : null;
+    const quantity = getSafeInteger(rawItem.quantity);
+    const productId = getString(rawItem.productId) ?? getString(product?.id);
 
-    const product = isRecord(rawItem.product)
-      ? rawItem.product
-      : null;
+    if (typeof rawItem.id !== "string" || !productId || quantity === null || quantity < 1) continue;
 
-    const business =
-      product && isRecord(product.business)
-        ? product.business
-        : null;
+    const businessName = getString(business?.name, "Business unavailable")!;
+    const businessId = getString(business?.id, `business:${businessName}`)!;
+    const name = getString(product?.name, "Product unavailable")!;
+    const unitPrice = getSafeInteger(product?.price);
+    const originalPrice = getValidOriginalPrice(product?.originalPrice, unitPrice);
 
-    const quantity =
-      getSafeInteger(rawItem.quantity);
+    const stockFieldExists = product !== null && Object.prototype.hasOwnProperty.call(product, "stockQuantity");
+    const rawStock = product?.stockQuantity;
+    const stock = rawStock === null ? null : getSafeInteger(rawStock);
+    const validStock = stockFieldExists && (rawStock === null || (stock !== null && stock >= 0));
+    const enoughStock = validStock && (stock === null || (stock !== null && stock >= quantity));
 
-    const productId =
-      getString(rawItem.productId) ??
-      getString(product?.id);
-
-    if (
-      typeof rawItem.id !== "string" ||
-      !productId ||
-      quantity === null ||
-      quantity < 1
-    ) {
-      continue;
-    }
-
-    /* BUSINESS */
-
-    const businessName = getString(
-      business?.name,
-      "Business unavailable",
-    )!;
-
-    const businessId = getString(
-      business?.id,
-      `business:${businessName}`,
-    )!;
-
-    /* PRODUCT */
-
-    const productName = getString(
-      product?.name,
-      "Product unavailable",
-    )!;
-
-    const unitPrice =
-      getSafeInteger(product?.price);
-
-    const originalPrice =
-      getValidOriginalPrice(
-        product?.originalPrice,
-        unitPrice,
-      );
-
-    /* STOCK */
-
-    const stockFieldExists =
-      product !== null &&
-      Object.prototype.hasOwnProperty.call(
-        product,
-        "stockQuantity",
-      );
-
-    const rawStockQuantity =
-      product?.stockQuantity;
-
-    const stockQuantity =
-      rawStockQuantity === null
-        ? null
-        : getSafeInteger(rawStockQuantity);
-
-    const validStockInformation =
-      stockFieldExists &&
-      (
-        rawStockQuantity === null ||
-        (
-          stockQuantity !== null &&
-          stockQuantity >= 0
-        )
-      );
-
-    const enoughStock =
-      validStockInformation &&
-      (
-        stockQuantity === null ||
-        (
-          stockQuantity !== null &&
-          stockQuantity >= quantity
-        )
-      );
-
-    /* PRODUCT STATUS */
-
-    const productAvailable =
-      product !== null &&
+    const productAvailable = Boolean(
+      product &&
       product.status === "ACTIVE" &&
       isNotDeleted(product.deletedAt) &&
       product.availability === "AVAILABLE" &&
-      business !== null &&
+      business &&
       business.status === "ACTIVE" &&
-      isNotDeleted(business.deletedAt);
+      isNotDeleted(business.deletedAt),
+    );
 
-    /* PRICE VALIDATION */
+    const validPrice = unitPrice !== null && unitPrice > 0 && unitPrice <= MAX_ORDER_TOTAL;
+    const validQuantity = quantity <= MAX_QUANTITY_PER_PRODUCT;
+    const lineTotalCalculated = validPrice && unitPrice !== null ? unitPrice * quantity : null;
+    const validLineTotal = lineTotalCalculated !== null &&
+      Number.isSafeInteger(lineTotalCalculated) &&
+      lineTotalCalculated > 0 &&
+      lineTotalCalculated <= MAX_ORDER_TOTAL;
 
-    const validFixedPrice =
-      unitPrice !== null &&
-      unitPrice > 0 &&
-      unitPrice <= MAX_ORDER_TOTAL;
+    const apiLineExists = rawItem.lineTotal !== null && rawItem.lineTotal !== undefined;
+    const apiLineTotal = getSafeInteger(rawItem.lineTotal);
+    const apiLineMatches = !apiLineExists || (apiLineTotal !== null && apiLineTotal === lineTotalCalculated);
 
-    const validQuantity =
-      quantity <= MAX_QUANTITY_PER_PRODUCT;
-
-    const calculatedLineTotal =
-      validFixedPrice && unitPrice !== null
-        ? unitPrice * quantity
-        : null;
-
-    const validCalculatedTotal =
-      calculatedLineTotal !== null &&
-      Number.isSafeInteger(calculatedLineTotal) &&
-      calculatedLineTotal > 0 &&
-      calculatedLineTotal <= MAX_ORDER_TOTAL;
-
-    /*
-     * If the API provides lineTotal, compare it with
-     * current price multiplied by quantity.
-     */
-
-    const apiLineTotalExists =
-      rawItem.lineTotal !== null &&
-      rawItem.lineTotal !== undefined;
-
-    const apiLineTotal =
-      getSafeInteger(rawItem.lineTotal);
-
-    const lineTotalMatches =
-      !apiLineTotalExists ||
-      (
-        apiLineTotal !== null &&
-        apiLineTotal === calculatedLineTotal
-      );
-
-    const lineTotal =
-      validCalculatedTotal
-        ? calculatedLineTotal
-        : null;
-
-    /* PURCHASABILITY */
-
-    const purchasable =
+    const purchasable = Boolean(
       rawItem.purchasable === true &&
       productAvailable &&
-      validFixedPrice &&
+      validPrice &&
       validQuantity &&
-      validStockInformation &&
+      validStock &&
       enoughStock &&
-      validCalculatedTotal &&
-      lineTotalMatches;
+      validLineTotal &&
+      apiLineMatches,
+    );
 
-    /* PRODUCT IMAGE */
-
-    const images = Array.isArray(
-      product?.images,
-    )
-      ? product.images
-      : [];
-
+    const images = Array.isArray(product?.images) ? product.images : [];
     const firstImage = images.find(isRecord);
-
-    const imageUrl =
-      getString(product?.imageUrl) ??
-      getString(firstImage?.imageUrl) ??
-      getString(firstImage?.url);
-
-    /* UNAVAILABLE REASON */
+    const imageUrl = getString(product?.imageUrl) ?? getString(firstImage?.url) ?? getString(firstImage?.imageUrl);
 
     let unavailableReason: string | null = null;
-
-    if (!validQuantity) {
-      unavailableReason =
-        `You can purchase up to ${MAX_QUANTITY_PER_PRODUCT} units of one product.`;
-    } else if (!productAvailable) {
-      unavailableReason =
-        "This product or its business is no longer available.";
-    } else if (!validFixedPrice) {
-      unavailableReason =
-        "This product does not have a confirmed fixed price.";
-    } else if (!validStockInformation) {
-      unavailableReason =
-        "The stock information for this product is unavailable.";
-    } else if (!enoughStock) {
-      unavailableReason =
-        "The requested quantity exceeds the available stock.";
-    } else if (!validCalculatedTotal) {
-      unavailableReason =
-        "The product total exceeds the maximum allowed order value.";
-    } else if (!lineTotalMatches) {
-      unavailableReason =
-        "The product price has changed. Return to your cart and refresh it.";
-    } else if (!purchasable) {
-      unavailableReason =
-        getString(rawItem.unavailableReason) ??
-        "This product is unavailable for checkout.";
-    }
+    if (!validQuantity) unavailableReason = `You can purchase up to ${MAX_QUANTITY_PER_PRODUCT} units of one product.`;
+    else if (!productAvailable) unavailableReason = "This product or its business is no longer available.";
+    else if (!validPrice) unavailableReason = "This product does not have a confirmed fixed price.";
+    else if (!validStock) unavailableReason = "The stock information for this product is unavailable.";
+    else if (!enoughStock) unavailableReason = "The requested quantity exceeds the available stock.";
+    else if (!validLineTotal || !apiLineMatches) unavailableReason = "The product price or total has changed. Refresh your cart.";
+    else if (!purchasable) unavailableReason = getString(rawItem.unavailableReason, "This product is unavailable for checkout.");
 
     items.push({
       id: rawItem.id,
       productId,
-
       businessId,
       businessName,
-
-      name: productName,
+      name,
       imageUrl,
-
       quantity,
-
       unitPrice,
       originalPrice,
-      lineTotal,
-
+      lineTotal: validLineTotal ? lineTotalCalculated : null,
       purchasable,
       unavailableReason,
     });
   }
 
-  const itemCount = items.reduce(
-    (sum, item) => sum + item.quantity,
-    0,
-  );
-
-  const calculatedSubtotal = items.reduce(
-    (sum, item) => {
-      if (
-        !item.purchasable ||
-        item.lineTotal === null
-      ) {
-        return sum;
-      }
-
-      return sum + item.lineTotal;
-    },
-    0,
-  );
+  const itemCount = items.reduce((sum, item) => sum + item.quantity, 0);
+  const subtotal = items.reduce((sum, item) => sum + (item.purchasable ? item.lineTotal ?? 0 : 0), 0);
 
   return {
     items,
     itemCount,
-    subtotal: calculatedSubtotal,
-
-    currency:
-      typeof value.currency === "string"
-        ? value.currency
-        : "NGN",
+    subtotal,
+    currency: typeof value.currency === "string" ? value.currency : "NGN",
   };
 }
 
 /* =========================================================
-   CART FINGERPRINT
+   DELIVERY QUOTE RESPONSE PARSER
 
-   Used to determine whether a saved checkout key
-   belongs to the current cart.
+   Contract expected from POST /api/shipping/quotes:
+   {
+     quote: {
+       id, quoteCode, expiresAt, itemsSubtotal,
+       packages: [{ businessId, businessName, rates: [...] }]
+     }
+   }
 
-   A different cart receives a different key.
+   Rates can be normalized by the API or returned in the
+   provider's snake_case format; this parser supports both.
 ========================================================= */
 
-function createCartFingerprint(
-  items: CheckoutCartItem[],
-): string {
-  const snapshot = items
-    .map((item) => ({
-      id: item.id,
-      productId: item.productId,
-      businessId: item.businessId,
-      quantity: item.quantity,
-      unitPrice: item.unitPrice,
-    }))
-    .sort((a, b) => a.id.localeCompare(b.id));
+function parseCourierRate(value: unknown): CourierRate | null {
+  if (!isRecord(value)) return null;
+  const courierId = getString(value.courierId ?? value.courier_id);
+  const serviceCode = getString(value.serviceCode ?? value.service_code);
+  const courierName = getString(value.courierName ?? value.courier_name, "Delivery partner")!;
+  const rawAmount = value.amount ?? value.total ?? value.rate_card_amount;
+  const amount = getSafeInteger(rawAmount);
 
-  return JSON.stringify(snapshot);
+  if (!courierId || !serviceCode || amount === null || amount < 0 || amount > MAX_ORDER_TOTAL) return null;
+
+  return {
+    courierId,
+    courierName,
+    serviceCode,
+    serviceType: getString(value.serviceType ?? value.service_type),
+    amount,
+    currency: getString(value.currency ?? value.rate_card_currency, "NGN")!,
+    eta: getString(value.eta ?? value.delivery_eta ?? value.delivery_eta_time),
+    pickupEta: getString(value.pickupEta ?? value.pickup_eta ?? value.pickup_eta_time),
+  };
+}
+
+function parseDeliveryQuote(value: unknown): DeliveryQuote | null {
+  if (!isRecord(value)) return null;
+  const rawQuote = isRecord(value.quote) ? value.quote : isRecord(value.data) ? value.data : value;
+  const id = getString(rawQuote.id ?? rawQuote.quoteId);
+  const expiresAt = getString(rawQuote.expiresAt ?? rawQuote.expires_at);
+  const quoteCode = getString(rawQuote.quoteCode ?? rawQuote.quote_code, id ?? "")!;
+  const rawPackages = Array.isArray(rawQuote.packages) ? rawQuote.packages : null;
+  const itemsSubtotal = getSafeInteger(rawQuote.itemsSubtotal ?? rawQuote.items_subtotal);
+
+  if (!id || !expiresAt || !rawPackages || itemsSubtotal === null) return null;
+
+  const packages: DeliveryQuotePackage[] = [];
+  for (const rawPackage of rawPackages) {
+    if (!isRecord(rawPackage)) continue;
+    const businessId = getString(rawPackage.businessId ?? rawPackage.business_id);
+    if (!businessId) continue;
+    const rawRates = Array.isArray(rawPackage.rates)
+      ? rawPackage.rates
+      : Array.isArray(rawPackage.availableRates)
+        ? rawPackage.availableRates
+        : Array.isArray(rawPackage.available_rates)
+          ? rawPackage.available_rates
+          : [];
+    const rates = rawRates.map(parseCourierRate).filter((rate): rate is CourierRate => rate !== null);
+    const rawItems = Array.isArray(rawPackage.items) ? rawPackage.items : [];
+    const items = rawItems.flatMap((item) => {
+      if (!isRecord(item)) return [];
+      const productId = getString(item.productId ?? item.product_id);
+      const productName = getString(item.productName ?? item.product_name);
+      const quantity = getSafeInteger(item.quantity);
+      if (!productId || !productName || quantity === null || quantity < 1) return [];
+      return [{ productId, productName, quantity }];
+    });
+
+    packages.push({
+      id: getString(rawPackage.id) ?? undefined,
+      businessId,
+      businessName: getString(rawPackage.businessName ?? rawPackage.business_name, "Seller")!,
+      items,
+      rates,
+      selectedCourierId: getString(rawPackage.selectedCourierId ?? rawPackage.selected_courier_id),
+      selectedServiceCode: getString(rawPackage.selectedServiceCode ?? rawPackage.selected_service_code),
+      selectedDeliveryFee: getSafeInteger(rawPackage.selectedDeliveryFee ?? rawPackage.selected_delivery_fee),
+      selectedCourierName: getString(rawPackage.selectedCourierName ?? rawPackage.selected_courier_name),
+      selectedDeliveryEta: getString(rawPackage.selectedDeliveryEta ?? rawPackage.selected_delivery_eta),
+    });
+  }
+
+  if (packages.length === 0) return null;
+  return { id, quoteCode, expiresAt, itemsSubtotal, packages };
 }
 
 /* =========================================================
-   GROUP CART ITEMS BY SELLER
+   CHECKOUT RESPONSE PARSER
 ========================================================= */
 
-function groupCartItems(
-  items: CheckoutCartItem[],
-): CartGroup[] {
-  const groups = new Map<string, CartGroup>();
+function parseCheckoutApiResult(value: unknown): CheckoutApiResult | null {
+  if (!isRecord(value) || !isRecord(value.order) || typeof value.order.id !== "string" || typeof value.order.orderCode !== "string") {
+    return null;
+  }
+  const payment = isRecord(value.payment) ? value.payment : null;
+  return {
+    orderId: value.order.id,
+    orderCode: value.order.orderCode,
+    authorizationUrl: getString(payment?.authorizationUrl),
+    paymentStatus: getString(payment?.status),
+  };
+}
 
+/* =========================================================
+   STORE GROUPING
+========================================================= */
+
+function groupCartItems(items: CheckoutCartItem[]): CartGroup[] {
+  const groups = new Map<string, CartGroup>();
   for (const item of items) {
     if (!groups.has(item.businessId)) {
       groups.set(item.businessId, {
@@ -556,161 +471,45 @@ function groupCartItems(
         items: [],
       });
     }
-
-    groups.get(item.businessId)?.items.push(item);
+    groups.get(item.businessId)!.items.push(item);
   }
-
   return Array.from(groups.values());
 }
 
 /* =========================================================
-   CHECKOUT RESPONSE PARSER
-
-   Expected API response:
-
-   {
-     order: {
-       id,
-       orderCode
-     },
-     sellerOrders: [
-       {
-         sellerOrderCode
-       }
-     ]
-   }
-========================================================= */
-
-function parseCheckoutResult(
-  value: unknown,
-): CheckoutResult | null {
-  if (
-    !isRecord(value) ||
-    !isRecord(value.order) ||
-    typeof value.order.id !== "string" ||
-    typeof value.order.orderCode !== "string"
-  ) {
-    return null;
-  }
-
-  const sellerOrderCodes = Array.isArray(
-    value.sellerOrders,
-  )
-    ? value.sellerOrders.flatMap((item) => {
-        if (
-          isRecord(item) &&
-          typeof item.sellerOrderCode === "string"
-        ) {
-          return [item.sellerOrderCode];
-        }
-
-        return [];
-      })
-    : [];
-
-  return {
-    orderId: value.order.id,
-    orderCode: value.order.orderCode,
-    sellerOrderCodes,
-  };
-}
-
-/* =========================================================
-   SMALL PROGRESS COMPONENT
-========================================================= */
-
-function CheckoutProgress() {
-  const steps = [
-    {
-      number: "01",
-      label: "Shopping cart",
-      status: "complete",
-    },
-    {
-      number: "02",
-      label: "Delivery and review",
-      status: "active",
-    },
-    {
-      number: "03",
-      label: "Confirmation",
-      status: "upcoming",
-    },
-  ] as const;
-
-  return (
-    <div className="mb-7 rounded-2xl border border-[#EAE6DF] bg-white p-4 sm:p-5">
-
-      <div className="grid grid-cols-3 gap-2">
-
-        {steps.map((step, index) => (
-          <div
-            key={step.number}
-            className="relative min-w-0"
-          >
-            <div className="flex items-center gap-2">
-
-              <span
-                className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-[10px] font-extrabold ${
-                  step.status === "complete"
-                    ? "bg-[#E8F8F0] text-[#16845D]"
-                    : step.status === "active"
-                      ? "bg-[#FF5A36] text-white"
-                      : "bg-[#F1EEEA] text-[#91877E]"
-                }`}
-              >
-                {step.status === "complete" ? (
-                  <CheckCircle2 className="h-4 w-4" />
-                ) : (
-                  step.number
-                )}
-              </span>
-
-              <div className="min-w-0">
-                <p
-                  className={`truncate text-[9px] font-bold sm:text-[11px] ${
-                    step.status === "active"
-                      ? "text-[#9F2D18]"
-                      : step.status === "complete"
-                        ? "text-[#16845D]"
-                        : "text-[#91877E]"
-                  }`}
-                >
-                  {step.label}
-                </p>
-
-                <p className="mt-0.5 hidden text-[9px] text-[#A69D94] sm:block">
-                  {step.status === "complete"
-                    ? "Completed"
-                    : step.status === "active"
-                      ? "Current step"
-                      : "Next"}
-                </p>
-              </div>
-            </div>
-
-            {index < steps.length - 1 && (
-              <div
-                aria-hidden="true"
-                className="absolute -right-1 top-4 hidden h-px w-4 bg-[#EAE6DF] sm:block"
-              />
-            )}
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-}
-
-/* =========================================================
-   DELIVERY INPUT STYLE
+   UI STYLES
 ========================================================= */
 
 const inputClassName =
-  "w-full rounded-xl border border-[#EAE6DF] bg-[#FCFAF6] px-4 py-3 text-xs text-[#292522] outline-none transition placeholder:text-[#A69D94] focus:border-[#FF5A36] focus:bg-white focus:ring-2 focus:ring-[#FF5A36]/10";
+  "w-full rounded-xl border border-[#EAE6DF] bg-white px-4 py-3 text-sm text-[#292522] outline-none transition placeholder:text-[#A69D94] focus:border-[#FF5A36] focus:ring-2 focus:ring-[#FF5A36]/10";
 
-const labelClassName =
-  "mb-2 block text-xs font-bold text-[#514840]";
+const labelClassName = "mb-2 block text-xs font-semibold text-[#514840]";
+
+function CheckoutSteps({ step }: { step: 1 | 2 | 3 }) {
+  const steps = ["Delivery address", "Delivery options", "Payment"] as const;
+  return (
+    <div className="rounded-2xl border border-[#EAE6DF] bg-white p-4 sm:p-5">
+      <ol className="grid grid-cols-3 gap-2">
+        {steps.map((label, index) => {
+          const number = (index + 1) as 1 | 2 | 3;
+          const complete = number < step;
+          const active = number === step;
+          return (
+            <li key={label} className="min-w-0">
+              <div className="flex items-center gap-2">
+                <span className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-xs font-bold ${complete ? "bg-[#E8F8F0] text-[#16845D]" : active ? "bg-[#FF5A36] text-white" : "bg-[#F1EEEA] text-[#91877E]"}`}>
+                  {complete ? <Check className="h-4 w-4" /> : `0${number}`}
+                </span>
+                <span className={`truncate text-[10px] font-bold sm:text-xs ${active ? "text-[#9F2D18]" : complete ? "text-[#16845D]" : "text-[#91877E]"}`}>{label}</span>
+              </div>
+              <div className={`mt-3 h-1 rounded-full ${complete || active ? "bg-[#FF5A36]" : "bg-[#EEEAE5]"}`} />
+            </li>
+          );
+        })}
+      </ol>
+    </div>
+  );
+}
 
 /* =========================================================
    MAIN CHECKOUT PAGE
@@ -718,1393 +517,627 @@ const labelClassName =
 
 export default function CheckoutPage() {
   const router = useRouter();
-
-  /* =====================================================
-     CART STATE
-  ===================================================== */
+  const formRef = useRef<HTMLFormElement>(null);
+  const idempotencyKeyRef = useRef<StoredCheckoutAttempt | null>(null);
 
   const [items, setItems] = useState<CheckoutCartItem[]>([]);
-
   const [loading, setLoading] = useState(true);
-
   const [loadError, setLoadError] = useState("");
-
   const [refreshKey, setRefreshKey] = useState(0);
 
-  /* =====================================================
-     DELIVERY FORM
-  ===================================================== */
+  const [form, setForm] = useState<DeliveryForm>(initialDeliveryForm);
+  const [quote, setQuote] = useState<DeliveryQuote | null>(null);
+  const [quoteCartFingerprint, setQuoteCartFingerprint] = useState<string | null>(null);
+  const [selectedRateKeys, setSelectedRateKeys] = useState<Record<string, string>>({});
+  const [confirmedQuoteId, setConfirmedQuoteId] = useState<string | null>(null);
+  const [clockNow, setClockNow] = useState(() => Date.now());
 
-  const [form, setForm] =
-    useState<DeliveryForm>(initialDeliveryForm);
-
-  /* =====================================================
-     SUBMISSION STATE
-  ===================================================== */
-
+  const [quoting, setQuoting] = useState(false);
+  const [confirmingRates, setConfirmingRates] = useState(false);
   const [submitting, setSubmitting] = useState(false);
-
+  const [quoteError, setQuoteError] = useState("");
   const [submitError, setSubmitError] = useState("");
 
-  const [result, setResult] =
-    useState<CheckoutResult | null>(null);
+  /* -------------------- Cart calculations -------------------- */
 
-  /*
-   * Keeps the current key in memory.
-   *
-   * sessionStorage also preserves it across a page
-   * refresh within the same browser tab.
-   */
-  const idempotencyKeyRef =
-    useRef<StoredCheckoutAttempt | null>(null);
+  const itemCount = useMemo(() => items.reduce((sum, item) => sum + item.quantity, 0), [items]);
+  const subtotal = useMemo(() => items.reduce((sum, item) => sum + (item.purchasable ? item.lineTotal ?? 0 : 0), 0), [items]);
+  const unavailableItems = useMemo(() => items.filter((item) => !item.purchasable), [items]);
+  const groups = useMemo(() => groupCartItems(items), [items]);
+  const cartFingerprint = useMemo(() => createCartFingerprint(items), [items]);
 
-  /* =====================================================
-     IDEMPOTENCY KEY HELPERS
-  ===================================================== */
+  const selectedRates = useMemo(() => {
+    if (!quote) return [] as Array<{ businessId: string; rate: CourierRate }>;
+    return quote.packages.flatMap((pack) => {
+      const selectedKey = selectedRateKeys[pack.businessId];
+      const rate = pack.rates.find((candidate) => rateKey(candidate) === selectedKey);
+      return rate ? [{ businessId: pack.businessId, rate }] : [];
+    });
+  }, [quote, selectedRateKeys]);
 
-  const getOrCreateCheckoutKey = useCallback(
-    (fingerprint: string): string => {
-      /*
-       * Reuse the current key for this exact cart.
-       */
+  const selectedDeliveryFee = selectedRates.reduce((sum, item) => sum + item.rate.amount, 0);
+  const displayedTotal = subtotal + selectedDeliveryFee;
+  const quoteExpired = Boolean(quote && new Date(quote.expiresAt).getTime() <= clockNow);
+  const quoteMatchesCart = Boolean(quote && quoteCartFingerprint === cartFingerprint);
+  const allPackagesSelected = Boolean(quote && quote.packages.length > 0 && selectedRates.length === quote.packages.length);
+  const quoteConfirmed = Boolean(quote && quoteMatchesCart && confirmedQuoteId === quote.id && allPackagesSelected && !quoteExpired);
+  const quoteAlmostExpired = Boolean(quote && new Date(quote.expiresAt).getTime() - clockNow < QUOTE_EXPIRY_WARNING_MS && !quoteExpired);
 
-      if (
-        idempotencyKeyRef.current?.fingerprint ===
-        fingerprint
-      ) {
-        return idempotencyKeyRef.current.key;
-      }
+  const validCart = items.length > 0 && unavailableItems.length === 0 &&
+    items.every((item) => item.lineTotal !== null && Number.isSafeInteger(item.lineTotal) && item.lineTotal > 0) &&
+    Number.isSafeInteger(subtotal) && subtotal > 0 && subtotal <= MAX_ORDER_TOTAL;
 
-      /*
-       * Check sessionStorage so the key survives
-       * a page refresh.
-       */
+  const canSubmitPayment = validCart && quoteConfirmed && !quoting && !confirmingRates && !submitting;
 
-      try {
-        const saved = window.sessionStorage.getItem(
-          CHECKOUT_IDEMPOTENCY_STORAGE_KEY,
-        );
+  /* -------------------- Checkout key -------------------- */
 
-        if (saved) {
-          const parsed: unknown = JSON.parse(saved);
-
-          if (
-            isRecord(parsed) &&
-            typeof parsed.key === "string" &&
-            /^[A-Za-z0-9._:-]{16,100}$/.test(
-              parsed.key,
-            ) &&
-            parsed.fingerprint === fingerprint
-          ) {
-            const record: StoredCheckoutAttempt = {
-              key: parsed.key,
-              fingerprint,
-            };
-
-            idempotencyKeyRef.current = record;
-
-            return record.key;
-          }
-        }
-      } catch {
-        /*
-         * If storage is unavailable or contains invalid
-         * data, generate a new key.
-         */
-      }
-
-      /*
-       * Generate a new unique checkout key.
-       */
-
-      const randomPart =
-        typeof window.crypto?.randomUUID === "function"
-          ? window.crypto.randomUUID()
-          : `${Date.now().toString(36)}-${Math.random()
-              .toString(36)
-              .slice(2)}`;
-
-      const record: StoredCheckoutAttempt = {
-        key: `rm-${randomPart}`,
-        fingerprint,
-      };
-
-      idempotencyKeyRef.current = record;
-
-      try {
-        window.sessionStorage.setItem(
-          CHECKOUT_IDEMPOTENCY_STORAGE_KEY,
-          JSON.stringify(record),
-        );
-      } catch {
-        /*
-         * The in-memory key still works for retries
-         * while this page remains open.
-         */
-      }
-
-      return record.key;
-    },
-    [],
-  );
-
-  /*
-   * Clear the checkout key after successful confirmation.
-   */
-
-  const clearCheckoutAttempt = useCallback(() => {
-    idempotencyKeyRef.current = null;
+  const getOrCreateCheckoutKey = useCallback((fingerprint: string): string => {
+    if (idempotencyKeyRef.current?.fingerprint === fingerprint) return idempotencyKeyRef.current.key;
 
     try {
-      window.sessionStorage.removeItem(
-        CHECKOUT_IDEMPOTENCY_STORAGE_KEY,
-      );
-    } catch {
-      // Storage may be unavailable.
-    }
-  }, []);
-
-  /* =====================================================
-     CART CALCULATIONS
-  ===================================================== */
-
-  const itemCount = useMemo(
-    () =>
-      items.reduce(
-        (sum, item) => sum + item.quantity,
-        0,
-      ),
-    [items],
-  );
-
-  const subtotal = useMemo(
-    () =>
-      items.reduce(
-        (sum, item) =>
-          item.purchasable
-            ? sum + (item.lineTotal ?? 0)
-            : sum,
-        0,
-      ),
-    [items],
-  );
-
-  const unavailableItems = useMemo(
-    () =>
-      items.filter(
-        (item) => !item.purchasable,
-      ),
-    [items],
-  );
-
-  const groups = useMemo(
-    () => groupCartItems(items),
-    [items],
-  );
-
-  const cartFingerprint = useMemo(
-    () => createCartFingerprint(items),
-    [items],
-  );
-
-  const allLineTotalsValid = items.every(
-    (item) =>
-      item.purchasable &&
-      item.lineTotal !== null &&
-      Number.isSafeInteger(item.lineTotal) &&
-      item.lineTotal > 0,
-  );
-
-  const validSubtotal =
-    Number.isSafeInteger(subtotal) &&
-    subtotal > 0 &&
-    subtotal <= MAX_ORDER_TOTAL;
-
-  const canCheckout =
-    items.length > 0 &&
-    unavailableItems.length === 0 &&
-    allLineTotalsValid &&
-    validSubtotal &&
-    !submitting;
-
-  /* =====================================================
-     FORM HANDLING
-  ===================================================== */
-
-  function updateField(
-    field: keyof DeliveryForm,
-    value: string,
-  ) {
-    setForm((current) => ({
-      ...current,
-      [field]: value,
-    }));
-  }
-
-  /* =====================================================
-     LOAD CART
-  ===================================================== */
-
-  const loadCart = useCallback(
-    async (signal: AbortSignal) => {
-      setLoading(true);
-      setLoadError("");
-
-      try {
-        const response = await fetch("/api/cart", {
-          method: "GET",
-          cache: "no-store",
-          credentials: "same-origin",
-
-          headers: {
-            Accept: "application/json",
-          },
-
-          signal,
-        });
-
-        if (
-          response.status === 401 ||
-          response.status === 403
-        ) {
-          router.replace("/buyer/login");
-          return;
-        }
-
-        const payload: unknown =
-          await response.json().catch(() => null);
-
-        if (!response.ok) {
-          throw new Error(
-            isRecord(payload) &&
-            typeof payload.error === "string"
-              ? payload.error
-              : "Unable to load your shopping cart.",
-          );
-        }
-
-        const parsed = parseCheckoutCart(payload);
-
-        if (!parsed) {
-          throw new Error(
-            "We could not read your cart information.",
-          );
-        }
-
-        if (signal.aborted) {
-          return;
-        }
-
-        /*
-         * Do not clear the saved checkout key merely
-         * because the cart is empty.
-         *
-         * The server may already have created an order
-         * while the browser did not receive its response.
-         *
-         * A different cart will automatically receive
-         * a different key when checkout is started.
-         */
-
-        setItems(parsed.items);
-
-      } catch (error) {
-        if (
-          error instanceof DOMException &&
-          error.name === "AbortError"
-        ) {
-          return;
-        }
-
-        if (!signal.aborted) {
-          console.error(
-            "Checkout cart error:",
-            error,
-          );
-
-          setLoadError(
-            error instanceof Error
-              ? error.message
-              : "Unable to load your cart.",
-          );
-        }
-
-      } finally {
-        if (!signal.aborted) {
-          setLoading(false);
+      const saved = window.sessionStorage.getItem(CHECKOUT_IDEMPOTENCY_STORAGE_KEY);
+      if (saved) {
+        const parsed: unknown = JSON.parse(saved);
+        if (isRecord(parsed) && typeof parsed.key === "string" && /^[A-Za-z0-9._:-]{16,100}$/.test(parsed.key) && parsed.fingerprint === fingerprint) {
+          idempotencyKeyRef.current = { key: parsed.key, fingerprint };
+          return parsed.key;
         }
       }
-    },
-    [router],
-  );
+    } catch {
+      // Storage may be unavailable; use an in-memory key.
+    }
+
+    const randomPart = typeof window.crypto?.randomUUID === "function"
+      ? window.crypto.randomUUID()
+      : `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
+    const record = { key: `rm-${randomPart}`, fingerprint };
+    idempotencyKeyRef.current = record;
+    try {
+      window.sessionStorage.setItem(CHECKOUT_IDEMPOTENCY_STORAGE_KEY, JSON.stringify(record));
+    } catch {
+      // The in-memory key still protects retry attempts in this page.
+    }
+    return record.key;
+  }, []);
+
+  /* -------------------- Load cart -------------------- */
+
+  const loadCart = useCallback(async (signal: AbortSignal) => {
+    setLoading(true);
+    setLoadError("");
+    try {
+      const response = await fetch("/api/cart", {
+        method: "GET",
+        cache: "no-store",
+        credentials: "same-origin",
+        headers: noStoreHeaders,
+        signal,
+      });
+      if (response.status === 401 || response.status === 403) {
+        router.replace("/buyer/login");
+        return;
+      }
+      const payload: unknown = await response.json().catch(() => null);
+      if (!response.ok) throw new Error(parseApiError(payload, "Unable to load your cart."));
+      const parsed = parseCheckoutCart(payload);
+      if (!parsed) throw new Error("We could not read your cart information.");
+      if (signal.aborted) return;
+      setItems(parsed.items);
+    } catch (error) {
+      if (error instanceof DOMException && error.name === "AbortError") return;
+      if (!signal.aborted) {
+        console.error("Checkout cart error:", error);
+        setLoadError(error instanceof Error ? error.message : "Unable to load your cart.");
+      }
+    } finally {
+      if (!signal.aborted) setLoading(false);
+    }
+  }, [router]);
 
   useEffect(() => {
     const controller = new AbortController();
-
     void loadCart(controller.signal);
-
     return () => controller.abort();
   }, [loadCart, refreshKey]);
 
-  /* =====================================================
-     RETRY CART LOADING
-  ===================================================== */
+  useEffect(() => {
+    const refreshCart = () => setRefreshKey((value) => value + 1);
+    window.addEventListener(CART_CHANGED_EVENT, refreshCart);
+    return () => window.removeEventListener(CART_CHANGED_EVENT, refreshCart);
+  }, []);
 
-  function retryLoadingCart() {
-    setRefreshKey((current) => current + 1);
+  useEffect(() => {
+    const timer = window.setInterval(() => setClockNow(Date.now()), 15_000);
+    return () => window.clearInterval(timer);
+  }, []);
+
+  /* -------------------- Reset quotes when address changes -------------------- */
+
+  function updateField(field: keyof DeliveryForm, value: string) {
+    setForm((current) => ({ ...current, [field]: value }));
+    setQuote(null);
+    setQuoteCartFingerprint(null);
+    setSelectedRateKeys({});
+    setConfirmedQuoteId(null);
+    setQuoteError("");
+    setSubmitError("");
+    idempotencyKeyRef.current = null;
   }
 
-  /* =====================================================
-     PLACE ORDER
-  ===================================================== */
+  function validateDeliveryForm(): boolean {
+    if (!formRef.current?.reportValidity()) return false;
+    const phoneDigits = form.deliveryPhone.replace(/\D/g, "");
+    if (phoneDigits.length < 7 || phoneDigits.length > 15) {
+      setQuoteError("Enter a valid delivery phone number.");
+      return false;
+    }
+    return true;
+  }
 
-  async function handleSubmit(
-    event: FormEvent<HTMLFormElement>,
-  ) {
+  /* -------------------- Request Shipbubble delivery rates -------------------- */
+
+  async function handleGetDeliveryRates() {
+    if (quoting || !validCart || !validateDeliveryForm()) return;
+    setQuoting(true);
+    setQuoteError("");
+    setSubmitError("");
+    setQuote(null);
+    setQuoteCartFingerprint(null);
+    setSelectedRateKeys({});
+    setConfirmedQuoteId(null);
+
+    try {
+      const response = await fetch("/api/shipping/quotes", {
+        method: "POST",
+        credentials: "same-origin",
+        headers: { "Content-Type": "application/json", ...noStoreHeaders },
+        body: JSON.stringify({
+          deliveryRecipient: form.deliveryRecipient.trim(),
+          deliveryPhone: form.deliveryPhone.trim(),
+          deliveryAddress: form.deliveryAddress.trim(),
+          deliveryArea: form.deliveryArea.trim(),
+          deliveryLandmark: form.deliveryLandmark.trim() || null,
+          deliveryNotes: form.deliveryNotes.trim() || null,
+        }),
+      });
+      if (response.status === 401 || response.status === 403) {
+        router.replace("/buyer/login");
+        return;
+      }
+      const payload: unknown = await response.json().catch(() => null);
+      if (!response.ok) throw new Error(parseApiError(payload, "We could not retrieve delivery options."));
+      const parsed = parseDeliveryQuote(payload);
+      if (!parsed) throw new Error("Shipbubble returned an incomplete delivery quote. Please try again.");
+      if (parsed.itemsSubtotal !== subtotal) throw new Error("Your cart total changed while delivery was being calculated. Refresh checkout and try again.");
+      if (parsed.packages.length !== groups.length) throw new Error("Delivery options were not returned for every seller in your cart.");
+
+      const expectedBusinessIds = new Set(groups.map((group) => group.businessId));
+      if (parsed.packages.some((pack) => !expectedBusinessIds.has(pack.businessId))) {
+        throw new Error("The delivery quote contains an unexpected seller package. Please refresh and try again.");
+      }
+      if (parsed.packages.some((pack) => pack.rates.length === 0)) {
+        const noRate = parsed.packages.find((pack) => pack.rates.length === 0);
+        throw new Error(`No delivery services are currently available for ${noRate?.businessName ?? "one of your sellers"}. Try another delivery address or contact support.`);
+      }
+      if (parsed.packages.some((pack) => pack.rates.some((rate) => rate.currency.toUpperCase() !== "NGN"))) {
+        throw new Error("A delivery option was returned in an unsupported currency. Please contact support.");
+      }
+
+      // Require the buyer to actively choose one courier for each seller parcel.
+      setQuote(parsed);
+      setQuoteCartFingerprint(cartFingerprint);
+      setSelectedRateKeys({});
+    } catch (error) {
+      console.error("Shipbubble delivery quote error:", error);
+      setQuoteError(error instanceof Error ? error.message : "Unable to load delivery options.");
+    } finally {
+      setQuoting(false);
+    }
+  }
+
+  /* -------------------- Courier selection -------------------- */
+
+  function selectCourier(businessId: string, selectedKey: string) {
+    setSelectedRateKeys((current) => ({ ...current, [businessId]: selectedKey }));
+    setConfirmedQuoteId(null);
+    setSubmitError("");
+  }
+
+  /* -------------------- Persist courier choices -------------------- */
+
+  async function handleConfirmDeliveryOptions() {
+    if (!quote || !quoteMatchesCart || !allPackagesSelected || quoteExpired || confirmingRates) return;
+    setConfirmingRates(true);
+    setQuoteError("");
+    setSubmitError("");
+
+    const selections: QuoteSelection[] = quote.packages.flatMap((pack) => {
+      const selectedKey = selectedRateKeys[pack.businessId];
+      const rate = pack.rates.find((candidate) => rateKey(candidate) === selectedKey);
+      return rate ? [{ businessId: pack.businessId, courierId: rate.courierId, serviceCode: rate.serviceCode }] : [];
+    });
+
+    try {
+      const response = await fetch("/api/shipping/quotes/select", {
+        method: "POST",
+        credentials: "same-origin",
+        headers: { "Content-Type": "application/json", ...noStoreHeaders },
+        body: JSON.stringify({ quoteId: quote.id, selections }),
+      });
+      if (response.status === 401 || response.status === 403) {
+        router.replace("/buyer/login");
+        return;
+      }
+      const payload: unknown = await response.json().catch(() => null);
+      if (!response.ok) throw new Error(parseApiError(payload, "We could not save your delivery choices."));
+
+      const returnedQuote = parseDeliveryQuote(payload);
+      if (!returnedQuote || returnedQuote.id !== quote.id || returnedQuote.packages.length !== quote.packages.length) {
+        throw new Error("The server could not confirm every selected delivery service. Please request rates again.");
+      }
+      setConfirmedQuoteId(quote.id);
+    } catch (error) {
+      console.error("Confirm delivery options error:", error);
+      setQuoteError(error instanceof Error ? error.message : "Unable to confirm delivery options.");
+    } finally {
+      setConfirmingRates(false);
+    }
+  }
+
+  /* -------------------- Start Paystack checkout -------------------- */
+
+  async function handlePayNow(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-
-    if (!canCheckout || submitting) {
+    if (!canSubmitPayment || !quote || !quoteMatchesCart) return;
+    if (!validateDeliveryForm()) return;
+    if (quoteExpired) {
+      setQuoteError("Your delivery quote has expired. Request new delivery rates before paying.");
+      setConfirmedQuoteId(null);
       return;
     }
 
     setSubmitting(true);
     setSubmitError("");
 
-    /*
-     * Get or reuse the key for this exact cart.
-     */
-
-    const idempotencyKey =
-      getOrCreateCheckoutKey(cartFingerprint);
+    const fingerprint = createCheckoutFingerprint(cartFingerprint, quote.id, form);
+    const idempotencyKey = getOrCreateCheckoutKey(fingerprint);
 
     try {
       const response = await fetch("/api/checkout", {
         method: "POST",
-
         credentials: "same-origin",
-
         headers: {
           "Content-Type": "application/json",
-          Accept: "application/json",
-
-          /*
-           * Required by the updated checkout API.
-           */
-
+          ...noStoreHeaders,
           "Idempotency-Key": idempotencyKey,
         },
-
         body: JSON.stringify({
-          deliveryRecipient:
-            form.deliveryRecipient.trim(),
-
-          deliveryPhone:
-            form.deliveryPhone.trim(),
-
-          deliveryAddress:
-            form.deliveryAddress.trim(),
-
-          deliveryArea:
-            form.deliveryArea.trim(),
-
-          deliveryLandmark:
-            form.deliveryLandmark.trim(),
-
-          deliveryNotes:
-            form.deliveryNotes.trim(),
+          deliveryRecipient: form.deliveryRecipient.trim(),
+          deliveryPhone: form.deliveryPhone.trim(),
+          deliveryAddress: form.deliveryAddress.trim(),
+          deliveryArea: form.deliveryArea.trim(),
+          deliveryLandmark: form.deliveryLandmark.trim() || null,
+          deliveryNotes: form.deliveryNotes.trim() || null,
+          deliveryQuoteId: quote.id,
         }),
       });
 
-      if (
-        response.status === 401 ||
-        response.status === 403
-      ) {
+      if (response.status === 401 || response.status === 403) {
         router.replace("/buyer/login");
         return;
       }
 
-      const payload: unknown =
-        await response.json().catch(() => null);
+      const payload: unknown = await response.json().catch(() => null);
+      if (!response.ok) throw new Error(parseApiError(payload, "We could not prepare your payment. Please try again."));
 
-      if (!response.ok) {
-        throw new Error(
-          isRecord(payload) &&
-          typeof payload.error === "string"
-            ? payload.error
-            : "We could not place your order. Please try again.",
-        );
+      const checkout = parseCheckoutApiResult(payload);
+      if (!checkout) throw new Error("We received an unexpected checkout response. Please retry using the same checkout session.");
+
+      if (checkout.authorizationUrl) {
+        // Paystack's hosted checkout is the payment collection surface.
+        window.location.assign(checkout.authorizationUrl);
+        return;
       }
 
-      const checkoutResult =
-        parseCheckoutResult(payload);
-
-      /*
-       * The server returned success, but the confirmation
-       * could not be read.
-       *
-       * Keep the key so the buyer can retry the same
-       * request and retrieve the existing order.
-       */
-
-      if (!checkoutResult) {
-        throw new Error(
-          "The server may have received your order, but we could not read its confirmation. Submit again to safely retrieve the same order.",
-        );
+      if (checkout.paymentStatus === "SUCCESS") {
+        dispatchCartChanged();
+        router.replace(`/orders/${encodeURIComponent(checkout.orderId)}`);
+        return;
       }
 
-      /*
-       * Clear the saved key only after successfully
-       * reading the server's order confirmation.
-       */
-
-      clearCheckoutAttempt();
-
-      setResult(checkoutResult);
-      setItems([]);
-
-      dispatchCartChanged();
-
+      throw new Error("Your order was prepared, but Paystack did not return a payment link. Please retry or contact support with your order reference.");
     } catch (error) {
-      console.error(
-        "Checkout submission error:",
-        error,
-      );
-
-      const message =
-        error instanceof TypeError
-          ? "We could not confirm whether your order was submitted. Please try again. The same checkout request key will be reused to prevent a duplicate order."
-          : error instanceof Error
-            ? error.message
-            : "Something went wrong while placing your order.";
-
-      setSubmitError(message);
-
+      console.error("Paystack checkout error:", error);
+      setSubmitError(error instanceof Error ? error.message : "Unable to start payment. Please try again.");
     } finally {
       setSubmitting(false);
     }
   }
 
   /* =====================================================
-     LOADING STATE
+     SHARED PAGE SHELLS
   ===================================================== */
 
   if (loading) {
     return (
       <>
         <SiteHeader searchMode="PRODUCTS" />
-
         <main className="flex min-h-[70vh] items-center justify-center bg-[#FCFAF6] px-4 pb-28">
-
           <div className="w-full max-w-sm rounded-[24px] border border-[#EAE6DF] bg-white p-8 text-center shadow-sm">
-
-            <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-2xl bg-[#FFF1ED] text-[#9F2D18]">
-              <ShoppingBag className="h-8 w-8" />
-            </div>
-
+            <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-2xl bg-[#FFF1ED] text-[#9F2D18]"><ShoppingBag className="h-8 w-8" /></div>
             <LoaderCircle className="mx-auto mt-6 h-5 w-5 animate-spin text-[#FF5A36]" />
-
-            <h1 className="mt-4 text-base font-extrabold text-[#401B13]">
-              Preparing your checkout
-            </h1>
-
-            <p className="mt-2 text-xs leading-6 text-[#756B61]">
-              Checking your selected products and availability.
-            </p>
+            <h1 className="mt-4 text-base font-extrabold text-[#401B13]">Preparing your checkout</h1>
+            <p className="mt-2 text-xs leading-6 text-[#756B61]">Checking your products, prices and stock availability.</p>
           </div>
         </main>
-
         <MobileBottomNav />
       </>
     );
   }
-
-  /* =====================================================
-     ORDER SUCCESS SCREEN
-  ===================================================== */
-
-  if (result) {
-    return (
-      <>
-        <SiteHeader searchMode="PRODUCTS" />
-
-        <main className="min-h-dvh bg-[#FCFAF6] px-4 pb-28 pt-10 lg:pb-12">
-
-          <section className="mx-auto max-w-2xl overflow-hidden rounded-[26px] border border-[#EAE6DF] bg-white shadow-[0_8px_35px_rgba(23,32,42,0.05)]">
-
-            {/* SUCCESS HEADER */}
-
-            <div className="bg-gradient-to-br from-[#F0FBF5] to-[#FFFDFC] px-6 py-9 text-center sm:px-10">
-
-              <div className="mx-auto flex h-20 w-20 items-center justify-center rounded-full bg-[#DCFCE7] text-[#16845D]">
-                <CheckCircle2 className="h-11 w-11" />
-              </div>
-
-              <p className="mt-5 text-[10px] font-extrabold uppercase tracking-[0.16em] text-[#16845D]">
-                Order submitted
-              </p>
-
-              <h1 className="mt-2 text-2xl font-black tracking-tight text-[#401B13] sm:text-3xl">
-                Your order request is in!
-              </h1>
-
-              <p className="mx-auto mt-3 max-w-md text-xs leading-6 text-[#756B61]">
-                ReMarket has received your order request.
-                Keep your order reference for future enquiries.
-              </p>
-            </div>
-
-            <div className="space-y-5 p-5 sm:p-8">
-
-              {/* ORDER REFERENCE */}
-
-              <div className="rounded-2xl border border-[#FFD9CE] bg-[#FFF1ED] p-5 text-center">
-
-                <p className="text-[10px] font-bold uppercase tracking-wide text-[#91877E]">
-                  Your ReMarket order reference
-                </p>
-
-                <p className="mt-2 break-all text-xl font-black text-[#9F2D18]">
-                  {result.orderCode}
-                </p>
-
-                <p className="mt-2 text-[10px] leading-5 text-[#756B61]">
-                  Keep this reference for order enquiries.
-                </p>
-              </div>
-
-              {/* SELLER REFERENCES */}
-
-              {result.sellerOrderCodes.length > 0 && (
-                <div className="rounded-2xl border border-[#EAE6DF] p-5">
-
-                  <div className="flex items-center gap-2">
-                    <Store className="h-4 w-4 text-[#FF5A36]" />
-
-                    <h2 className="text-xs font-extrabold text-[#401B13]">
-                      Seller order references
-                    </h2>
-                  </div>
-
-                  <div className="mt-4 space-y-2">
-                    {result.sellerOrderCodes.map(
-                      (code, index) => (
-                        <div
-                          key={`${code}-${index}`}
-                          className="flex flex-wrap items-center justify-between gap-3 rounded-xl bg-[#FCFAF6] px-3 py-3"
-                        >
-                          <span className="text-[10px] font-semibold text-[#756B61]">
-                            Seller order {index + 1}
-                          </span>
-
-                          <span className="break-all text-[11px] font-extrabold text-[#9F2D18]">
-                            {code}
-                          </span>
-                        </div>
-                      ),
-                    )}
-                  </div>
-                </div>
-              )}
-
-              {/* PAYMENT INFORMATION */}
-
-              <div className="rounded-2xl border border-[#F0D7B3] bg-[#FFF8EC] p-4">
-
-                <div className="flex items-start gap-3">
-
-                  <ShieldCheck className="mt-0.5 h-5 w-5 shrink-0 text-[#9F2D18]" />
-
-                  <div>
-                    <h2 className="text-xs font-extrabold text-[#5E4730]">
-                      No payment has been collected
-                    </h2>
-
-                    <p className="mt-1.5 text-[11px] leading-6 text-[#796B5C]">
-                      This confirms order submission, not payment
-                      or seller acceptance. ReMarket will
-                      communicate the next steps for payment
-                      and fulfilment separately.
-                    </p>
-                  </div>
-                </div>
-              </div>
-
-              {/* NEXT STEPS */}
-
-              <div className="rounded-2xl border border-[#EAE6DF] p-5">
-
-                <h2 className="text-xs font-extrabold text-[#401B13]">
-                  What happens next?
-                </h2>
-
-                <div className="mt-4 space-y-4">
-
-                  <div className="flex items-start gap-3">
-                    <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-[#FFF1ED] text-[10px] font-extrabold text-[#9F2D18]">
-                      1
-                    </span>
-
-                    <div>
-                      <p className="text-[11px] font-bold text-[#514840]">
-                        Order review
-                      </p>
-
-                      <p className="mt-1 text-[10px] leading-5 text-[#91877E]">
-                        The submitted order will need to be reviewed
-                        and accepted by the relevant sellers.
-                      </p>
-                    </div>
-                  </div>
-
-                  <div className="flex items-start gap-3">
-                    <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-[#FFF1ED] text-[10px] font-extrabold text-[#9F2D18]">
-                      2
-                    </span>
-
-                    <div>
-                      <p className="text-[11px] font-bold text-[#514840]">
-                        Delivery and payment arrangements
-                      </p>
-
-                      <p className="mt-1 text-[10px] leading-5 text-[#91877E]">
-                        The applicable arrangements will be
-                        communicated separately.
-                      </p>
-                    </div>
-                  </div>
-                </div>
-              </div>
-
-              {/* ACTION */}
-
-              <Link
-                href="/shop"
-                className="flex min-h-12 w-full items-center justify-center gap-2 rounded-xl bg-[#FF5A36] px-5 py-3 text-xs font-extrabold text-white transition hover:bg-[#E94E2C]"
-              >
-                Continue shopping
-                <ArrowRight className="h-4 w-4" />
-              </Link>
-
-              <Link
-                href="/"
-                className="flex justify-center text-xs font-bold text-[#9F2D18] hover:text-[#FF5A36]"
-              >
-                Return to ReMarket home
-              </Link>
-
-            </div>
-          </section>
-        </main>
-
-        <MobileBottomNav />
-      </>
-    );
-  }
-
-  /* =====================================================
-     CART LOADING ERROR
-  ===================================================== */
 
   if (loadError) {
     return (
       <>
         <SiteHeader searchMode="PRODUCTS" />
-
         <main className="flex min-h-[65vh] items-center justify-center bg-[#FCFAF6] px-4 pb-28">
-
           <section className="w-full max-w-md rounded-[24px] border border-[#F0C9BF] bg-white p-7 text-center shadow-sm">
-
-            <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-[#FFF1ED] text-[#9F2D18]">
-              <Package className="h-7 w-7" />
-            </div>
-
-            <h1 className="mt-4 text-lg font-extrabold text-[#401B13]">
-              Checkout unavailable
-            </h1>
-
-            <p className="mt-2 text-xs leading-6 text-[#756B61]">
-              {loadError}
-            </p>
-
-            <button
-              type="button"
-              onClick={retryLoadingCart}
-              className="mt-6 inline-flex min-h-11 items-center gap-2 rounded-xl bg-[#FF5A36] px-5 py-3 text-xs font-bold text-white transition hover:bg-[#E94E2C]"
-            >
-              <RefreshCw className="h-4 w-4" />
-              Try again
-            </button>
-
-            <Link
-              href="/cart"
-              className="mt-4 flex justify-center text-xs font-bold text-[#9F2D18]"
-            >
-              Return to cart
-            </Link>
-
+            <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-[#FFF1ED] text-[#9F2D18]"><Package className="h-7 w-7" /></div>
+            <h1 className="mt-4 text-lg font-extrabold text-[#401B13]">Checkout unavailable</h1>
+            <p className="mt-2 text-xs leading-6 text-[#756B61]">{loadError}</p>
+            <button type="button" onClick={() => setRefreshKey((value) => value + 1)} className="mt-6 inline-flex min-h-11 items-center gap-2 rounded-xl bg-[#FF5A36] px-5 py-3 text-xs font-bold text-white hover:bg-[#E94E2C]"><RefreshCw className="h-4 w-4" />Try again</button>
+            <Link href="/cart" className="mt-4 flex justify-center text-xs font-bold text-[#9F2D18]">Return to cart</Link>
           </section>
         </main>
-
         <MobileBottomNav />
       </>
     );
   }
-
-  /* =====================================================
-     EMPTY CART
-  ===================================================== */
 
   if (items.length === 0) {
     return (
       <>
         <SiteHeader searchMode="PRODUCTS" />
-
         <main className="flex min-h-[65vh] items-center justify-center bg-[#FCFAF6] px-4 pb-28">
-
           <section className="w-full max-w-md rounded-[24px] border border-[#EAE6DF] bg-white p-8 text-center shadow-sm">
-
-            <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-2xl bg-[#FFF1ED] text-[#9F2D18]">
-              <PackageOpen className="h-8 w-8" />
-            </div>
-
-            <h1 className="mt-5 text-xl font-black text-[#401B13]">
-              Your cart is empty
-            </h1>
-
-            <p className="mt-2 text-xs leading-6 text-[#756B61]">
-              Add products to your cart before proceeding
-              to checkout.
-            </p>
-
-            <Link
-              href="/shop"
-              className="mt-6 inline-flex min-h-11 items-center gap-2 rounded-xl bg-[#FF5A36] px-5 py-3 text-xs font-bold text-white transition hover:bg-[#E94E2C]"
-            >
-              Explore products
-              <ArrowRight className="h-4 w-4" />
-            </Link>
-
-            <Link
-              href="/cart"
-              className="mt-4 flex justify-center text-xs font-bold text-[#9F2D18]"
-            >
-              Return to cart
-            </Link>
-
+            <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-2xl bg-[#FFF1ED] text-[#9F2D18]"><PackageCheck className="h-8 w-8" /></div>
+            <h1 className="mt-5 text-xl font-black text-[#401B13]">Your cart is empty</h1>
+            <p className="mt-2 text-xs leading-6 text-[#756B61]">Add products to your cart before proceeding to checkout.</p>
+            <Link href="/shop" className="mt-6 inline-flex min-h-11 items-center gap-2 rounded-xl bg-[#FF5A36] px-5 py-3 text-xs font-bold text-white hover:bg-[#E94E2C]">Explore products<ArrowRight className="h-4 w-4" /></Link>
+            <Link href="/cart" className="mt-4 flex justify-center text-xs font-bold text-[#9F2D18]">Return to cart</Link>
           </section>
         </main>
-
         <MobileBottomNav />
       </>
     );
   }
 
   /* =====================================================
-     MAIN CHECKOUT
+     MAIN CHECKOUT EXPERIENCE
   ===================================================== */
+
+  const currentStep: 1 | 2 | 3 = !quote ? 1 : !quoteConfirmed ? 2 : 3;
 
   return (
     <>
       <SiteHeader searchMode="PRODUCTS" />
-
-      <main
-        id="main-content"
-        className="min-h-dvh overflow-x-clip bg-[#FCFAF6] pb-28 text-[#17202A] lg:pb-10"
-      >
-        <div className="mx-auto max-w-[1500px] px-4 pb-10 pt-5 sm:px-6 lg:px-8 lg:pt-7">
-
-          {/* =====================================
-              BREADCRUMB
-          ===================================== */}
-
-          <nav
-            aria-label="Breadcrumb"
-            className="mb-5 flex items-center gap-2 text-[11px] text-[#756B61]"
-          >
-            <Link
-              href="/"
-              className="transition hover:text-[#9F2D18]"
-            >
-              Home
-            </Link>
-
+      <main id="main-content" className="min-h-dvh overflow-x-clip bg-[#FCFAF6] pb-32 text-[#292522] lg:pb-10">
+        <div className="mx-auto max-w-[1440px] px-4 pb-8 pt-5 sm:px-6 lg:px-8 lg:pt-7">
+          {/* Breadcrumb */}
+          <nav aria-label="Breadcrumb" className="mb-5 flex items-center gap-2 text-[11px] text-[#756B61]">
+            <Link href="/" className="hover:text-[#9F2D18]">Home</Link>
             <ChevronRight className="h-3 w-3" />
-
-            <Link
-              href="/cart"
-              className="transition hover:text-[#9F2D18]"
-            >
-              Cart
-            </Link>
-
+            <Link href="/cart" className="hover:text-[#9F2D18]">Cart</Link>
             <ChevronRight className="h-3 w-3" />
-
-            <span className="font-bold text-[#9F2D18]">
-              Checkout
-            </span>
+            <span className="font-bold text-[#9F2D18]">Checkout</span>
           </nav>
 
-          {/* =====================================
-              CHECKOUT HEADER
-          ===================================== */}
-
-          <section className="mb-6 overflow-hidden rounded-[24px] border border-[#F3D6CC] bg-gradient-to-br from-[#FFF1ED] via-white to-[#FFF7ED] p-5 sm:p-7">
-
-            <div className="flex flex-wrap items-center justify-between gap-5">
-
-              <div className="max-w-2xl">
-
-                <div className="inline-flex items-center gap-2 rounded-full border border-[#FFD9CE] bg-white/80 px-3 py-1.5 text-[9px] font-extrabold uppercase tracking-[0.13em] text-[#9F2D18]">
-                  <ShoppingBag className="h-3.5 w-3.5" />
-                  ReMarket secure order submission
-                </div>
-
-                <h1 className="mt-4 text-[29px] font-black tracking-tight text-[#401B13] sm:text-[36px]">
-                  Checkout
-                </h1>
-
-                <p className="mt-2 max-w-xl text-xs leading-6 text-[#756B61] sm:text-sm">
-                  Confirm your delivery information, review
-                  products from each seller, and submit
-                  your order.
-                </p>
-              </div>
-
-              <div className="flex items-center gap-3 rounded-2xl border border-white bg-white/85 px-4 py-3 shadow-sm">
-
-                <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-[#FFF1ED] text-[#9F2D18]">
-                  <Package className="h-5 w-5" />
-                </div>
-
-                <div>
-                  <p className="text-[9px] font-semibold uppercase tracking-wide text-[#91877E]">
-                    Your order
-                  </p>
-
-                  <p className="mt-1 text-sm font-black text-[#401B13]">
-                    {itemCount}{" "}
-                    {itemCount === 1 ? "item" : "items"}
-                  </p>
-                </div>
-              </div>
+          {/* Compact title area */}
+          <div className="mb-6 flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
+            <div>
+              <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-[#FF5A36]">Secure marketplace checkout</p>
+              <h1 className="mt-1 text-2xl font-black tracking-tight text-[#401B13] sm:text-3xl">Checkout</h1>
+              <p className="mt-2 max-w-2xl text-xs leading-6 text-[#756B61]">Confirm your address, choose delivery for each seller’s parcel and pay once for your complete order.</p>
             </div>
-          </section>
+            <Link href="/cart" className="inline-flex min-h-10 items-center gap-2 self-start rounded-xl border border-[#EAE6DF] bg-white px-3 py-2 text-xs font-semibold text-[#756B61] hover:border-[#FFB39F] hover:text-[#9F2D18] sm:self-auto"><ArrowLeft className="h-3.5 w-3.5" />Back to cart</Link>
+          </div>
 
-          {/* =====================================
-              PROGRESS
-          ===================================== */}
-
-          <CheckoutProgress />
-
-          {/* =====================================
-              UNAVAILABLE PRODUCTS
-          ===================================== */}
+          <CheckoutSteps step={currentStep} />
 
           {unavailableItems.length > 0 && (
-            <div
-              role="alert"
-              className="mb-6 rounded-2xl border border-[#F0D7B3] bg-[#FFF8EC] p-4 sm:p-5"
-            >
+            <div role="alert" className="mt-5 rounded-2xl border border-[#F0D7B3] bg-[#FFF8EC] p-4">
               <div className="flex items-start gap-3">
-
-                <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-[#FFF0C9] text-[#96610D]">
-                  <XCircle className="h-4 w-4" />
-                </div>
-
+                <XCircle className="mt-0.5 h-5 w-5 shrink-0 text-[#96610D]" />
                 <div className="min-w-0 flex-1">
-
-                  <h2 className="text-xs font-extrabold text-[#5E4730]">
-                    Some products need attention
-                  </h2>
-
-                  <p className="mt-1 text-[10px] leading-5 text-[#796B5C]">
-                    You cannot submit this order until the
-                    unavailable products are addressed.
-                  </p>
-
+                  <h2 className="text-xs font-extrabold text-[#5E4730]">Some products need attention</h2>
+                  <p className="mt-1 text-[10px] leading-5 text-[#796B5C]">Remove or update unavailable items before requesting delivery prices.</p>
                   <div className="mt-3 space-y-2">
-
-                    {unavailableItems.map((item) => (
-                      <div
-                        key={item.id}
-                        className="rounded-xl bg-white/70 px-3 py-2"
-                      >
-                        <p className="text-[10px] font-bold text-[#5E4730]">
-                          {item.name}
-                        </p>
-
-                        <p className="mt-1 text-[10px] leading-5 text-[#796B5C]">
-                          {item.unavailableReason ??
-                            "This product is unavailable for checkout."}
-                        </p>
-                      </div>
-                    ))}
+                    {unavailableItems.map((item) => <div key={item.id} className="rounded-lg bg-white/80 px-3 py-2"><p className="text-[10px] font-bold">{item.name}</p><p className="mt-1 text-[10px] text-[#796B5C]">{item.unavailableReason}</p></div>)}
                   </div>
-
-                  <Link
-                    href="/cart"
-                    className="mt-4 inline-flex items-center gap-1 text-xs font-extrabold text-[#9F2D18]"
-                  >
-                    Return to cart
-                    <ArrowRight className="h-3.5 w-3.5" />
-                  </Link>
+                  <Link href="/cart" className="mt-3 inline-flex items-center gap-1 text-xs font-bold text-[#9F2D18]">Update cart<ArrowRight className="h-3.5 w-3.5" /></Link>
                 </div>
               </div>
             </div>
           )}
 
-          {/* =====================================
-              CHECKOUT FORM
-          ===================================== */}
-
-          <form
-            onSubmit={handleSubmit}
-            className="grid grid-cols-1 items-start gap-6 lg:grid-cols-[minmax(0,1fr)_390px] xl:gap-8"
-          >
-
-            {/* =================================
-                LEFT COLUMN
-            ================================= */}
-
+          <div className="mt-5 grid grid-cols-1 items-start gap-5 lg:grid-cols-[minmax(0,1fr)_360px] xl:gap-7">
+            {/* Main checkout column */}
             <div className="min-w-0 space-y-5">
-
-              {/* DELIVERY DETAILS */}
-
-              <section className="overflow-hidden rounded-[22px] border border-[#EAE6DF] bg-white">
-
-                <div className="flex items-center gap-3 border-b border-[#F0ECE7] px-5 py-5 sm:px-6">
-
-                  <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-[#FFF1ED] text-[#9F2D18]">
-                    <MapPin className="h-5 w-5" />
+              <form ref={formRef} onSubmit={handlePayNow} className="space-y-5">
+                {/* Delivery address */}
+                <section className="overflow-hidden rounded-2xl border border-[#EAE6DF] bg-white">
+                  <div className="flex items-center justify-between gap-3 border-b border-[#F0ECE7] px-5 py-4 sm:px-6">
+                    <div className="flex items-center gap-3">
+                      <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-[#FFF1ED] text-[#9F2D18]"><MapPin className="h-5 w-5" /></div>
+                      <div>
+                        <p className="text-[9px] font-bold uppercase tracking-[0.13em] text-[#FF5A36]">Step 1 · Address</p>
+                        <h2 className="mt-0.5 text-sm font-extrabold text-[#401B13]">Where should we deliver?</h2>
+                      </div>
+                    </div>
+                    <span className="hidden rounded-full bg-[#F7F4EF] px-3 py-1 text-[9px] font-semibold text-[#756B61] sm:inline-flex">Required for delivery rates</span>
                   </div>
-
-                  <div>
-                    <p className="text-[9px] font-extrabold uppercase tracking-[0.13em] text-[#FF5A36]">
-                      Step 1 · Delivery
-                    </p>
-
-                    <h2 className="mt-1 text-sm font-extrabold text-[#401B13]">
-                      Delivery information
-                    </h2>
-
-                    <p className="mt-1 text-[10px] text-[#91877E]">
-                      Tell us where your order should be delivered.
-                    </p>
-                  </div>
-                </div>
-
-                <div className="grid grid-cols-1 gap-5 p-5 sm:grid-cols-2 sm:p-6">
-
-                  {/* RECIPIENT */}
-
-                  <div>
-                    <label
-                      htmlFor="deliveryRecipient"
-                      className={labelClassName}
-                    >
-                      Recipient's full name
-                      <span className="text-[#FF5A36]"> *</span>
-                    </label>
-
-                    <input
-                      id="deliveryRecipient"
-                      type="text"
-                      name="deliveryRecipient"
-                      value={form.deliveryRecipient}
-                      onChange={(event) =>
-                        updateField(
-                          "deliveryRecipient",
-                          event.target.value,
-                        )
-                      }
-                      placeholder="Who will receive this order?"
-                      autoComplete="name"
-                      minLength={2}
-                      maxLength={100}
-                      required
-                      className={inputClassName}
-                    />
-                  </div>
-
-                  {/* PHONE */}
-
-                  <div>
-                    <label
-                      htmlFor="deliveryPhone"
-                      className={labelClassName}
-                    >
-                      Phone number
-                      <span className="text-[#FF5A36]"> *</span>
-                    </label>
-
-                    <input
-                      id="deliveryPhone"
-                      type="tel"
-                      name="deliveryPhone"
-                      value={form.deliveryPhone}
-                      onChange={(event) =>
-                        updateField(
-                          "deliveryPhone",
-                          event.target.value,
-                        )
-                      }
-                      placeholder="08012345678"
-                      autoComplete="tel"
-                      maxLength={30}
-                      pattern="[+]?[0-9() -]{7,30}"
-                      required
-                      className={inputClassName}
-                    />
-                  </div>
-
-                  {/* ADDRESS */}
-
-                  <div className="sm:col-span-2">
-                    <label
-                      htmlFor="deliveryAddress"
-                      className={labelClassName}
-                    >
-                      Full delivery address
-                      <span className="text-[#FF5A36]"> *</span>
-                    </label>
-
-                    <textarea
-                      id="deliveryAddress"
-                      name="deliveryAddress"
-                      value={form.deliveryAddress}
-                      onChange={(event) =>
-                        updateField(
-                          "deliveryAddress",
-                          event.target.value,
-                        )
-                      }
-                      placeholder="House number, street name, estate or building..."
-                      autoComplete="street-address"
-                      rows={3}
-                      minLength={5}
-                      maxLength={300}
-                      required
-                      className={`${inputClassName} resize-y leading-6`}
-                    />
-                  </div>
-
-                  {/* AREA */}
-
-                  <div>
-                    <label
-                      htmlFor="deliveryArea"
-                      className={labelClassName}
-                    >
-                      Area / Neighbourhood
-                      <span className="text-[#FF5A36]"> *</span>
-                    </label>
-
-                    <input
-                      id="deliveryArea"
-                      type="text"
-                      name="deliveryArea"
-                      value={form.deliveryArea}
-                      onChange={(event) =>
-                        updateField(
-                          "deliveryArea",
-                          event.target.value,
-                        )
-                      }
-                      placeholder="e.g. Ogba, Ikeja"
-                      autoComplete="address-level2"
-                      minLength={2}
-                      maxLength={100}
-                      required
-                      className={inputClassName}
-                    />
-                  </div>
-
-                  {/* LANDMARK */}
-
-                  <div>
-                    <label
-                      htmlFor="deliveryLandmark"
-                      className={labelClassName}
-                    >
-                      Nearby landmark
-                      <span className="ml-1 text-[10px] font-normal text-[#91877E]">
-                        Optional
-                      </span>
-                    </label>
-
-                    <input
-                      id="deliveryLandmark"
-                      type="text"
-                      name="deliveryLandmark"
-                      value={form.deliveryLandmark}
-                      onChange={(event) =>
-                        updateField(
-                          "deliveryLandmark",
-                          event.target.value,
-                        )
-                      }
-                      placeholder="e.g. Near a filling station"
-                      maxLength={150}
-                      className={inputClassName}
-                    />
-                  </div>
-
-                  {/* NOTES */}
-
-                  <div className="sm:col-span-2">
-                    <label
-                      htmlFor="deliveryNotes"
-                      className={labelClassName}
-                    >
-                      Additional delivery instructions
-                      <span className="ml-1 text-[10px] font-normal text-[#91877E]">
-                        Optional
-                      </span>
-                    </label>
-
-                    <textarea
-                      id="deliveryNotes"
-                      name="deliveryNotes"
-                      value={form.deliveryNotes}
-                      onChange={(event) =>
-                        updateField(
-                          "deliveryNotes",
-                          event.target.value,
-                        )
-                      }
-                      placeholder="Anything that will help with delivery..."
-                      rows={2}
-                      maxLength={300}
-                      className={`${inputClassName} resize-y leading-6`}
-                    />
-                  </div>
-                </div>
-              </section>
-
-              {/* DELIVERY ARRANGEMENTS */}
-
-              <section className="rounded-[22px] border border-[#EAE6DF] bg-white p-5 sm:p-6">
-
-                <div className="flex items-start gap-3">
-                  <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-[#FFF1ED] text-[#9F2D18]">
-                    <Truck className="h-5 w-5" />
-                  </div>
-
-                  <div>
-                    <h2 className="text-xs font-extrabold text-[#401B13]">
-                      Delivery arrangements
-                    </h2>
-
-                    <p className="mt-2 text-[11px] leading-6 text-[#756B61]">
-                      Your delivery address will be provided
-                      for fulfilment. Delivery fees and
-                      arrangements are not calculated at this
-                      stage and will be confirmed separately.
-                    </p>
-                  </div>
-                </div>
-              </section>
-
-              {/* PAYMENT NOTICE */}
-
-              <section className="rounded-[22px] border border-[#F0D7B3] bg-[#FFF8EC] p-5 sm:p-6">
-
-                <div className="flex items-start gap-3">
-                  <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-[#FFF0C9] text-[#9F2D18]">
-                    <ShieldCheck className="h-5 w-5" />
-                  </div>
-
-                  <div>
-                    <h2 className="text-xs font-extrabold text-[#5E4730]">
-                      Payment information
-                    </h2>
-
-                    <p className="mt-2 text-[11px] leading-6 text-[#796B5C]">
-                      No payment is collected when you submit
-                      your order. The order is sent for review
-                      and seller acceptance. Payment
-                      arrangements will be communicated
-                      separately.
-                    </p>
-                  </div>
-                </div>
-              </section>
-            </div>
-
-            {/* =================================
-                RIGHT COLUMN: ORDER REVIEW
-            ================================= */}
-
-            <aside className="min-w-0 lg:sticky lg:top-24">
-
-              <section className="overflow-hidden rounded-[22px] border border-[#EAE6DF] bg-white shadow-[0_5px_22px_rgba(23,32,42,0.035)]">
-
-                {/* SUMMARY HEADER */}
-
-                <div className="border-b border-[#F0ECE7] px-5 py-5">
-
-                  <div className="flex items-center justify-between gap-3">
-
+                  <div className="grid grid-cols-1 gap-4 p-5 sm:grid-cols-2 sm:p-6">
                     <div>
-                      <p className="text-[9px] font-extrabold uppercase tracking-[0.13em] text-[#FF5A36]">
-                        Step 2 · Review
-                      </p>
-
-                      <h2 className="mt-1 text-sm font-extrabold text-[#401B13]">
-                        Your order
-                      </h2>
+                      <label htmlFor="deliveryRecipient" className={labelClassName}>Recipient full name <span className="text-[#FF5A36]">*</span></label>
+                      <input id="deliveryRecipient" name="deliveryRecipient" value={form.deliveryRecipient} onChange={(event) => updateField("deliveryRecipient", event.target.value)} placeholder="Name of the person receiving the order" autoComplete="name" minLength={2} maxLength={100} required className={inputClassName} />
                     </div>
+                    <div>
+                      <label htmlFor="deliveryPhone" className={labelClassName}>Phone number <span className="text-[#FF5A36]">*</span></label>
+                      <input id="deliveryPhone" name="deliveryPhone" type="tel" value={form.deliveryPhone} onChange={(event) => updateField("deliveryPhone", event.target.value)} placeholder="08012345678" autoComplete="tel" maxLength={30} pattern="[+]?[0-9() -]{7,30}" required className={inputClassName} />
+                    </div>
+                    <div className="sm:col-span-2">
+                      <label htmlFor="deliveryAddress" className={labelClassName}>Street address, building or estate <span className="text-[#FF5A36]">*</span></label>
+                      <textarea id="deliveryAddress" name="deliveryAddress" value={form.deliveryAddress} onChange={(event) => updateField("deliveryAddress", event.target.value)} placeholder="House number, street name, estate or building" autoComplete="street-address" rows={2} minLength={5} maxLength={300} required className={`${inputClassName} resize-y leading-6`} />
+                    </div>
+                    <div>
+                      <label htmlFor="deliveryArea" className={labelClassName}>Area / neighbourhood <span className="text-[#FF5A36]">*</span></label>
+                      <input id="deliveryArea" name="deliveryArea" value={form.deliveryArea} onChange={(event) => updateField("deliveryArea", event.target.value)} placeholder="e.g. Ogba, Ikeja" autoComplete="address-level2" minLength={2} maxLength={100} required className={inputClassName} />
+                    </div>
+                    <div>
+                      <label htmlFor="deliveryLandmark" className={labelClassName}>Nearby landmark <span className="font-normal text-[#91877E]">(optional)</span></label>
+                      <input id="deliveryLandmark" name="deliveryLandmark" value={form.deliveryLandmark} onChange={(event) => updateField("deliveryLandmark", event.target.value)} placeholder="e.g. Near a filling station" maxLength={150} className={inputClassName} />
+                    </div>
+                    <div className="sm:col-span-2">
+                      <label htmlFor="deliveryNotes" className={labelClassName}>Delivery instructions <span className="font-normal text-[#91877E]">(optional)</span></label>
+                      <textarea id="deliveryNotes" name="deliveryNotes" value={form.deliveryNotes} onChange={(event) => updateField("deliveryNotes", event.target.value)} placeholder="Gate instructions or other useful delivery details" rows={2} maxLength={300} className={`${inputClassName} resize-y leading-6`} />
+                    </div>
+                    <div className="sm:col-span-2 flex flex-col gap-2 rounded-xl bg-[#FCFAF6] p-3 sm:flex-row sm:items-center sm:justify-between">
+                      <div className="flex items-start gap-2">
+                        <ShieldCheck className="mt-0.5 h-4 w-4 shrink-0 text-[#16845D]" />
+                        <p className="text-[10px] leading-5 text-[#756B61]">Your delivery details are shared with the assigned courier only as required to fulfil this order.</p>
+                      </div>
+                      <button type="button" onClick={handleGetDeliveryRates} disabled={!validCart || quoting} className="inline-flex min-h-11 shrink-0 items-center justify-center gap-2 rounded-xl bg-[#FF5A36] px-4 py-3 text-xs font-bold text-white transition hover:bg-[#E94E2C] disabled:cursor-not-allowed disabled:bg-[#EAE6DF] disabled:text-[#91877E]">
+                        {quoting ? <><LoaderCircle className="h-4 w-4 animate-spin" />Finding delivery options</> : <><Truck className="h-4 w-4" />Get delivery options</>}
+                      </button>
+                    </div>
+                  </div>
+                </section>
 
-                    <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-[#FFF1ED] text-[#9F2D18]">
-                      <ShoppingBag className="h-5 w-5" />
+                {/* Delivery choices */}
+                <section className="overflow-hidden rounded-2xl border border-[#EAE6DF] bg-white">
+                  <div className="flex items-center gap-3 border-b border-[#F0ECE7] px-5 py-4 sm:px-6">
+                    <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-[#FFF1ED] text-[#9F2D18]"><Truck className="h-5 w-5" /></div>
+                    <div>
+                      <p className="text-[9px] font-bold uppercase tracking-[0.13em] text-[#FF5A36]">Step 2 · Delivery service</p>
+                      <h2 className="mt-0.5 text-sm font-extrabold text-[#401B13]">Choose delivery for each seller</h2>
+                      <p className="mt-1 text-[10px] text-[#91877E]">Items from different sellers may arrive in separate packages.</p>
                     </div>
                   </div>
 
-                  <div className="mt-4 flex items-center justify-between rounded-xl bg-[#FCFAF6] px-3 py-3">
-                    <span className="text-[10px] font-semibold text-[#756B61]">
-                      Products
-                    </span>
+                  {!quote && (
+                    <div className="px-5 py-8 text-center sm:px-8">
+                      <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-xl bg-[#FCFAF6] text-[#9F2D18]"><Package className="h-6 w-6" /></div>
+                      <p className="mt-3 text-xs font-bold text-[#401B13]">Delivery prices haven’t been calculated yet</p>
+                      <p className="mx-auto mt-1 max-w-sm text-[10px] leading-5 text-[#91877E]">Enter your delivery address above and select “Get delivery options” to see available couriers and prices.</p>
+                    </div>
+                  )}
 
-                    <span className="text-xs font-extrabold text-[#401B13]">
-                      {itemCount}{" "}
-                      {itemCount === 1 ? "item" : "items"}
-                    </span>
-                  </div>
-                </div>
-
-                {/* SELLER GROUPS */}
-
-                <div className="max-h-[520px] space-y-5 overflow-y-auto p-4 sm:p-5">
-
-                  {groups.map((group) => (
-                    <section
-                      key={group.businessId}
-                      className="overflow-hidden rounded-xl border border-[#EAE6DF]"
-                    >
-
-                      {/* SELLER HEADER */}
-
-                      <div className="flex items-center gap-2 border-b border-[#F0ECE7] bg-[#FCFAF6] px-3 py-3">
-
-                        <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-white text-[#9F2D18]">
-                          <Store className="h-4 w-4" />
+                  {quote && (
+                    <div className="space-y-4 p-4 sm:p-5">
+                      <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl bg-[#FCFAF6] px-3 py-3">
+                        <div>
+                          <p className="text-[10px] font-bold text-[#401B13]">Delivery options found</p>
+                          <p className="mt-0.5 text-[9px] text-[#91877E]">Choose one service for each seller package.</p>
                         </div>
-
-                        <div className="min-w-0 flex-1">
-                          <p className="text-[8px] font-semibold uppercase tracking-wide text-[#91877E]">
-                            Seller
-                          </p>
-
-                          <p className="mt-0.5 truncate text-[10px] font-extrabold text-[#401B13]">
-                            {group.businessName}
-                          </p>
-                        </div>
-
-                        <span className="shrink-0 text-[9px] font-semibold text-[#91877E]">
-                          {group.items.length}{" "}
-                          {group.items.length === 1
-                            ? "product"
-                            : "products"}
-                        </span>
+                        <button type="button" onClick={handleGetDeliveryRates} disabled={quoting} className="inline-flex items-center gap-1.5 text-[10px] font-bold text-[#9F2D18] hover:text-[#FF5A36] disabled:opacity-50"><RefreshCw className="h-3.5 w-3.5" />Refresh rates</button>
                       </div>
 
-                      {/* SELLER PRODUCTS */}
-
-                      <div className="divide-y divide-[#F0ECE7] px-3">
-
-                        {group.items.map((item) => {
-                          const originalLineTotal =
-                            item.originalPrice !== null
-                              ? item.originalPrice *
-                                item.quantity
-                              : null;
-
-                          const validOriginalLineTotal =
-                            originalLineTotal !== null &&
-                            Number.isSafeInteger(
-                              originalLineTotal,
-                            ) &&
-                            originalLineTotal >
-                              (item.lineTotal ?? 0);
-
-                          return (
-                            <div
-                              key={item.id}
-                              className="flex gap-3 py-3"
-                            >
-
-                              {/* IMAGE */}
-
-                              <div className="relative flex h-[62px] w-[62px] shrink-0 items-center justify-center overflow-hidden rounded-xl border border-[#EAE6DF] bg-[#FCFAF6]">
-
-                                {item.imageUrl ? (
-                                  <img
-                                    src={item.imageUrl}
-                                    alt={item.name}
-                                    loading="lazy"
-                                    className="h-full w-full object-cover"
-                                  />
-                                ) : (
-                                  <Package className="h-6 w-6 text-[#B6A99E]" />
-                                )}
-
-                                <span className="absolute -right-0.5 -top-0.5 flex h-5 min-w-5 items-center justify-center rounded-full border border-white bg-[#FF5A36] px-1 text-[8px] font-extrabold text-white">
-                                  {item.quantity}
-                                </span>
-                              </div>
-
-                              {/* ITEM INFORMATION */}
-
-                              <div className="min-w-0 flex-1">
-
-                                <p className="line-clamp-2 text-[10px] font-bold leading-5 text-[#292522]">
-                                  {item.name}
-                                </p>
-
-                                <p className="mt-1 text-[9px] text-[#91877E]">
-                                  Qty: {item.quantity}
-                                </p>
-
-                                {!item.purchasable && (
-                                  <p className="mt-1 text-[9px] leading-4 text-red-600">
-                                    {item.unavailableReason ??
-                                      "Unavailable for checkout"}
-                                  </p>
-                                )}
-
-                                <div className="mt-2 flex flex-wrap items-center justify-between gap-1">
-
-                                  <span className="text-[9px] text-[#91877E]">
-                                    {item.unitPrice !== null
-                                      ? `${formatNaira(item.unitPrice)} each`
-                                      : "Price unavailable"}
-                                  </span>
-
-                                  <div className="text-right">
-                                    {validOriginalLineTotal && (
-                                      <p className="text-[9px] text-[#91877E] line-through">
-                                        {formatNaira(
-                                          originalLineTotal!,
-                                        )}
-                                      </p>
-                                    )}
-
-                                    <p
-                                      className={`text-[11px] font-extrabold ${
-                                        item.purchasable
-                                          ? "text-[#9F2D18]"
-                                          : "text-[#91877E]"
-                                      }`}
-                                    >
-                                      {item.lineTotal !== null
-                                        ? formatNaira(
-                                            item.lineTotal,
-                                          )
-                                        : "Unavailable"}
-                                    </p>
-                                  </div>
+                      {quote.packages.map((pack, index) => {
+                        const group = groups.find((item) => item.businessId === pack.businessId);
+                        const selectedKey = selectedRateKeys[pack.businessId] ?? "";
+                        return (
+                          <section key={pack.businessId} className="overflow-hidden rounded-xl border border-[#EAE6DF]">
+                            <div className="flex items-center justify-between gap-3 border-b border-[#F0ECE7] bg-[#FCFAF6] px-3 py-3 sm:px-4">
+                              <div className="flex min-w-0 items-center gap-2.5">
+                                <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-white text-[#9F2D18]"><Store className="h-4 w-4" /></span>
+                                <div className="min-w-0">
+                                  <p className="text-[8px] font-semibold uppercase tracking-wide text-[#91877E]">Package {index + 1} · Seller</p>
+                                  <p className="truncate text-[11px] font-extrabold text-[#401B13]">{group?.businessName ?? pack.businessName}</p>
                                 </div>
                               </div>
+                              <span className="shrink-0 text-[9px] text-[#91877E]">{group?.items.reduce((sum, item) => sum + item.quantity, 0) ?? pack.items.length} item(s)</span>
+                            </div>
+                            <div className="grid gap-2 p-3 sm:grid-cols-2 sm:p-4">
+                              {pack.rates.map((rate) => {
+                                const key = rateKey(rate);
+                                const selected = selectedKey === key;
+                                return (
+                                  <label key={key} className={`flex cursor-pointer gap-3 rounded-xl border p-3 transition ${selected ? "border-[#FF5A36] bg-[#FFF7F4] ring-1 ring-[#FF5A36]/20" : "border-[#EAE6DF] bg-white hover:border-[#FFB39F]"}`}>
+                                    <input type="radio" name={`courier-${pack.businessId}`} value={key} checked={selected} onChange={() => selectCourier(pack.businessId, key)} className="mt-1 h-4 w-4 accent-[#FF5A36]" />
+                                    <span className="min-w-0 flex-1">
+                                      <span className="flex flex-wrap items-center justify-between gap-2">
+                                        <span className="text-[11px] font-extrabold text-[#401B13]">{rate.courierName}</span>
+                                        <span className="text-xs font-black text-[#9F2D18]">{formatNaira(rate.amount)}</span>
+                                      </span>
+                                      {rate.serviceType && <span className="mt-1 block text-[9px] text-[#756B61]">{rate.serviceType}</span>}
+                                      <span className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-[9px] text-[#91877E]">
+                                        <span className="inline-flex items-center gap-1"><Clock3 className="h-3 w-3" />{formatEta(rate.eta)}</span>
+                                        {rate.pickupEta && <span>Pickup: {rate.pickupEta}</span>}
+                                      </span>
+                                      {selected && <span className="mt-2 inline-flex items-center gap-1 text-[9px] font-bold text-[#16845D]"><CheckCircle2 className="h-3 w-3" />Selected</span>}
+                                    </span>
+                                  </label>
+                                );
+                              })}
+                            </div>
+                          </section>
+                        );
+                      })}
+
+                      {!quoteMatchesCart && <p role="alert" className="rounded-lg bg-[#FFF8EC] px-3 py-2 text-[10px] text-[#8A5A13]">Your cart has changed since these rates were calculated. Refresh delivery rates before continuing.</p>}
+                      {quoteAlmostExpired && <p className="rounded-lg bg-[#FFF8EC] px-3 py-2 text-[10px] text-[#8A5A13]">These delivery rates expire soon. Confirm and complete checkout now, or refresh the rates.</p>}
+                      {quoteExpired && <p role="alert" className="rounded-lg bg-red-50 px-3 py-2 text-[10px] text-red-700">These delivery rates have expired. Refresh rates to continue.</p>}
+
+                      <div className="flex flex-col gap-3 rounded-xl border border-[#EAE6DF] p-4 sm:flex-row sm:items-center sm:justify-between">
+                        <div>
+                          <p className="text-[10px] font-bold text-[#401B13]">Selected delivery total</p>
+                          <p className="mt-1 text-lg font-black text-[#9F2D18]">{formatNaira(selectedDeliveryFee)}</p>
+                          <p className="mt-0.5 text-[9px] text-[#91877E]">One delivery option is charged for each seller package.</p>
+                        </div>
+                        <button type="button" onClick={handleConfirmDeliveryOptions} disabled={!quoteMatchesCart || !allPackagesSelected || quoteExpired || confirmingRates} className="inline-flex min-h-11 items-center justify-center gap-2 rounded-xl border border-[#FF5A36] bg-white px-4 py-3 text-xs font-bold text-[#9F2D18] transition hover:bg-[#FFF1ED] disabled:cursor-not-allowed disabled:border-[#EAE6DF] disabled:text-[#A69D94]">
+                          {confirmingRates ? <><LoaderCircle className="h-4 w-4 animate-spin" />Saving choices</> : quoteConfirmed ? <><CheckCircle2 className="h-4 w-4" />Delivery confirmed</> : <>Confirm delivery choices<ArrowRight className="h-4 w-4" /></>}
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </section>
+
+                {/* Payment notice */}
+                <section className="rounded-2xl border border-[#DDECE4] bg-[#F4FBF7] p-4 sm:p-5">
+                  <div className="flex items-start gap-3">
+                    <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-white text-[#16845D]"><ShieldCheck className="h-5 w-5" /></div>
+                    <div>
+                      <h2 className="text-xs font-extrabold text-[#245B43]">Secure payment with Paystack</h2>
+                      <p className="mt-1 text-[10px] leading-5 text-[#557565]">You’ll be redirected to Paystack to pay for all products and selected deliveries in one checkout. ReMarket confirms payment with Paystack before processing your order.</p>
+                      <div className="mt-2 flex flex-wrap gap-2 text-[9px] font-semibold text-[#557565]"><span className="rounded-full bg-white px-2 py-1">Cards</span><span className="rounded-full bg-white px-2 py-1">Bank transfer</span><span className="rounded-full bg-white px-2 py-1">USSD</span></div>
+                    </div>
+                  </div>
+                </section>
+
+                {quoteError && <div role="alert" className="rounded-xl border border-red-200 bg-red-50 p-3 text-[10px] leading-5 text-red-700">{quoteError}</div>}
+                {submitError && <div role="alert" className="rounded-xl border border-red-200 bg-red-50 p-3 text-[10px] leading-5 text-red-700">{submitError}</div>}
+              </form>
+            </div>
+
+            {/* Order summary */}
+            <aside className="min-w-0 lg:sticky lg:top-24">
+              <section className="overflow-hidden rounded-2xl border border-[#EAE6DF] bg-white shadow-[0_5px_22px_rgba(23,32,42,0.035)]">
+                <div className="flex items-center justify-between gap-3 border-b border-[#F0ECE7] px-5 py-4">
+                  <div><p className="text-[9px] font-bold uppercase tracking-[0.13em] text-[#FF5A36]">Order summary</p><h2 className="mt-0.5 text-sm font-extrabold text-[#401B13]">Your items</h2></div>
+                  <span className="rounded-full bg-[#FFF1ED] px-2.5 py-1 text-[9px] font-bold text-[#9F2D18]">{itemCount} items</span>
+                </div>
+
+                <div className="max-h-[420px] space-y-4 overflow-y-auto p-4">
+                  {groups.map((group) => (
+                    <section key={group.businessId} className="overflow-hidden rounded-xl border border-[#EAE6DF]">
+                      <div className="flex items-center gap-2 border-b border-[#F0ECE7] bg-[#FCFAF6] px-3 py-2.5"><Store className="h-3.5 w-3.5 text-[#9F2D18]" /><p className="min-w-0 flex-1 truncate text-[10px] font-bold text-[#401B13]">{group.businessName}</p><span className="text-[8px] text-[#91877E]">{group.items.length} product(s)</span></div>
+                      <div className="divide-y divide-[#F0ECE7] px-3">
+                        {group.items.map((item) => {
+                          const oldLine = item.originalPrice !== null ? item.originalPrice * item.quantity : null;
+                          const showOld = oldLine !== null && Number.isSafeInteger(oldLine) && oldLine > (item.lineTotal ?? 0);
+                          return (
+                            <div key={item.id} className="flex gap-3 py-3">
+                              <div className="relative flex h-14 w-14 shrink-0 items-center justify-center overflow-hidden rounded-lg border border-[#EAE6DF] bg-[#FCFAF6]">{item.imageUrl ? <img src={item.imageUrl} alt={item.name} loading="lazy" className="h-full w-full object-cover" /> : <Package className="h-5 w-5 text-[#B6A99E]" />}<span className="absolute -right-0.5 -top-0.5 flex h-4 min-w-4 items-center justify-center rounded-full border border-white bg-[#FF5A36] px-1 text-[8px] font-bold text-white">{item.quantity}</span></div>
+                              <div className="min-w-0 flex-1"><p className="line-clamp-2 text-[10px] font-semibold leading-4 text-[#292522]">{item.name}</p><p className="mt-1 text-[9px] text-[#91877E]">Qty {item.quantity}</p><div className="mt-1 flex items-center justify-between gap-2"><span className="text-[9px] text-[#91877E]">{item.unitPrice !== null ? `${formatNaira(item.unitPrice)} each` : "Price unavailable"}</span><span className="text-[10px] font-extrabold text-[#401B13]">{item.lineTotal !== null ? formatNaira(item.lineTotal) : "—"}</span></div>{showOld && <p className="text-right text-[9px] text-[#91877E] line-through">{formatNaira(oldLine!)}</p>}</div>
                             </div>
                           );
                         })}
@@ -2113,140 +1146,41 @@ export default function CheckoutPage() {
                   ))}
                 </div>
 
-                {/* ORDER TOTALS */}
-
                 <div className="border-t border-[#F0ECE7] p-5">
-
                   <div className="space-y-3">
-
-                    <div className="flex items-center justify-between gap-3">
-                      <span className="text-[11px] text-[#756B61]">
-                        Products subtotal
-                      </span>
-
-                      <span className="text-xs font-bold text-[#292522]">
-                        {formatNaira(subtotal)}
-                      </span>
-                    </div>
-
-                    <div className="flex items-center justify-between gap-3">
-                      <span className="text-[11px] text-[#756B61]">
-                        Delivery fee
-                      </span>
-
-                      <span className="text-[10px] font-semibold text-[#91877E]">
-                        To be confirmed
-                      </span>
-                    </div>
+                    <div className="flex items-center justify-between gap-3 text-[11px]"><span className="text-[#756B61]">Products subtotal</span><span className="font-bold text-[#292522]">{formatNaira(subtotal)}</span></div>
+                    <div className="flex items-center justify-between gap-3 text-[11px]"><span className="text-[#756B61]">Delivery</span><span className="font-bold text-[#292522]">{quote && allPackagesSelected ? formatNaira(selectedDeliveryFee) : "Choose options"}</span></div>
                   </div>
-
                   <div className="my-4 h-px bg-[#EAE6DF]" />
+                  <div className="flex items-end justify-between gap-3"><div><p className="text-[9px] font-bold uppercase tracking-[0.12em] text-[#91877E]">Total to pay</p><p className="mt-1 text-2xl font-black tracking-tight text-[#9F2D18]">{quote && allPackagesSelected ? formatNaira(displayedTotal) : formatNaira(subtotal)}</p></div><span className="mb-1 rounded-full bg-[#F7F4EF] px-2.5 py-1 text-[8px] font-bold text-[#756B61]">NGN</span></div>
+                  {!quoteConfirmed && <p className="mt-2 text-[9px] leading-5 text-[#91877E]">{quote ? "Confirm each seller’s delivery service to calculate your final amount." : "Delivery charges are not included yet. Get delivery options to calculate the final total."}</p>}
+                  {quoteConfirmed && <p className="mt-2 text-[9px] leading-5 text-[#16845D]">Delivery selections confirmed. This is the amount that will be sent to Paystack.</p>}
 
-                  <div>
-                    <p className="text-[9px] font-extrabold uppercase tracking-[0.13em] text-[#91877E]">
-                      Product order subtotal
-                    </p>
-
-                    <p className="mt-1 text-[26px] font-black tracking-tight text-[#9F2D18]">
-                      {formatNaira(subtotal)}
-                    </p>
-
-                    <p className="mt-1 text-[9px] leading-5 text-[#91877E]">
-                      Delivery charges are not included.
-                      This is not a final payment amount.
-                    </p>
-                  </div>
-
-                  {/* CHECKOUT ERROR */}
-
-                  {submitError && (
-                    <div
-                      role="alert"
-                      className="mt-4 rounded-xl border border-red-200 bg-red-50 p-3 text-[10px] leading-5 text-red-700"
-                    >
-                      {submitError}
-                    </div>
-                  )}
-
-                  {/* SUBMIT */}
-
-                  <button
-                    type="submit"
-                    disabled={!canCheckout}
-                    className="mt-5 flex min-h-12 w-full items-center justify-center gap-2 rounded-xl bg-[#FF5A36] px-4 py-3 text-xs font-extrabold text-white shadow-sm transition hover:bg-[#E94E2C] disabled:cursor-not-allowed disabled:bg-[#EAE6DF] disabled:text-[#91877E]"
-                  >
-                    {submitting ? (
-                      <>
-                        <LoaderCircle className="h-4 w-4 animate-spin" />
-                        Submitting order...
-                      </>
-                    ) : (
-                      <>
-                        Submit order
-                        <ArrowRight className="h-4 w-4" />
-                      </>
-                    )}
+                  <button type="button" onClick={() => formRef.current?.requestSubmit()} disabled={!canSubmitPayment} className="mt-5 flex min-h-12 w-full items-center justify-center gap-2 rounded-xl bg-[#FF5A36] px-4 py-3 text-xs font-extrabold text-white shadow-sm transition hover:bg-[#E94E2C] disabled:cursor-not-allowed disabled:bg-[#EAE6DF] disabled:text-[#91877E]">
+                    {submitting ? <><LoaderCircle className="h-4 w-4 animate-spin" />Connecting to Paystack</> : <><CreditCard className="h-4 w-4" />Pay securely with Paystack<ArrowRight className="h-4 w-4" /></>}
                   </button>
 
-                  {!canCheckout &&
-                    !submitting && (
-                      <p className="mt-3 text-center text-[9px] leading-5 text-[#B42318]">
-                        {unavailableItems.length > 0
-                          ? "Resolve unavailable products before submitting."
-                          : !validSubtotal
-                            ? "The order subtotal is not valid."
-                            : "Check your cart before continuing."}
-                      </p>
-                    )}
-
-                  <p className="mt-3 text-center text-[9px] leading-5 text-[#91877E]">
-                    No payment will be collected when
-                    you submit this order.
-                  </p>
+                  {!validCart && <p className="mt-2 text-center text-[9px] leading-5 text-[#B42318]">Resolve unavailable products before checkout.</p>}
+                  {validCart && !quote && <p className="mt-2 text-center text-[9px] leading-5 text-[#91877E]">Enter your address and get delivery options to continue.</p>}
+                  {quote && !quoteConfirmed && <p className="mt-2 text-center text-[9px] leading-5 text-[#91877E]">Confirm your delivery choices before payment.</p>}
+                  <div className="mt-4 flex items-start gap-2 rounded-xl bg-[#FCFAF6] p-3"><ShieldCheck className="mt-0.5 h-3.5 w-3.5 shrink-0 text-[#16845D]" /><p className="text-[9px] leading-5 text-[#91877E]">Your payment is processed on Paystack. ReMarket never receives or stores your card PIN or full card details.</p></div>
+                  <Link href="/cart" className="mt-4 flex min-h-10 items-center justify-center gap-2 text-[10px] font-bold text-[#756B61] hover:text-[#9F2D18]"><ArrowLeft className="h-3.5 w-3.5" />Back to cart</Link>
                 </div>
               </section>
-
-              {/* BACK TO CART */}
-
-              <Link
-                href="/cart"
-                className="mt-4 flex min-h-11 items-center justify-center gap-2 rounded-xl border border-[#EAE6DF] bg-white px-4 py-3 text-xs font-bold text-[#756B61] transition hover:border-[#FFB39F] hover:text-[#9F2D18]"
-              >
-                <ArrowLeft className="h-4 w-4" />
-                Return to cart
-              </Link>
-
-              {/* TRUST INFORMATION */}
-
-              <div className="mt-4 flex items-start gap-2 rounded-xl bg-white p-3">
-                <CircleCheck className="mt-0.5 h-4 w-4 shrink-0 text-[#16845D]" />
-
-                <p className="text-[9px] leading-5 text-[#91877E]">
-                  Your order details and delivery information
-                  are submitted together for processing.
-                </p>
-              </div>
             </aside>
-          </form>
+          </div>
 
-          {/* =====================================
-              FOOTER
-          ===================================== */}
+          {/* Mobile fixed summary/action bar */}
+          <div className="fixed inset-x-0 bottom-[64px] z-30 border-t border-[#EAE6DF] bg-white/95 px-4 py-3 shadow-[0_-8px_24px_rgba(23,32,42,0.07)] backdrop-blur lg:hidden">
+            <div className="mx-auto flex max-w-3xl items-center gap-3">
+              <div className="min-w-0 flex-1"><p className="text-[9px] font-semibold text-[#91877E]">{quoteConfirmed ? "Total to pay" : "Products subtotal"}</p><p className="truncate text-lg font-black text-[#9F2D18]">{formatNaira(quoteConfirmed ? displayedTotal : subtotal)}</p></div>
+              <button type="button" onClick={() => formRef.current?.requestSubmit()} disabled={!canSubmitPayment} className="inline-flex min-h-11 min-w-[158px] items-center justify-center gap-2 rounded-xl bg-[#FF5A36] px-4 py-3 text-[11px] font-extrabold text-white disabled:cursor-not-allowed disabled:bg-[#EAE6DF] disabled:text-[#91877E]">{submitting ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <CreditCard className="h-4 w-4" />}{submitting ? "Connecting…" : "Pay with Paystack"}</button>
+            </div>
+          </div>
 
-          <footer className="mt-12 flex items-center justify-center gap-3 pb-4 text-[10px] text-[#9B9188]">
-
-            <span className="h-px w-12 bg-[#EAE6DF]" />
-
-            <span>
-              ReMarket · Find it nearby
-            </span>
-
-            <span className="h-px w-12 bg-[#EAE6DF]" />
-
-          </footer>
+          <footer className="mt-10 hidden items-center justify-center gap-3 pb-4 text-[10px] text-[#9B9188] lg:flex"><span className="h-px w-12 bg-[#EAE6DF]" /><span>ReMarket · Find it nearby</span><span className="h-px w-12 bg-[#EAE6DF]" /></footer>
         </div>
       </main>
-
       <MobileBottomNav />
     </>
   );

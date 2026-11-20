@@ -27,6 +27,7 @@ import {
   Sparkles,
   LayoutDashboard,
   ExternalLink,
+  Wallet,
 } from "lucide-react";
 
 type SellerProfile = {
@@ -807,6 +808,26 @@ export default function SellerProfilePage() {
                               aria-hidden="true"
                               className="h-4 w-4 shrink-0 text-gray-400 transition group-hover:translate-x-0.5 group-hover:text-[#9F2D18]"
                             />
+                          </Link>
+
+                          {/* PAYOUT AND DELIVERY SETUP */}
+
+                          <Link
+                            href="/seller/payout-settings"
+                            className="group flex min-w-0 items-center gap-3 rounded-xl border border-[#EAE6DF] bg-white p-3.5 transition hover:border-[#FFB39F] hover:bg-[#FFF7ED] focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-[#FF5A36]/20"
+                          >
+                            <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-[#FFF0EB] text-[#FF5A36] transition group-hover:bg-[#FFE3D8]">
+                              <Wallet aria-hidden="true" className="h-5 w-5" />
+                            </span>
+                            <span className="min-w-0 flex-1">
+                              <span className="block text-sm font-bold text-[#17202A]">
+                                Payout &amp; delivery setup
+                              </span>
+                              <span className="mt-1 block text-[11px] leading-5 text-gray-500">
+                                Verify your bank account and courier pickup address.
+                              </span>
+                            </span>
+                            <ChevronRight aria-hidden="true" className="h-4 w-4 shrink-0 text-gray-400 transition group-hover:translate-x-0.5 group-hover:text-[#9F2D18]" />
                           </Link>
 
                           {/* BUSINESS CLAIMS */}

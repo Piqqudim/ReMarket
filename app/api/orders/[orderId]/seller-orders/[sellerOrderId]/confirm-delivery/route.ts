@@ -10,6 +10,10 @@ import {
 import { requireBuyer } from "@/lib/buyer-auth";
 import { prisma } from "@/lib/prisma";
 import { createNotification } from "@/lib/notifications";
+import {
+  createSettlementAfterBuyerConfirmation,
+  initiateQueuedSellerPayout,
+} from "@/lib/seller-settlement";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -116,7 +120,9 @@ type RouteContext = {
 type ConfirmResult =
   | { kind: "NOT_FOUND" }
   | { kind: "INVALID_STATUS"; currentStatus: SellerOrderStatus }
+  | { kind: "SHIPMENT_REVIEW"; shipmentCount: number; deliveredShipmentCount: number }
   | { kind: "CONFLICT" }
+  | { kind: "PAYMENT_REVIEW"; reason: string }
   | {
       kind: "ALREADY_COMPLETED";
       sellerId: string;
@@ -138,6 +144,15 @@ type ConfirmResult =
       sellerOrderCompletedAt: Date;
       parentOrderStatus: OrderStatus;
       parentOrderCompletedAt: Date | null;
+      settlement: {
+        id: string;
+        status: string;
+        grossSalesAmount: number;
+        commissionRateBps: number;
+        commissionAmount: number;
+        netPayoutAmount: number;
+        payoutId: string | null;
+      };
     };
 
 function isSerializationConflict(error: unknown): boolean {
@@ -155,6 +170,14 @@ class DeliveryConfirmationConflictError extends Error {
   constructor() {
     super("Delivery confirmation encountered a concurrent order update.");
     this.name = "DeliveryConfirmationConflictError";
+  }
+}
+
+
+class DeliverySettlementError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "DeliverySettlementError";
   }
 }
 
@@ -194,6 +217,7 @@ async function confirmSellerOrderDelivery(input: {
               sellerOrderCode: true,
               status: true,
               completedAt: true,
+              shipments: { select: { status: true } },
             },
           });
 
@@ -217,6 +241,20 @@ async function confirmSellerOrderDelivery(input: {
             return {
               kind: "INVALID_STATUS",
               currentStatus: sellerOrder.status,
+            };
+          }
+
+          const deliveredShipmentCount = sellerOrder.shipments.filter(
+            (shipment) => shipment.status === "DELIVERED",
+          ).length;
+          if (
+            sellerOrder.shipments.length === 0 ||
+            deliveredShipmentCount !== sellerOrder.shipments.length
+          ) {
+            return {
+              kind: "SHIPMENT_REVIEW",
+              shipmentCount: sellerOrder.shipments.length,
+              deliveredShipmentCount,
             };
           }
 
@@ -269,6 +307,17 @@ async function confirmSellerOrderDelivery(input: {
             throw new DeliveryConfirmationConflictError();
           }
 
+          let settlement: Awaited<ReturnType<typeof createSettlementAfterBuyerConfirmation>>;
+          try {
+            settlement = await createSettlementAfterBuyerConfirmation(tx, sellerOrder.id);
+          } catch (settlementError) {
+            throw new DeliverySettlementError(
+              settlementError instanceof Error
+                ? settlementError.message
+                : "The seller settlement could not be prepared.",
+            );
+          }
+
           return {
             kind: "SUCCESS",
             sellerId: sellerOrder.sellerId,
@@ -279,11 +328,23 @@ async function confirmSellerOrderDelivery(input: {
             sellerOrderCompletedAt: now,
             parentOrderStatus: parentStatus,
             parentOrderCompletedAt: parentCompletedAt,
+            settlement: {
+              id: settlement.settlementId,
+              status: settlement.status,
+              grossSalesAmount: settlement.grossSalesAmount,
+              commissionRateBps: settlement.commissionRateBps,
+              commissionAmount: settlement.commissionAmount,
+              netPayoutAmount: settlement.netPayoutAmount,
+              payoutId: settlement.payoutId,
+            },
           };
         },
         { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
       );
     } catch (error) {
+      if (error instanceof DeliverySettlementError) {
+        return { kind: "PAYMENT_REVIEW", reason: error.message };
+      }
       if (
         error instanceof DeliveryConfirmationConflictError ||
         isSerializationConflict(error)
@@ -340,6 +401,27 @@ export async function PATCH(_request: Request, context: RouteContext) {
       );
     }
 
+    if (result.kind === "PAYMENT_REVIEW") {
+      return NextResponse.json(
+        {
+          error: "Delivery confirmation could not complete because the payment or settlement records need review.",
+          reason: result.reason,
+        },
+        { status: 409, headers: noStore },
+      );
+    }
+
+    if (result.kind === "SHIPMENT_REVIEW") {
+      return NextResponse.json(
+        {
+          error: "Delivery cannot be confirmed until every parcel in this seller order is marked delivered by Shipbubble.",
+          shipmentCount: result.shipmentCount,
+          deliveredShipmentCount: result.deliveredShipmentCount,
+        },
+        { status: 409, headers: noStore },
+      );
+    }
+
     if (result.kind === "CONFLICT") {
       return jsonError(
         "The order changed during delivery confirmation. Refresh and try again.",
@@ -391,10 +473,26 @@ export async function PATCH(_request: Request, context: RouteContext) {
       );
     }
 
+    let payoutResult: { initiated: boolean; status: string; reason?: string } | null = null;
+    if (result.settlement.payoutId) {
+      try {
+        payoutResult = await initiateQueuedSellerPayout(result.settlement.payoutId);
+      } catch (payoutError) {
+        // Delivery remains confirmed. The durable payout record is reconciled
+        // by the scheduled payout worker; never roll back delivery for a
+        // temporary transfer-provider outage.
+        console.error("SELLER_PAYOUT_INITIATION_ERROR:", payoutError);
+      }
+    }
+
+    const payoutStatus = payoutResult?.status ?? (
+      result.settlement.payoutId ? "QUEUED" : result.settlement.status
+    );
+
     return NextResponse.json(
       {
         success: true,
-        message: "Delivery confirmed successfully.",
+        message: "Delivery confirmed successfully. ReMarket has recorded the seller settlement.",
         sellerOrder: {
           id: result.sellerOrderId,
           sellerOrderCode: result.sellerOrderCode,
@@ -404,6 +502,16 @@ export async function PATCH(_request: Request, context: RouteContext) {
         order: {
           status: result.parentOrderStatus,
           completedAt: result.parentOrderCompletedAt?.toISOString() ?? null,
+        },
+        settlement: {
+          id: result.settlement.id,
+          status: result.settlement.status,
+          grossSalesAmount: result.settlement.grossSalesAmount,
+          commissionRateBps: result.settlement.commissionRateBps,
+          commissionAmount: result.settlement.commissionAmount,
+          netPayoutAmount: result.settlement.netPayoutAmount,
+          payoutStatus: payoutStatus,
+          payoutMessage: payoutResult?.reason ?? null,
         },
       },
       { status: 200, headers: noStore },

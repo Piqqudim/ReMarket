@@ -79,14 +79,35 @@ type OrderItem = {
   id: string; productId: string | null; productName: string;
   productImageUrl: string | null; unitPrice: number; quantity: number; lineTotal: number;
 };
+type SellerShipment = {
+  id: string;
+  providerOrderId?: string | null;
+  status: string;
+  courierName?: string | null;
+  trackingCode?: string | null;
+  trackingUrl?: string | null;
+  waybillUrl?: string | null;
+  estimatedDelivery?: string | null;
+  shippingFee?: number;
+  currency?: string;
+  bookedAt?: string | null;
+  pickedUpAt?: string | null;
+  inTransitAt?: string | null;
+  deliveredAt?: string | null;
+  failureReason?: string | null;
+};
 type SellerOrder = {
   id: string; sellerOrderCode: string; status: string; subtotal: number; createdAt: string;
   order: {
     id: string; orderCode: string; status: string; deliveryRecipient: string;
     deliveryPhone: string; deliveryAddress: string; deliveryArea: string;
-    deliveryNotes: string | null; buyer?: { id: string; name: string | null };
+    deliveryNotes: string | null;
+    paymentVerified?: boolean;
+    buyer?: { id: string; name: string | null };
   };
   items: OrderItem[];
+  shipment?: SellerShipment | null;
+  shipments?: SellerShipment[];
 };
 type SellerDashboardData = {
   hasBusiness?: boolean;
@@ -190,8 +211,8 @@ function getInitialBusinessForm(business: SellerBusiness): BusinessForm {
   };
 }
 function getStatusClasses(status: string): string {
-  if (["ACTIVE", "ACCEPTED", "PROCESSING", "READY_FOR_DISPATCH", "DISPATCHED", "DELIVERED", "COMPLETED", "IN_PROGRESS"].includes(status)) return "bg-[#DDF5EA] text-[#137A59]";
-  if (["PENDING", "PENDING_ACCEPTANCE", "AWAITING_BUYER"].includes(status)) return "bg-[#FFF5D9] text-[#9A6700]";
+  if (["ACTIVE", "ACCEPTED", "PROCESSING", "READY_FOR_DISPATCH", "DISPATCHED", "DELIVERED", "COMPLETED", "IN_PROGRESS", "CONFIRMED", "COURIER_ASSIGNED", "AWAITING_PICKUP", "PICKED_UP", "IN_TRANSIT", "OUT_FOR_DELIVERY"].includes(status)) return "bg-[#DDF5EA] text-[#137A59]";
+  if (["PENDING", "PENDING_ACCEPTANCE", "AWAITING_BUYER", "BOOKING_PENDING"].includes(status)) return "bg-[#FFF5D9] text-[#9A6700]";
   if (status === "APPROVED" || status === "VERIFIED") return "bg-[#E7F0FF] text-[#3566B8]";
   return "bg-[#FFF0EE] text-[#C5402D]";
 }
@@ -206,12 +227,23 @@ function safeCount(value: unknown): number {
 }
 function getSellerOrderActions(status: string) {
   switch (status) {
-    case "PENDING_ACCEPTANCE": return [{ status: "ACCEPTED", label: "Accept order" }, { status: "REJECTED", label: "Reject order" }];
+    case "PENDING_ACCEPTANCE": return [{ status: "ACCEPTED", label: "Accept order" }];
     case "ACCEPTED": return [{ status: "PROCESSING", label: "Start preparing" }];
     case "PROCESSING": return [{ status: "READY_FOR_DISPATCH", label: "Mark ready" }];
-    case "READY_FOR_DISPATCH": return [{ status: "DISPATCHED", label: "Mark dispatched" }];
-    case "DISPATCHED": return [{ status: "DELIVERED", label: "Mark delivered" }];
+    // Shipbubble booking and courier webhooks control dispatch and delivery.
+    case "READY_FOR_DISPATCH":
+    case "DISPATCHED":
+    case "DELIVERED":
     default: return [];
+  }
+}
+function getSafeExternalUrl(value: string | null | undefined): string {
+  if (!value) return "";
+  try {
+    const url = new URL(value);
+    return url.protocol === "https:" || url.protocol === "http:" ? url.toString() : "";
+  } catch {
+    return "";
   }
 }
 
@@ -266,6 +298,7 @@ function SellerCommerceOverview() {
   const [actionError, setActionError] = useState("");
   const [actionMessage, setActionMessage] = useState("");
   const [updatingOrderId, setUpdatingOrderId] = useState("");
+  const [bookingShipmentOrderId, setBookingShipmentOrderId] = useState("");
   const loadDashboard = useCallback(async (showLoading = true) => {
     if (showLoading) setLoading(true); else setRefreshing(true);
     setLoadError("");
@@ -282,8 +315,7 @@ function SellerCommerceOverview() {
   }, []);
   useEffect(() => { void loadDashboard(true); }, [loadDashboard]);
   async function updateSellerOrder(order: SellerOrder, nextStatus: string) {
-    if (updatingOrderId) return;
-    if (nextStatus === "REJECTED" && !window.confirm(`Reject order ${order.sellerOrderCode}? The reserved tracked stock will be returned to your inventory.`)) return;
+    if (updatingOrderId || bookingShipmentOrderId) return;
     setUpdatingOrderId(order.id); setActionError(""); setActionMessage("");
     try {
       const response = await fetch(`/api/seller/orders/${encodeURIComponent(order.id)}`, {
@@ -296,6 +328,64 @@ function SellerCommerceOverview() {
     } catch (error) {
       setActionError(error instanceof Error ? error.message : "Unable to update this order.");
     } finally { setUpdatingOrderId(""); }
+  }
+  async function bookSellerShipment(order: SellerOrder) {
+    if (updatingOrderId || bookingShipmentOrderId || order.status !== "READY_FOR_DISPATCH") return;
+    setBookingShipmentOrderId(order.id); setActionError(""); setActionMessage("");
+    try {
+      const response = await fetch(`/api/seller/orders/${encodeURIComponent(order.id)}/shipments`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({}),
+      });
+      const payload: unknown = await response.json().catch(() => null);
+      if (!response.ok) {
+        if (response.status === 401 || response.status === 403) {
+          throw new Error("Your seller session is no longer authorised. Sign in again and retry.");
+        }
+        throw new Error(getResponseError(payload, "Unable to book Shipbubble delivery."));
+      }
+      const root = isRecord(payload) ? payload : {};
+      const rawShipment = isRecord(root.shipment) ? root.shipment : null;
+      const shipment: SellerShipment | null = rawShipment && typeof rawShipment.id === "string" && typeof rawShipment.status === "string"
+        ? {
+            id: rawShipment.id,
+            providerOrderId: typeof rawShipment.providerOrderId === "string" ? rawShipment.providerOrderId : null,
+            status: rawShipment.status,
+            courierName: typeof rawShipment.courierName === "string" ? rawShipment.courierName : null,
+            trackingCode: typeof rawShipment.trackingCode === "string" ? rawShipment.trackingCode : null,
+            trackingUrl: typeof rawShipment.trackingUrl === "string" ? rawShipment.trackingUrl : null,
+            waybillUrl: typeof rawShipment.waybillUrl === "string" ? rawShipment.waybillUrl : null,
+            estimatedDelivery: typeof rawShipment.estimatedDelivery === "string" ? rawShipment.estimatedDelivery : null,
+          }
+        : null;
+      const details = [
+        shipment?.courierName,
+        shipment?.trackingCode ? `Tracking code: ${shipment.trackingCode}` : null,
+      ].filter(Boolean).join(" · ");
+      setActionMessage(`${order.sellerOrderCode}: ${typeof root.message === "string" ? root.message : "Shipbubble delivery booked successfully."}${details ? ` ${details}` : ""}`);
+      await loadDashboard(false);
+      // The dashboard endpoint returns saved shipments. Merge the immediate
+      // booking response too, so the tracking details appear without waiting
+      // for another refresh or depending on response timing.
+      if (shipment) {
+        setDashboard((current) => current ? {
+          ...current,
+          recentOrders: (current.recentOrders ?? []).map((item) => item.id === order.id
+            ? {
+                ...item,
+                shipment,
+                shipments: [
+                  shipment,
+                  ...(item.shipments ?? []).filter((existing) => existing.id !== shipment.id),
+                ],
+              }
+            : item),
+        } : current);
+      }
+    } catch (error) {
+      setActionError(error instanceof Error ? error.message : "Unable to book Shipbubble delivery.");
+    } finally { setBookingShipmentOrderId(""); }
   }
   const products = dashboard?.listings?.products ?? {};
   const inventory = dashboard?.inventory ?? {};
@@ -326,8 +416,16 @@ function SellerCommerceOverview() {
           <div className="mt-6 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between"><div><h3 className="text-sm font-bold">Recent product orders</h3><p className="mt-1 text-[11px] text-gray-500">Review each order and move it through fulfilment.</p></div><span className="text-[11px] text-gray-400">Showing the latest {recentOrders.length} orders</span></div>
           {!recentOrders.length ? <div className="mt-4 rounded-2xl border border-dashed border-[#D9DEE5] bg-[#FCFAF6] px-5 py-9 text-center"><Package className="mx-auto h-8 w-8 text-gray-300" /><h4 className="mt-3 text-sm font-bold text-gray-800">No product orders yet</h4><p className="mt-1 text-xs leading-5 text-gray-500">New customer orders will appear here.</p></div> : <div className="mt-4 grid gap-3">
             {recentOrders.map((order) => {
-              const actions = getSellerOrderActions(order.status);
+              const paymentPending = order.order?.paymentVerified !== true;
+              const actions = paymentPending ? [] : getSellerOrderActions(order.status);
               const isUpdating = updatingOrderId === order.id;
+              const isBookingShipment = bookingShipmentOrderId === order.id;
+              const shipment = order.shipment ?? order.shipments?.find((item) => Boolean(item.providerOrderId)) ?? order.shipments?.[0] ?? null;
+              const hasBookedShipment = Boolean(shipment?.providerOrderId);
+              const bookingIsPending = shipment?.status === "BOOKING_PENDING";
+              const shipmentFailed = shipment?.status === "FAILED";
+              const trackingUrl = getSafeExternalUrl(shipment?.trackingUrl);
+              const waybillUrl = getSafeExternalUrl(shipment?.waybillUrl);
               const buyerName = order.order?.buyer?.name || order.order?.deliveryRecipient || "Customer";
               const items = Array.isArray(order.items) ? order.items : [];
               return <article key={order.id} className="rounded-2xl border border-[#E8E4DE] bg-white p-4 sm:p-5">
@@ -335,7 +433,18 @@ function SellerCommerceOverview() {
                 <div className="mt-3 grid gap-3 rounded-xl bg-[#FCFAF6] p-3 sm:grid-cols-2"><div><p className="text-[10px] font-semibold uppercase tracking-wide text-gray-400">Customer</p><p className="mt-1 text-xs font-bold text-gray-800">{buyerName}</p><p className="mt-1 break-words text-[11px] leading-5 text-gray-500">{order.order?.deliveryArea || "Delivery area not supplied"}</p></div><div><p className="text-[10px] font-semibold uppercase tracking-wide text-gray-400">Delivery address</p><p className="mt-1 break-words text-[11px] leading-5 text-gray-600">{order.order?.deliveryAddress || "Address not supplied"}</p>{order.order?.deliveryPhone && <p className="mt-1 text-[11px] text-gray-500">Phone: {order.order.deliveryPhone}</p>}</div></div>
                 {items.length > 0 && <div className="mt-3"><p className="text-[10px] font-semibold uppercase tracking-wide text-gray-400">Ordered products</p><div className="mt-2 grid gap-2 sm:grid-cols-2">{items.slice(0, 4).map((item) => <div key={item.id} className="flex min-w-0 items-center justify-between gap-3 rounded-xl border border-[#F0ECE6] px-3 py-2.5"><div className="min-w-0"><p className="break-words text-xs font-semibold text-gray-800">{item.productName}</p><p className="mt-0.5 text-[10px] text-gray-400">Qty: {item.quantity}</p></div><p className="shrink-0 text-xs font-bold text-gray-700">{formatNaira(safeCount(item.lineTotal))}</p></div>)}</div>{items.length > 4 && <p className="mt-2 text-[10px] text-gray-400">And {items.length - 4} more product line(s).</p>}</div>}
                 {order.order?.deliveryNotes && <p className="mt-3 rounded-xl border border-[#E8E4DE] px-3 py-2 text-[11px] leading-5 text-gray-500">Delivery note: {order.order.deliveryNotes}</p>}
-                <div className="mt-4 flex flex-wrap gap-2 border-t border-[#F0ECE6] pt-3">{actions.length ? actions.map((action) => <button key={action.status} type="button" disabled={Boolean(updatingOrderId)} onClick={() => void updateSellerOrder(order, action.status)} className={action.status === "REJECTED" ? "inline-flex min-h-10 items-center justify-center rounded-xl border border-[#F1D5D0] px-4 py-2 text-xs font-bold text-[#C5402D] hover:bg-[#FFF0EE] disabled:opacity-50" : primaryButtonClass}>{isUpdating && <LoaderCircle className="h-4 w-4 animate-spin" />}{action.label}</button>) : <p className="text-[11px] text-gray-400">No further seller actions are available for this order.</p>}</div>
+                {shipment && <div className="mt-3 rounded-xl border border-[#E8E4DE] bg-[#FCFAF6] p-3"><div className="flex flex-wrap items-center justify-between gap-2"><p className="text-[10px] font-bold uppercase tracking-wide text-gray-500">Shipbubble delivery</p><span className={`rounded-full px-2.5 py-1 text-[10px] font-bold ${getStatusClasses(shipment.status)}`}>{shipment.status.replace(/_/g, " ")}</span></div>{shipment.courierName && <p className="mt-2 text-xs font-semibold text-gray-800">{shipment.courierName}</p>}{shipment.trackingCode && <p className="mt-1 text-[11px] text-gray-500">Tracking code: <span className="font-semibold text-gray-700">{shipment.trackingCode}</span></p>}<div className="mt-2 flex flex-wrap gap-3">{trackingUrl && <a href={trackingUrl} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 text-[11px] font-bold text-[#9F2D18] underline">Track parcel <ExternalLink className="h-3 w-3" /></a>}{waybillUrl && <a href={waybillUrl} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 text-[11px] font-bold text-[#9F2D18] underline">Waybill <ExternalLink className="h-3 w-3" /></a>}</div></div>}
+                <div className="mt-4 flex flex-wrap items-center gap-2 border-t border-[#F0ECE6] pt-3">
+                  {actions.map((action) => <button key={action.status} type="button" disabled={Boolean(updatingOrderId || bookingShipmentOrderId)} onClick={() => void updateSellerOrder(order, action.status)} className={primaryButtonClass}>{isUpdating && <LoaderCircle className="h-4 w-4 animate-spin" />}{action.label}</button>)}
+                  {paymentPending && <span className="text-[11px] leading-5 text-[#9A6700]">Waiting for verified Paystack payment. Seller fulfilment is not available yet.</span>}
+                  {!paymentPending && order.status === "READY_FOR_DISPATCH" && !hasBookedShipment && !bookingIsPending && <button type="button" disabled={Boolean(updatingOrderId || bookingShipmentOrderId)} onClick={() => void bookSellerShipment(order)} className={primaryButtonClass}>{isBookingShipment ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Package className="h-4 w-4" />}{isBookingShipment ? "Booking delivery..." : shipmentFailed ? "Retry delivery booking" : "Book Shipbubble delivery"}</button>}
+                  {!paymentPending && order.status === "READY_FOR_DISPATCH" && hasBookedShipment && <span className="text-[11px] font-semibold text-[#137A59]">Courier booked. Dispatch and delivery status will update from Shipbubble.</span>}
+                  {!paymentPending && order.status === "READY_FOR_DISPATCH" && bookingIsPending && <span className="text-[11px] leading-5 text-[#9A6700]">Shipment booking is being reconciled. Do not submit another booking; contact an administrator if this remains unresolved.</span>}
+                  {!paymentPending && order.status === "PENDING_ACCEPTANCE" && <span className="text-[11px] leading-5 text-gray-500">Need to decline this paid order? Contact ReMarket support; seller rejection is disabled until refunds are handled safely.</span>}
+                  {!paymentPending && order.status === "DISPATCHED" && <span className="text-[11px] text-gray-500">Courier has collected the parcel. Delivery confirmation will come from Shipbubble.</span>}
+                  {!paymentPending && order.status === "DELIVERED" && <span className="text-[11px] font-semibold text-[#137A59]">Delivery confirmed by Shipbubble.</span>}
+                  {!paymentPending && !actions.length && order.status !== "READY_FOR_DISPATCH" && order.status !== "DISPATCHED" && order.status !== "DELIVERED" && order.status !== "PENDING_ACCEPTANCE" && <p className="text-[11px] text-gray-400">No further seller actions are available for this order.</p>}
+                </div>
               </article>;
             })}
           </div>}
@@ -871,3 +980,4 @@ function MobileLink({ href, onClick, active, children }: { href: string; onClick
 function FooterLink({ href, children }: { href: string; children: ReactNode }) {
   return <Link href={href} className="hover:text-[#9F2D18]">{children}</Link>;
 }
+

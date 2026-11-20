@@ -2,8 +2,8 @@ import { LedgerAccountType, Prisma } from "@prisma/client";
 import { NextResponse } from "next/server";
 
 import { requireAdmin } from "@/lib/admin-auth";
-import { prisma } from "@/lib/prisma";
 import { writeAdminAuditLog } from "@/lib/admin-audit";
+import { prisma } from "@/lib/prisma";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -12,6 +12,7 @@ export const runtime = "nodejs";
 const noStore = {
   "Cache-Control": "private, no-store, max-age=0, must-revalidate",
   Pragma: "no-cache",
+  Expires: "0",
 };
 
 const SYSTEM_ACCOUNTS = [
@@ -28,8 +29,40 @@ const SYSTEM_ACCOUNTS = [
   { code: "5100", name: "Delivery Subsidy Expense", type: LedgerAccountType.EXPENSE, currency: "NGN" },
 ] as const;
 
+type SystemAccount = (typeof SYSTEM_ACCOUNTS)[number];
+type AccountShape = Pick<SystemAccount, "code" | "name" | "type" | "currency"> & { isSystem: boolean };
+
+class SystemAccountConflictError extends Error {
+  constructor() {
+    super("A predefined account code is already used by a different account.");
+    this.name = "SystemAccountConflictError";
+  }
+}
+
+class SystemAccountInitializationError extends Error {
+  constructor() {
+    super("The system chart of accounts could not be fully initialized.");
+    this.name = "SystemAccountInitializationError";
+  }
+}
+
 function jsonError(message: string, status: number) {
-  return NextResponse.json({ success: false, error: message }, { status, headers: noStore });
+  return NextResponse.json(
+    { success: false, error: message },
+    { status, headers: noStore },
+  );
+}
+
+function assertSystemAccountMatches(expected: SystemAccount, actual: AccountShape | undefined) {
+  if (
+    !actual ||
+    actual.name !== expected.name ||
+    actual.type !== expected.type ||
+    actual.currency !== expected.currency ||
+    actual.isSystem !== true
+  ) {
+    throw new SystemAccountConflictError();
+  }
 }
 
 /** GET /api/admin/finance/accounts — lists the chart of accounts. */
@@ -55,7 +88,12 @@ export async function GET() {
     });
 
     return NextResponse.json(
-      { success: true, accounts, count: accounts.length, generatedAt: new Date().toISOString() },
+      {
+        success: true,
+        accounts,
+        count: accounts.length,
+        generatedAt: new Date().toISOString(),
+      },
       { headers: noStore },
     );
   } catch (error) {
@@ -65,74 +103,96 @@ export async function GET() {
 }
 
 /**
- * POST /api/admin/finance/accounts — idempotently initializes ReMarket's
- * predefined system accounts. It does not accept arbitrary account data.
+ * POST /api/admin/finance/accounts
+ * Idempotently initializes the predefined system accounts only.
+ * Arbitrary account creation is deliberately not exposed by this route.
  */
 export async function POST() {
   try {
     const auth = await requireAdmin();
     if (!auth.authorized) return auth.response;
 
-    const result = await prisma.$transaction(async (tx) => {
-      const codes = SYSTEM_ACCOUNTS.map((account) => account.code);
-      const existing = await tx.financialAccount.findMany({
-        where: { code: { in: codes } },
-        select: { code: true, name: true, type: true, currency: true, isSystem: true },
-      });
-      const existingByCode = new Map(existing.map((account) => [account.code, account]));
-
-      for (const expected of SYSTEM_ACCOUNTS) {
-        const found = existingByCode.get(expected.code);
-        if (found && (
-          found.name !== expected.name ||
-          found.type !== expected.type ||
-          found.currency !== expected.currency ||
-          !found.isSystem
-        )) {
-          throw new Error(`SYSTEM_ACCOUNT_CONFLICT:${expected.code}`);
-        }
-      }
-
-      const missing = SYSTEM_ACCOUNTS.filter((account) => !existingByCode.has(account.code));
-      if (missing.length > 0) {
-        await tx.financialAccount.createMany({
-          data: missing.map((account) => ({ ...account, isSystem: true, isActive: true })),
-          skipDuplicates: true,
-        });
-
-        const createdOrExisting = await tx.financialAccount.findMany({
+    const result = await prisma.$transaction(
+      async (tx) => {
+        const codes = SYSTEM_ACCOUNTS.map((account) => account.code);
+        const existing = await tx.financialAccount.findMany({
           where: { code: { in: codes } },
-          select: { id: true, code: true, name: true, type: true, currency: true, isSystem: true },
+          select: {
+            id: true,
+            code: true,
+            name: true,
+            type: true,
+            currency: true,
+            isSystem: true,
+          },
+        });
+        const existingByCode = new Map(existing.map((account) => [account.code, account]));
+
+        for (const expected of SYSTEM_ACCOUNTS) {
+          const found = existingByCode.get(expected.code);
+          if (found) assertSystemAccountMatches(expected, found);
+        }
+
+        const missing = SYSTEM_ACCOUNTS.filter((account) => !existingByCode.has(account.code));
+        let insertedCount = 0;
+
+        if (missing.length > 0) {
+          const inserted = await tx.financialAccount.createMany({
+            data: missing.map((account) => ({
+              ...account,
+              isSystem: true,
+              isActive: true,
+            })),
+            skipDuplicates: true,
+          });
+          insertedCount = inserted.count;
+        }
+
+        // Re-read and validate every predefined code, including records that
+        // may have been created concurrently while createMany was running.
+        const allAccounts = await tx.financialAccount.findMany({
+          where: { code: { in: codes } },
+          select: {
+            id: true,
+            code: true,
+            name: true,
+            type: true,
+            currency: true,
+            isSystem: true,
+          },
           orderBy: { code: "asc" },
         });
+        const allByCode = new Map(allAccounts.map((account) => [account.code, account]));
 
-        if (createdOrExisting.length !== SYSTEM_ACCOUNTS.length) {
-          throw new Error("SYSTEM_ACCOUNT_INITIALIZATION_INCOMPLETE");
+        if (allAccounts.length !== SYSTEM_ACCOUNTS.length) {
+          throw new SystemAccountInitializationError();
+        }
+        for (const expected of SYSTEM_ACCOUNTS) {
+          assertSystemAccountMatches(expected, allByCode.get(expected.code));
         }
 
-        await writeAdminAuditLog(tx, {
-          adminId: auth.user.id,
-          action: "FINANCIAL_CHART_OF_ACCOUNTS_INITIALIZED",
-          entityType: "FINANCIAL_CHART",
-          entityId: "SYSTEM_CHART_OF_ACCOUNTS",
-          beforeData: { accountCount: existing.length } as Prisma.InputJsonValue,
-          afterData: {
-            accountCount: createdOrExisting.length,
-            createdCodes: missing.map((account) => account.code),
-          } as Prisma.InputJsonValue,
-          metadata: { currency: "NGN", createdCount: missing.length } as Prisma.InputJsonValue,
-        });
+        if (insertedCount > 0) {
+          await writeAdminAuditLog(tx, {
+            adminId: auth.user.id,
+            action: "FINANCIAL_CHART_OF_ACCOUNTS_INITIALIZED",
+            entityType: "FINANCIAL_CHART",
+            entityId: "SYSTEM_CHART_OF_ACCOUNTS",
+            beforeData: { accountCount: existing.length } as Prisma.InputJsonValue,
+            afterData: {
+              accountCount: allAccounts.length,
+              missingAtStartCodes: missing.map((account) => account.code),
+            } as Prisma.InputJsonValue,
+            metadata: {
+              currency: "NGN",
+              createdCount: insertedCount,
+            } as Prisma.InputJsonValue,
+          });
+        }
 
-        return { accounts: createdOrExisting, createdCount: missing.length };
-      }
-
-      const accounts = await tx.financialAccount.findMany({
-        where: { code: { in: codes } },
-        select: { id: true, code: true, name: true, type: true, currency: true, isSystem: true },
-        orderBy: { code: "asc" },
-      });
-      return { accounts, createdCount: 0 };
-    }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
+        return { accounts: allAccounts, createdCount: insertedCount };
+      },
+      { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+    );
 
     return NextResponse.json(
       {
@@ -143,18 +203,34 @@ export async function POST() {
         createdCount: result.createdCount,
         accounts: result.accounts,
       },
-      { status: result.createdCount > 0 ? 201 : 200, headers: noStore },
+      {
+        status: result.createdCount > 0 ? 201 : 200,
+        headers: noStore,
+      },
     );
   } catch (error) {
-    if (error instanceof Error && error.message.startsWith("SYSTEM_ACCOUNT_CONFLICT:")) {
-      return jsonError("A predefined account code is already used by a different account. Review the chart before continuing.", 409);
+    if (error instanceof SystemAccountConflictError) {
+      return jsonError(
+        "A predefined account code is already used by a different account. Review the chart before continuing.",
+        409,
+      );
     }
-    if (error instanceof Error && error.message === "SYSTEM_ACCOUNT_INITIALIZATION_INCOMPLETE") {
-      return jsonError("The chart of accounts could not be fully initialized. No partial initialization was committed.", 409);
+    if (error instanceof SystemAccountInitializationError) {
+      return jsonError(
+        "The chart of accounts could not be fully initialized. No partial initialization was committed.",
+        409,
+      );
     }
-    if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2034") {
-      return jsonError("The chart of accounts changed during initialization. Refresh and try again.", 409);
+    if (
+      error instanceof Prisma.PrismaClientKnownRequestError &&
+      (error.code === "P2034" || error.code === "P2002")
+    ) {
+      return jsonError(
+        "The chart of accounts changed during initialization. Refresh and try again.",
+        409,
+      );
     }
+
     console.error("Admin financial accounts POST error:", error);
     return jsonError("Unable to initialize the chart of accounts.", 500);
   }
