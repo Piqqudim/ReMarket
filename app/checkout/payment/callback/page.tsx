@@ -26,6 +26,8 @@ type VerifyResult = {
   error?: string;
 };
 
+type PaymentState = "VERIFYING" | "SUCCESS" | "PENDING" | "FAILED" | "REVIEW" | "ERROR";
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -33,11 +35,10 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 function PaymentCallbackContent() {
   const searchParams = useSearchParams();
   const reference = searchParams.get("reference") ?? searchParams.get("trxref") ?? "";
-  const [state, setState] = useState<"VERIFYING" | "SUCCESS" | "PENDING" | "FAILED" | "REVIEW" | "ERROR">("VERIFYING");
+  const [state, setState] = useState<PaymentState>("VERIFYING");
   const [result, setResult] = useState<VerifyResult | null>(null);
   const [error, setError] = useState("");
-  const [attempt, setAttempt] = useState(0);
-  const startedRef = useRef(false);
+  const lastAutoVerifiedReference = useRef<string | null>(null);
 
   const verify = useCallback(async () => {
     if (!reference) {
@@ -90,76 +91,171 @@ function PaymentCallbackContent() {
     }
   }, [reference]);
 
+  // Prevent duplicate automatic requests in React Strict Mode, while allowing
+  // a new reference in the URL to be checked if the route is reused.
   useEffect(() => {
-    if (startedRef.current) return;
-    startedRef.current = true;
+    if (lastAutoVerifiedReference.current === reference) return;
+    lastAutoVerifiedReference.current = reference;
     void verify();
-  }, [verify, attempt]);
+  }, [reference, verify]);
 
   const isSuccessful = state === "SUCCESS";
   const isReview = state === "REVIEW";
   const isWorking = state === "VERIFYING";
+  const isPending = state === "PENDING";
+  const isFailed = state === "FAILED";
+
+  const statusLabel = isWorking
+    ? "Verifying with Paystack"
+    : isSuccessful
+      ? "Payment confirmed"
+      : isReview
+        ? "Payment needs review"
+        : isPending
+          ? "Payment processing"
+          : isFailed
+            ? "Payment not completed"
+            : "Verification unavailable";
+
+  const heading = isWorking
+    ? "Checking your payment"
+    : isSuccessful
+      ? "Thank you for your order"
+      : isReview
+        ? "We received your payment"
+        : isPending
+          ? "Your payment is still processing"
+          : isFailed
+            ? "Your payment was not confirmed"
+            : "We couldn't verify your payment yet";
+
+  const description = isWorking
+    ? "Please keep this page open while ReMarket confirms the transaction directly with Paystack."
+    : state === "ERROR"
+      ? error || "Payment verification is temporarily unavailable. Try again."
+      : result?.message ?? (isPending
+        ? "Paystack has not returned a final transaction status. You can check again shortly."
+        : isFailed
+          ? "The payment was not completed. You can check the status again before trying another payment."
+          : "Please contact ReMarket support if you need help with this payment.");
+
+  const statusTone = isSuccessful
+    ? "success"
+    : isReview
+      ? "warning"
+      : isFailed || state === "ERROR"
+        ? "danger"
+        : "neutral";
+
+  const StatusIcon = isWorking || isPending
+    ? LoaderCircle
+    : isSuccessful
+      ? CheckCircle2
+      : isReview || isFailed
+        ? AlertCircle
+        : ShieldCheck;
 
   return (
     <>
       <SiteHeader searchMode="PRODUCTS" />
-      <main className="min-h-[70vh] bg-[#FCFAF6] px-4 pb-28 pt-10 text-[#17202A] lg:pb-12">
-        <section className="mx-auto max-w-xl overflow-hidden rounded-[26px] border border-[#EAE6DF] bg-white shadow-[0_8px_35px_rgba(23,32,42,0.05)]">
-          <div className={`px-6 py-9 text-center sm:px-10 ${isSuccessful ? "bg-gradient-to-br from-[#F0FBF5] to-[#FFFDFC]" : isReview ? "bg-gradient-to-br from-[#FFF8EC] to-[#FFFDFC]" : "bg-gradient-to-br from-[#FFF1ED] to-[#FFFDFC]"}`}>
-            <div className={`mx-auto flex h-20 w-20 items-center justify-center rounded-full ${isSuccessful ? "bg-[#DCFCE7] text-[#16845D]" : isReview ? "bg-[#FFF0C9] text-[#96610D]" : "bg-[#FFF1ED] text-[#9F2D18]"}`}>
-              {isWorking ? <LoaderCircle className="h-10 w-10 animate-spin" /> : isSuccessful ? <CheckCircle2 className="h-11 w-11" /> : isReview ? <AlertCircle className="h-10 w-10" /> : state === "PENDING" ? <LoaderCircle className="h-10 w-10" /> : <ShieldCheck className="h-10 w-10" />}
+      <main className="rm-storefront min-h-[70vh] px-4 py-8 pb-28 sm:px-6 sm:py-12 lg:pb-12">
+        <div className="mx-auto w-full max-w-[640px]">
+          <nav aria-label="Breadcrumb" className="mb-5 flex items-center gap-2 text-xs text-[var(--rm-muted)]">
+            <Link href="/" className="hover:text-[var(--rm-coral-dark)]">Home</Link>
+            <span aria-hidden="true">/</span>
+            <span className="font-semibold text-[var(--rm-ink)]">Payment confirmation</span>
+          </nav>
+
+          <section className="rm-panel overflow-hidden" aria-live="polite" aria-busy={isWorking}>
+            <div className="border-b border-[var(--rm-border)] px-5 py-8 text-center sm:px-9 sm:py-10">
+              <div
+                className={`mx-auto grid h-16 w-16 place-items-center rounded-full ${
+                  statusTone === "success"
+                    ? "bg-[var(--rm-green-bg)] text-[var(--rm-green)]"
+                    : statusTone === "warning"
+                      ? "bg-[var(--rm-yellow-bg)] text-[var(--rm-yellow)]"
+                      : statusTone === "danger"
+                        ? "bg-[var(--rm-red-bg)] text-[var(--rm-red)]"
+                        : "bg-[var(--rm-coral-soft)] text-[var(--rm-coral-dark)]"
+                }`}
+              >
+                <StatusIcon className={`h-8 w-8 ${isWorking || isPending ? "animate-spin" : ""}`} aria-hidden="true" />
+              </div>
+
+              <p className="mt-5 text-[11px] font-bold uppercase tracking-[0.12em] text-[var(--rm-muted)]">
+                {statusLabel}
+              </p>
+              <h1 className="mt-2 text-2xl font-bold leading-tight tracking-[-0.035em] text-[var(--rm-ink)] sm:text-[30px]">
+                {heading}
+              </h1>
+              <p className="mx-auto mt-3 max-w-[460px] text-sm leading-6 text-[var(--rm-muted)]">
+                {description}
+              </p>
             </div>
-            <p className={`mt-5 text-[10px] font-extrabold uppercase tracking-[0.16em] ${isSuccessful ? "text-[#16845D]" : isReview ? "text-[#96610D]" : "text-[#9F2D18]"}`}>
-              {isWorking ? "Verifying with Paystack" : isSuccessful ? "Payment confirmed" : isReview ? "Payment needs review" : state === "PENDING" ? "Payment processing" : state === "FAILED" ? "Payment not completed" : "Verification unavailable"}
-            </p>
-            <h1 className="mt-2 text-2xl font-black tracking-tight text-[#401B13] sm:text-3xl">
-              {isWorking ? "Checking your payment" : isSuccessful ? "Thank you for your order" : isReview ? "We received your payment" : state === "PENDING" ? "Your payment is still processing" : state === "FAILED" ? "Your payment was not confirmed" : "We couldn't verify your payment yet"}
-            </h1>
-            <p className="mx-auto mt-3 max-w-md text-xs leading-6 text-[#756B61]">
-              {isWorking
-                ? "Please keep this page open while ReMarket confirms the transaction directly with Paystack."
-                : result?.message ?? error ?? (state === "PENDING" ? "Paystack has not returned a final transaction status. You can check again shortly." : "Please try verification again. Do not make another payment while this one is still being checked.")}
-            </p>
-          </div>
 
-          <div className="space-y-5 p-5 sm:p-8">
-            {result?.order?.orderCode && (
-              <div className="rounded-2xl border border-[#FFD9CE] bg-[#FFF1ED] p-5 text-center">
-                <p className="text-[10px] font-bold uppercase tracking-wide text-[#91877E]">ReMarket order reference</p>
-                <p className="mt-2 break-all text-xl font-black text-[#9F2D18]">{result.order.orderCode}</p>
+            <div className="space-y-5 p-5 sm:p-8">
+              {result?.order?.orderCode && (
+                <div className="rounded-[var(--rm-radius-md)] border border-[var(--rm-border)] bg-[var(--rm-surface-muted)] px-4 py-4 text-center">
+                  <p className="text-[11px] font-semibold text-[var(--rm-muted)]">ReMarket order reference</p>
+                  <p className="mt-1 break-all text-xl font-bold tracking-wide text-[var(--rm-coral-dark)]">
+                    {result.order.orderCode}
+                  </p>
+                </div>
+              )}
+
+              {isSuccessful && result?.order?.id && (
+                <Link
+                  href={`/orders/${encodeURIComponent(result.order.id)}`}
+                  className="rm-button rm-button-primary min-h-12 w-full"
+                >
+                  View your order <ArrowRight className="h-4 w-4" aria-hidden="true" />
+                </Link>
+              )}
+
+              {isReview && (
+                <div className="rounded-[var(--rm-radius-md)] border border-[#ead7ad] bg-[var(--rm-yellow-bg)] p-4 text-sm leading-6 text-[#76551b]">
+                  Your payment is recorded, but ReMarket has paused seller fulfilment while the order is reviewed. Keep the order reference above and contact ReMarket support. Do not pay again.
+                </div>
+              )}
+
+              {(isPending || isFailed || state === "ERROR") && (
+                <button
+                  type="button"
+                  onClick={() => void verify()}
+                  disabled={isWorking}
+                  className="rm-button rm-button-primary min-h-12 w-full disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  {isWorking
+                    ? <LoaderCircle className="h-4 w-4 animate-spin" aria-hidden="true" />
+                    : <RefreshCw className="h-4 w-4" aria-hidden="true" />}
+                  Check payment again
+                </button>
+              )}
+
+              {!isSuccessful && !isReview && (
+                <Link href="/cart" className="rm-button rm-button-secondary min-h-11 w-full">
+                  Return to cart
+                </Link>
+              )}
+
+              <div className="flex items-start gap-2 rounded-[var(--rm-radius-md)] bg-[var(--rm-surface-muted)] p-3">
+                <ShieldCheck className="mt-0.5 h-4 w-4 shrink-0 text-[var(--rm-green)]" aria-hidden="true" />
+                <p className="text-xs leading-5 text-[var(--rm-muted)]">
+                  Do not make another payment while this transaction is pending or being verified. ReMarket checks the payment status with Paystack.
+                </p>
               </div>
-            )}
 
-            {isSuccessful && result?.order?.id && (
-              <Link href={`/orders/${encodeURIComponent(result.order.id)}`} className="flex min-h-12 w-full items-center justify-center gap-2 rounded-xl bg-[#FF5A36] px-5 py-3 text-xs font-extrabold text-white transition hover:bg-[#E94E2C]">
-                View your order <ArrowRight className="h-4 w-4" />
-              </Link>
-            )}
-
-            {isReview && (
-              <div className="rounded-2xl border border-[#F0D7B3] bg-[#FFF8EC] p-4 text-[11px] leading-6 text-[#796B5C]">
-                Your payment is recorded, but ReMarket has paused seller fulfilment while the order is reviewed. Please keep the order reference above and contact ReMarket support. Do not pay again.
+              <div className="flex flex-col items-center gap-3 border-t border-[var(--rm-border)] pt-5 sm:flex-row sm:justify-between">
+                <Link href="/" className="rm-text-link">
+                  Return to ReMarket home
+                </Link>
+                {!isSuccessful && !isReview && (
+                  <span className="text-xs text-[var(--rm-muted)]">Need help? Contact ReMarket support.</span>
+                )}
               </div>
-            )}
-
-            {(state === "PENDING" || state === "FAILED" || state === "ERROR") && (
-              <button type="button" onClick={() => { startedRef.current = true; setAttempt((value) => value + 1); void verify(); }} disabled={isWorking} className="flex min-h-12 w-full items-center justify-center gap-2 rounded-xl bg-[#FF5A36] px-5 py-3 text-xs font-extrabold text-white transition hover:bg-[#E94E2C] disabled:cursor-not-allowed disabled:opacity-60">
-                <RefreshCw className="h-4 w-4" />
-                Check payment again
-              </button>
-            )}
-
-            {!isSuccessful && !isReview && (
-              <Link href="/cart" className="flex justify-center text-xs font-bold text-[#9F2D18] hover:text-[#FF5A36]">
-                Return to cart
-              </Link>
-            )}
-
-            <Link href="/" className="flex justify-center text-xs font-bold text-[#756B61] hover:text-[#9F2D18]">
-              Return to ReMarket home
-            </Link>
-          </div>
-        </section>
+            </div>
+          </section>
+        </div>
       </main>
       <MobileBottomNav />
     </>
@@ -168,18 +264,20 @@ function PaymentCallbackContent() {
 
 export default function PaystackPaymentCallbackPage() {
   return (
-    <Suspense fallback={
-      <>
-        <SiteHeader searchMode="PRODUCTS" />
-        <main className="flex min-h-[70vh] items-center justify-center bg-[#FCFAF6] px-4 pb-28">
-          <div className="flex items-center gap-3 rounded-2xl border border-[#EAE6DF] bg-white px-6 py-5 text-xs font-semibold text-[#756B61]">
-            <LoaderCircle className="h-5 w-5 animate-spin text-[#FF5A36]" />
-            Loading payment confirmation...
-          </div>
-        </main>
-        <MobileBottomNav />
-      </>
-    }>
+    <Suspense
+      fallback={
+        <>
+          <SiteHeader searchMode="PRODUCTS" />
+          <main className="rm-storefront flex min-h-[70vh] items-center justify-center px-4 pb-28 pt-10">
+            <div className="rm-panel flex w-full max-w-sm items-center justify-center gap-3 px-6 py-5 text-sm font-semibold text-[var(--rm-muted)]">
+              <LoaderCircle className="h-5 w-5 animate-spin text-[var(--rm-coral)]" aria-hidden="true" />
+              Loading payment confirmation...
+            </div>
+          </main>
+          <MobileBottomNav />
+        </>
+      }
+    >
       <PaymentCallbackContent />
     </Suspense>
   );

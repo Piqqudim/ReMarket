@@ -217,15 +217,15 @@ function getOrderStatusLabel(status: string): string {
 
 function getStatusClass(status: string): string {
   if (["COMPLETED", "DELIVERED", "SUCCESS", "VERIFIED"].includes(status)) {
-    return "bg-[#DCFCE7] text-[#166534]";
+    return "bg-[var(--rm-green-bg)] text-[var(--rm-green)]";
   }
   if (["CANCELLED", "PARTIALLY_CANCELLED", "REJECTED", "FAILED", "REFUNDED"].includes(status)) {
-    return "bg-[#FEE2E2] text-[#B42318]";
+    return "bg-[var(--rm-red-bg)] text-[var(--rm-red)]";
   }
   if (["DISPATCHED", "PARTIALLY_DISPATCHED", "READY_FOR_DISPATCH", "IN_TRANSIT", "OUT_FOR_DELIVERY", "PICKED_UP"].includes(status)) {
-    return "bg-[#DBEAFE] text-[#1D4ED8]";
+    return "bg-blue-100 text-blue-700";
   }
-  return "bg-[#FFF1ED] text-[#9F2D18]";
+  return "bg-[var(--rm-coral-soft)] text-[var(--rm-coral-dark)]";
 }
 
 function getShipmentStatusLabel(status: string): string {
@@ -249,14 +249,14 @@ function getShipmentStatusLabel(status: string): string {
 }
 
 function getShipmentStatusClass(status: string): string {
-  if (status === "DELIVERED") return "bg-[#DCFCE7] text-[#166534]";
+  if (status === "DELIVERED") return "bg-[var(--rm-green-bg)] text-[var(--rm-green)]";
   if (["FAILED", "DELIVERY_FAILED", "RETURNED", "CANCELLED"].includes(status)) {
-    return "bg-[#FEE2E2] text-[#B42318]";
+    return "bg-[var(--rm-red-bg)] text-[var(--rm-red)]";
   }
   if (["PICKED_UP", "IN_TRANSIT", "OUT_FOR_DELIVERY", "COURIER_ASSIGNED"].includes(status)) {
-    return "bg-[#DBEAFE] text-[#1D4ED8]";
+    return "bg-blue-100 text-blue-700";
   }
-  return "bg-[#FFF1ED] text-[#9F2D18]";
+  return "bg-[var(--rm-coral-soft)] text-[var(--rm-coral-dark)]";
 }
 
 function parseOrderItems(value: unknown): OrderItemView[] {
@@ -440,27 +440,6 @@ function parseOrderDetail(value: unknown): OrderDetail | null {
   };
 }
 
-function mergeShipmentTracking(order: OrderDetail, payload: unknown): OrderDetail {
-  if (
-    !isRecord(payload) || !isRecord(payload.order) || payload.order.id !== order.id ||
-    !Array.isArray(payload.sellerOrders)
-  ) {
-    throw new Error("The shipment tracking response did not match this order.");
-  }
-  const trackingBySellerOrder = new Map<string, ShipmentView[]>();
-  for (const rawSellerOrder of payload.sellerOrders) {
-    if (!isRecord(rawSellerOrder) || typeof rawSellerOrder.id !== "string") continue;
-    trackingBySellerOrder.set(rawSellerOrder.id, parseShipments(rawSellerOrder.shipments));
-  }
-  return {
-    ...order,
-    sellerOrders: order.sellerOrders.map((sellerOrder) => ({
-      ...sellerOrder,
-      shipments: trackingBySellerOrder.get(sellerOrder.id) ?? [],
-    })),
-  };
-}
-
 const fulfilmentSteps = [
   { status: "PENDING_ACCEPTANCE", label: "Awaiting seller response" },
   { status: "ACCEPTED", label: "Order accepted" },
@@ -475,6 +454,33 @@ function getProgressIndex(status: string): number {
   return fulfilmentSteps.findIndex((step) => step.status === status);
 }
 
+function SectionHeading({
+  icon: Icon,
+  eyebrow,
+  title,
+  description,
+}: {
+  icon: typeof Package;
+  eyebrow?: string;
+  title: string;
+  description?: string;
+}) {
+  return (
+    <div className="rm-panel-header">
+      <div className="flex min-w-0 items-center gap-3">
+        <span className="rm-category-icon h-10 w-10 shrink-0">
+          <Icon className="h-5 w-5" aria-hidden="true" />
+        </span>
+        <div className="min-w-0">
+          {eyebrow && <p className="text-[10px] font-bold uppercase tracking-[0.08em] text-[var(--rm-coral-dark)]">{eyebrow}</p>}
+          <h2 className="text-sm font-bold text-[var(--rm-ink)]">{title}</h2>
+          {description && <p className="mt-1 text-xs leading-5 text-[var(--rm-muted)]">{description}</p>}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function ShipmentCard({ shipment }: { shipment: ShipmentView }) {
   const trackingUrl = getSafeExternalUrl(shipment.trackingUrl);
   const waybillUrl = getSafeExternalUrl(shipment.waybillUrl);
@@ -482,111 +488,103 @@ function ShipmentCard({ shipment }: { shipment: ShipmentView }) {
   const trackingEvents = shipment.trackingEvents;
 
   return (
-    <div className="mt-3 rounded-2xl border border-[#EAE6DF] bg-white p-3.5 sm:p-4">
+    <section className="mt-3 rounded-xl border border-[var(--rm-border)] bg-[var(--rm-surface)] p-3.5 sm:p-4">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="flex min-w-0 items-start gap-3">
-          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-[#FFF1ED] text-[#9F2D18]">
-            <Truck className="h-5 w-5" />
-          </div>
+          <span className="rm-category-icon h-10 w-10 shrink-0"><Truck className="h-5 w-5" /></span>
           <div className="min-w-0">
-            <p className="text-xs font-extrabold text-[#401B13]">
+            <h4 className="text-xs font-bold text-[var(--rm-ink)]">
               {shipment.provider === "SHIPBUBBLE" ? "Shipbubble delivery" : `${shipment.provider} delivery`}
-            </p>
-            <p className="mt-1 break-words text-[10px] text-[#91877E]">
-              {shipment.courierName || "Courier not yet assigned"}
-            </p>
+            </h4>
+            <p className="mt-1 break-words text-xs text-[var(--rm-muted)]">{shipment.courierName || "Courier not yet assigned"}</p>
           </div>
         </div>
-        <span className={`rounded-full px-2.5 py-1.5 text-[9px] font-bold ${getShipmentStatusClass(shipment.status)}`}>
+        <span className={`rounded-md px-2.5 py-1.5 text-[10px] font-bold ${getShipmentStatusClass(shipment.status)}`}>
           {getShipmentStatusLabel(shipment.status)}
         </span>
       </div>
 
-      <div className="mt-4 grid grid-cols-2 gap-2.5">
+      <div className="mt-4 grid grid-cols-2 gap-2.5 sm:grid-cols-4">
         {shipment.trackingCode && (
-          <div className="min-w-0 rounded-xl bg-[#FCFAF6] p-3">
-            <p className="text-[9px] font-bold uppercase tracking-wide text-[#91877E]">Tracking number</p>
-            <p className="mt-1 break-all text-xs font-extrabold text-[#292522]">{shipment.trackingCode}</p>
+          <div className="min-w-0 rounded-lg bg-[var(--rm-surface-muted)] p-3">
+            <p className="text-[9px] font-bold uppercase tracking-wide text-[var(--rm-muted)]">Tracking number</p>
+            <p className="mt-1 break-all text-xs font-bold text-[var(--rm-ink)]">{shipment.trackingCode}</p>
           </div>
         )}
         {shipment.estimatedDelivery && (
-          <div className="min-w-0 rounded-xl bg-[#FCFAF6] p-3">
-            <p className="text-[9px] font-bold uppercase tracking-wide text-[#91877E]">Estimated delivery</p>
-            <p className="mt-1 break-words text-xs font-extrabold text-[#292522]">{shipment.estimatedDelivery}</p>
+          <div className="min-w-0 rounded-lg bg-[var(--rm-surface-muted)] p-3">
+            <p className="text-[9px] font-bold uppercase tracking-wide text-[var(--rm-muted)]">Estimated delivery</p>
+            <p className="mt-1 break-words text-xs font-bold text-[var(--rm-ink)]">{shipment.estimatedDelivery}</p>
           </div>
         )}
-        <div className="min-w-0 rounded-xl bg-[#FCFAF6] p-3">
-          <p className="text-[9px] font-bold uppercase tracking-wide text-[#91877E]">Delivery fee</p>
-          <p className="mt-1 text-xs font-extrabold text-[#292522]">{formatMoney(shipment.shippingFee, shipment.currency)}</p>
+        <div className="min-w-0 rounded-lg bg-[var(--rm-surface-muted)] p-3">
+          <p className="text-[9px] font-bold uppercase tracking-wide text-[var(--rm-muted)]">Delivery fee</p>
+          <p className="mt-1 text-xs font-bold text-[var(--rm-ink)]">{formatMoney(shipment.shippingFee, shipment.currency)}</p>
         </div>
-        <div className="min-w-0 rounded-xl bg-[#FCFAF6] p-3">
-          <p className="text-[9px] font-bold uppercase tracking-wide text-[#91877E]">Booked</p>
-          <p className="mt-1 break-words text-[10px] font-semibold text-[#514840]">{formatDateTime(shipment.bookedAt)}</p>
+        <div className="min-w-0 rounded-lg bg-[var(--rm-surface-muted)] p-3">
+          <p className="text-[9px] font-bold uppercase tracking-wide text-[var(--rm-muted)]">Booked</p>
+          <p className="mt-1 break-words text-[10px] font-semibold text-[var(--rm-text)]">{formatDateTime(shipment.bookedAt)}</p>
         </div>
       </div>
 
       {(trackingUrl || waybillUrl) && (
         <div className="mt-3 flex flex-wrap gap-2">
           {trackingUrl && (
-            <a href={trackingUrl} target="_blank" rel="noopener noreferrer" className="inline-flex min-h-10 items-center gap-2 rounded-xl bg-[#FF5A36] px-4 py-2.5 text-[10px] font-extrabold text-white transition hover:bg-[#E94E2C] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#FF5A36] focus-visible:ring-offset-2">
-              <ExternalLink className="h-3.5 w-3.5" /> Track delivery
+            <a href={trackingUrl} target="_blank" rel="noopener noreferrer" className="rm-button rm-button-primary min-h-10 text-xs">
+              <ExternalLink className="h-3.5 w-3.5" />Track delivery
             </a>
           )}
           {waybillUrl && (
-            <a href={waybillUrl} target="_blank" rel="noopener noreferrer" className="inline-flex min-h-10 items-center gap-2 rounded-xl border border-[#EAE6DF] bg-white px-4 py-2.5 text-[10px] font-bold text-[#756B61] transition hover:border-[#FFB39F] hover:text-[#9F2D18] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#FF5A36] focus-visible:ring-offset-2">
-              <FileText className="h-3.5 w-3.5" /> View waybill
+            <a href={waybillUrl} target="_blank" rel="noopener noreferrer" className="rm-button rm-button-secondary min-h-10 text-xs">
+              <FileText className="h-3.5 w-3.5" />View waybill
             </a>
           )}
         </div>
       )}
 
       {failed && (
-        <div className="mt-3 rounded-xl border border-red-200 bg-red-50 p-3">
-          <p className="text-[10px] font-bold text-red-700">This shipment needs attention.</p>
-          <p className="mt-1 text-[10px] leading-5 text-red-600">
-            The delivery provider has reported a booking or delivery issue. ReMarket support or the seller may need to review it.
-          </p>
+        <div className="mt-3 rounded-lg border border-[var(--rm-red)]/25 bg-[var(--rm-red-bg)] p-3">
+          <p className="text-xs font-bold text-[var(--rm-red)]">This shipment needs attention.</p>
+          <p className="mt-1 text-xs leading-5 text-[var(--rm-red)]">The delivery provider has reported a booking or delivery issue. ReMarket support or the seller may need to review it.</p>
         </div>
       )}
       {shipment.status === "BOOKING_PENDING" && (
-        <p className="mt-3 rounded-xl border border-[#F0D7B3] bg-[#FFF8EC] p-3 text-[10px] leading-5 text-[#796B5C]">
+        <p className="mt-3 rounded-lg border border-[var(--rm-yellow)]/25 bg-[var(--rm-yellow-bg)] p-3 text-xs leading-5 text-[var(--rm-yellow)]">
           The delivery booking is being processed. Tracking information will appear when the courier confirms the shipment.
         </p>
       )}
       {shipment.status === "DELIVERED" && shipment.deliveredAt && (
-        <p className="mt-3 rounded-xl border border-[#B8E5D2] bg-[#F0FBF5] p-3 text-[10px] font-semibold text-[#137A59]">
+        <p className="mt-3 rounded-lg border border-[var(--rm-green)]/25 bg-[var(--rm-green-bg)] p-3 text-xs font-semibold text-[var(--rm-green)]">
           Courier delivery recorded: {formatDateTime(shipment.deliveredAt)}
         </p>
       )}
 
-      <div className="mt-4 border-t border-[#F0ECE7] pt-4">
-        <h4 className="text-[10px] font-extrabold uppercase tracking-wide text-[#756B61]">Tracking updates</h4>
+      <div className="mt-4 border-t border-[var(--rm-border)] pt-4">
+        <h4 className="text-[10px] font-bold uppercase tracking-wide text-[var(--rm-muted)]">Tracking updates</h4>
         {trackingEvents.length > 0 ? (
           <ol className="mt-3 space-y-3">
             {trackingEvents.map((event, index) => (
               <li key={event.id} className="flex items-start gap-3">
                 <div className="flex flex-col items-center">
-                  <span className={`mt-0.5 flex h-6 w-6 items-center justify-center rounded-full ${index === trackingEvents.length - 1 ? "bg-[#E9F9F0] text-[#16845D]" : "bg-[#F3F0EB] text-[#91877E]"}`}>
+                  <span className={`mt-0.5 flex h-6 w-6 items-center justify-center rounded-full ${index === trackingEvents.length - 1 ? "bg-[var(--rm-green-bg)] text-[var(--rm-green)]" : "bg-[var(--rm-surface-muted)] text-[var(--rm-muted)]"}`}>
                     {index === trackingEvents.length - 1 ? <CheckCircle2 className="h-3.5 w-3.5" /> : <Clock3 className="h-3.5 w-3.5" />}
                   </span>
-                  {index !== trackingEvents.length - 1 && <span className="mt-1 h-5 w-px bg-[#EAE6DF]" />}
+                  {index !== trackingEvents.length - 1 && <span className="mt-1 h-5 w-px bg-[var(--rm-border)]" />}
                 </div>
                 <div className="min-w-0 flex-1 pb-1">
-                  <p className="text-[10px] font-bold text-[#514840]">{event.statusLabel}</p>
-                  {event.message && <p className="mt-0.5 break-words text-[10px] leading-5 text-[#756B61]">{event.message}</p>}
-                  {event.location && <p className="mt-0.5 flex items-center gap-1 text-[9px] text-[#91877E]"><MapPin className="h-3 w-3 shrink-0" />{event.location}</p>}
-                  <p className="mt-1 text-[9px] text-[#A49A90]">{formatDateTime(event.occurredAt ?? event.createdAt)}</p>
+                  <p className="text-xs font-bold text-[var(--rm-text)]">{event.statusLabel}</p>
+                  {event.message && <p className="mt-0.5 break-words text-xs leading-5 text-[var(--rm-muted)]">{event.message}</p>}
+                  {event.location && <p className="mt-1 flex items-center gap-1 text-[10px] text-[var(--rm-muted)]"><MapPin className="h-3 w-3 shrink-0" />{event.location}</p>}
+                  <p className="mt-1 text-[10px] text-[var(--rm-subtle)]">{formatDateTime(event.occurredAt ?? event.createdAt)}</p>
                 </div>
               </li>
             ))}
           </ol>
         ) : (
-          <p className="mt-2 text-[10px] leading-5 text-[#91877E]">
-            No courier scans have been received yet. The latest shipment status is shown above.
-          </p>
+          <p className="mt-2 text-xs leading-5 text-[var(--rm-muted)]">No courier scans have been received yet. The latest shipment status is shown above.</p>
         )}
       </div>
-    </div>
+    </section>
   );
 }
 
@@ -605,47 +603,47 @@ function SellerOrderCard({
   const progressIndex = getProgressIndex(sellerOrder.status);
 
   return (
-    <section className="overflow-hidden rounded-2xl border border-[#EAE6DF] bg-white shadow-[0_4px_18px_rgba(41,37,34,0.025)]">
-      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[#F0ECE7] bg-[#FCFAF6] p-4 sm:p-5">
+    <section className="rm-panel overflow-hidden">
+      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[var(--rm-border)] bg-[var(--rm-surface-muted)] p-4 sm:p-5">
         <div className="flex min-w-0 items-center gap-3">
-          <div className="flex h-11 w-11 shrink-0 items-center justify-center overflow-hidden rounded-xl border border-[#EAE6DF] bg-white text-[#9F2D18]">
+          <div className="flex h-11 w-11 shrink-0 items-center justify-center overflow-hidden rounded-lg border border-[var(--rm-border)] bg-white text-[var(--rm-coral-dark)]">
             {sellerOrder.business.imageUrl ? (
               <img src={sellerOrder.business.imageUrl} alt={sellerOrder.business.name} className="h-full w-full object-cover" />
             ) : <Store className="h-5 w-5" />}
           </div>
           <div className="min-w-0">
-            <p className="truncate text-xs font-extrabold text-[#292522]">{sellerOrder.business.name}</p>
-            <p className="mt-1 break-all text-[9px] text-[#91877E]">{sellerOrder.sellerOrderCode}</p>
+            <p className="truncate text-sm font-bold text-[var(--rm-ink)]">{sellerOrder.business.name}</p>
+            <p className="mt-1 break-all text-[10px] text-[var(--rm-muted)]">{sellerOrder.sellerOrderCode}</p>
           </div>
         </div>
-        <span className={`rounded-full px-3 py-1.5 text-[10px] font-bold ${getStatusClass(sellerOrder.status)}`}>
+        <span className={`rounded-md px-2.5 py-1.5 text-[10px] font-bold ${getStatusClass(sellerOrder.status)}`}>
           {getOrderStatusLabel(sellerOrder.status)}
         </span>
       </div>
 
-      <div className="p-4 sm:p-5">
+      <div className="space-y-5 p-4 sm:p-5">
         <div>
           <div className="flex items-center justify-between gap-3">
-            <h3 className="text-xs font-extrabold text-[#401B13]">Fulfilment progress</h3>
-            {!terminated && <span className="text-[9px] font-semibold text-[#91877E]">{Math.max(0, progressIndex + 1)} of {fulfilmentSteps.length} stages</span>}
+            <h3 className="text-sm font-bold text-[var(--rm-ink)]">Fulfilment progress</h3>
+            {!terminated && <span className="text-[10px] font-semibold text-[var(--rm-muted)]">{Math.max(0, progressIndex + 1)} of {fulfilmentSteps.length} stages</span>}
           </div>
           {terminated ? (
-            <div className="mt-3 rounded-xl border border-red-200 bg-red-50 p-3">
-              <p className="text-xs font-bold text-red-700">{rejected ? "This seller rejected the order." : "This seller order was cancelled."}</p>
-              <p className="mt-1 text-[10px] text-red-600">{formatDateTime(rejected ? sellerOrder.rejectedAt : sellerOrder.cancelledAt)}</p>
+            <div className="mt-3 rounded-lg border border-[var(--rm-red)]/25 bg-[var(--rm-red-bg)] p-3">
+              <p className="text-xs font-bold text-[var(--rm-red)]">{rejected ? "This seller rejected the order." : "This seller order was cancelled."}</p>
+              <p className="mt-1 text-xs text-[var(--rm-red)]">{formatDateTime(rejected ? sellerOrder.rejectedAt : sellerOrder.cancelledAt)}</p>
             </div>
           ) : (
-            <div className="mt-4 grid gap-2 sm:grid-cols-2 lg:grid-cols-1 xl:grid-cols-2">
+            <div className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-1 xl:grid-cols-2">
               {fulfilmentSteps.map((step, index) => {
                 const done = progressIndex >= 0 && index <= progressIndex;
                 const current = index === progressIndex;
                 return (
-                  <div key={step.status} className={`flex min-w-0 items-center gap-2 rounded-xl px-2.5 py-2 ${current ? "bg-[#FFF1ED]" : "bg-[#FCFAF6]"}`}>
-                    <span className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-full ${done ? "bg-[#E9F9F0] text-[#16845D]" : "border border-[#EAE6DF] bg-white text-[#B6A99E]"}`}>
+                  <div key={step.status} className={`flex min-w-0 items-center gap-2 rounded-lg px-3 py-2.5 ${current ? "bg-[var(--rm-coral-soft)]" : "bg-[var(--rm-surface-muted)]"}`}>
+                    <span className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-full ${done ? "bg-[var(--rm-green-bg)] text-[var(--rm-green)]" : "border border-[var(--rm-border)] bg-white text-[var(--rm-subtle)]"}`}>
                       {done ? <CheckCircle2 className="h-3.5 w-3.5" /> : <span className="text-[9px] font-bold">{index + 1}</span>}
                     </span>
-                    <span className={`min-w-0 text-[10px] ${current ? "font-extrabold text-[#9F2D18]" : done ? "font-semibold text-[#514840]" : "text-[#91877E]"}`}>{step.label}</span>
-                    {current && <span className="ml-auto shrink-0 text-[8px] font-extrabold text-[#9F2D18]">NOW</span>}
+                    <span className={`min-w-0 text-xs ${current ? "font-bold text-[var(--rm-coral-dark)]" : done ? "font-semibold text-[var(--rm-text)]" : "text-[var(--rm-muted)]"}`}>{step.label}</span>
+                    {current && <span className="ml-auto shrink-0 text-[9px] font-bold text-[var(--rm-coral-dark)]">NOW</span>}
                   </div>
                 );
               })}
@@ -653,20 +651,15 @@ function SellerOrderCard({
           )}
         </div>
 
-        <div className="mt-5 border-t border-[#F0ECE7] pt-4">
+        <div className="border-t border-[var(--rm-border)] pt-4">
           <div className="flex flex-wrap items-center justify-between gap-2">
-            <div className="flex items-center gap-2">
-              <Truck className="h-4 w-4 text-[#9F2D18]" />
-              <h3 className="text-xs font-extrabold text-[#401B13]">Delivery tracking</h3>
-            </div>
-            <span className="text-[9px] font-semibold text-[#91877E]">{sellerOrder.shipments.length} {sellerOrder.shipments.length === 1 ? "parcel" : "parcels"}</span>
+            <div className="flex items-center gap-2"><Truck className="h-4 w-4 text-[var(--rm-coral-dark)]" /><h3 className="text-sm font-bold text-[var(--rm-ink)]">Delivery tracking</h3></div>
+            <span className="text-[10px] font-semibold text-[var(--rm-muted)]">{sellerOrder.shipments.length} {sellerOrder.shipments.length === 1 ? "parcel" : "parcels"}</span>
           </div>
           {sellerOrder.shipments.length > 0 ? (
-            <div className="space-y-3">
-              {sellerOrder.shipments.map((shipment) => <ShipmentCard key={shipment.id} shipment={shipment} />)}
-            </div>
+            <div className="space-y-3">{sellerOrder.shipments.map((shipment) => <ShipmentCard key={shipment.id} shipment={shipment} />)}</div>
           ) : (
-            <p className="mt-3 rounded-xl border border-dashed border-[#EAE6DF] bg-[#FCFAF6] p-3 text-[10px] leading-5 text-[#91877E]">
+            <p className="mt-3 rounded-lg border border-dashed border-[var(--rm-border-strong)] bg-[var(--rm-surface-muted)] p-3 text-xs leading-5 text-[var(--rm-muted)]">
               {sellerOrder.status === "READY_FOR_DISPATCH"
                 ? "The seller has marked this order ready. Courier booking details will appear here once a shipment is booked."
                 : sellerOrder.status === "DISPATCHED" || sellerOrder.status === "DELIVERED"
@@ -677,13 +670,13 @@ function SellerOrderCard({
         </div>
 
         {sellerOrder.status === "DELIVERED" && (
-          <div className="mt-5 rounded-xl border border-[#B8E5D2] bg-[#F0FBF5] p-4">
+          <div className="rounded-lg border border-[var(--rm-green)]/25 bg-[var(--rm-green-bg)] p-4">
             <div className="flex items-start gap-3">
-              <CheckCircle2 className="mt-0.5 h-5 w-5 shrink-0 text-[#16845D]" />
+              <CheckCircle2 className="mt-0.5 h-5 w-5 shrink-0 text-[var(--rm-green)]" />
               <div className="min-w-0 flex-1">
-                <p className="text-xs font-extrabold text-[#137A59]">The courier has marked this seller order as delivered.</p>
-                <p className="mt-1 text-[10px] leading-5 text-[#42745F]">Confirm only after you have received the products.</p>
-                <button type="button" disabled={confirming} onClick={() => onConfirmDelivery(sellerOrder.id)} className="mt-3 inline-flex min-h-10 items-center justify-center gap-2 rounded-xl bg-[#16845D] px-4 py-2.5 text-xs font-extrabold text-white transition hover:bg-[#137A59] disabled:cursor-not-allowed disabled:opacity-60">
+                <p className="text-sm font-bold text-[var(--rm-green)]">The courier has marked this seller order as delivered.</p>
+                <p className="mt-1 text-xs leading-5 text-[var(--rm-green)]">Confirm only after you have received the products.</p>
+                <button type="button" disabled={confirming} onClick={() => onConfirmDelivery(sellerOrder.id)} className="rm-button mt-3 min-h-10 bg-[var(--rm-green)] text-white hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60">
                   {confirming ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}
                   {confirming ? "Confirming..." : "Confirm delivery"}
                 </button>
@@ -692,36 +685,36 @@ function SellerOrderCard({
           </div>
         )}
         {sellerOrder.status === "COMPLETED" && (
-          <div className="mt-5 rounded-xl border border-[#B8E5D2] bg-[#F0FBF5] p-3">
-            <p className="flex items-center gap-2 text-xs font-bold text-[#137A59]"><CheckCircle2 className="h-4 w-4" />You have confirmed delivery of this order.</p>
-            {sellerOrder.completedAt && <p className="mt-2 text-[10px] text-[#42745F]">Confirmed: {formatDateTime(sellerOrder.completedAt)}</p>}
+          <div className="rounded-lg border border-[var(--rm-green)]/25 bg-[var(--rm-green-bg)] p-3">
+            <p className="flex items-center gap-2 text-xs font-bold text-[var(--rm-green)]"><CheckCircle2 className="h-4 w-4" />You have confirmed delivery of this order.</p>
+            {sellerOrder.completedAt && <p className="mt-2 text-xs text-[var(--rm-green)]">Confirmed: {formatDateTime(sellerOrder.completedAt)}</p>}
           </div>
         )}
 
-        <div className="mt-5 border-t border-[#F0ECE7] pt-4">
+        <div className="border-t border-[var(--rm-border)] pt-4">
           <div className="flex items-center justify-between gap-3">
-            <h3 className="text-xs font-extrabold text-[#401B13]">Products from this seller</h3>
-            <span className="text-[9px] font-semibold text-[#91877E]">{sellerOrder.items.length} {sellerOrder.items.length === 1 ? "product" : "products"}</span>
+            <h3 className="text-sm font-bold text-[var(--rm-ink)]">Products from this seller</h3>
+            <span className="text-[10px] font-semibold text-[var(--rm-muted)]">{sellerOrder.items.length} {sellerOrder.items.length === 1 ? "product" : "products"}</span>
           </div>
-          <div className="mt-3 space-y-3">
+          <div className="mt-3 space-y-2">
             {sellerOrder.items.map((item) => (
-              <div key={item.id} className="flex min-w-0 items-center gap-3 rounded-xl bg-[#FCFAF6] p-3">
-                <div className="flex h-14 w-14 shrink-0 items-center justify-center overflow-hidden rounded-xl border border-[#EAE6DF] bg-white">
-                  {item.productImageUrl ? <img src={item.productImageUrl} alt={item.productName} loading="lazy" className="h-full w-full object-cover" /> : <Package className="h-5 w-5 text-[#B6A99E]" />}
+              <div key={item.id} className="flex min-w-0 items-center gap-3 rounded-lg bg-[var(--rm-surface-muted)] p-3">
+                <div className="flex h-14 w-14 shrink-0 items-center justify-center overflow-hidden rounded-lg border border-[var(--rm-border)] bg-white">
+                  {item.productImageUrl ? <img src={item.productImageUrl} alt={item.productName} loading="lazy" className="h-full w-full object-cover" /> : <Package className="h-5 w-5 text-[var(--rm-subtle)]" />}
                 </div>
                 <div className="min-w-0 flex-1">
                   {item.productId ? (
-                    <Link href={`/product/${encodeURIComponent(item.productId)}`} className="line-clamp-2 break-words text-[11px] font-bold text-[#292522] hover:text-[#9F2D18]">{item.productName}</Link>
-                  ) : <p className="line-clamp-2 break-words text-[11px] font-bold text-[#292522]">{item.productName}</p>}
-                  <p className="mt-1 text-[10px] text-[#91877E]">{item.quantity} × {formatNaira(item.unitPrice)}</p>
+                    <Link href={`/product/${encodeURIComponent(item.productId)}`} className="line-clamp-2 break-words text-xs font-semibold text-[var(--rm-ink)] hover:text-[var(--rm-coral-dark)]">{item.productName}</Link>
+                  ) : <p className="line-clamp-2 break-words text-xs font-semibold text-[var(--rm-ink)]">{item.productName}</p>}
+                  <p className="mt-1 text-[10px] text-[var(--rm-muted)]">{item.quantity} × {formatNaira(item.unitPrice)}</p>
                 </div>
-                <p className="shrink-0 text-xs font-extrabold text-[#9F2D18]">{formatNaira(item.lineTotal)}</p>
+                <p className="shrink-0 text-xs font-bold text-[var(--rm-coral-dark)]">{formatNaira(item.lineTotal)}</p>
               </div>
             ))}
           </div>
-          <div className="mt-4 flex items-center justify-between border-t border-[#F0ECE7] pt-3">
-            <span className="text-[10px] font-semibold text-[#756B61]">Seller subtotal</span>
-            <span className="text-sm font-black text-[#17202A]">{formatNaira(sellerOrder.subtotal)}</span>
+          <div className="mt-4 flex items-center justify-between border-t border-[var(--rm-border)] pt-3">
+            <span className="text-xs font-semibold text-[var(--rm-muted)]">Seller subtotal</span>
+            <span className="text-sm font-bold text-[var(--rm-ink)]">{formatNaira(sellerOrder.subtotal)}</span>
           </div>
         </div>
       </div>
@@ -983,9 +976,9 @@ function OrderDetailContent({ orderId }: { orderId: string }) {
       <>
         <div className="hidden lg:block"><SiteHeader searchMode="PRODUCTS" /></div>
         <MobileOrderHeader />
-        <main className="flex min-h-[65vh] items-center justify-center bg-[#FFFDFC] px-4 pb-28 lg:pb-10">
-          <div role="status" className="flex items-center gap-3 text-sm font-semibold text-[#756B61]">
-            <LoaderCircle className="h-5 w-5 animate-spin text-[#FF5A36]" />Loading order details...
+        <main className="rm-storefront flex min-h-[65vh] items-center justify-center px-4 pb-28 lg:pb-10">
+          <div role="status" className="flex items-center gap-3 text-sm font-semibold text-[var(--rm-muted)]">
+            <LoaderCircle className="h-5 w-5 animate-spin text-[var(--rm-coral)]" />Loading order details...
           </div>
         </main>
         <MobileBottomNav />
@@ -998,14 +991,12 @@ function OrderDetailContent({ orderId }: { orderId: string }) {
       <>
         <div className="hidden lg:block"><SiteHeader searchMode="PRODUCTS" /></div>
         <MobileOrderHeader />
-        <main className="flex min-h-[65vh] items-center justify-center bg-[#FFFDFC] px-4 pb-28 lg:pb-10">
-          <section className="w-full max-w-md rounded-2xl border border-[#F0C9BF] bg-[#FFF1ED] p-7 text-center">
-            <Package className="mx-auto h-9 w-9 text-[#9F2D18]" />
-            <h1 className="mt-4 text-lg font-extrabold text-[#17202A]">Order unavailable</h1>
-            <p className="mt-2 text-sm leading-6 text-[#756B61]">{error || "We could not find this order in your account."}</p>
-            <Link href="/orders" className="mt-5 inline-flex min-h-11 items-center gap-2 rounded-xl bg-[#FF5A36] px-5 py-3 text-xs font-bold text-white transition hover:bg-[#E94E2C]">
-              <ArrowLeft className="h-4 w-4" />Back to my orders
-            </Link>
+        <main className="rm-storefront flex min-h-[65vh] items-center justify-center px-4 pb-28 lg:pb-10">
+          <section className="rm-panel w-full max-w-md p-7 text-center">
+            <span className="rm-category-icon mx-auto h-14 w-14"><Package className="h-7 w-7" /></span>
+            <h1 className="mt-4 text-lg font-bold text-[var(--rm-ink)]">Order unavailable</h1>
+            <p className="mt-2 text-sm leading-6 text-[var(--rm-muted)]">{error || "We could not find this order in your account."}</p>
+            <Link href="/orders" className="rm-button rm-button-primary mt-5"><ArrowLeft className="h-4 w-4" />Back to my orders</Link>
           </section>
         </main>
         <MobileBottomNav />
@@ -1019,118 +1010,96 @@ function OrderDetailContent({ orderId }: { orderId: string }) {
 
   return (
     <>
-      {/* Desktop keeps the full site navigation. Mobile uses a compact order header without the category/search header. */}
       <div className="hidden lg:block"><SiteHeader searchMode="PRODUCTS" /></div>
       <MobileOrderHeader />
 
-      <main id="main-content" className="min-h-dvh bg-[#FFFDFC] pb-28 text-[#17202A] lg:pb-10">
-        <div className="mx-auto max-w-[1240px] px-3 pb-8 pt-4 sm:px-5 sm:pt-6 lg:px-8 lg:pb-10 lg:pt-8">
-          <div className="mb-5 hidden flex-wrap items-center gap-2 text-[11px] text-[#756B61] sm:flex">
-            <Link href="/" className="hover:text-[#9F2D18]">Home</Link>
+      <main id="main-content" className="rm-storefront pb-28 lg:pb-10">
+        <div className="rm-container max-w-[1240px] pb-8 pt-4 sm:pt-6 lg:pb-10 lg:pt-8">
+          <nav aria-label="Breadcrumb" className="mb-5 hidden flex-wrap items-center gap-2 text-xs text-[var(--rm-muted)] sm:flex">
+            <Link href="/" className="hover:text-[var(--rm-coral-dark)]">Home</Link>
             <ChevronRight className="h-3 w-3" />
-            <Link href="/orders" className="hover:text-[#9F2D18]">My orders</Link>
+            <Link href="/orders" className="hover:text-[var(--rm-coral-dark)]">My orders</Link>
             <ChevronRight className="h-3 w-3" />
-            <span className="font-bold text-[#9F2D18]">Order details</span>
-          </div>
+            <span className="font-semibold text-[var(--rm-coral-dark)]">Order details</span>
+          </nav>
 
           <div className="mb-5 flex flex-wrap items-start justify-between gap-3 sm:mb-6">
             <div className="min-w-0">
-              <Link href="/orders" className="mb-2 hidden items-center gap-1.5 text-[10px] font-bold text-[#9F2D18] hover:text-[#FF5A36] sm:inline-flex">
+              <Link href="/orders" className="mb-2 hidden items-center gap-1.5 text-xs font-semibold text-[var(--rm-coral-dark)] hover:text-[var(--rm-coral)] sm:inline-flex">
                 <ArrowLeft className="h-3.5 w-3.5" />Back to my orders
               </Link>
-              <h1 className="text-xl font-black tracking-tight text-[#401B13] sm:text-2xl lg:text-3xl">Order details</h1>
-              <p className="mt-1.5 break-all text-[11px] font-bold text-[#9F2D18] sm:text-xs">{order.orderCode}</p>
-              <p className="mt-1 text-[10px] text-[#91877E]">Placed {formatDateTime(order.createdAt)}</p>
+              <p className="text-xs font-bold uppercase tracking-[0.08em] text-[var(--rm-coral-dark)]">Purchase details</p>
+              <h1 className="mt-1 text-2xl font-bold tracking-tight text-[var(--rm-ink)] sm:text-3xl">Order details</h1>
+              <p className="mt-2 break-all text-sm font-bold text-[var(--rm-coral-dark)]">{order.orderCode}</p>
+              <p className="mt-1 text-xs text-[var(--rm-muted)]">Placed {formatDateTime(order.createdAt)}</p>
             </div>
-            <span className={`rounded-full px-3 py-2 text-[10px] font-bold ${getStatusClass(order.status)}`}>
+            <span className={`rounded-md px-3 py-2 text-xs font-bold ${getStatusClass(order.status)}`}>
               {getOrderStatusLabel(order.status)}
             </span>
           </div>
 
-          <div className="grid items-start gap-5 lg:grid-cols-[minmax(0,1fr)_350px] xl:gap-6">
-            {/* MAIN COLUMN */}
-            <div className="min-w-0 space-y-5">
-              <section className="rounded-2xl border border-[#EAE6DF] bg-white p-4 shadow-[0_4px_18px_rgba(41,37,34,0.025)] sm:p-5">
-                <div className="grid grid-cols-2 gap-4 sm:grid-cols-4 sm:gap-5">
-                  <div><p className="text-[9px] font-bold uppercase tracking-wide text-[#91877E]">Order date</p><p className="mt-1.5 text-xs font-bold text-[#292522]">{formatDateTime(order.createdAt)}</p></div>
-                  <div><p className="text-[9px] font-bold uppercase tracking-wide text-[#91877E]">Products</p><p className="mt-1.5 text-xs font-bold text-[#292522]">{productCount} {productCount === 1 ? "item" : "items"}</p></div>
-                  <div><p className="text-[9px] font-bold uppercase tracking-wide text-[#91877E]">Sellers</p><p className="mt-1.5 text-xs font-bold text-[#292522]">{order.sellerOrders.length}</p></div>
-                  <div><p className="text-[9px] font-bold uppercase tracking-wide text-[#91877E]">{displayAmountLabel}</p><p className="mt-1.5 text-sm font-black text-[#9F2D18]">{formatNaira(displayAmount)}</p></div>
-                </div>
-              </section>
+          <div className="mb-5 grid grid-cols-2 gap-2 sm:grid-cols-4 sm:gap-3">
+            <div className="rm-panel p-3 sm:p-4"><p className="text-[10px] font-semibold text-[var(--rm-muted)]">Order date</p><p className="mt-1 text-xs font-bold text-[var(--rm-ink)]">{formatDateTime(order.createdAt)}</p></div>
+            <div className="rm-panel p-3 sm:p-4"><p className="text-[10px] font-semibold text-[var(--rm-muted)]">Products</p><p className="mt-1 text-xs font-bold text-[var(--rm-ink)]">{productCount} {productCount === 1 ? "item" : "items"}</p></div>
+            <div className="rm-panel p-3 sm:p-4"><p className="text-[10px] font-semibold text-[var(--rm-muted)]">Sellers</p><p className="mt-1 text-xs font-bold text-[var(--rm-ink)]">{order.sellerOrders.length}</p></div>
+            <div className="rm-panel p-3 sm:p-4"><p className="text-[10px] font-semibold text-[var(--rm-muted)]">{displayAmountLabel}</p><p className="mt-1 text-sm font-bold text-[var(--rm-coral-dark)]">{formatNaira(displayAmount)}</p></div>
+          </div>
 
-              <section>
-                <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
-                  <div>
-                    <h2 className="text-base font-extrabold text-[#401B13] sm:text-lg">Seller fulfilment and delivery</h2>
-                    <p className="mt-1 max-w-2xl text-[10px] leading-5 text-[#756B61] sm:text-[11px]">
-                      Each seller handles their part of your order. Courier tracking is shown separately for every parcel.
-                    </p>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <span className="rounded-full bg-[#FFF1ED] px-3 py-1.5 text-[9px] font-extrabold text-[#9F2D18]">
-                      {order.sellerOrders.length} {order.sellerOrders.length === 1 ? "seller" : "sellers"}
-                    </span>
-                    <button type="button" onClick={() => void refreshTracking()} disabled={trackingLoading || trackingRefreshing} aria-label="Refresh delivery tracking" title="Refresh delivery tracking" className="inline-flex h-9 w-9 items-center justify-center rounded-xl border border-[#EAE6DF] bg-white text-[#756B61] transition hover:border-[#FFB39F] hover:text-[#9F2D18] disabled:opacity-50">
+          <div className="grid items-start gap-5 lg:grid-cols-[minmax(0,1fr)_350px] xl:gap-6">
+            <div className="min-w-0 space-y-5">
+              <section className="rm-panel overflow-hidden">
+                <SectionHeading
+                  icon={Store}
+                  eyebrow="Order progress"
+                  title="Seller fulfilment and delivery"
+                  description="Each seller handles their part of your order. Courier tracking is shown separately for every parcel."
+                />
+                <div className="p-4 sm:p-5">
+                  <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+                    <span className="rm-filter-chip" aria-current="true">{order.sellerOrders.length} {order.sellerOrders.length === 1 ? "seller" : "sellers"}</span>
+                    <button type="button" onClick={() => void refreshTracking()} disabled={trackingLoading || trackingRefreshing} aria-label="Refresh delivery tracking" title="Refresh delivery tracking" className="rm-icon-button">
                       {trackingLoading || trackingRefreshing ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
                     </button>
                   </div>
+                  {trackingError && (
+                    <div role="alert" className="mb-3 flex flex-wrap items-center justify-between gap-2 rounded-lg border border-[var(--rm-yellow)]/25 bg-[var(--rm-yellow-bg)] p-3 text-xs leading-5 text-[var(--rm-yellow)]">
+                      <span>{trackingError} Your order details are still available; tracking could not be refreshed.</span>
+                      <button type="button" onClick={() => void refreshTracking()} className="font-bold underline">Try again</button>
+                    </div>
+                  )}
+                  {trackingLoading && order.sellerOrders.every((sellerOrder) => sellerOrder.shipments.length === 0) && (
+                    <p role="status" className="mb-3 flex items-center gap-2 text-xs text-[var(--rm-muted)]"><LoaderCircle className="h-3.5 w-3.5 animate-spin" />Checking for courier updates...</p>
+                  )}
+                  {deliveryError && <div role="alert" className="mb-3 rounded-lg border border-[var(--rm-red)]/25 bg-[var(--rm-red-bg)] p-3 text-xs font-semibold text-[var(--rm-red)]">{deliveryError}</div>}
+                  {deliveryMessage && <div role="status" className="mb-3 rounded-lg border border-[var(--rm-green)]/25 bg-[var(--rm-green-bg)] p-3 text-xs font-semibold text-[var(--rm-green)]">{deliveryMessage}</div>}
+                  {order.sellerOrders.length > 0 ? (
+                    <div className="space-y-4">{order.sellerOrders.map((sellerOrder) => <SellerOrderCard key={sellerOrder.id} sellerOrder={sellerOrder} onConfirmDelivery={confirmDelivery} confirming={confirmingSellerOrderId === sellerOrder.id} />)}</div>
+                  ) : (
+                    <div className="rounded-lg border border-dashed border-[var(--rm-border-strong)] bg-[var(--rm-surface-muted)] p-5 text-xs text-[var(--rm-muted)]">Seller fulfilment records are not available for this order.</div>
+                  )}
                 </div>
-
-                {trackingError && (
-                  <div role="alert" className="mb-3 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-[#F0D7B3] bg-[#FFF8EC] p-3 text-[10px] leading-5 text-[#796B5C]">
-                    <span>{trackingError} Your order details are still available; tracking could not be refreshed.</span>
-                    <button type="button" onClick={() => void refreshTracking()} className="font-extrabold text-[#9F2D18] underline">Try again</button>
-                  </div>
-                )}
-                {trackingLoading && order.sellerOrders.every((sellerOrder) => sellerOrder.shipments.length === 0) && (
-                  <p role="status" className="mb-3 flex items-center gap-2 text-[10px] text-[#91877E]">
-                    <LoaderCircle className="h-3.5 w-3.5 animate-spin" />Checking for courier updates...
-                  </p>
-                )}
-                {deliveryError && <div role="alert" className="mb-3 rounded-xl border border-red-200 bg-red-50 p-3 text-xs font-semibold text-red-700">{deliveryError}</div>}
-                {deliveryMessage && <div role="status" className="mb-3 rounded-xl border border-[#B8E5D2] bg-[#F0FBF5] p-3 text-xs font-semibold text-[#137A59]">{deliveryMessage}</div>}
-
-                {order.sellerOrders.length > 0 ? (
-                  <div className="space-y-4">
-                    {order.sellerOrders.map((sellerOrder) => (
-                      <SellerOrderCard
-                        key={sellerOrder.id}
-                        sellerOrder={sellerOrder}
-                        onConfirmDelivery={confirmDelivery}
-                        confirming={confirmingSellerOrderId === sellerOrder.id}
-                      />
-                    ))}
-                  </div>
-                ) : (
-                  <div className="rounded-2xl border border-[#EAE6DF] bg-white p-5 text-xs text-[#756B61]">Seller fulfilment records are not available for this order.</div>
-                )}
               </section>
 
-              <section className="rounded-2xl border border-[#EAE6DF] bg-white p-4 shadow-[0_4px_18px_rgba(41,37,34,0.025)] sm:p-5">
-                <div className="flex items-center gap-3">
-                  <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-[#FFF1ED] text-[#9F2D18]"><MapPin className="h-5 w-5" /></div>
-                  <div><h2 className="text-sm font-extrabold text-[#401B13]">Delivery details</h2><p className="mt-1 text-[10px] text-[#91877E]">The delivery information supplied during checkout.</p></div>
-                </div>
-                <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2 sm:gap-4">
-                  <div><p className="text-[9px] font-bold uppercase tracking-wide text-[#91877E]">Recipient</p><p className="mt-1 text-xs font-bold text-[#292522]">{order.deliveryRecipient}</p></div>
-                  <div><p className="text-[9px] font-bold uppercase tracking-wide text-[#91877E]">Phone number</p><p className="mt-1 text-xs font-bold text-[#292522]">{order.deliveryPhone}</p></div>
-                  <div><p className="text-[9px] font-bold uppercase tracking-wide text-[#91877E]">Delivery address</p><p className="mt-1 whitespace-pre-wrap break-words text-xs leading-6 text-[#514840]">{order.deliveryAddress}</p></div>
-                  <div><p className="text-[9px] font-bold uppercase tracking-wide text-[#91877E]">Area / neighbourhood</p><p className="mt-1 text-xs font-bold text-[#292522]">{order.deliveryArea}</p></div>
-                  {order.deliveryLandmark && <div><p className="text-[9px] font-bold uppercase tracking-wide text-[#91877E]">Landmark</p><p className="mt-1 text-xs text-[#514840]">{order.deliveryLandmark}</p></div>}
-                  {order.deliveryNotes && <div className="sm:col-span-2"><p className="text-[9px] font-bold uppercase tracking-wide text-[#91877E]">Delivery instructions</p><p className="mt-1 whitespace-pre-wrap break-words text-xs leading-6 text-[#514840]">{order.deliveryNotes}</p></div>}
+              <section className="rm-panel overflow-hidden">
+                <SectionHeading icon={MapPin} title="Delivery details" description="The delivery information supplied during checkout." />
+                <div className="grid grid-cols-1 gap-4 p-4 sm:grid-cols-2 sm:p-5">
+                  <div><p className="rm-field-label">Recipient</p><p className="text-sm font-semibold text-[var(--rm-ink)]">{order.deliveryRecipient}</p></div>
+                  <div><p className="rm-field-label">Phone number</p><p className="text-sm font-semibold text-[var(--rm-ink)]">{order.deliveryPhone}</p></div>
+                  <div><p className="rm-field-label">Delivery address</p><p className="whitespace-pre-wrap break-words text-sm leading-6 text-[var(--rm-text)]">{order.deliveryAddress}</p></div>
+                  <div><p className="rm-field-label">Area / neighbourhood</p><p className="text-sm font-semibold text-[var(--rm-ink)]">{order.deliveryArea}</p></div>
+                  {order.deliveryLandmark && <div><p className="rm-field-label">Landmark</p><p className="text-sm text-[var(--rm-text)]">{order.deliveryLandmark}</p></div>}
+                  {order.deliveryNotes && <div className="sm:col-span-2"><p className="rm-field-label">Delivery instructions</p><p className="whitespace-pre-wrap break-words text-sm leading-6 text-[var(--rm-text)]">{order.deliveryNotes}</p></div>}
                 </div>
               </section>
             </div>
 
-            {/* ORDER SIDEBAR */}
             <aside className="min-w-0 space-y-5 lg:sticky lg:top-24 lg:self-start">
               {(canCancelOrder || cancellationMessage || cancellationError) && (
-                <section className="rounded-2xl border border-[#EAE6DF] bg-white p-4 sm:p-5">
+                <section className="rm-panel p-4 sm:p-5">
                   <div className="flex flex-wrap items-center justify-between gap-3">
                     <div className="min-w-0 flex-1">
-                      <h2 className="text-xs font-extrabold text-[#401B13]">Order actions</h2>
-                      <p className="mt-1 text-[10px] leading-5 text-[#91877E]">
+                      <h2 className="text-sm font-bold text-[var(--rm-ink)]">Order actions</h2>
+                      <p className="mt-1 text-xs leading-5 text-[var(--rm-muted)]">
                         {canCancelOrder
                           ? "No seller has accepted this order yet. You can cancel the entire order."
                           : order.status === "CANCELLED"
@@ -1139,84 +1108,67 @@ function OrderDetailContent({ orderId }: { orderId: string }) {
                       </p>
                     </div>
                     {canCancelOrder && (
-                      <button type="button" onClick={cancelOrder} disabled={cancellingOrder || confirmingSellerOrderId !== null} className="inline-flex min-h-10 shrink-0 items-center justify-center gap-2 rounded-xl border border-red-200 bg-white px-3 py-2 text-[10px] font-extrabold text-red-600 transition hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-50">
+                      <button type="button" onClick={cancelOrder} disabled={cancellingOrder || confirmingSellerOrderId !== null} className="rm-button min-h-10 border border-[var(--rm-red)]/30 bg-white px-3 text-xs font-bold text-[var(--rm-red)] hover:bg-[var(--rm-red-bg)] disabled:cursor-not-allowed disabled:opacity-50">
                         {cancellingOrder ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <XCircle className="h-4 w-4" />}
                         {cancellingOrder ? "Cancelling..." : "Cancel order"}
                       </button>
                     )}
                   </div>
-                  {cancellationError && <div role="alert" className="mt-3 rounded-xl border border-red-200 bg-red-50 p-3 text-[10px] leading-5 text-red-700">{cancellationError}</div>}
-                  {cancellationMessage && <div role="status" className="mt-3 rounded-xl border border-[#B8E5D2] bg-[#F0FBF5] p-3 text-[10px] leading-5 text-[#137A59]">{cancellationMessage}</div>}
+                  {cancellationError && <div role="alert" className="mt-3 rounded-lg border border-[var(--rm-red)]/25 bg-[var(--rm-red-bg)] p-3 text-xs leading-5 text-[var(--rm-red)]">{cancellationError}</div>}
+                  {cancellationMessage && <div role="status" className="mt-3 rounded-lg border border-[var(--rm-green)]/25 bg-[var(--rm-green-bg)] p-3 text-xs leading-5 text-[var(--rm-green)]">{cancellationMessage}</div>}
                 </section>
               )}
 
-              <section className="rounded-2xl border border-[#EAE6DF] bg-white p-4 shadow-[0_4px_18px_rgba(41,37,34,0.025)] sm:p-5">
-                <h2 className="text-sm font-extrabold text-[#401B13]">Order summary</h2>
-                <div className="mt-4 space-y-3">
-                  <div className="flex justify-between gap-3 text-xs"><span className="text-[#756B61]">Products subtotal</span><span className="font-bold text-[#292522]">{formatNaira(order.itemsSubtotal)}</span></div>
-                  <div className="flex justify-between gap-3 text-xs"><span className="text-[#756B61]">Delivery fee</span><span className="text-right font-semibold text-[#756B61]">{isDeliveryFeeConfirmed ? formatNaira(order.deliveryFee) : "To be confirmed"}</span></div>
-                  <div className="flex justify-between gap-3 border-t border-[#EAE6DF] pt-4"><span className="text-sm font-extrabold text-[#292522]">{isDeliveryFeeConfirmed ? "Confirmed order total" : "Products subtotal"}</span><span className="text-base font-black text-[#9F2D18]">{formatNaira(displayAmount)}</span></div>
+              <section className="rm-panel overflow-hidden">
+                <div className="rm-panel-header"><div><p className="text-[10px] font-bold uppercase tracking-[0.08em] text-[var(--rm-coral-dark)]">Payment breakdown</p><h2 className="mt-1 text-sm font-bold text-[var(--rm-ink)]">Order summary</h2></div></div>
+                <div className="space-y-3 p-4 sm:p-5">
+                  <div className="flex justify-between gap-3 text-xs"><span className="text-[var(--rm-muted)]">Products subtotal</span><span className="font-semibold text-[var(--rm-ink)]">{formatNaira(order.itemsSubtotal)}</span></div>
+                  <div className="flex justify-between gap-3 text-xs"><span className="text-[var(--rm-muted)]">Delivery fee</span><span className="text-right font-semibold text-[var(--rm-text)]">{isDeliveryFeeConfirmed ? formatNaira(order.deliveryFee) : "To be confirmed"}</span></div>
+                  <div className="flex justify-between gap-3 border-t border-[var(--rm-border)] pt-4"><span className="text-sm font-bold text-[var(--rm-ink)]">{isDeliveryFeeConfirmed ? "Confirmed order total" : "Products subtotal"}</span><span className="text-base font-extrabold text-[var(--rm-coral-dark)]">{formatNaira(displayAmount)}</span></div>
+                  {!isDeliveryFeeConfirmed && <div className="rounded-lg border border-[var(--rm-yellow)]/25 bg-[var(--rm-yellow-bg)] p-3"><p className="text-xs leading-5 text-[var(--rm-yellow)]">Delivery charges have not been confirmed yet. The displayed amount covers products only and is not the final delivered order amount.</p></div>}
                 </div>
-                {!isDeliveryFeeConfirmed && (
-                  <div className="mt-4 rounded-xl border border-[#F0D7B3] bg-[#FFF8EC] p-3">
-                    <p className="text-[10px] leading-5 text-[#796B5C]">Delivery charges have not been confirmed yet. The displayed amount covers products only and is not the final delivered order amount.</p>
-                  </div>
-                )}
               </section>
 
-              <section className="rounded-2xl border border-[#F0D7B3] bg-[#FFF8EC] p-4 sm:p-5">
-                <div className="flex items-start gap-3">
-                  <ShieldCheck className="mt-0.5 h-5 w-5 shrink-0 text-[#9F2D18]" />
-                  <div className="min-w-0 flex-1">
-                    <h2 className="text-xs font-extrabold text-[#5E4730]">Payment information</h2>
-                    {order.payments.length === 0 ? (
-                      <p className="mt-2 text-[11px] leading-6 text-[#796B5C]">No payment has been recorded for this order. This order reference is not a payment receipt.</p>
-                    ) : (
-                      <div className="mt-3 space-y-3">
-                        {order.payments.map((payment) => (
-                          <div key={payment.id} className="rounded-xl border border-[#F0D7B3] bg-white/70 p-3">
-                            <div className="flex flex-wrap items-center justify-between gap-2">
-                              <span className="text-xs font-extrabold text-[#5E4730]">{formatMoney(payment.amount, payment.currency)}</span>
-                              <span className={`rounded-full px-2.5 py-1 text-[9px] font-bold ${getStatusClass(payment.status)}`}>{getOrderStatusLabel(payment.status)}</span>
-                            </div>
-                            <p className="mt-2 text-[10px] text-[#796B5C]">{payment.method ? payment.method.replaceAll("_", " ") : "Payment method not recorded"}</p>
-                            <p className="mt-1 text-[10px] text-[#91877E]">Recorded: {formatDateTime(payment.createdAt)}</p>
-                            {payment.paidAt && <p className="mt-1 text-[10px] font-semibold text-[#16845D]">Paid: {formatDateTime(payment.paidAt)}</p>}
-                            {payment.failureReason && <p className="mt-2 break-words text-[10px] leading-5 text-red-600">Payment information: {payment.failureReason}</p>}
-                          </div>
-                        ))}
+              <section className="rm-panel overflow-hidden">
+                <div className="rm-panel-header"><div className="flex items-center gap-2"><ShieldCheck className="h-4 w-4 text-[var(--rm-coral-dark)]" /><h2 className="text-sm font-bold text-[var(--rm-ink)]">Payment information</h2></div></div>
+                <div className="space-y-3 p-4 sm:p-5">
+                  {order.payments.length === 0 ? (
+                    <p className="text-xs leading-5 text-[var(--rm-muted)]">No payment has been recorded for this order. This order reference is not a payment receipt.</p>
+                  ) : order.payments.map((payment) => (
+                    <div key={payment.id} className="rounded-lg border border-[var(--rm-border)] bg-[var(--rm-surface-muted)] p-3">
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <span className="text-sm font-bold text-[var(--rm-ink)]">{formatMoney(payment.amount, payment.currency)}</span>
+                        <span className={`rounded-md px-2.5 py-1 text-[10px] font-bold ${getStatusClass(payment.status)}`}>{getOrderStatusLabel(payment.status)}</span>
                       </div>
-                    )}
-                  </div>
+                      <p className="mt-2 text-xs text-[var(--rm-muted)]">{payment.method ? payment.method.replaceAll("_", " ") : "Payment method not recorded"}</p>
+                      <p className="mt-1 text-[10px] text-[var(--rm-muted)]">Recorded: {formatDateTime(payment.createdAt)}</p>
+                      {payment.paidAt && <p className="mt-1 text-xs font-semibold text-[var(--rm-green)]">Paid: {formatDateTime(payment.paidAt)}</p>}
+                      {payment.failureReason && <p className="mt-2 break-words text-xs leading-5 text-[var(--rm-red)]">Payment information: {payment.failureReason}</p>}
+                    </div>
+                  ))}
                 </div>
               </section>
 
               {allSellerOrdersFinished && (
-                <div className="rounded-2xl border border-[#B8E5D2] bg-[#F0FBF5] p-4">
-                  <div className="flex items-center gap-3"><CheckCircle2 className="h-5 w-5 shrink-0 text-[#16845D]" /><p className="text-xs font-bold text-[#137A59]">All seller orders have reached a final status.</p></div>
+                <div className="flex items-center gap-3 rounded-lg border border-[var(--rm-green)]/25 bg-[var(--rm-green-bg)] p-4">
+                  <CheckCircle2 className="h-5 w-5 shrink-0 text-[var(--rm-green)]" /><p className="text-xs font-semibold text-[var(--rm-green)]">All seller orders have reached a final status.</p>
                 </div>
               )}
 
-              <section className="rounded-2xl border border-[#EAE6DF] bg-white p-4 sm:p-5">
-                <h2 className="text-xs font-extrabold text-[#401B13]">Order timeline</h2>
-                <div className="mt-3 flex flex-wrap items-center gap-2 text-[10px] text-[#756B61]"><CalendarDays className="h-4 w-4 text-[#9F2D18]" /><span>Created: {formatDateTime(order.createdAt)}</span></div>
-                {order.completedAt && <div className="mt-3 flex flex-wrap items-center gap-2 text-[10px] text-[#756B61]"><CheckCircle2 className="h-4 w-4 text-[#16845D]" /><span>Completed: {formatDateTime(order.completedAt)}</span></div>}
-                {order.cancelledAt && <div className="mt-3 flex flex-wrap items-center gap-2 text-[10px] text-[#B42318]"><Clock3 className="h-4 w-4" /><span>Cancelled: {formatDateTime(order.cancelledAt)}</span></div>}
+              <section className="rm-panel p-4 sm:p-5">
+                <h2 className="text-sm font-bold text-[var(--rm-ink)]">Order timeline</h2>
+                <div className="mt-3 flex items-start gap-2 text-xs text-[var(--rm-muted)]"><CalendarDays className="mt-0.5 h-4 w-4 shrink-0 text-[var(--rm-coral-dark)]" /><span>Created: {formatDateTime(order.createdAt)}</span></div>
+                {order.completedAt && <div className="mt-3 flex items-start gap-2 text-xs text-[var(--rm-muted)]"><CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-[var(--rm-green)]" /><span>Completed: {formatDateTime(order.completedAt)}</span></div>}
+                {order.cancelledAt && <div className="mt-3 flex items-start gap-2 text-xs text-[var(--rm-red)]"><Clock3 className="mt-0.5 h-4 w-4 shrink-0" /><span>Cancelled: {formatDateTime(order.cancelledAt)}</span></div>}
               </section>
             </aside>
           </div>
 
-          <div className="mt-6 flex flex-wrap items-center justify-between gap-3 border-t border-[#EAE6DF] pt-5">
-            <Link href="/orders" className="inline-flex min-h-11 items-center gap-2 rounded-xl border border-[#EAE6DF] bg-white px-5 py-3 text-xs font-bold text-[#756B61] transition hover:border-[#FFB39F] hover:text-[#9F2D18]">
-              <ArrowLeft className="h-4 w-4" />My orders
-            </Link>
-            <Link href="/shop" className="inline-flex min-h-11 items-center gap-2 rounded-xl bg-[#FF5A36] px-5 py-3 text-xs font-extrabold text-white transition hover:bg-[#E94E2C]">
-              Continue shopping<ArrowRight className="h-4 w-4" />
-            </Link>
+          <div className="mt-6 flex flex-wrap items-center justify-between gap-3 border-t border-[var(--rm-border)] pt-5">
+            <Link href="/orders" className="rm-button rm-button-secondary"><ArrowLeft className="h-4 w-4" />My orders</Link>
+            <Link href="/shop" className="rm-button rm-button-primary">Continue shopping<ArrowRight className="h-4 w-4" /></Link>
           </div>
-          <footer className="mt-8 flex items-center justify-center gap-3 pb-4 text-[10px] text-[#9B9188]">
-            <span className="h-px w-12 bg-[#EAE6DF]" /><span>ReMarket · Find it nearby</span><span className="h-px w-12 bg-[#EAE6DF]" />
-          </footer>
+          <footer className="mt-8 flex items-center justify-center gap-3 pb-4 text-xs text-[var(--rm-muted)]"><span className="h-px w-12 bg-[var(--rm-border)]" /><span>ReMarket · Find it nearby</span><span className="h-px w-12 bg-[var(--rm-border)]" /></footer>
         </div>
       </main>
       <MobileBottomNav />
@@ -1226,17 +1178,15 @@ function OrderDetailContent({ orderId }: { orderId: string }) {
 
 function MobileOrderHeader() {
   return (
-    <header className="sticky top-0 z-40 flex min-h-[60px] items-center justify-between gap-3 border-b border-[#EAE6DF] bg-white/95 px-3 shadow-[0_2px_12px_rgba(23,32,42,0.035)] backdrop-blur lg:hidden">
-      <Link href="/orders" aria-label="Back to my orders" className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-[#EAE6DF] bg-white text-[#756B61]">
+    <header className="sticky top-0 z-40 flex min-h-[58px] items-center justify-between gap-2 border-b border-[var(--rm-border)] bg-white px-3 shadow-[var(--rm-shadow-header)] lg:hidden">
+      <Link href="/orders" aria-label="Back to my orders" className="rm-icon-button h-9 w-9">
         <ArrowLeft className="h-4 w-4" />
       </Link>
-      <Link href="/" className="flex min-w-0 items-center gap-2" aria-label="ReMarket home">
-        <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-[#FF5A36] text-white"><ShoppingBag className="h-4 w-4" /></span>
-        <span className="min-w-0"><span className="block text-sm font-extrabold leading-4 text-[#9F2D18]">ReMarket</span><span className="block text-[9px] leading-3 text-[#91877E]">Order details</span></span>
+      <Link href="/" className="rm-brand min-w-0 text-lg" aria-label="ReMarket home">
+        <span className="rm-brand-mark"><ShoppingBag className="h-4 w-4" /></span>
+        <span className="min-w-0"><span className="block">Re<span className="text-[var(--rm-coral)]">Market</span></span><span className="mt-0.5 block text-[10px] font-medium tracking-normal text-[var(--rm-muted)]">Order details</span></span>
       </Link>
-      <Link href="/shop" className="inline-flex h-10 shrink-0 items-center gap-1 rounded-xl bg-[#FFF1ED] px-3 text-[10px] font-extrabold text-[#9F2D18]">
-        Shop<ArrowRight className="h-3.5 w-3.5" />
-      </Link>
+      <Link href="/shop" className="rm-button min-h-9 gap-1 bg-[var(--rm-coral-soft)] px-3 text-xs text-[var(--rm-coral-dark)] hover:bg-[var(--rm-cream-deep)]">Shop<ArrowRight className="h-3.5 w-3.5" /></Link>
     </header>
   );
 }

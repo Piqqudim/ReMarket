@@ -292,10 +292,10 @@ function getStockLabel(product: RecentProduct): { label: string; className: stri
   }
 
   if (product.availability === "AVAILABLE") {
-    return { label: "Available", className: "bg-[#E3F3E9] text-[#176B48]" };
+    return { label: "In stock", className: "bg-[#EAF5ED] text-[#176B48]" };
   }
 
-  return { label: "Confirm availability", className: "bg-[#FFF1D6] text-[#805D16]" };
+  return { label: "Check availability", className: "bg-[#FFF4DE] text-[#805D16]" };
 }
 
 function ProductPrice({ product }: { product: RecentProduct }) {
@@ -326,9 +326,9 @@ function ProductRating({ product }: { product: RecentProduct }) {
         {Array.from({ length: 5 }).map((_, index) => (
           <Star
             key={index}
-            className={`h-3 w-3 ${index < filledStars
-              ? "fill-[#E7A52E] text-[#E7A52E]"
-              : "fill-none text-[#C9C1B9]"}`}
+            className={index < filledStars
+              ? "h-3 w-3 fill-[#E7A52E] text-[#E7A52E]"
+              : "h-3 w-3 fill-none text-[#C9C1B9]"}
             aria-hidden="true"
           />
         ))}
@@ -359,18 +359,18 @@ function ProductCard({
   const currentFeedback = feedback?.productId === product.id ? feedback : null;
 
   return (
-    <article className="group flex h-full min-w-0 flex-col overflow-hidden rounded-xl border border-[#E8E4DE] bg-white transition-colors hover:border-[#F3B6A5]">
+    <article className="group flex h-full min-w-0 flex-col overflow-hidden rounded-lg border border-[#E8E4DE] bg-white">
       <Link
         href={productHref}
         aria-label={`View ${product.name}`}
-        className="relative block aspect-square overflow-hidden bg-[#F8F7F4] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[#FF5A36]"
+        className="relative block aspect-square overflow-hidden bg-[#F7F6F3] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[#FF5A36]"
       >
         {product.imageUrl ? (
           <img
             src={product.imageUrl}
             alt={product.name}
             loading="lazy"
-            className="h-full w-full object-contain p-2.5 transition-transform duration-200 group-hover:scale-[1.025] sm:p-3"
+            className="h-full w-full object-contain p-2.5 sm:p-3"
           />
         ) : (
           <span className="flex h-full w-full items-center justify-center text-[#B9AEA4]">
@@ -378,12 +378,12 @@ function ProductCard({
           </span>
         )}
 
-        <span className={`absolute left-2 top-2 max-w-[calc(100%-1rem)] truncate rounded-full px-2 py-1 text-[10px] font-semibold ${stock.className}`}>
+        <span className={`absolute left-2 top-2 max-w-[calc(100%-1rem)] truncate rounded px-2 py-1 text-[10px] font-semibold ${stock.className}`}>
           {stock.label}
         </span>
 
         {discount !== null && (
-          <span className="absolute right-2 top-2 rounded-md bg-[#9F2D18] px-2 py-1 text-[10px] font-bold text-white">
+          <span className="absolute right-2 top-2 rounded bg-[#9F2D18] px-2 py-1 text-[10px] font-bold text-white">
             -{discount}%
           </span>
         )}
@@ -429,7 +429,7 @@ function ProductCard({
               type="button"
               disabled={adding}
               onClick={() => onAddToCart(product)}
-              className="flex min-h-10 w-full items-center justify-center gap-2 rounded-lg bg-[#FF5A36] px-3 py-2 text-xs font-bold text-white transition hover:bg-[#E94A28] disabled:cursor-wait disabled:opacity-70 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#FF5A36] focus-visible:ring-offset-2"
+              className="flex min-h-10 w-full items-center justify-center gap-2 rounded-md bg-[#FF5A36] px-3 py-2 text-xs font-bold text-white hover:bg-[#E94A28] disabled:cursor-wait disabled:opacity-70 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#FF5A36] focus-visible:ring-offset-2"
               aria-label={`Add ${product.name} to cart`}
             >
               {adding ? (
@@ -445,14 +445,14 @@ function ProductCard({
             <button
               type="button"
               disabled
-              className="flex min-h-10 w-full items-center justify-center rounded-lg bg-[#F0EEEB] px-3 py-2 text-xs font-semibold text-[#8E857D]"
+              className="flex min-h-10 w-full items-center justify-center rounded-md bg-[#F0EEEB] px-3 py-2 text-xs font-semibold text-[#8E857D]"
             >
               Out of stock
             </button>
           ) : (
             <Link
               href={productHref}
-              className="flex min-h-10 w-full items-center justify-center rounded-lg border border-[#E7D5CE] bg-white px-3 py-2 text-xs font-bold text-[#9F2D18] transition hover:bg-[#FFF5F1]"
+              className="flex min-h-10 w-full items-center justify-center rounded-md border border-[#E7D5CE] bg-white px-3 py-2 text-xs font-bold text-[#9F2D18] hover:bg-[#FFF5F1]"
             >
               {product.price === null ? "Check price" : "Confirm availability"}
             </Link>
@@ -465,7 +465,7 @@ function ProductCard({
           )}
           {currentFeedback?.kind === "success" && (
             <p role="status" className="mt-1.5 text-[11px] leading-4 text-[#176B48]">
-              {feedback?.message}
+              {currentFeedback.message}
             </p>
           )}
         </div>
@@ -487,48 +487,45 @@ function CategoryTile({ category }: { category: HomeCategoryNode }) {
   const Icon = category.icon;
 
   return (
-    <article className="min-w-0 overflow-hidden rounded-xl border border-[#E8E4DE] bg-white transition-colors hover:border-[#F3B6A5]">
-      <Link
-        href={getCategoryHref(category)}
-        className="group flex min-w-0 items-center gap-2.5 p-2.5 sm:p-3"
+    <Link
+      href={getCategoryHref(category)}
+      className="group flex min-w-0 items-center gap-2.5 rounded-lg border border-[#E8E4DE] bg-white p-2.5 hover:border-[#E8B5A6] sm:gap-3 sm:p-3"
+    >
+      <span
+        className="flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-md sm:h-11 sm:w-11"
+        style={{ backgroundColor: category.bg }}
       >
-        <span
-          className="flex h-9 w-9 shrink-0 items-center justify-center overflow-hidden rounded-lg sm:h-10 sm:w-10"
-          style={{ backgroundColor: category.bg }}
-        >
-          {category.imageUrl ? (
-            <img src={category.imageUrl} alt="" loading="lazy" className="h-full w-full object-cover" />
-          ) : (
-            <Icon className="h-5 w-5 text-[#6F5144]" aria-hidden="true" />
-          )}
+        {category.imageUrl ? (
+          <img src={category.imageUrl} alt="" loading="lazy" className="h-full w-full object-cover" />
+        ) : (
+          <Icon className="h-5 w-5 text-[#6F5144]" aria-hidden="true" />
+        )}
+      </span>
+
+      <span className="min-w-0 flex-1">
+        <span className="block truncate text-xs font-semibold text-[#2B2927] group-hover:text-[#9F2D18] sm:text-sm">
+          {category.name}
         </span>
-
-        <span className="min-w-0 flex-1">
-          <span className="block truncate text-xs font-semibold text-[#2B2927] group-hover:text-[#9F2D18] sm:text-sm">
-            {category.name}
-          </span>
-          <span className="mt-0.5 block text-[10px] text-[#81766D]">
-            {category.children.length > 0 ? `${category.children.length} subcategories` : "Browse products"}
-          </span>
+        <span className="mt-0.5 block text-[10px] text-[#81766D]">
+          {category.children.length > 0 ? `${category.children.length} subcategories` : "Browse products"}
         </span>
+      </span>
+      <ChevronRight className="h-4 w-4 shrink-0 text-[#A69B91] group-hover:text-[#9F2D18]" aria-hidden="true" />
+    </Link>
+  );
+}
 
-        <ChevronRight className="h-4 w-4 shrink-0 text-[#A69B91] transition group-hover:translate-x-0.5 group-hover:text-[#9F2D18]" aria-hidden="true" />
-      </Link>
-
-      {category.children.length > 0 && (
-        <div className="hidden flex-wrap gap-1.5 border-t border-[#F0ECE7] px-3 py-2.5 sm:flex">
-          {category.children.slice(0, 4).map((child) => (
-            <Link
-              key={child.id}
-              href={getCategoryHref(child)}
-              className="max-w-full rounded-full border border-[#EEE8E1] bg-[#FCFAF6] px-2.5 py-1 text-[10px] font-medium text-[#62574E] transition hover:border-[#FFC2B2] hover:bg-[#FFF1ED] hover:text-[#9F2D18]"
-            >
-              <span className="block truncate">{child.name}</span>
-            </Link>
-          ))}
-        </div>
-      )}
-    </article>
+function ProductSkeleton() {
+  return (
+    <div className="overflow-hidden rounded-lg border border-[#EAE6DF] bg-white">
+      <div className="aspect-square bg-[#F2EEE9]" />
+      <div className="space-y-2 p-3">
+        <div className="h-3 w-2/5 rounded bg-[#F2EEE9]" />
+        <div className="h-3 w-4/5 rounded bg-[#F2EEE9]" />
+        <div className="h-4 w-1/2 rounded bg-[#F2EEE9]" />
+        <div className="h-9 w-full rounded-md bg-[#F2EEE9]" />
+      </div>
+    </div>
   );
 }
 
@@ -589,9 +586,7 @@ export default function HomePage() {
             : data.categories;
 
         if (!controller.signal.aborted) {
-          setCategories(
-            parseHomeCategories(navigationCategories).slice(0, MAX_HOME_CATEGORIES),
-          );
+          setCategories(parseHomeCategories(navigationCategories).slice(0, MAX_HOME_CATEGORIES));
         }
       } catch (error) {
         if (!controller.signal.aborted) {
@@ -644,9 +639,7 @@ export default function HomePage() {
       setCartFeedback({
         productId: product.id,
         kind: "error",
-        message: error instanceof Error
-          ? error.message
-          : "Unable to add this product to your cart.",
+        message: error instanceof Error ? error.message : "Unable to add this product to your cart.",
       });
     } finally {
       setAddingProductId(null);
@@ -691,7 +684,7 @@ export default function HomePage() {
   const productGridClass =
     "grid min-w-0 grid-cols-2 gap-3 sm:gap-4 md:grid-cols-3 lg:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4";
   const categoryGridClass =
-    "grid min-w-0 grid-cols-2 gap-2 sm:grid-cols-3 sm:gap-3 lg:grid-cols-2 2xl:grid-cols-3";
+    "grid min-w-0 grid-cols-2 gap-2 sm:grid-cols-3 sm:gap-3 xl:grid-cols-4";
 
   return (
     <div className="remarket-home-page min-h-dvh bg-[#FFF7ED]">
@@ -699,32 +692,36 @@ export default function HomePage() {
 
       <main
         id="main-content"
-        className="min-h-dvh overflow-x-clip bg-[#FFFDFC] pb-28 text-[#17202A] lg:pb-8"
+        className="min-h-dvh overflow-x-clip bg-white pb-28 text-[#17202A] lg:pb-8"
       >
-        <div className="mx-auto w-full max-w-[1600px] px-3 pb-8 pt-5 sm:px-5 sm:pt-6 lg:pl-7 lg:pr-[340px] xl:pt-7">
-          <section className="mb-7 flex flex-col gap-3 border-b border-[#EAE6DF] pb-5 sm:flex-row sm:items-end sm:justify-between sm:gap-5">
+        <div className="mx-auto w-full max-w-[1680px] px-3 pb-8 pt-4 sm:px-5 sm:pt-6 lg:pl-7 lg:pr-[340px] xl:pt-7">
+          <section className="mb-7 flex flex-col gap-4 border-b border-[#EAE6DF] pb-5 sm:flex-row sm:items-end sm:justify-between sm:gap-6">
             <div className="min-w-0">
-              <p className="text-[10px] font-bold uppercase tracking-[0.13em] text-[#9F2D18]">
-                ReMarket · Find it nearby
-              </p>
-              <h1 className="mt-1.5 text-[23px] font-bold leading-tight tracking-tight text-[#17202A] sm:text-2xl lg:text-[27px]">
+              <p className="text-[11px] font-semibold text-[#9F2D18]">ReMarket / Shop products</p>
+              <h1 className="mt-1.5 text-2xl font-bold leading-tight tracking-tight text-[#17202A] sm:text-[30px]">
                 Discover products from local businesses
               </h1>
-              <p className="mt-1.5 max-w-2xl text-xs leading-5 text-[#756B61] sm:text-sm">
-                Explore products listed by businesses around you.
+              <p className="mt-2 max-w-2xl text-sm leading-6 text-[#71675F]">
+                Browse products listed by businesses around you and add available items to your cart.
               </p>
             </div>
-
+            <Link
+              href="/shop"
+              className="inline-flex min-h-10 shrink-0 items-center justify-center gap-2 self-start rounded-md border border-[#E5DCD3] bg-white px-4 py-2 text-sm font-semibold text-[#514840] hover:border-[#D9A99A] hover:text-[#9F2D18] sm:self-auto"
+            >
+              Browse all products
+              <ArrowRight className="h-4 w-4" aria-hidden="true" />
+            </Link>
           </section>
 
-          <section aria-labelledby="categories-heading" className="mb-8">
+          <section aria-labelledby="categories-heading" className="mb-9">
             <div className="mb-3 flex items-end justify-between gap-3">
               <div>
-                <h2 id="categories-heading" className="text-base font-bold tracking-tight text-[#202A33] sm:text-lg">
+                <h2 id="categories-heading" className="text-lg font-bold tracking-tight text-[#202A33]">
                   Shop by category
                 </h2>
-                <p className="mt-0.5 text-[11px] text-[#81766D] sm:text-xs">
-                  Browse products by type.
+                <p className="mt-0.5 text-xs text-[#81766D]">
+                  Choose a category to narrow down the catalogue.
                 </p>
               </div>
               <Link
@@ -738,10 +735,10 @@ export default function HomePage() {
 
             {categoriesLoading ? (
               <div className={categoryGridClass}>
-                {Array.from({ length: 6 }).map((_, index) => (
+                {Array.from({ length: 8 }).map((_, index) => (
                   <div
                     key={`home-category-skeleton-${index}`}
-                    className="h-[66px] animate-pulse rounded-xl border border-[#EAE6DF] bg-white"
+                    className="h-[66px] rounded-lg border border-[#EAE6DF] bg-[#F8F6F2]"
                   />
                 ))}
               </div>
@@ -752,7 +749,7 @@ export default function HomePage() {
                 ))}
               </div>
             ) : (
-              <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-[#EAE6DF] bg-[#FCFAF6] px-4 py-4">
+              <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-[#EAE6DF] bg-[#FCFAF6] px-4 py-4">
                 <p className="text-xs text-[#756B61]">
                   Browse the product catalogue to explore available categories.
                 </p>
@@ -768,12 +765,12 @@ export default function HomePage() {
             className="scroll-mt-28"
             aria-labelledby="recent-products-heading"
           >
-            <div className="mb-4 flex items-end justify-between gap-3">
+            <div className="mb-4 flex items-end justify-between gap-3 border-b border-[#EAE6DF] pb-3">
               <div className="min-w-0">
-                <h2 id="recent-products-heading" className="text-base font-bold tracking-tight text-[#202A33] sm:text-lg">
+                <h2 id="recent-products-heading" className="text-lg font-bold tracking-tight text-[#202A33]">
                   Recently listed
                 </h2>
-                <p className="mt-0.5 text-[11px] text-[#81766D] sm:text-xs">
+                <p className="mt-0.5 text-xs text-[#81766D]">
                   The latest products added to ReMarket.
                 </p>
               </div>
@@ -789,30 +786,19 @@ export default function HomePage() {
             {productsLoading && (
               <div className={productGridClass}>
                 {Array.from({ length: MAX_HOME_PRODUCTS }).map((_, index) => (
-                  <div
-                    key={`home-product-skeleton-${index}`}
-                    className="overflow-hidden rounded-xl border border-[#EAE6DF] bg-white"
-                  >
-                    <div className="aspect-square animate-pulse bg-[#F2EEE9]" />
-                    <div className="space-y-2 p-3">
-                      <div className="h-3 w-2/5 animate-pulse rounded bg-[#F2EEE9]" />
-                      <div className="h-3 w-4/5 animate-pulse rounded bg-[#F2EEE9]" />
-                      <div className="h-4 w-1/2 animate-pulse rounded bg-[#F2EEE9]" />
-                      <div className="h-9 w-full animate-pulse rounded-lg bg-[#F2EEE9]" />
-                    </div>
-                  </div>
+                  <ProductSkeleton key={`home-product-skeleton-${index}`} />
                 ))}
               </div>
             )}
 
             {!productsLoading && productsFailed && (
-              <div className="rounded-xl border border-[#F2D2C9] bg-[#FFF7F4] px-5 py-8 text-center">
+              <div className="rounded-lg border border-[#F2D2C9] bg-[#FFF7F4] px-5 py-8 text-center">
                 <p className="text-sm font-semibold text-[#9F2D18]">We couldn’t load products.</p>
                 <p className="mt-1 text-xs text-[#756B61]">Please try again.</p>
                 <button
                   type="button"
                   onClick={retryProducts}
-                  className="mt-4 min-h-10 rounded-lg bg-[#FF5A36] px-5 py-2 text-xs font-bold text-white transition hover:bg-[#E94A28]"
+                  className="mt-4 min-h-10 rounded-md bg-[#FF5A36] px-5 py-2 text-xs font-bold text-white hover:bg-[#E94A28]"
                 >
                   Try again
                 </button>
@@ -834,8 +820,8 @@ export default function HomePage() {
             )}
 
             {!productsLoading && !productsFailed && products.length === 0 && (
-              <div className="rounded-xl border border-dashed border-[#E8E4DE] bg-[#FCFAF6] px-5 py-10 text-center">
-                <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-xl bg-white text-[#FF5A36]">
+              <div className="rounded-lg border border-dashed border-[#E8E4DE] bg-[#FCFAF6] px-5 py-10 text-center">
+                <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-lg bg-white text-[#FF5A36]">
                   <Package className="h-6 w-6" aria-hidden="true" />
                 </div>
                 <p className="mt-3 text-sm font-semibold text-[#202A33]">No products to display yet</p>
@@ -844,7 +830,7 @@ export default function HomePage() {
                 </p>
                 <Link
                   href="/shop"
-                  className="mt-4 inline-flex min-h-10 items-center justify-center gap-2 rounded-lg bg-[#FF5A36] px-4 py-2 text-xs font-bold text-white transition hover:bg-[#E94A28]"
+                  className="mt-4 inline-flex min-h-10 items-center justify-center gap-2 rounded-md bg-[#FF5A36] px-4 py-2 text-xs font-bold text-white hover:bg-[#E94A28]"
                 >
                   Explore products
                   <ArrowRight className="h-3.5 w-3.5" aria-hidden="true" />
@@ -853,7 +839,7 @@ export default function HomePage() {
             )}
           </section>
 
-          <footer className="mt-9 flex flex-col gap-3 border-t border-[#EAE6DF] pt-5 text-xs text-[#81766D] sm:flex-row sm:items-center sm:justify-between">
+          <footer className="mt-10 flex flex-col gap-3 border-t border-[#EAE6DF] pt-5 text-xs text-[#81766D] sm:flex-row sm:items-center sm:justify-between">
             <div>
               <p className="font-semibold text-[#514840]">ReMarket</p>
               <p className="mt-0.5">Find it nearby.</p>
@@ -863,7 +849,7 @@ export default function HomePage() {
               <button
                 type="button"
                 onClick={() => void handleShareReMarket()}
-                className="inline-flex min-h-9 items-center gap-2 rounded-lg px-2.5 py-1.5 font-semibold text-[#9F2D18] transition hover:bg-[#FFF1ED]"
+                className="inline-flex min-h-9 items-center gap-2 rounded-md px-2.5 py-1.5 font-semibold text-[#9F2D18] hover:bg-[#FFF1ED]"
               >
                 <Share2 className="h-3.5 w-3.5" aria-hidden="true" />
                 Share ReMarket

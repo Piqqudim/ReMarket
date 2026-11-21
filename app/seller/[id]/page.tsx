@@ -147,7 +147,7 @@ function getAvailabilityLabel(value: Availability): string {
   return value === "AVAILABLE" ? "Available" : value === "UNAVAILABLE" ? "Unavailable" : "Ask seller";
 }
 function getAvailabilityClass(value: Availability): string {
-  return value === "AVAILABLE" ? "bg-[#E4F7EC] text-[#237A48]" : value === "UNAVAILABLE" ? "bg-[#F3ECEA] text-[#8B6960]" : "bg-[#FFF0D9] text-[#9F2D18]";
+  return value === "AVAILABLE" ? "bg-[var(--rm-green-bg)] text-[var(--rm-green)]" : value === "UNAVAILABLE" ? "bg-[var(--rm-surface-muted)] text-[var(--rm-muted)]" : "bg-[var(--rm-yellow-bg)] text-[var(--rm-coral-dark)]";
 }
 function formatDuration(minutes: number | null): string | null {
   if (minutes === null || !Number.isFinite(minutes) || minutes <= 0) return null;
@@ -255,7 +255,7 @@ function initials(name: string): string {
   return !parts.length ? "R" : parts.length === 1 ? parts[0].slice(0, 2).toUpperCase() : `${parts[0][0]}${parts[parts.length - 1][0]}`.toUpperCase();
 }
 function RatingStars({ rating, size = 15 }: { rating: number; size?: number }) {
-  return <div className="inline-flex items-center gap-0.5" aria-label={`${rating.toFixed(1)} out of 5 stars`}>{[1, 2, 3, 4, 5].map((star) => <Star key={star} size={size} className={star <= Math.round(rating) ? "fill-[#FFB300] text-[#FFB300]" : "text-[#D8D1CA]"} />)}</div>;
+  return <div className="inline-flex items-center gap-0.5" aria-label={`${rating.toFixed(1)} out of 5 stars`}>{[1, 2, 3, 4, 5].map((star) => <Star key={star} size={size} className={star <= Math.round(rating) ? "fill-[#FFB300] text-[#FFB300]" : "text-[var(--rm-border-strong)]"} />)}</div>;
 }
 function RatingLabel({ rating }: { rating: number }) {
   return <span>{(["", "Poor", "Fair", "Good", "Very good", "Excellent"] as string[])[rating] ?? "Select a rating"}</span>;
@@ -310,7 +310,7 @@ function SaveButton({ type, listingId, saved, busy, disabled, onClick }: {
   onClick: (type: SavedListingType, id: string) => void;
 }) {
   const label = type === "PRODUCT" ? "product" : "service";
-  return <button type="button" onClick={() => onClick(type, listingId)} disabled={busy || disabled} aria-pressed={saved} aria-label={saved ? `Remove ${label} from Saved` : `Save ${label}`} className={`inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full border bg-white/95 shadow-sm transition disabled:cursor-wait disabled:opacity-60 ${saved ? "border-[#FFB39F] text-[#9F2D18]" : "border-[#EAE6DF] text-[#756B61] hover:border-[#FFB39F] hover:text-[#9F2D18]"}`}>
+  return <button type="button" onClick={() => onClick(type, listingId)} disabled={busy || disabled} aria-pressed={saved} aria-label={saved ? `Remove ${label} from Saved` : `Save ${label}`} className={`rm-icon-button inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-white/95 shadow-sm transition disabled:cursor-wait disabled:opacity-60 ${saved ? "border-[var(--rm-coral)] text-[var(--rm-coral-dark)]" : "text-[var(--rm-muted)] hover:border-[var(--rm-coral)] hover:text-[var(--rm-coral-dark)]"}`}>
     {busy ? <LoaderCircle size={16} className="animate-spin" /> : <Heart size={17} fill={saved ? "currentColor" : "none"} />}
   </button>;
 }
@@ -325,18 +325,18 @@ function ProductCard({ product, sellerCategory, saved, saving, savedLoading, onS
   const href = `/product/${encodeURIComponent(product.id)}`;
 
   return (
-    <article className="group flex min-w-0 flex-col overflow-hidden rounded-xl border border-[#EAE6DF] bg-white transition duration-200 hover:border-[#FFB39F] hover:shadow-[0_8px_24px_rgba(64,27,19,0.08)]">
-      <div className="relative aspect-square overflow-hidden bg-[#FCFAF6]">
+    <article className="rm-product-card group flex min-w-0 flex-col overflow-hidden transition duration-200">
+      <div className="rm-product-media relative aspect-square">
         <Link href={href} aria-label={`View ${product.name}`} className="absolute inset-0 flex items-center justify-center p-3 sm:p-4">
           {images[0] ? (
             <img src={images[0].url} alt={product.name} loading="lazy" className="h-full w-full object-contain transition-transform duration-300 group-hover:scale-[1.035]" />
           ) : (
             <div className="flex h-full w-full items-center justify-center" style={{ backgroundColor: getCategoryColor(product.category?.name ?? sellerCategory) }}>
-              <Package size={34} className="text-[#9F2D18]" />
+              <Package size={34} className="text-[var(--rm-coral-dark)]" />
             </div>
           )}
         </Link>
-        {discount !== null && <span className="absolute left-2.5 top-2.5 rounded bg-[#9F2D18] px-2 py-1 text-[9px] font-extrabold text-white">-{discount}%</span>}
+        {discount !== null && <span className="absolute left-2.5 top-2.5 rounded bg-[var(--rm-coral-dark)] px-2 py-1 text-[9px] font-extrabold text-white">-{discount}%</span>}
         <div className="absolute right-2.5 top-2.5">
           <SaveButton type="PRODUCT" listingId={product.id} saved={saved} busy={saving} disabled={savedLoading} onClick={onSave} />
         </div>
@@ -346,14 +346,14 @@ function ProductCard({ product, sellerCategory, saved, saving, savedLoading, onS
       </div>
 
       <div className="flex flex-1 flex-col p-3 sm:p-3.5">
-        {product.category && <p className="mb-1 truncate text-[9px] font-semibold uppercase tracking-wide text-[#91877E]">{categoryLabel(product.category)}</p>}
-        <h3 className="line-clamp-2 min-h-10 text-[12px] font-semibold leading-5 text-[#292522] sm:text-[13px]">
-          <Link href={href} className="transition hover:text-[#9F2D18]">{product.name}</Link>
+        {product.category && <p className="mb-1 truncate text-[9px] font-semibold uppercase tracking-wide text-[var(--rm-muted)]">{categoryLabel(product.category)}</p>}
+        <h3 className="line-clamp-2 min-h-10 text-[12px] font-semibold leading-5 text-[var(--rm-ink)] sm:text-[13px]">
+          <Link href={href} className="transition hover:text-[var(--rm-coral-dark)]">{product.name}</Link>
         </h3>
-        {product.description && <p className="mt-1.5 line-clamp-2 min-h-8 text-[10px] leading-4 text-[#817970]">{product.description}</p>}
+        {product.description && <p className="mt-1.5 line-clamp-2 min-h-8 text-[10px] leading-4 text-[var(--rm-muted)]">{product.description}</p>}
         <div className="mt-auto flex flex-wrap items-baseline gap-x-2 gap-y-1 pt-3">
-          <span className="text-[14px] font-extrabold text-[#9F2D18] sm:text-[15px]">{formatProductPrice(product)}</span>
-          {originalPrice !== null && <span className="text-[10px] font-semibold text-[#A69D94] line-through">{money(originalPrice)}</span>}
+          <span className="text-[14px] font-extrabold text-[var(--rm-coral-dark)] sm:text-[15px]">{formatProductPrice(product)}</span>
+          {originalPrice !== null && <span className="text-[10px] font-semibold text-[var(--rm-subtle)] line-through">{money(originalPrice)}</span>}
         </div>
       </div>
     </article>
@@ -366,26 +366,26 @@ function ServiceCard({ service, saved, saving, savedLoading, onSave }: {
   const duration = formatDuration(service.durationMinutes);
 
   return (
-    <article className="group flex min-w-0 flex-col overflow-hidden rounded-xl border border-[#EAE6DF] bg-white transition duration-200 hover:border-[#FFB39F] hover:shadow-[0_8px_24px_rgba(64,27,19,0.08)]">
-      <div className="relative aspect-square overflow-hidden bg-[#FCFAF6]">
+    <article className="rm-product-card group flex min-w-0 flex-col overflow-hidden transition duration-200">
+      <div className="rm-product-media relative aspect-square">
         {images[0] ? (
           <img src={images[0].url} alt={service.name} loading="lazy" className="h-full w-full object-contain p-3 transition-transform duration-300 group-hover:scale-[1.035]" />
         ) : (
-          <div className="flex h-full items-center justify-center bg-[#F2EDE7]"><Wrench size={34} className="text-[#9F2D18]" /></div>
+          <div className="flex h-full items-center justify-center bg-[var(--rm-surface-muted)]"><Wrench size={34} className="text-[var(--rm-coral-dark)]" /></div>
         )}
         <div className="absolute right-2.5 top-2.5"><SaveButton type="SERVICE" listingId={service.id} saved={saved} busy={saving} disabled={savedLoading} onClick={onSave} /></div>
         <span className={`absolute bottom-2.5 left-2.5 rounded-full px-2 py-1 text-[9px] font-bold ${getAvailabilityClass(service.availability)}`}>{getAvailabilityLabel(service.availability)}</span>
       </div>
       <div className="flex flex-1 flex-col p-3.5">
-        {service.category && <p className="mb-1 truncate text-[9px] font-semibold uppercase tracking-wide text-[#91877E]">{categoryLabel(service.category)}</p>}
-        <h3 className="line-clamp-2 min-h-10 text-[12px] font-semibold leading-5 text-[#292522] sm:text-[13px]">{service.name}</h3>
-        {service.description && <p className="mt-1.5 line-clamp-2 min-h-8 text-[10px] leading-4 text-[#817970]">{service.description}</p>}
-        <p className="mt-3 text-[14px] font-extrabold text-[#9F2D18]">{formatServicePrice(service)}</p>
+        {service.category && <p className="mb-1 truncate text-[9px] font-semibold uppercase tracking-wide text-[var(--rm-muted)]">{categoryLabel(service.category)}</p>}
+        <h3 className="line-clamp-2 min-h-10 text-[12px] font-semibold leading-5 text-[var(--rm-ink)] sm:text-[13px]">{service.name}</h3>
+        {service.description && <p className="mt-1.5 line-clamp-2 min-h-8 text-[10px] leading-4 text-[var(--rm-muted)]">{service.description}</p>}
+        <p className="mt-3 text-[14px] font-extrabold text-[var(--rm-coral-dark)]">{formatServicePrice(service)}</p>
         <div className="mt-2 flex flex-wrap gap-1.5">
-          <span className="rounded-full bg-[#FCFAF6] px-2.5 py-1 text-[9px] font-semibold text-[#746D67]">{getFulfillmentLabel(service.fulfillmentType)}</span>
-          {duration && <span className="inline-flex items-center gap-1 rounded-full bg-[#FCFAF6] px-2.5 py-1 text-[9px] font-semibold text-[#746D67]"><Clock3 size={10} />{duration}</span>}
+          <span className="rounded-full bg-[var(--rm-surface-muted)] px-2.5 py-1 text-[9px] font-semibold text-[var(--rm-muted)]">{getFulfillmentLabel(service.fulfillmentType)}</span>
+          {duration && <span className="inline-flex items-center gap-1 rounded-full bg-[var(--rm-surface-muted)] px-2.5 py-1 text-[9px] font-semibold text-[var(--rm-muted)]"><Clock3 size={10} />{duration}</span>}
         </div>
-        <a href="#seller-contact" className="mt-auto inline-flex min-h-9 w-full items-center justify-center rounded-lg bg-[#FFF0E9] px-3 py-2 text-[10px] font-bold text-[#9F2D18] transition hover:bg-[#FFE2D8]">Contact about this service</a>
+        <a href="#seller-contact" className="rm-button rm-button-secondary mt-auto w-full">Contact about this service</a>
       </div>
     </article>
   );
@@ -662,146 +662,151 @@ function SellerPageContent({ id }: { id: string }) {
     });
   }, [seller?.products, productSearch, activeProductCategory]);
 
-  if (!id) return <><SiteHeader searchMode="ALL" /><main className="flex min-h-[65vh] w-full items-center justify-center bg-[#FFF7ED] px-4 py-12"><div className="max-w-md rounded-3xl border border-[#F0C9BF] bg-white p-8 text-center shadow-sm"><Store size={34} className="mx-auto text-[#9F2D18]" /><h1 className="mt-4 text-xl font-black text-[#401B13]">Seller not found</h1><p className="mt-2 text-sm leading-6 text-[#756B61]">We couldn&apos;t find the seller you&apos;re looking for.</p><Link href="/shop" className="mt-5 inline-flex items-center gap-2 rounded-xl bg-[#FF5A36] px-5 py-3 text-xs font-bold text-white">Browse products <ArrowRight size={15} /></Link></div></main><MobileBottomNav /></>;
+  if (!id) return <><SiteHeader searchMode="ALL" /><main className="rm-storefront flex min-h-[65vh] w-full items-center justify-center px-4 py-12"><div className="max-w-md rounded-3xl border border-[var(--rm-border-strong)] bg-white p-8 text-center shadow-sm"><Store size={34} className="mx-auto text-[var(--rm-coral-dark)]" /><h1 className="mt-4 text-xl font-black text-[var(--rm-coral-dark)]">Seller not found</h1><p className="mt-2 text-sm leading-6 text-[var(--rm-muted)]">We couldn&apos;t find the seller you&apos;re looking for.</p><Link href="/shop" className="rm-button rm-button-primary mt-5">Browse products <ArrowRight size={15} /></Link></div></main><MobileBottomNav /></>;
 
-  return <><SiteHeader searchMode="ALL" /><main id="main-content" className="min-h-screen w-full overflow-x-clip bg-[#FFFDFC] pb-24 text-[#292522] lg:pb-10">
-    {loading ? <div className="mx-auto w-full px-4 py-10 sm:px-6 xl:px-10 2xl:px-14"><div className="h-[260px] animate-pulse rounded-[26px] bg-[#F2EDE7]" /><div className="mt-6 grid grid-cols-2 gap-4 md:grid-cols-4 xl:grid-cols-5">{Array.from({ length: 10 }).map((_, index) => <div key={index} className="aspect-[4/5] animate-pulse rounded-2xl bg-[#F2EDE7]" />)}</div></div>
-    : error || !seller ? <div className="mx-auto flex min-h-[65vh] w-full items-center justify-center px-4 py-12"><section className="w-full max-w-lg rounded-3xl border border-[#F0C9BF] bg-[#FFF8F5] p-8 text-center"><Store size={34} className="mx-auto text-[#9F2D18]" /><h1 className="mt-4 text-xl font-black text-[#401B13]">{notFound ? "Seller not found" : "Unable to load seller"}</h1><p className="mt-2 text-sm leading-6 text-[#756B61]">{notFound ? "This seller profile may have been removed or is no longer available." : error || "We could not load this seller profile."}</p>{!notFound && <button type="button" onClick={() => window.location.reload()} className="mt-5 rounded-xl border border-[#EAE6DF] bg-white px-5 py-3 text-xs font-bold text-[#756B61]">Try again</button>}<Link href="/shop" className="mt-5 inline-flex items-center gap-2 rounded-xl bg-[#FF5A36] px-5 py-3 text-xs font-bold text-white">Back to Shop <ArrowRight size={14} /></Link></section></div>
+  return <><SiteHeader searchMode="ALL" /><main id="main-content" className="rm-storefront min-h-screen w-full overflow-x-clip pb-24 text-[var(--rm-ink)] lg:pb-10">
+    {loading ? <div className="rm-container w-full py-10"><div className="h-[260px] animate-pulse rounded-[26px] bg-[var(--rm-surface-muted)]" /><div className="mt-6 grid grid-cols-2 gap-4 md:grid-cols-4 xl:grid-cols-5">{Array.from({ length: 10 }).map((_, index) => <div key={index} className="aspect-[4/5] animate-pulse rounded-2xl bg-[var(--rm-surface-muted)]" />)}</div></div>
+    : error || !seller ? <div className="mx-auto flex min-h-[65vh] w-full items-center justify-center px-4 py-12"><section className="w-full max-w-lg rounded-3xl border border-[var(--rm-border-strong)] bg-[var(--rm-coral-soft)] p-8 text-center"><Store size={34} className="mx-auto text-[var(--rm-coral-dark)]" /><h1 className="mt-4 text-xl font-black text-[var(--rm-coral-dark)]">{notFound ? "Seller not found" : "Unable to load seller"}</h1><p className="mt-2 text-sm leading-6 text-[var(--rm-muted)]">{notFound ? "This seller profile may have been removed or is no longer available." : error || "We could not load this seller profile."}</p>{!notFound && <button type="button" onClick={() => window.location.reload()} className="rm-button rm-button-secondary mt-5">Try again</button>}<Link href="/shop" className="rm-button rm-button-primary mt-5">Back to Shop <ArrowRight size={14} /></Link></section></div>
     : <>
-      <section className="w-full border-b border-[#EAE6DF] bg-[#FCFAF6]">
-        <div className="mx-auto max-w-[1480px] px-3 py-5 sm:px-5 sm:py-6 lg:px-7 xl:px-9">
-          <div className="mb-4 flex items-center gap-2 text-[10px] font-medium text-[#91877E]">
-            <Link href="/" className="hover:text-[#9F2D18]">Home</Link>
+      <section className="w-full border-b border-[var(--rm-border)] bg-[var(--rm-cream)]">
+        <div className="rm-container py-6 sm:py-7">
+          <div className="mb-4 flex items-center gap-2 text-[10px] font-medium text-[var(--rm-muted)]">
+            <Link href="/" className="hover:text-[var(--rm-coral-dark)]">Home</Link>
             <span>/</span>
             <span>Stores</span>
             <span>/</span>
-            <span className="font-semibold text-[#62574E]">{seller.name}</span>
+            <span className="font-semibold text-[var(--rm-text)]">{seller.name}</span>
           </div>
           <div className="flex min-w-0 flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
             <div className="flex min-w-0 items-center gap-3.5 sm:gap-5">
-              <div className="flex h-[68px] w-[68px] shrink-0 items-center justify-center overflow-hidden rounded-xl border border-[#EAE6DF] bg-white text-xl font-extrabold text-[#9F2D18] sm:h-20 sm:w-20 sm:rounded-2xl sm:text-2xl">
+              <div className="flex h-[68px] w-[68px] shrink-0 items-center justify-center overflow-hidden rounded-xl border border-[var(--rm-border)] bg-white text-xl font-extrabold text-[var(--rm-coral-dark)] sm:h-20 sm:w-20 sm:rounded-2xl sm:text-2xl">
                 {seller.imageUrl ? <img src={seller.imageUrl} alt={`${seller.name} logo`} className="h-full w-full object-cover" /> : getInitials(seller.name)}
               </div>
               <div className="min-w-0">
                 <div className="flex flex-wrap items-center gap-2">
-                  <p className="text-[9px] font-bold uppercase tracking-[0.14em] text-[#9F2D18]">ReMarket storefront</p>
-                  {seller.verified && <span className="inline-flex items-center gap-1 rounded-full bg-[#E4F7EC] px-2 py-1 text-[9px] font-bold text-[#237A48]"><BadgeCheck size={12} /> Verified</span>}
+                  <p className="text-[9px] font-bold uppercase tracking-[0.14em] text-[var(--rm-coral-dark)]">ReMarket storefront</p>
+                  {seller.verified && <span className="inline-flex items-center gap-1 rounded-full bg-[var(--rm-green-bg)] px-2 py-1 text-[9px] font-bold text-[var(--rm-green)]"><BadgeCheck size={12} /> Verified</span>}
                 </div>
-                <h1 className="mt-1 break-words text-xl font-extrabold tracking-tight text-[#25211E] sm:text-2xl lg:text-[28px]">{seller.name}</h1>
-                {seller.ownerName && <p className="mt-0.5 truncate text-[11px] text-[#756B61]">Owned by {seller.ownerName}</p>}
+                <h1 className="mt-1 break-words text-xl font-extrabold tracking-tight text-[var(--rm-ink)] sm:text-2xl lg:text-[28px]">{seller.name}</h1>
+                {seller.ownerName && <p className="mt-0.5 truncate text-[11px] text-[var(--rm-muted)]">Owned by {seller.ownerName}</p>}
                 <div className="mt-2 flex flex-wrap items-center gap-1.5">
-                  {(seller.businessCategories[0] || seller.category) && <span className="rounded-md bg-white px-2 py-1 text-[9px] font-semibold text-[#62574E] ring-1 ring-inset ring-[#EAE6DF]">{seller.businessCategories[0] ? categoryLabel(seller.businessCategories[0]) : seller.category}</span>}
-                  <span className={`rounded-md px-2 py-1 text-[9px] font-bold ${seller.availability === "AVAILABLE" ? "bg-[#E4F7EC] text-[#237A48]" : seller.availability === "UNAVAILABLE" ? "bg-[#F3ECEA] text-[#8B6960]" : "bg-[#FFF0D9] text-[#9F2D18]"}`}>{getAvailabilityLabel(seller.availability)}</span>
-                  {seller.location?.area && <span className="inline-flex items-center gap-1 rounded-md bg-white px-2 py-1 text-[9px] font-semibold text-[#756B61] ring-1 ring-inset ring-[#EAE6DF]"><MapPin size={10} />{seller.location.area}</span>}
+                  {(seller.businessCategories[0] || seller.category) && <span className="rounded-md bg-white px-2 py-1 text-[9px] font-semibold text-[var(--rm-text)] ring-1 ring-inset ring-[var(--rm-border)]">{seller.businessCategories[0] ? categoryLabel(seller.businessCategories[0]) : seller.category}</span>}
+                  <span className={`rounded-md px-2 py-1 text-[9px] font-bold ${seller.availability === "AVAILABLE" ? "bg-[var(--rm-green-bg)] text-[var(--rm-green)]" : seller.availability === "UNAVAILABLE" ? "bg-[var(--rm-surface-muted)] text-[var(--rm-muted)]" : "bg-[var(--rm-yellow-bg)] text-[var(--rm-coral-dark)]"}`}>{getAvailabilityLabel(seller.availability)}</span>
+                  {seller.location?.area && <span className="inline-flex items-center gap-1 rounded-md bg-white px-2 py-1 text-[9px] font-semibold text-[var(--rm-muted)] ring-1 ring-inset ring-[var(--rm-border)]"><MapPin size={10} />{seller.location.area}</span>}
+                </div>
+                <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-2 text-[11px] font-medium text-[var(--rm-muted)]">
+                  <span className="inline-flex items-center gap-1.5"><Package size={13} className="text-[var(--rm-coral)]" />{seller.productCount.toLocaleString("en-NG")} products</span>
+                  <span className="inline-flex items-center gap-1.5"><Wrench size={13} className="text-[var(--rm-coral)]" />{seller.serviceCount.toLocaleString("en-NG")} services</span>
+                  {seller.reviewCount > 0 && <span className="inline-flex items-center gap-1.5"><Star size={13} className="fill-[#FFB300] text-[#FFB300]" />{seller.averageRating.toFixed(1)} · {seller.reviewCount.toLocaleString("en-NG")} reviews</span>}
                 </div>
               </div>
             </div>
             <div className="flex shrink-0 gap-2 sm:pl-3">
-              <a href="#seller-contact" className="inline-flex min-h-10 flex-1 items-center justify-center gap-2 rounded-lg bg-[#FF5A36] px-4 py-2.5 text-[11px] font-bold text-white transition hover:bg-[#E94A28] sm:flex-none"><MessageCircle size={14} /> Contact seller</a>
-              <button type="button" onClick={() => void shareSeller()} className="inline-flex min-h-10 items-center justify-center gap-2 rounded-lg border border-[#E2DED8] bg-white px-3.5 py-2.5 text-[11px] font-bold text-[#514840] transition hover:border-[#FFB39F] hover:text-[#9F2D18]"><Share2 size={14} /><span className="hidden sm:inline">Share store</span></button>
+              <a href="#seller-contact" className="rm-button rm-button-primary min-h-10 flex-1 sm:flex-none"><MessageCircle size={14} /> Contact seller</a>
+              <button type="button" onClick={() => void shareSeller()} className="rm-button rm-button-secondary min-h-10"><Share2 size={14} /><span className="hidden sm:inline">Share store</span></button>
             </div>
           </div>
         </div>
       </section>
 
-      <nav aria-label="Seller storefront sections" className="w-full border-b border-[#EAE6DF] bg-white">
-        <div className="mx-auto flex max-w-[1480px] items-center gap-1 overflow-x-auto px-3 py-2 sm:px-5 lg:px-7 xl:px-9 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-          <a href="#seller-products" className="shrink-0 rounded-lg bg-[#FFF0E9] px-3.5 py-2.5 text-[11px] font-bold text-[#9F2D18]">Products</a>
-          <a href="#seller-services" className="shrink-0 rounded-lg px-3.5 py-2.5 text-[11px] font-semibold text-[#625B55] transition hover:bg-[#FCFAF6] hover:text-[#9F2D18]">Services</a>
-          <a href="#seller-about" className="shrink-0 rounded-lg px-3.5 py-2.5 text-[11px] font-semibold text-[#625B55] transition hover:bg-[#FCFAF6] hover:text-[#9F2D18]">About</a>
-          <a href="#seller-contact" className="shrink-0 rounded-lg px-3.5 py-2.5 text-[11px] font-semibold text-[#625B55] transition hover:bg-[#FCFAF6] hover:text-[#9F2D18]">Contact &amp; location</a>
-          <a href="#seller-reviews" className="shrink-0 rounded-lg px-3.5 py-2.5 text-[11px] font-semibold text-[#625B55] transition hover:bg-[#FCFAF6] hover:text-[#9F2D18]">Reviews <span className="ml-1 text-[9px] opacity-70">{seller.reviewCount}</span></a>
+      <nav aria-label="Seller storefront sections" className="sticky top-[var(--rm-header-height)] z-30 w-full border-b border-[var(--rm-border)] bg-white/95 backdrop-blur">
+        <div className="rm-container flex items-center gap-1 overflow-x-auto py-2 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+          <a href="#seller-products" className="shrink-0 rounded-lg bg-[var(--rm-coral-soft)] px-3.5 py-2.5 text-[11px] font-bold text-[var(--rm-coral-dark)]">Products</a>
+          <a href="#seller-services" className="shrink-0 rounded-lg px-3.5 py-2.5 text-[11px] font-semibold text-[var(--rm-text)] transition hover:bg-[var(--rm-surface-muted)] hover:text-[var(--rm-coral-dark)]">Services</a>
+          <a href="#seller-about" className="shrink-0 rounded-lg px-3.5 py-2.5 text-[11px] font-semibold text-[var(--rm-text)] transition hover:bg-[var(--rm-surface-muted)] hover:text-[var(--rm-coral-dark)]">About</a>
+          <a href="#seller-contact" className="shrink-0 rounded-lg px-3.5 py-2.5 text-[11px] font-semibold text-[var(--rm-text)] transition hover:bg-[var(--rm-surface-muted)] hover:text-[var(--rm-coral-dark)]">Contact &amp; location</a>
+          <a href="#seller-reviews" className="shrink-0 rounded-lg px-3.5 py-2.5 text-[11px] font-semibold text-[var(--rm-text)] transition hover:bg-[var(--rm-surface-muted)] hover:text-[var(--rm-coral-dark)]">Reviews <span className="ml-1 text-[9px] opacity-70">{seller.reviewCount}</span></a>
         </div>
       </nav>
 
-      <div className="mx-auto w-full max-w-[1480px] px-3 py-5 sm:px-5 sm:py-7 lg:px-7 xl:px-9">
-        {savedNotice && <div role="status" aria-live="polite" className="mb-4 flex flex-wrap items-center gap-2 rounded-lg border border-[#F0C9BF] bg-[#FFF1ED] px-4 py-3 text-[11px] font-semibold text-[#9F2D18]"><Heart size={14} /><span>{savedNotice}</span>{savedAuthRequired && <Link href={`/buyer/login?callbackUrl=${encodeURIComponent(`/seller/${id}`)}`} className="font-extrabold underline underline-offset-2">Sign in</Link>}</div>}
-        {shareNotice && <p role="status" className="mb-4 rounded-lg border border-[#EAE6DF] bg-white px-4 py-3 text-[11px] font-semibold text-[#756B61]">{shareNotice}</p>}
+      <div className="rm-container w-full py-6 sm:py-8">
+        {savedNotice && <div role="status" aria-live="polite" className="mb-4 flex flex-wrap items-center gap-2 rounded-lg border border-[var(--rm-border-strong)] bg-[var(--rm-coral-soft)] px-4 py-3 text-[11px] font-semibold text-[var(--rm-coral-dark)]"><Heart size={14} /><span>{savedNotice}</span>{savedAuthRequired && <Link href={`/buyer/login?callbackUrl=${encodeURIComponent(`/seller/${id}`)}`} className="font-extrabold underline underline-offset-2">Sign in</Link>}</div>}
+        {shareNotice && <p role="status" className="mb-4 rounded-lg border border-[var(--rm-border)] bg-white px-4 py-3 text-[11px] font-semibold text-[var(--rm-muted)]">{shareNotice}</p>}
 
         <div className="grid min-w-0 gap-6 lg:grid-cols-[minmax(0,1fr)_300px] xl:grid-cols-[minmax(0,1fr)_320px] xl:gap-7">
-          <div className="min-w-0 space-y-9">
-            <section id="seller-products" className="scroll-mt-24 min-w-0">
-              <div className="mb-4 flex flex-col gap-3 border-b border-[#EAE6DF] pb-4 sm:flex-row sm:items-end sm:justify-between">
+          <div className="min-w-0 space-y-10">
+            <section id="seller-products" className="scroll-mt-28 min-w-0">
+              <div className="rm-section-heading mb-4 flex flex-col gap-3 border-b border-[var(--rm-border)] pb-4 sm:flex-row sm:items-end sm:justify-between">
                 <div>
-                  <p className="text-[9px] font-bold uppercase tracking-[0.14em] text-[#9F2D18]">Store catalogue</p>
-                  <h2 className="mt-1 text-xl font-extrabold tracking-tight text-[#25211E] sm:text-2xl">Products</h2>
-                  <p className="mt-1 text-[11px] text-[#756B61]">{seller.productCount.toLocaleString("en-NG")} {seller.productCount === 1 ? "product" : "products"} listed by this seller</p>
+                  <p className="text-[9px] font-bold uppercase tracking-[0.14em] text-[var(--rm-coral-dark)]">Store catalogue</p>
+                  <h2 className="rm-section-title mt-1">Products</h2>
+                  <p className="rm-section-subtitle mt-1">{seller.productCount.toLocaleString("en-NG")} {seller.productCount === 1 ? "product" : "products"} listed by this seller</p>
                 </div>
-                {seller.products.length > 0 && <label className="flex min-h-10 w-full items-center gap-2 rounded-lg border border-[#E2DED8] bg-white px-3 sm:max-w-[330px]"><Search size={15} className="shrink-0 text-[#9B9188]" /><input value={productSearch} onChange={(event) => setProductSearch(event.target.value)} placeholder={`Search this store`} aria-label="Search this seller's products" className="w-full bg-transparent text-[11px] text-[#292522] outline-none placeholder:text-[#A69D94]" /></label>}
+                {seller.products.length > 0 && <label className="rm-search w-full sm:max-w-[330px]"><Search size={15} className="shrink-0 text-[var(--rm-muted)]" /><input value={productSearch} onChange={(event) => setProductSearch(event.target.value)} placeholder={`Search this store`} aria-label="Search this seller's products" className="text-[12px]" /></label>}
               </div>
 
               {productCategories.length > 0 && seller.products.length > 0 && <div className="mb-4 flex gap-2 overflow-x-auto pb-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-                <button type="button" onClick={() => setActiveProductCategory("All")} aria-pressed={activeProductCategory === "All"} className={`shrink-0 rounded-lg border px-3 py-2 text-[10px] font-bold transition ${activeProductCategory === "All" ? "border-[#FF5A36] bg-[#FFF0E9] text-[#9F2D18]" : "border-[#EAE6DF] bg-white text-[#756B61] hover:border-[#FFB39F]"}`}>All products</button>
+                <button type="button" onClick={() => setActiveProductCategory("All")} aria-pressed={activeProductCategory === "All"} className="rm-filter-chip shrink-0">All products</button>
                 {productCategories.map((category) => {
                   const key = categoryKey(category);
-                  return <button key={key} type="button" onClick={() => setActiveProductCategory(key)} aria-pressed={activeProductCategory === key} className={`shrink-0 rounded-lg border px-3 py-2 text-[10px] font-bold transition ${activeProductCategory === key ? "border-[#FF5A36] bg-[#FFF0E9] text-[#9F2D18]" : "border-[#EAE6DF] bg-white text-[#756B61] hover:border-[#FFB39F]"}`}>{categoryLabel(category)}</button>;
+                  return <button key={key} type="button" onClick={() => setActiveProductCategory(key)} aria-pressed={activeProductCategory === key} className="rm-filter-chip shrink-0">{categoryLabel(category)}</button>;
                 })}
               </div>}
 
               {seller.products.length > 0 ? filteredProducts.length > 0 ? <>
-                <div className="mb-3 flex items-center justify-between gap-2 text-[10px] text-[#91877E]"><span>{filteredProducts.length} matching {filteredProducts.length === 1 ? "product" : "products"}</span>{(productSearch || activeProductCategory !== "All") && <button type="button" onClick={() => { setProductSearch(""); setActiveProductCategory("All"); }} className="font-bold text-[#9F2D18] hover:underline">Reset</button>}</div>
-                <div className="grid min-w-0 grid-cols-2 gap-2.5 sm:gap-3.5 md:grid-cols-3 2xl:grid-cols-4">
+                <div className="mb-3 flex items-center justify-between gap-2 text-[10px] text-[var(--rm-muted)]"><span>{filteredProducts.length} matching {filteredProducts.length === 1 ? "product" : "products"}</span>{(productSearch || activeProductCategory !== "All") && <button type="button" onClick={() => { setProductSearch(""); setActiveProductCategory("All"); }} className="font-bold text-[var(--rm-coral-dark)] hover:underline">Reset</button>}</div>
+                <div className="rm-product-grid min-w-0 grid-cols-2 sm:grid-cols-3 xl:grid-cols-4">
                   {filteredProducts.map((product) => <ProductCard key={product.id} product={product} sellerCategory={seller.category} saved={Boolean(savedListingIds[savedKey("PRODUCT", product.id)])} saving={savingListingKey === savedKey("PRODUCT", product.id)} savedLoading={savedListingsLoading} onSave={(type, listingId) => { void toggleSaved(type, listingId); }} />)}
                 </div>
-              </> : <div className="rounded-xl border border-dashed border-[#DDD6CE] bg-[#FCFAF6] px-5 py-12 text-center"><Search size={26} className="mx-auto text-[#AAA29B]" /><p className="mt-3 text-sm font-bold text-[#625B55]">No matching products</p><p className="mt-1 text-[11px] text-[#928A83]">Try another search or category.</p><button type="button" onClick={() => { setProductSearch(""); setActiveProductCategory("All"); }} className="mt-4 rounded-lg border border-[#EAE6DF] bg-white px-4 py-2 text-[10px] font-bold text-[#9F2D18]">Reset filters</button></div> : <div className="rounded-xl border border-dashed border-[#DDD6CE] bg-[#FCFAF6] px-5 py-14 text-center"><Package size={30} className="mx-auto text-[#AAA29B]" /><p className="mt-3 text-sm font-bold text-[#625B55]">No products listed yet</p><p className="mt-1 text-[11px] text-[#928A83]">Contact the seller to ask what is currently available.</p></div>}
+              </> : <div className="rm-empty-state rounded-xl border border-dashed border-[var(--rm-border-strong)] bg-[var(--rm-surface-muted)]"><Search size={26} className="mx-auto text-[var(--rm-subtle)]" /><p className="mt-3 text-sm font-bold text-[var(--rm-text)]">No matching products</p><p className="mt-1 text-[11px] text-[var(--rm-subtle)]">Try another search or category.</p><button type="button" onClick={() => { setProductSearch(""); setActiveProductCategory("All"); }} className="mt-4 rounded-lg border border-[var(--rm-border)] bg-white px-4 py-2 text-[10px] font-bold text-[var(--rm-coral-dark)]">Reset filters</button></div> : <div className="rm-empty-state rounded-xl border border-dashed border-[var(--rm-border-strong)] bg-[var(--rm-surface-muted)]"><Package size={30} className="mx-auto text-[var(--rm-subtle)]" /><p className="mt-3 text-sm font-bold text-[var(--rm-text)]">No products listed yet</p><p className="mt-1 text-[11px] text-[var(--rm-subtle)]">Contact the seller to ask what is currently available.</p></div>}
             </section>
 
-            <section id="seller-services" className="scroll-mt-24 border-t border-[#EAE6DF] pt-7">
-              <div className="mb-4 flex items-end justify-between gap-3"><div><p className="text-[9px] font-bold uppercase tracking-[0.14em] text-[#9F2D18]">More from this store</p><h2 className="mt-1 text-xl font-extrabold tracking-tight text-[#25211E] sm:text-2xl">Services</h2><p className="mt-1 text-[11px] text-[#756B61]">{seller.serviceCount.toLocaleString("en-NG")} {seller.serviceCount === 1 ? "service" : "services"} offered</p></div><Wrench size={20} className="text-[#FF5A36]" /> </div>
-              {seller.services.length > 0 ? <div className="grid min-w-0 grid-cols-2 gap-2.5 sm:gap-3.5 xl:grid-cols-3">{seller.services.map((service) => <ServiceCard key={service.id} service={service} saved={Boolean(savedListingIds[savedKey("SERVICE", service.id)])} saving={savingListingKey === savedKey("SERVICE", service.id)} savedLoading={savedListingsLoading} onSave={(type, listingId) => { void toggleSaved(type, listingId); }} />)}</div> : <div className="rounded-xl border border-dashed border-[#DDD6CE] bg-[#FCFAF6] px-5 py-12 text-center"><Wrench size={27} className="mx-auto text-[#AAA29B]" /><p className="mt-3 text-sm font-bold text-[#625B55]">No services listed yet</p><p className="mt-1 text-[11px] text-[#928A83]">This seller has not published any services.</p></div>}
+            <section id="seller-services" className="scroll-mt-28 border-t border-[var(--rm-border)] pt-8">
+              <div className="mb-4 flex items-end justify-between gap-3"><div><p className="text-[9px] font-bold uppercase tracking-[0.14em] text-[var(--rm-coral-dark)]">More from this store</p><h2 className="rm-section-title mt-1">Services</h2><p className="rm-section-subtitle mt-1">{seller.serviceCount.toLocaleString("en-NG")} {seller.serviceCount === 1 ? "service" : "services"} offered</p></div><Wrench size={20} className="text-[var(--rm-coral)]" /> </div>
+              {seller.services.length > 0 ? <div className="rm-product-grid min-w-0 grid-cols-2 sm:grid-cols-3 xl:grid-cols-3">{seller.services.map((service) => <ServiceCard key={service.id} service={service} saved={Boolean(savedListingIds[savedKey("SERVICE", service.id)])} saving={savingListingKey === savedKey("SERVICE", service.id)} savedLoading={savedListingsLoading} onSave={(type, listingId) => { void toggleSaved(type, listingId); }} />)}</div> : <div className="rm-empty-state rounded-xl border border-dashed border-[var(--rm-border-strong)] bg-[var(--rm-surface-muted)]"><Wrench size={27} className="mx-auto text-[var(--rm-subtle)]" /><p className="mt-3 text-sm font-bold text-[var(--rm-text)]">No services listed yet</p><p className="mt-1 text-[11px] text-[var(--rm-subtle)]">This seller has not published any services.</p></div>}
             </section>
 
-            <section id="seller-reviews" className="scroll-mt-24 border-t border-[#EAE6DF] pt-7">
-              <div className="mb-5 flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between"><div><p className="text-[9px] font-bold uppercase tracking-[0.14em] text-[#9F2D18]">Buyer feedback</p><h2 className="mt-1 text-xl font-extrabold tracking-tight text-[#25211E] sm:text-2xl">Ratings &amp; reviews</h2><p className="mt-1 text-[11px] text-[#756B61]">Reviews shared by ReMarket buyer accounts.</p></div></div>
-              {reviewSuccess && <p role="status" className="mb-4 rounded-lg border border-[#BDE8D8] bg-[#EFFBF6] px-4 py-3 text-[11px] font-semibold text-[#137A59]">{reviewSuccess}</p>}
-              {reviewError && <p role="alert" className="mb-4 rounded-lg border border-[#F0C9BF] bg-[#FFF1ED] px-4 py-3 text-[11px] font-semibold text-[#9F2D18]">{reviewError}</p>}
+            <section id="seller-reviews" className="scroll-mt-28 border-t border-[var(--rm-border)] pt-8">
+              <div className="mb-5 flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between"><div><p className="text-[9px] font-bold uppercase tracking-[0.14em] text-[var(--rm-coral-dark)]">Buyer feedback</p><h2 className="rm-section-title mt-1">Ratings &amp; reviews</h2><p className="rm-section-subtitle mt-1">Reviews shared by ReMarket buyer accounts.</p></div></div>
+              {reviewSuccess && <p role="status" className="mb-4 rounded-lg border border-[var(--rm-green-bg)] bg-[var(--rm-green-bg)] px-4 py-3 text-[11px] font-semibold text-[var(--rm-green)]">{reviewSuccess}</p>}
+              {reviewError && <p role="alert" className="mb-4 rounded-lg border border-[var(--rm-border-strong)] bg-[var(--rm-coral-soft)] px-4 py-3 text-[11px] font-semibold text-[var(--rm-coral-dark)]">{reviewError}</p>}
               <div className="grid min-w-0 gap-4 xl:grid-cols-[260px_minmax(0,1fr)]">
                 <div className="space-y-4">
-                  <div className="rounded-xl border border-[#EAE6DF] bg-[#FCFAF6] p-4"><div className="text-center"><p className="text-3xl font-extrabold text-[#401B13]">{seller.reviewCount > 0 ? seller.averageRating.toFixed(1) : "—"}</p><div className="mt-2"><RatingStars rating={seller.averageRating} size={17} /></div><p className="mt-2 text-[10px] text-[#8B847E]">{seller.reviewCount} {seller.reviewCount === 1 ? "review" : "reviews"}</p></div>
-                    <div className="mt-5 space-y-2">{([5, 4, 3, 2, 1] as const).map((rating) => { const count = ratingBreakdown[rating], percent = seller.reviewCount > 0 ? Math.min(100, Math.round((count / seller.reviewCount) * 100)) : 0; return <div key={rating} className="flex items-center gap-2"><span className="w-3 text-right text-[10px] font-bold text-[#756B61]">{rating}</span><Star size={11} className="fill-[#FFB300] text-[#FFB300]" /><div className="h-1.5 flex-1 overflow-hidden rounded-full bg-[#E7E0D8]"><div className="h-full rounded-full bg-[#FF5A36]" style={{ width: `${percent}%` }} /></div><span className="w-6 text-right text-[9px] text-[#8B847E]">{count}</span></div>; })}</div>
+                  <div className="rm-panel bg-[var(--rm-surface-muted)] p-4"><div className="text-center"><p className="text-3xl font-extrabold text-[var(--rm-coral-dark)]">{seller.reviewCount > 0 ? seller.averageRating.toFixed(1) : "—"}</p><div className="mt-2"><RatingStars rating={seller.averageRating} size={17} /></div><p className="mt-2 text-[10px] text-[var(--rm-muted)]">{seller.reviewCount} {seller.reviewCount === 1 ? "review" : "reviews"}</p></div>
+                    <div className="mt-5 space-y-2">{([5, 4, 3, 2, 1] as const).map((rating) => { const count = ratingBreakdown[rating], percent = seller.reviewCount > 0 ? Math.min(100, Math.round((count / seller.reviewCount) * 100)) : 0; return <div key={rating} className="flex items-center gap-2"><span className="w-3 text-right text-[10px] font-bold text-[var(--rm-muted)]">{rating}</span><Star size={11} className="fill-[#FFB300] text-[#FFB300]" /><div className="h-1.5 flex-1 overflow-hidden rounded-full bg-[var(--rm-border-strong)]"><div className="h-full rounded-full bg-[var(--rm-coral)]" style={{ width: `${percent}%` }} /></div><span className="w-6 text-right text-[9px] text-[var(--rm-muted)]">{count}</span></div>; })}</div>
                   </div>
-                  <div className="rounded-xl border border-[#EAE6DF] bg-white p-4">{currentUserLoading ? <div className="flex min-h-28 items-center justify-center gap-2 text-[11px] text-[#817970]"><LoaderCircle size={15} className="animate-spin text-[#FF5A36]" />Checking your account...</div> : currentUserRole === "BUYER" ? <form onSubmit={submitReview}><h3 className="text-sm font-bold text-[#401B13]">Leave a review</h3><p className="mt-1 text-[10px] leading-5 text-[#8B847E]">Share your experience with this business.</p><p className="mt-4 text-[10px] font-bold uppercase tracking-[0.1em] text-[#8C8580]">Your rating</p><div className="mt-2 flex flex-wrap items-center gap-2"><div className="flex items-center gap-1">{[1, 2, 3, 4, 5].map((rating) => <button key={rating} type="button" aria-label={`Rate ${rating} out of 5`} aria-pressed={reviewRating === rating} onClick={() => setReviewRating(rating)} className="rounded-lg p-1 hover:bg-[#FFF0E9]"><Star size={21} className={rating <= reviewRating ? "fill-[#FFB300] text-[#FFB300]" : "text-[#D6CFC8]"} /></button>)}</div><span className="text-[10px] text-[#8B847E]"><RatingLabel rating={reviewRating} /></span></div><textarea value={reviewComment} onChange={(event) => setReviewComment(event.target.value)} rows={4} maxLength={2000} placeholder="What was your experience with this business?" className="mt-4 w-full resize-none rounded-lg border border-[#EAE6DF] bg-[#FCFAF6] px-3 py-3 text-[11px] leading-5 outline-none focus:border-[#FF9B86] focus:bg-white" /><div className="mt-1 text-right text-[9px] text-[#A29B94]">{reviewComment.length}/2000</div><button type="submit" disabled={reviewSubmitting} className="mt-3 inline-flex min-h-10 w-full items-center justify-center gap-2 rounded-lg bg-[#FF5A36] px-4 py-2.5 text-[11px] font-bold text-white disabled:opacity-60">{reviewSubmitting ? <><LoaderCircle size={14} className="animate-spin" />Submitting...</> : "Submit review"}</button></form> : currentUserRole === null ? <div className="py-3 text-center"><Star size={22} className="mx-auto text-[#FF5A36]" /><h3 className="mt-3 text-sm font-bold text-[#401B13]">Sign in to leave a review</h3><p className="mt-1 text-[10px] text-[#8B847E]">Buyer accounts can share their experience.</p><div className="mt-4 flex justify-center gap-2"><Link href={`/buyer/login?callbackUrl=${encodeURIComponent(`/seller/${id}#seller-reviews`)}`} className="rounded-lg bg-[#FF5A36] px-4 py-2.5 text-[10px] font-bold text-white">Sign in</Link><Link href="/buyer/signup" className="rounded-lg border border-[#EAE6DF] px-4 py-2.5 text-[10px] font-bold text-[#756B61]">Create account</Link></div></div> : <div className="py-5 text-center"><Star size={22} className="mx-auto text-[#8B6960]" /><h3 className="mt-3 text-sm font-bold text-[#401B13]">Buyer reviews only</h3><p className="mt-1 text-[10px] text-[#8B847E]">Only buyer accounts can submit reviews.</p></div>}</div>
+                  <div className="rm-panel p-4">{currentUserLoading ? <div className="flex min-h-28 items-center justify-center gap-2 text-[11px] text-[var(--rm-muted)]"><LoaderCircle size={15} className="animate-spin text-[var(--rm-coral)]" />Checking your account...</div> : currentUserRole === "BUYER" ? <form onSubmit={submitReview}><h3 className="text-sm font-bold text-[var(--rm-coral-dark)]">Leave a review</h3><p className="mt-1 text-[10px] leading-5 text-[var(--rm-muted)]">Share your experience with this business.</p><p className="mt-4 text-[10px] font-bold uppercase tracking-[0.1em] text-[var(--rm-muted)]">Your rating</p><div className="mt-2 flex flex-wrap items-center gap-2"><div className="flex items-center gap-1">{[1, 2, 3, 4, 5].map((rating) => <button key={rating} type="button" aria-label={`Rate ${rating} out of 5`} aria-pressed={reviewRating === rating} onClick={() => setReviewRating(rating)} className="rounded-lg p-1 hover:bg-[var(--rm-coral-soft)]"><Star size={21} className={rating <= reviewRating ? "fill-[#FFB300] text-[#FFB300]" : "text-[var(--rm-border-strong)]"} /></button>)}</div><span className="text-[10px] text-[var(--rm-muted)]"><RatingLabel rating={reviewRating} /></span></div><textarea value={reviewComment} onChange={(event) => setReviewComment(event.target.value)} rows={4} maxLength={2000} placeholder="What was your experience with this business?" className="rm-textarea mt-4 w-full text-[12px] leading-5" /><div className="mt-1 text-right text-[9px] text-[var(--rm-subtle)]">{reviewComment.length}/2000</div><button type="submit" disabled={reviewSubmitting} className="rm-button rm-button-primary mt-3 w-full disabled:opacity-60">{reviewSubmitting ? <><LoaderCircle size={14} className="animate-spin" />Submitting...</> : "Submit review"}</button></form> : currentUserRole === null ? <div className="py-3 text-center"><Star size={22} className="mx-auto text-[var(--rm-coral)]" /><h3 className="mt-3 text-sm font-bold text-[var(--rm-coral-dark)]">Sign in to leave a review</h3><p className="mt-1 text-[10px] text-[var(--rm-muted)]">Buyer accounts can share their experience.</p><div className="mt-4 flex justify-center gap-2"><Link href={`/buyer/login?callbackUrl=${encodeURIComponent(`/seller/${id}#seller-reviews`)}`} className="rm-button rm-button-primary">Sign in</Link><Link href="/buyer/signup" className="rm-button rm-button-secondary">Create account</Link></div></div> : <div className="py-5 text-center"><Star size={22} className="mx-auto text-[var(--rm-muted)]" /><h3 className="mt-3 text-sm font-bold text-[var(--rm-coral-dark)]">Buyer reviews only</h3><p className="mt-1 text-[10px] text-[var(--rm-muted)]">Only buyer accounts can submit reviews.</p></div>}</div>
                 </div>
-                <div className="space-y-3">{reviewsLoading ? <div className="flex min-h-40 items-center justify-center rounded-xl border border-dashed border-[#DDD6CE] bg-[#FCFAF6]"><span className="flex items-center gap-2 text-[11px] text-[#817970]"><LoaderCircle size={15} className="animate-spin text-[#FF5A36]" />Loading reviews...</span></div> : reviews.length === 0 ? <div className="rounded-xl border border-dashed border-[#DDD6CE] bg-[#FCFAF6] px-5 py-12 text-center"><Star size={26} className="mx-auto text-[#B7AFA7]" /><p className="mt-3 text-sm font-bold text-[#625B55]">No reviews yet</p><p className="mt-1 text-[10px] text-[#928A83]">Be the first customer to rate this business.</p></div> : reviews.map((review) => {
+                <div className="space-y-3">{reviewsLoading ? <div className="flex min-h-40 items-center justify-center rounded-xl border border-dashed border-[var(--rm-border-strong)] bg-[var(--rm-surface-muted)]"><span className="flex items-center gap-2 text-[11px] text-[var(--rm-muted)]"><LoaderCircle size={15} className="animate-spin text-[var(--rm-coral)]" />Loading reviews...</span></div> : reviews.length === 0 ? <div className="rm-empty-state rounded-xl border border-dashed border-[var(--rm-border-strong)] bg-[var(--rm-surface-muted)]"><Star size={26} className="mx-auto text-[var(--rm-subtle)]" /><p className="mt-3 text-sm font-bold text-[var(--rm-text)]">No reviews yet</p><p className="mt-1 text-[10px] text-[var(--rm-subtle)]">Be the first customer to rate this business.</p></div> : reviews.map((review) => {
                   const own = currentUserRole === "BUYER" && review.isOwnReview, editing = editingReviewId === review.id;
-                  return <article key={review.id} className="rounded-xl border border-[#EAE6DF] bg-white p-4 sm:p-5"><div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between"><div className="min-w-0 flex-1"><div className="flex items-center gap-3"><div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-[#FFE0D6] text-[10px] font-extrabold text-[#9F2D18]">{initials(review.user.name)}</div><div><p className="text-[11px] font-bold text-[#3D3834]">{review.user.name}</p><p className="text-[9px] text-[#A29B94]">{formatReviewDate(review.createdAt)}{review.updatedAt !== review.createdAt ? " · Edited" : ""}</p></div></div>
-                    {!editing ? <><div className="mt-3"><RatingStars rating={review.rating} size={14} /></div>{review.comment && <p className="mt-3 whitespace-pre-wrap break-words text-[11px] leading-6 text-[#68615C]">{review.comment}</p>}</> : <div className="mt-3"><div className="flex items-center gap-2">{[1, 2, 3, 4, 5].map((rating) => <button key={rating} type="button" aria-label={`Change rating to ${rating}`} onClick={() => setEditingRating(rating)}><Star size={19} className={rating <= editingRating ? "fill-[#FFB300] text-[#FFB300]" : "text-[#D6CFC8]"} /></button>)}<span className="text-[10px] text-[#8B847E]"><RatingLabel rating={editingRating} /></span></div><textarea value={editingComment} onChange={(event) => setEditingComment(event.target.value)} maxLength={2000} rows={4} className="mt-3 w-full resize-none rounded-lg border border-[#EAE6DF] bg-[#FCFAF6] px-3 py-3 text-[11px] leading-5 outline-none focus:border-[#FF9B86]" /><div className="mt-3 flex justify-end gap-2"><button type="button" onClick={cancelEditReview} disabled={reviewUpdatingId === review.id} className="rounded-lg border border-[#EAE6DF] px-3 py-2 text-[10px] font-bold text-[#756B61]">Cancel</button><button type="button" onClick={() => void updateReview(review.id)} disabled={reviewUpdatingId === review.id} className="rounded-lg bg-[#FF5A36] px-3 py-2 text-[10px] font-bold text-white disabled:opacity-60">{reviewUpdatingId === review.id ? "Saving..." : "Save changes"}</button></div></div>}</div>
-                    {own && !editing && <div className="flex shrink-0 gap-1"><button type="button" onClick={() => beginEditReview(review)} className="inline-flex items-center gap-1 rounded-lg px-2 py-1.5 text-[9px] font-bold text-[#746D67] hover:bg-[#FFF0E9]"><Pencil size={12} />Edit</button><button type="button" onClick={() => void deleteReview(review.id)} disabled={reviewDeletingId === review.id} className="inline-flex items-center gap-1 rounded-lg px-2 py-1.5 text-[9px] font-bold text-[#9F2D18] hover:bg-[#FFF1ED] disabled:opacity-60">{reviewDeletingId === review.id ? <LoaderCircle size={12} className="animate-spin" /> : <Trash2 size={12} />}Delete</button></div>}</div></article>;
+                  return <article key={review.id} className="rm-panel p-4 sm:p-5"><div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between"><div className="min-w-0 flex-1"><div className="flex items-center gap-3"><div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-[#FFE0D6] text-[10px] font-extrabold text-[var(--rm-coral-dark)]">{initials(review.user.name)}</div><div><p className="text-[11px] font-bold text-[var(--rm-ink)]">{review.user.name}</p><p className="text-[9px] text-[var(--rm-subtle)]">{formatReviewDate(review.createdAt)}{review.updatedAt !== review.createdAt ? " · Edited" : ""}</p></div></div>
+                    {!editing ? <><div className="mt-3"><RatingStars rating={review.rating} size={14} /></div>{review.comment && <p className="mt-3 whitespace-pre-wrap break-words text-[11px] leading-6 text-[var(--rm-text)]">{review.comment}</p>}</> : <div className="mt-3"><div className="flex items-center gap-2">{[1, 2, 3, 4, 5].map((rating) => <button key={rating} type="button" aria-label={`Change rating to ${rating}`} onClick={() => setEditingRating(rating)}><Star size={19} className={rating <= editingRating ? "fill-[#FFB300] text-[#FFB300]" : "text-[var(--rm-border-strong)]"} /></button>)}<span className="text-[10px] text-[var(--rm-muted)]"><RatingLabel rating={editingRating} /></span></div><textarea value={editingComment} onChange={(event) => setEditingComment(event.target.value)} maxLength={2000} rows={4} className="rm-textarea mt-3 w-full text-[12px] leading-5" /><div className="mt-3 flex justify-end gap-2"><button type="button" onClick={cancelEditReview} disabled={reviewUpdatingId === review.id} className="rm-button rm-button-secondary">Cancel</button><button type="button" onClick={() => void updateReview(review.id)} disabled={reviewUpdatingId === review.id} className="rm-button rm-button-primary disabled:opacity-60">{reviewUpdatingId === review.id ? "Saving..." : "Save changes"}</button></div></div>}</div>
+                    {own && !editing && <div className="flex shrink-0 gap-1"><button type="button" onClick={() => beginEditReview(review)} className="inline-flex items-center gap-1 rounded-lg px-2 py-1.5 text-[9px] font-bold text-[var(--rm-muted)] hover:bg-[var(--rm-coral-soft)]"><Pencil size={12} />Edit</button><button type="button" onClick={() => void deleteReview(review.id)} disabled={reviewDeletingId === review.id} className="inline-flex items-center gap-1 rounded-lg px-2 py-1.5 text-[9px] font-bold text-[var(--rm-coral-dark)] hover:bg-[var(--rm-coral-soft)] disabled:opacity-60">{reviewDeletingId === review.id ? <LoaderCircle size={12} className="animate-spin" /> : <Trash2 size={12} />}Delete</button></div>}</div></article>;
                 })}
-                  {reviewsHasMore && !reviewsLoading && <div className="flex justify-center pt-2"><button type="button" onClick={() => void loadMoreReviews()} disabled={reviewsLoadingMore} className="inline-flex min-h-10 items-center gap-2 rounded-lg border border-[#EAE6DF] bg-white px-5 py-2.5 text-[10px] font-bold text-[#9F2D18] hover:bg-[#FFF7ED] disabled:opacity-60">{reviewsLoadingMore ? <><LoaderCircle size={13} className="animate-spin" />Loading more...</> : "Load more reviews"}</button></div>}
+                  {reviewsHasMore && !reviewsLoading && <div className="flex justify-center pt-2"><button type="button" onClick={() => void loadMoreReviews()} disabled={reviewsLoadingMore} className="inline-flex min-h-10 items-center gap-2 rounded-lg border border-[var(--rm-border)] bg-white px-5 py-2.5 text-[10px] font-bold text-[var(--rm-coral-dark)] hover:bg-[var(--rm-cream)] disabled:opacity-60">{reviewsLoadingMore ? <><LoaderCircle size={13} className="animate-spin" />Loading more...</> : "Load more reviews"}</button></div>}
                 </div>
               </div>
             </section>
           </div>
 
           <aside className="order-2 min-w-0 space-y-4 lg:order-none">
-            <section id="seller-contact" className="scroll-mt-24 rounded-xl border border-[#EAE6DF] bg-white p-4 sm:p-5 lg:sticky lg:top-[130px]">
-              <div className="flex items-center gap-2.5 border-b border-[#F0ECE7] pb-3"><div className="flex h-9 w-9 items-center justify-center rounded-lg bg-[#FFF0E9] text-[#9F2D18]"><MessageCircle size={17} /></div><div><h2 className="text-sm font-extrabold text-[#25211E]">Contact this seller</h2><p className="mt-0.5 text-[10px] text-[#817970]">Ask about products or services</p></div></div>
+            <section id="seller-contact" className="rm-panel scroll-mt-28 p-4 sm:p-5 lg:sticky lg:top-[130px]">
+              <div className="flex items-center gap-2.5 border-b border-[var(--rm-border)] pb-3"><div className="flex h-9 w-9 items-center justify-center rounded-lg bg-[var(--rm-coral-soft)] text-[var(--rm-coral-dark)]"><MessageCircle size={17} /></div><div><h2 className="text-sm font-extrabold text-[var(--rm-ink)]">Contact this seller</h2><p className="mt-0.5 text-[10px] text-[var(--rm-muted)]">Ask about products or services</p></div></div>
               <div className="mt-3 space-y-2">{seller.showContactInfo && seller.socialLinks.length > 0 ? seller.socialLinks.map((link) => {
                 if (link.platform === "DIRECTIONS") return null;
                 const url = buildContactUrl(link.platform, link.handle);
                 if (url === "#") return null;
                 const isPhone = link.platform === "PHONE";
                 const label = link.platform === "WHATSAPP" ? "WhatsApp" : link.platform === "PHONE" ? "Call seller" : link.platform === "INSTAGRAM" ? "Instagram" : link.platform === "TIKTOK" ? "TikTok" : link.platform === "FACEBOOK" ? "Facebook" : link.platform;
-                return <a key={link.id} href={url} target={isPhone ? undefined : "_blank"} rel={isPhone ? undefined : "noopener noreferrer"} onClick={() => trackContact(link.platform)} className="flex min-h-10 items-center justify-between rounded-lg border border-[#EAE6DF] bg-white px-3 py-2.5 text-[10px] font-bold text-[#514B46] transition hover:border-[#FFB39F] hover:text-[#9F2D18]"><span className="flex items-center gap-2"><ContactIcon platform={link.platform} />{label}</span><ExternalLink size={12} className="text-[#A29B94]" /></a>;
-              }) : <p className="rounded-lg bg-[#FCFAF6] px-3 py-3 text-[10px] leading-5 text-[#817970]">{seller.showContactInfo ? "No contact details have been added yet." : "This seller has chosen not to display contact details publicly."}</p>}
-                {directionsUrl !== "#" && <button type="button" onClick={openDirections} disabled={directionsLoading} className="flex min-h-10 w-full items-center justify-between rounded-lg border border-[#EAE6DF] bg-white px-3 py-2.5 text-[10px] font-bold text-[#514B46] transition hover:border-[#FFB39F] hover:text-[#9F2D18] disabled:opacity-60"><span className="flex items-center gap-2"><MapPin size={14} />{directionsLoading ? "Opening directions..." : "Get directions"}</span><ExternalLink size={12} /></button>}
+                return <a key={link.id} href={url} target={isPhone ? undefined : "_blank"} rel={isPhone ? undefined : "noopener noreferrer"} onClick={() => trackContact(link.platform)} className="rm-button rm-button-secondary w-full justify-between text-left"><span className="flex items-center gap-2"><ContactIcon platform={link.platform} />{label}</span><ExternalLink size={12} className="text-[var(--rm-subtle)]" /></a>;
+              }) : <p className="rounded-lg bg-[var(--rm-surface-muted)] px-3 py-3 text-[10px] leading-5 text-[var(--rm-muted)]">{seller.showContactInfo ? "No contact details have been added yet." : "This seller has chosen not to display contact details publicly."}</p>}
+                {directionsUrl !== "#" && <button type="button" onClick={openDirections} disabled={directionsLoading} className="rm-button rm-button-secondary w-full justify-between text-left disabled:opacity-60"><span className="flex items-center gap-2"><MapPin size={14} />{directionsLoading ? "Opening directions..." : "Get directions"}</span><ExternalLink size={12} /></button>}
               </div>
-              {(seller.location?.area || seller.location?.address || seller.location?.street) && <div className="mt-4 rounded-lg bg-[#FCFAF6] p-3"><p className="text-[9px] font-bold uppercase tracking-[0.12em] text-[#A29B94]">Business location</p><p className="mt-1.5 flex items-start gap-2 text-[10px] font-semibold leading-5 text-[#625B55]"><MapPin size={13} className="mt-0.5 shrink-0 text-[#FF5A36]" /><span>{[seller.location?.area, seller.location?.street, seller.location?.address].filter(Boolean).join(" · ")}</span></p></div>}
-              <p className="mt-3 text-[9px] leading-4 text-[#8B7D6C]">Contact information is shown according to the seller's public contact settings.</p>
+              {(seller.location?.area || seller.location?.address || seller.location?.street) && <div className="mt-4 rounded-lg bg-[var(--rm-surface-muted)] p-3"><p className="text-[9px] font-bold uppercase tracking-[0.12em] text-[var(--rm-subtle)]">Business location</p><p className="mt-1.5 flex items-start gap-2 text-[10px] font-semibold leading-5 text-[var(--rm-text)]"><MapPin size={13} className="mt-0.5 shrink-0 text-[var(--rm-coral)]" /><span>{[seller.location?.area, seller.location?.street, seller.location?.address].filter(Boolean).join(" · ")}</span></p></div>}
+              <p className="mt-3 text-[9px] leading-4 text-[var(--rm-muted)]">Contact information is shown according to the seller's public contact settings.</p>
             </section>
 
-            <section id="seller-about" className="scroll-mt-24 rounded-xl border border-[#EAE6DF] bg-white p-4 sm:p-5">
-              <p className="text-[9px] font-bold uppercase tracking-[0.14em] text-[#9F2D18]">Store information</p>
-              <h2 className="mt-1 text-sm font-extrabold text-[#25211E]">About {seller.name}</h2>
-              <p className="mt-3 whitespace-pre-line text-[11px] leading-6 text-[#68615C]">{seller.description || "Explore products and services from this local business. Contact the seller for details about current offers and availability."}</p>
-              {(seller.businessCategories.length > 0 || seller.categories.length > 0) && <div className="mt-4 border-t border-[#F0ECE7] pt-3"><p className="text-[9px] font-bold uppercase tracking-[0.12em] text-[#A29B94]">Categories</p><div className="mt-2 flex flex-wrap gap-1.5">{seller.businessCategories.length > 0 ? seller.businessCategories.map((category) => <Link key={category.id ?? categoryLabel(category)} href={categoryHref(category)} className="rounded-md px-2.5 py-1.5 text-[9px] font-bold text-[#514B46] transition hover:ring-1 hover:ring-[#FF9A81]" style={{ backgroundColor: getCategoryColor(category.name) }}>{categoryLabel(category)}</Link>) : seller.categories.map((category) => <span key={category} className="rounded-md px-2.5 py-1.5 text-[9px] font-bold text-[#514B46]" style={{ backgroundColor: getCategoryColor(category) }}>{category}</span>)}</div></div>}
+            <section id="seller-about" className="rm-panel scroll-mt-28 p-4 sm:p-5">
+              <p className="text-[9px] font-bold uppercase tracking-[0.14em] text-[var(--rm-coral-dark)]">Store information</p>
+              <h2 className="mt-1 text-sm font-extrabold text-[var(--rm-ink)]">About {seller.name}</h2>
+              <p className="mt-3 whitespace-pre-line text-[11px] leading-6 text-[var(--rm-text)]">{seller.description || "Explore products and services from this local business. Contact the seller for details about current offers and availability."}</p>
+              {(seller.businessCategories.length > 0 || seller.categories.length > 0) && <div className="mt-4 border-t border-[var(--rm-border)] pt-3"><p className="text-[9px] font-bold uppercase tracking-[0.12em] text-[var(--rm-subtle)]">Categories</p><div className="mt-2 flex flex-wrap gap-1.5">{seller.businessCategories.length > 0 ? seller.businessCategories.map((category) => <Link key={category.id ?? categoryLabel(category)} href={categoryHref(category)} className="rounded-md px-2.5 py-1.5 text-[9px] font-bold text-[var(--rm-text)] transition hover:ring-1 hover:ring-[var(--rm-coral)]" style={{ backgroundColor: getCategoryColor(category.name) }}>{categoryLabel(category)}</Link>) : seller.categories.map((category) => <span key={category} className="rounded-md px-2.5 py-1.5 text-[9px] font-bold text-[var(--rm-text)]" style={{ backgroundColor: getCategoryColor(category) }}>{category}</span>)}</div></div>}
             </section>
           </aside>
         </div>
       </div>
     </>}
-    <footer className="w-full border-t border-[#EAE6DF] bg-[#FCFAF6] px-4 py-5 text-center text-[10px] font-medium text-[#9B9188] sm:px-6 xl:px-10 2xl:px-14">ReMarket · Find it nearby</footer>
+    <footer className="w-full border-t border-[var(--rm-border)] bg-[var(--rm-surface-muted)] px-4 py-5 text-center text-[10px] font-medium text-[var(--rm-muted)] sm:px-6 xl:px-10 2xl:px-14">ReMarket · Find it nearby</footer>
   </main><MobileBottomNav /></>;
 }
 

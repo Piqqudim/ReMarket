@@ -196,8 +196,7 @@ function rateKey(rate: CourierRate): string {
 }
 
 function formatEta(value: string | null): string {
-  if (!value) return "Delivery estimate provided by courier";
-  return value;
+  return value || "Delivery estimate provided by courier";
 }
 
 function parseApiError(payload: unknown, fallback: string): string {
@@ -353,17 +352,6 @@ function parseCheckoutCart(value: unknown): CartResponse | null {
 
 /* =========================================================
    DELIVERY QUOTE RESPONSE PARSER
-
-   Contract expected from POST /api/shipping/quotes:
-   {
-     quote: {
-       id, quoteCode, expiresAt, itemsSubtotal,
-       packages: [{ businessId, businessName, rates: [...] }]
-     }
-   }
-
-   Rates can be normalized by the API or returned in the
-   provider's snake_case format; this parser supports both.
 ========================================================= */
 
 function parseCourierRate(value: unknown): CourierRate | null {
@@ -398,6 +386,7 @@ function parseDeliveryQuote(value: unknown): DeliveryQuote | null {
   const itemsSubtotal = getSafeInteger(rawQuote.itemsSubtotal ?? rawQuote.items_subtotal);
 
   if (!id || !expiresAt || !rawPackages || itemsSubtotal === null) return null;
+  if (!Number.isFinite(new Date(expiresAt).getTime())) return null;
 
   const packages: DeliveryQuotePackage[] = [];
   for (const rawPackage of rawPackages) {
@@ -477,19 +466,15 @@ function groupCartItems(items: CheckoutCartItem[]): CartGroup[] {
 }
 
 /* =========================================================
-   UI STYLES
+   CHECKOUT PROGRESS
 ========================================================= */
-
-const inputClassName =
-  "w-full rounded-xl border border-[#EAE6DF] bg-white px-4 py-3 text-sm text-[#292522] outline-none transition placeholder:text-[#A69D94] focus:border-[#FF5A36] focus:ring-2 focus:ring-[#FF5A36]/10";
-
-const labelClassName = "mb-2 block text-xs font-semibold text-[#514840]";
 
 function CheckoutSteps({ step }: { step: 1 | 2 | 3 }) {
   const steps = ["Delivery address", "Delivery options", "Payment"] as const;
+
   return (
-    <div className="rounded-2xl border border-[#EAE6DF] bg-white p-4 sm:p-5">
-      <ol className="grid grid-cols-3 gap-2">
+    <section className="rm-panel p-4 sm:p-5" aria-label="Checkout progress">
+      <ol className="grid grid-cols-3 gap-3">
         {steps.map((label, index) => {
           const number = (index + 1) as 1 | 2 | 3;
           const complete = number < step;
@@ -497,17 +482,31 @@ function CheckoutSteps({ step }: { step: 1 | 2 | 3 }) {
           return (
             <li key={label} className="min-w-0">
               <div className="flex items-center gap-2">
-                <span className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-xs font-bold ${complete ? "bg-[#E8F8F0] text-[#16845D]" : active ? "bg-[#FF5A36] text-white" : "bg-[#F1EEEA] text-[#91877E]"}`}>
+                <span
+                  className="grid h-8 w-8 shrink-0 place-items-center rounded-full text-xs font-bold"
+                  style={{
+                    background: complete ? "var(--rm-green-bg)" : active ? "var(--rm-coral)" : "var(--rm-surface-muted)",
+                    color: complete ? "var(--rm-green)" : active ? "#fff" : "var(--rm-muted)",
+                  }}
+                >
                   {complete ? <Check className="h-4 w-4" /> : `0${number}`}
                 </span>
-                <span className={`truncate text-[10px] font-bold sm:text-xs ${active ? "text-[#9F2D18]" : complete ? "text-[#16845D]" : "text-[#91877E]"}`}>{label}</span>
+                <span
+                  className="truncate text-[10px] font-bold sm:text-xs"
+                  style={{ color: active ? "var(--rm-coral-dark)" : complete ? "var(--rm-green)" : "var(--rm-muted)" }}
+                >
+                  {label}
+                </span>
               </div>
-              <div className={`mt-3 h-1 rounded-full ${complete || active ? "bg-[#FF5A36]" : "bg-[#EEEAE5]"}`} />
+              <div
+                className="mt-3 h-1 rounded-full"
+                style={{ background: complete || active ? "var(--rm-coral)" : "var(--rm-border)" }}
+              />
             </li>
           );
         })}
       </ol>
-    </div>
+    </section>
   );
 }
 
@@ -712,8 +711,13 @@ export default function CheckoutPage() {
       if (parsed.packages.length !== groups.length) throw new Error("Delivery options were not returned for every seller in your cart.");
 
       const expectedBusinessIds = new Set(groups.map((group) => group.businessId));
-      if (parsed.packages.some((pack) => !expectedBusinessIds.has(pack.businessId))) {
-        throw new Error("The delivery quote contains an unexpected seller package. Please refresh and try again.");
+      const receivedBusinessIds = new Set(parsed.packages.map((pack) => pack.businessId));
+      if (
+        parsed.packages.some((pack) => !expectedBusinessIds.has(pack.businessId)) ||
+        receivedBusinessIds.size !== parsed.packages.length ||
+        groups.some((group) => !receivedBusinessIds.has(group.businessId))
+      ) {
+        throw new Error("The delivery quote does not match every seller in your cart. Please refresh and try again.");
       }
       if (parsed.packages.some((pack) => pack.rates.length === 0)) {
         const noRate = parsed.packages.find((pack) => pack.rates.length === 0);
@@ -723,7 +727,7 @@ export default function CheckoutPage() {
         throw new Error("A delivery option was returned in an unsupported currency. Please contact support.");
       }
 
-      // Require the buyer to actively choose one courier for each seller parcel.
+      // The buyer must actively choose one courier for every seller parcel.
       setQuote(parsed);
       setQuoteCartFingerprint(cartFingerprint);
       setSelectedRateKeys({});
@@ -862,13 +866,15 @@ export default function CheckoutPage() {
     return (
       <>
         <SiteHeader searchMode="PRODUCTS" />
-        <main className="flex min-h-[70vh] items-center justify-center bg-[#FCFAF6] px-4 pb-28">
-          <div className="w-full max-w-sm rounded-[24px] border border-[#EAE6DF] bg-white p-8 text-center shadow-sm">
-            <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-2xl bg-[#FFF1ED] text-[#9F2D18]"><ShoppingBag className="h-8 w-8" /></div>
-            <LoaderCircle className="mx-auto mt-6 h-5 w-5 animate-spin text-[#FF5A36]" />
-            <h1 className="mt-4 text-base font-extrabold text-[#401B13]">Preparing your checkout</h1>
-            <p className="mt-2 text-xs leading-6 text-[#756B61]">Checking your products, prices and stock availability.</p>
-          </div>
+        <main className="rm-storefront flex min-h-[70vh] items-center justify-center px-4 pb-28">
+          <section className="rm-panel w-full max-w-sm p-8 text-center" aria-live="polite">
+            <div className="mx-auto grid h-14 w-14 place-items-center rounded-xl bg-[var(--rm-coral-soft)] text-[var(--rm-coral-dark)]">
+              <ShoppingBag className="h-7 w-7" aria-hidden="true" />
+            </div>
+            <LoaderCircle className="mx-auto mt-5 h-5 w-5 animate-spin text-[var(--rm-coral)]" aria-hidden="true" />
+            <h1 className="mt-4 text-base font-bold text-[var(--rm-ink)]">Preparing your checkout</h1>
+            <p className="mt-2 text-xs leading-6 text-[var(--rm-muted)]">Checking your products, prices and stock availability.</p>
+          </section>
         </main>
         <MobileBottomNav />
       </>
@@ -879,13 +885,17 @@ export default function CheckoutPage() {
     return (
       <>
         <SiteHeader searchMode="PRODUCTS" />
-        <main className="flex min-h-[65vh] items-center justify-center bg-[#FCFAF6] px-4 pb-28">
-          <section className="w-full max-w-md rounded-[24px] border border-[#F0C9BF] bg-white p-7 text-center shadow-sm">
-            <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-[#FFF1ED] text-[#9F2D18]"><Package className="h-7 w-7" /></div>
-            <h1 className="mt-4 text-lg font-extrabold text-[#401B13]">Checkout unavailable</h1>
-            <p className="mt-2 text-xs leading-6 text-[#756B61]">{loadError}</p>
-            <button type="button" onClick={() => setRefreshKey((value) => value + 1)} className="mt-6 inline-flex min-h-11 items-center gap-2 rounded-xl bg-[#FF5A36] px-5 py-3 text-xs font-bold text-white hover:bg-[#E94E2C]"><RefreshCw className="h-4 w-4" />Try again</button>
-            <Link href="/cart" className="mt-4 flex justify-center text-xs font-bold text-[#9F2D18]">Return to cart</Link>
+        <main className="rm-storefront flex min-h-[65vh] items-center justify-center px-4 pb-28">
+          <section className="rm-panel w-full max-w-md p-7 text-center">
+            <div className="mx-auto grid h-14 w-14 place-items-center rounded-xl bg-[var(--rm-coral-soft)] text-[var(--rm-coral-dark)]">
+              <Package className="h-7 w-7" aria-hidden="true" />
+            </div>
+            <h1 className="mt-4 text-lg font-bold text-[var(--rm-ink)]">Checkout unavailable</h1>
+            <p className="mt-2 text-xs leading-6 text-[var(--rm-muted)]">{loadError}</p>
+            <button type="button" onClick={() => setRefreshKey((value) => value + 1)} className="rm-button rm-button-primary mt-6">
+              <RefreshCw className="h-4 w-4" aria-hidden="true" />Try again
+            </button>
+            <Link href="/cart" className="rm-text-link mt-4 justify-center">Return to cart</Link>
           </section>
         </main>
         <MobileBottomNav />
@@ -897,13 +907,17 @@ export default function CheckoutPage() {
     return (
       <>
         <SiteHeader searchMode="PRODUCTS" />
-        <main className="flex min-h-[65vh] items-center justify-center bg-[#FCFAF6] px-4 pb-28">
-          <section className="w-full max-w-md rounded-[24px] border border-[#EAE6DF] bg-white p-8 text-center shadow-sm">
-            <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-2xl bg-[#FFF1ED] text-[#9F2D18]"><PackageCheck className="h-8 w-8" /></div>
-            <h1 className="mt-5 text-xl font-black text-[#401B13]">Your cart is empty</h1>
-            <p className="mt-2 text-xs leading-6 text-[#756B61]">Add products to your cart before proceeding to checkout.</p>
-            <Link href="/shop" className="mt-6 inline-flex min-h-11 items-center gap-2 rounded-xl bg-[#FF5A36] px-5 py-3 text-xs font-bold text-white hover:bg-[#E94E2C]">Explore products<ArrowRight className="h-4 w-4" /></Link>
-            <Link href="/cart" className="mt-4 flex justify-center text-xs font-bold text-[#9F2D18]">Return to cart</Link>
+        <main className="rm-storefront flex min-h-[65vh] items-center justify-center px-4 pb-28">
+          <section className="rm-panel w-full max-w-md p-8 text-center">
+            <div className="mx-auto grid h-14 w-14 place-items-center rounded-xl bg-[var(--rm-surface-muted)] text-[var(--rm-coral-dark)]">
+              <PackageCheck className="h-7 w-7" aria-hidden="true" />
+            </div>
+            <h1 className="mt-5 text-xl font-bold text-[var(--rm-ink)]">Your cart is empty</h1>
+            <p className="mt-2 text-xs leading-6 text-[var(--rm-muted)]">Add products to your cart before proceeding to checkout.</p>
+            <Link href="/shop" className="rm-button rm-button-primary mt-6">
+              Explore products<ArrowRight className="h-4 w-4" aria-hidden="true" />
+            </Link>
+            <Link href="/cart" className="rm-text-link mt-4 justify-center">Return to cart</Link>
           </section>
         </main>
         <MobileBottomNav />
@@ -920,160 +934,185 @@ export default function CheckoutPage() {
   return (
     <>
       <SiteHeader searchMode="PRODUCTS" />
-      <main id="main-content" className="min-h-dvh overflow-x-clip bg-[#FCFAF6] pb-32 text-[#292522] lg:pb-10">
-        <div className="mx-auto max-w-[1440px] px-4 pb-8 pt-5 sm:px-6 lg:px-8 lg:pt-7">
-          {/* Breadcrumb */}
-          <nav aria-label="Breadcrumb" className="mb-5 flex items-center gap-2 text-[11px] text-[#756B61]">
-            <Link href="/" className="hover:text-[#9F2D18]">Home</Link>
-            <ChevronRight className="h-3 w-3" />
-            <Link href="/cart" className="hover:text-[#9F2D18]">Cart</Link>
-            <ChevronRight className="h-3 w-3" />
-            <span className="font-bold text-[#9F2D18]">Checkout</span>
+      <main id="main-content" className="rm-storefront min-h-dvh overflow-x-clip pb-36 lg:pb-10">
+        <div className="rm-container pb-8 pt-5 lg:pt-7">
+          <nav aria-label="Breadcrumb" className="mb-5 flex flex-wrap items-center gap-2 text-xs text-[var(--rm-muted)]">
+            <Link href="/" className="hover:text-[var(--rm-coral-dark)]">Home</Link>
+            <ChevronRight className="h-3 w-3" aria-hidden="true" />
+            <Link href="/cart" className="hover:text-[var(--rm-coral-dark)]">Cart</Link>
+            <ChevronRight className="h-3 w-3" aria-hidden="true" />
+            <span className="font-bold text-[var(--rm-coral-dark)]" aria-current="page">Checkout</span>
           </nav>
 
-          {/* Compact title area */}
           <div className="mb-6 flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
             <div>
-              <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-[#FF5A36]">Secure marketplace checkout</p>
-              <h1 className="mt-1 text-2xl font-black tracking-tight text-[#401B13] sm:text-3xl">Checkout</h1>
-              <p className="mt-2 max-w-2xl text-xs leading-6 text-[#756B61]">Confirm your address, choose delivery for each seller’s parcel and pay once for your complete order.</p>
+              <p className="text-[11px] font-bold uppercase tracking-[0.1em] text-[var(--rm-coral-dark)]">Secure marketplace checkout</p>
+              <h1 className="mt-1 text-2xl font-bold tracking-tight text-[var(--rm-ink)] sm:text-3xl">Checkout</h1>
+              <p className="mt-2 max-w-2xl text-sm leading-6 text-[var(--rm-muted)]">Confirm your address, choose delivery for each seller’s parcel and pay once for your complete order.</p>
             </div>
-            <Link href="/cart" className="inline-flex min-h-10 items-center gap-2 self-start rounded-xl border border-[#EAE6DF] bg-white px-3 py-2 text-xs font-semibold text-[#756B61] hover:border-[#FFB39F] hover:text-[#9F2D18] sm:self-auto"><ArrowLeft className="h-3.5 w-3.5" />Back to cart</Link>
+            <Link href="/cart" className="rm-button rm-button-secondary self-start sm:self-auto">
+              <ArrowLeft className="h-4 w-4" aria-hidden="true" />Back to cart
+            </Link>
           </div>
 
           <CheckoutSteps step={currentStep} />
 
           {unavailableItems.length > 0 && (
-            <div role="alert" className="mt-5 rounded-2xl border border-[#F0D7B3] bg-[#FFF8EC] p-4">
+            <section role="alert" className="mt-5 rounded-xl border p-4" style={{ borderColor: "var(--rm-yellow-bg)", background: "#fffaf0" }}>
               <div className="flex items-start gap-3">
-                <XCircle className="mt-0.5 h-5 w-5 shrink-0 text-[#96610D]" />
+                <XCircle className="mt-0.5 h-5 w-5 shrink-0" style={{ color: "var(--rm-yellow)" }} aria-hidden="true" />
                 <div className="min-w-0 flex-1">
-                  <h2 className="text-xs font-extrabold text-[#5E4730]">Some products need attention</h2>
-                  <p className="mt-1 text-[10px] leading-5 text-[#796B5C]">Remove or update unavailable items before requesting delivery prices.</p>
+                  <h2 className="text-sm font-bold text-[var(--rm-ink)]">Some products need attention</h2>
+                  <p className="mt-1 text-xs leading-5 text-[var(--rm-muted)]">Remove or update unavailable items before requesting delivery prices.</p>
                   <div className="mt-3 space-y-2">
-                    {unavailableItems.map((item) => <div key={item.id} className="rounded-lg bg-white/80 px-3 py-2"><p className="text-[10px] font-bold">{item.name}</p><p className="mt-1 text-[10px] text-[#796B5C]">{item.unavailableReason}</p></div>)}
+                    {unavailableItems.map((item) => (
+                      <div key={item.id} className="rounded-lg border border-[var(--rm-border)] bg-white px-3 py-2">
+                        <p className="text-xs font-semibold text-[var(--rm-ink)]">{item.name}</p>
+                        <p className="mt-1 text-xs text-[var(--rm-muted)]">{item.unavailableReason}</p>
+                      </div>
+                    ))}
                   </div>
-                  <Link href="/cart" className="mt-3 inline-flex items-center gap-1 text-xs font-bold text-[#9F2D18]">Update cart<ArrowRight className="h-3.5 w-3.5" /></Link>
+                  <Link href="/cart" className="rm-text-link mt-3">Update cart<ArrowRight className="h-3.5 w-3.5" aria-hidden="true" /></Link>
                 </div>
               </div>
-            </div>
+            </section>
           )}
 
           <div className="mt-5 grid grid-cols-1 items-start gap-5 lg:grid-cols-[minmax(0,1fr)_360px] xl:gap-7">
-            {/* Main checkout column */}
             <div className="min-w-0 space-y-5">
               <form ref={formRef} onSubmit={handlePayNow} className="space-y-5">
                 {/* Delivery address */}
-                <section className="overflow-hidden rounded-2xl border border-[#EAE6DF] bg-white">
-                  <div className="flex items-center justify-between gap-3 border-b border-[#F0ECE7] px-5 py-4 sm:px-6">
-                    <div className="flex items-center gap-3">
-                      <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-[#FFF1ED] text-[#9F2D18]"><MapPin className="h-5 w-5" /></div>
-                      <div>
-                        <p className="text-[9px] font-bold uppercase tracking-[0.13em] text-[#FF5A36]">Step 1 · Address</p>
-                        <h2 className="mt-0.5 text-sm font-extrabold text-[#401B13]">Where should we deliver?</h2>
+                <section className="rm-panel overflow-hidden">
+                  <header className="rm-panel-header">
+                    <div className="flex min-w-0 items-center gap-3">
+                      <span className="grid h-10 w-10 shrink-0 place-items-center rounded-lg bg-[var(--rm-coral-soft)] text-[var(--rm-coral-dark)]">
+                        <MapPin className="h-5 w-5" aria-hidden="true" />
+                      </span>
+                      <div className="min-w-0">
+                        <p className="text-[10px] font-bold uppercase tracking-[0.08em] text-[var(--rm-coral-dark)]">Step 1 · Address</p>
+                        <h2 className="mt-0.5 text-base font-bold text-[var(--rm-ink)]">Where should we deliver?</h2>
                       </div>
                     </div>
-                    <span className="hidden rounded-full bg-[#F7F4EF] px-3 py-1 text-[9px] font-semibold text-[#756B61] sm:inline-flex">Required for delivery rates</span>
-                  </div>
-                  <div className="grid grid-cols-1 gap-4 p-5 sm:grid-cols-2 sm:p-6">
+                    <span className="hidden rounded-full bg-[var(--rm-surface-muted)] px-3 py-1 text-[10px] font-semibold text-[var(--rm-muted)] sm:inline-flex">Required for delivery rates</span>
+                  </header>
+
+                  <div className="grid grid-cols-1 gap-4 p-4 sm:grid-cols-2 sm:p-5">
                     <div>
-                      <label htmlFor="deliveryRecipient" className={labelClassName}>Recipient full name <span className="text-[#FF5A36]">*</span></label>
-                      <input id="deliveryRecipient" name="deliveryRecipient" value={form.deliveryRecipient} onChange={(event) => updateField("deliveryRecipient", event.target.value)} placeholder="Name of the person receiving the order" autoComplete="name" minLength={2} maxLength={100} required className={inputClassName} />
+                      <label htmlFor="deliveryRecipient" className="rm-field-label">Recipient full name <span className="text-[var(--rm-coral)]">*</span></label>
+                      <input id="deliveryRecipient" name="deliveryRecipient" value={form.deliveryRecipient} onChange={(event) => updateField("deliveryRecipient", event.target.value)} placeholder="Name of the person receiving the order" autoComplete="name" minLength={2} maxLength={100} required className="rm-input" />
                     </div>
                     <div>
-                      <label htmlFor="deliveryPhone" className={labelClassName}>Phone number <span className="text-[#FF5A36]">*</span></label>
-                      <input id="deliveryPhone" name="deliveryPhone" type="tel" value={form.deliveryPhone} onChange={(event) => updateField("deliveryPhone", event.target.value)} placeholder="08012345678" autoComplete="tel" maxLength={30} pattern="[+]?[0-9() -]{7,30}" required className={inputClassName} />
+                      <label htmlFor="deliveryPhone" className="rm-field-label">Phone number <span className="text-[var(--rm-coral)]">*</span></label>
+                      <input id="deliveryPhone" name="deliveryPhone" type="tel" value={form.deliveryPhone} onChange={(event) => updateField("deliveryPhone", event.target.value)} placeholder="08012345678" autoComplete="tel" maxLength={30} pattern="[+]?[0-9() -]{7,30}" required className="rm-input" />
                     </div>
                     <div className="sm:col-span-2">
-                      <label htmlFor="deliveryAddress" className={labelClassName}>Street address, building or estate <span className="text-[#FF5A36]">*</span></label>
-                      <textarea id="deliveryAddress" name="deliveryAddress" value={form.deliveryAddress} onChange={(event) => updateField("deliveryAddress", event.target.value)} placeholder="House number, street name, estate or building" autoComplete="street-address" rows={2} minLength={5} maxLength={300} required className={`${inputClassName} resize-y leading-6`} />
+                      <label htmlFor="deliveryAddress" className="rm-field-label">Street address, building or estate <span className="text-[var(--rm-coral)]">*</span></label>
+                      <textarea id="deliveryAddress" name="deliveryAddress" value={form.deliveryAddress} onChange={(event) => updateField("deliveryAddress", event.target.value)} placeholder="House number, street name, estate or building" autoComplete="street-address" rows={2} minLength={5} maxLength={300} required className="rm-textarea leading-6" />
                     </div>
                     <div>
-                      <label htmlFor="deliveryArea" className={labelClassName}>Area / neighbourhood <span className="text-[#FF5A36]">*</span></label>
-                      <input id="deliveryArea" name="deliveryArea" value={form.deliveryArea} onChange={(event) => updateField("deliveryArea", event.target.value)} placeholder="e.g. Ogba, Ikeja" autoComplete="address-level2" minLength={2} maxLength={100} required className={inputClassName} />
+                      <label htmlFor="deliveryArea" className="rm-field-label">Area / neighbourhood <span className="text-[var(--rm-coral)]">*</span></label>
+                      <input id="deliveryArea" name="deliveryArea" value={form.deliveryArea} onChange={(event) => updateField("deliveryArea", event.target.value)} placeholder="e.g. Ogba, Ikeja" autoComplete="address-level2" minLength={2} maxLength={100} required className="rm-input" />
                     </div>
                     <div>
-                      <label htmlFor="deliveryLandmark" className={labelClassName}>Nearby landmark <span className="font-normal text-[#91877E]">(optional)</span></label>
-                      <input id="deliveryLandmark" name="deliveryLandmark" value={form.deliveryLandmark} onChange={(event) => updateField("deliveryLandmark", event.target.value)} placeholder="e.g. Near a filling station" maxLength={150} className={inputClassName} />
+                      <label htmlFor="deliveryLandmark" className="rm-field-label">Nearby landmark <span className="font-normal text-[var(--rm-muted)]">(optional)</span></label>
+                      <input id="deliveryLandmark" name="deliveryLandmark" value={form.deliveryLandmark} onChange={(event) => updateField("deliveryLandmark", event.target.value)} placeholder="e.g. Near a filling station" maxLength={150} className="rm-input" />
                     </div>
                     <div className="sm:col-span-2">
-                      <label htmlFor="deliveryNotes" className={labelClassName}>Delivery instructions <span className="font-normal text-[#91877E]">(optional)</span></label>
-                      <textarea id="deliveryNotes" name="deliveryNotes" value={form.deliveryNotes} onChange={(event) => updateField("deliveryNotes", event.target.value)} placeholder="Gate instructions or other useful delivery details" rows={2} maxLength={300} className={`${inputClassName} resize-y leading-6`} />
+                      <label htmlFor="deliveryNotes" className="rm-field-label">Delivery instructions <span className="font-normal text-[var(--rm-muted)]">(optional)</span></label>
+                      <textarea id="deliveryNotes" name="deliveryNotes" value={form.deliveryNotes} onChange={(event) => updateField("deliveryNotes", event.target.value)} placeholder="Gate instructions or other useful delivery details" rows={2} maxLength={300} className="rm-textarea leading-6" />
                     </div>
-                    <div className="sm:col-span-2 flex flex-col gap-2 rounded-xl bg-[#FCFAF6] p-3 sm:flex-row sm:items-center sm:justify-between">
-                      <div className="flex items-start gap-2">
-                        <ShieldCheck className="mt-0.5 h-4 w-4 shrink-0 text-[#16845D]" />
-                        <p className="text-[10px] leading-5 text-[#756B61]">Your delivery details are shared with the assigned courier only as required to fulfil this order.</p>
+                    <div className="sm:col-span-2 flex flex-col gap-3 rounded-lg bg-[var(--rm-surface-muted)] p-3 sm:flex-row sm:items-center sm:justify-between">
+                      <div className="flex min-w-0 items-start gap-2">
+                        <ShieldCheck className="mt-0.5 h-4 w-4 shrink-0 text-[var(--rm-green)]" aria-hidden="true" />
+                        <p className="text-xs leading-5 text-[var(--rm-muted)]">Your delivery details are shared with the assigned courier only as required to fulfil this order.</p>
                       </div>
-                      <button type="button" onClick={handleGetDeliveryRates} disabled={!validCart || quoting} className="inline-flex min-h-11 shrink-0 items-center justify-center gap-2 rounded-xl bg-[#FF5A36] px-4 py-3 text-xs font-bold text-white transition hover:bg-[#E94E2C] disabled:cursor-not-allowed disabled:bg-[#EAE6DF] disabled:text-[#91877E]">
-                        {quoting ? <><LoaderCircle className="h-4 w-4 animate-spin" />Finding delivery options</> : <><Truck className="h-4 w-4" />Get delivery options</>}
+                      <button type="button" onClick={handleGetDeliveryRates} disabled={!validCart || quoting} className="rm-button rm-button-primary min-h-11 shrink-0">
+                        {quoting ? <><LoaderCircle className="h-4 w-4 animate-spin" aria-hidden="true" />Finding delivery options</> : <><Truck className="h-4 w-4" aria-hidden="true" />Get delivery options</>}
                       </button>
                     </div>
                   </div>
                 </section>
 
                 {/* Delivery choices */}
-                <section className="overflow-hidden rounded-2xl border border-[#EAE6DF] bg-white">
-                  <div className="flex items-center gap-3 border-b border-[#F0ECE7] px-5 py-4 sm:px-6">
-                    <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-[#FFF1ED] text-[#9F2D18]"><Truck className="h-5 w-5" /></div>
-                    <div>
-                      <p className="text-[9px] font-bold uppercase tracking-[0.13em] text-[#FF5A36]">Step 2 · Delivery service</p>
-                      <h2 className="mt-0.5 text-sm font-extrabold text-[#401B13]">Choose delivery for each seller</h2>
-                      <p className="mt-1 text-[10px] text-[#91877E]">Items from different sellers may arrive in separate packages.</p>
+                <section className="rm-panel overflow-hidden">
+                  <header className="rm-panel-header">
+                    <div className="flex min-w-0 items-center gap-3">
+                      <span className="grid h-10 w-10 shrink-0 place-items-center rounded-lg bg-[var(--rm-coral-soft)] text-[var(--rm-coral-dark)]">
+                        <Truck className="h-5 w-5" aria-hidden="true" />
+                      </span>
+                      <div className="min-w-0">
+                        <p className="text-[10px] font-bold uppercase tracking-[0.08em] text-[var(--rm-coral-dark)]">Step 2 · Delivery service</p>
+                        <h2 className="mt-0.5 text-base font-bold text-[var(--rm-ink)]">Choose delivery for each seller</h2>
+                        <p className="mt-1 text-xs text-[var(--rm-muted)]">Items from different sellers may arrive in separate packages.</p>
+                      </div>
                     </div>
-                  </div>
+                  </header>
 
                   {!quote && (
-                    <div className="px-5 py-8 text-center sm:px-8">
-                      <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-xl bg-[#FCFAF6] text-[#9F2D18]"><Package className="h-6 w-6" /></div>
-                      <p className="mt-3 text-xs font-bold text-[#401B13]">Delivery prices haven’t been calculated yet</p>
-                      <p className="mx-auto mt-1 max-w-sm text-[10px] leading-5 text-[#91877E]">Enter your delivery address above and select “Get delivery options” to see available couriers and prices.</p>
+                    <div className="px-5 py-9 text-center sm:px-8">
+                      <div className="mx-auto grid h-12 w-12 place-items-center rounded-xl bg-[var(--rm-surface-muted)] text-[var(--rm-coral-dark)]">
+                        <Package className="h-6 w-6" aria-hidden="true" />
+                      </div>
+                      <p className="mt-3 text-sm font-bold text-[var(--rm-ink)]">Delivery prices haven’t been calculated yet</p>
+                      <p className="mx-auto mt-1 max-w-sm text-xs leading-5 text-[var(--rm-muted)]">Enter your delivery address above and select “Get delivery options” to see available couriers and prices.</p>
                     </div>
                   )}
 
                   {quote && (
                     <div className="space-y-4 p-4 sm:p-5">
-                      <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl bg-[#FCFAF6] px-3 py-3">
+                      <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg bg-[var(--rm-surface-muted)] px-3 py-3">
                         <div>
-                          <p className="text-[10px] font-bold text-[#401B13]">Delivery options found</p>
-                          <p className="mt-0.5 text-[9px] text-[#91877E]">Choose one service for each seller package.</p>
+                          <p className="text-xs font-bold text-[var(--rm-ink)]">Delivery options found</p>
+                          <p className="mt-0.5 text-xs text-[var(--rm-muted)]">Choose one service for each seller package.</p>
                         </div>
-                        <button type="button" onClick={handleGetDeliveryRates} disabled={quoting} className="inline-flex items-center gap-1.5 text-[10px] font-bold text-[#9F2D18] hover:text-[#FF5A36] disabled:opacity-50"><RefreshCw className="h-3.5 w-3.5" />Refresh rates</button>
+                        <button type="button" onClick={handleGetDeliveryRates} disabled={quoting} className="rm-text-link disabled:opacity-50">
+                          <RefreshCw className="h-3.5 w-3.5" aria-hidden="true" />Refresh rates
+                        </button>
                       </div>
 
                       {quote.packages.map((pack, index) => {
                         const group = groups.find((item) => item.businessId === pack.businessId);
                         const selectedKey = selectedRateKeys[pack.businessId] ?? "";
                         return (
-                          <section key={pack.businessId} className="overflow-hidden rounded-xl border border-[#EAE6DF]">
-                            <div className="flex items-center justify-between gap-3 border-b border-[#F0ECE7] bg-[#FCFAF6] px-3 py-3 sm:px-4">
+                          <section key={pack.businessId} className="overflow-hidden rounded-lg border border-[var(--rm-border)]">
+                            <header className="flex items-center justify-between gap-3 border-b border-[var(--rm-border)] bg-[var(--rm-surface-muted)] px-3 py-3 sm:px-4">
                               <div className="flex min-w-0 items-center gap-2.5">
-                                <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-white text-[#9F2D18]"><Store className="h-4 w-4" /></span>
+                                <span className="grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-white text-[var(--rm-coral-dark)]">
+                                  <Store className="h-4 w-4" aria-hidden="true" />
+                                </span>
                                 <div className="min-w-0">
-                                  <p className="text-[8px] font-semibold uppercase tracking-wide text-[#91877E]">Package {index + 1} · Seller</p>
-                                  <p className="truncate text-[11px] font-extrabold text-[#401B13]">{group?.businessName ?? pack.businessName}</p>
+                                  <p className="text-[10px] font-semibold uppercase tracking-wide text-[var(--rm-muted)]">Package {index + 1} · Seller</p>
+                                  <p className="truncate text-xs font-bold text-[var(--rm-ink)]">{group?.businessName ?? pack.businessName}</p>
                                 </div>
                               </div>
-                              <span className="shrink-0 text-[9px] text-[#91877E]">{group?.items.reduce((sum, item) => sum + item.quantity, 0) ?? pack.items.length} item(s)</span>
-                            </div>
+                              <span className="shrink-0 text-xs text-[var(--rm-muted)]">{group?.items.reduce((sum, item) => sum + item.quantity, 0) ?? pack.items.length} item(s)</span>
+                            </header>
+
                             <div className="grid gap-2 p-3 sm:grid-cols-2 sm:p-4">
                               {pack.rates.map((rate) => {
                                 const key = rateKey(rate);
                                 const selected = selectedKey === key;
                                 return (
-                                  <label key={key} className={`flex cursor-pointer gap-3 rounded-xl border p-3 transition ${selected ? "border-[#FF5A36] bg-[#FFF7F4] ring-1 ring-[#FF5A36]/20" : "border-[#EAE6DF] bg-white hover:border-[#FFB39F]"}`}>
-                                    <input type="radio" name={`courier-${pack.businessId}`} value={key} checked={selected} onChange={() => selectCourier(pack.businessId, key)} className="mt-1 h-4 w-4 accent-[#FF5A36]" />
+                                  <label
+                                    key={key}
+                                    className="flex cursor-pointer gap-3 rounded-lg border p-3 transition-colors"
+                                    style={{
+                                      borderColor: selected ? "var(--rm-coral)" : "var(--rm-border)",
+                                      background: selected ? "var(--rm-coral-soft)" : "#fff",
+                                    }}
+                                  >
+                                    <input type="radio" name={`courier-${pack.businessId}`} value={key} checked={selected} onChange={() => selectCourier(pack.businessId, key)} className="mt-1 h-4 w-4 shrink-0 accent-[var(--rm-coral)]" />
                                     <span className="min-w-0 flex-1">
                                       <span className="flex flex-wrap items-center justify-between gap-2">
-                                        <span className="text-[11px] font-extrabold text-[#401B13]">{rate.courierName}</span>
-                                        <span className="text-xs font-black text-[#9F2D18]">{formatNaira(rate.amount)}</span>
+                                        <span className="text-xs font-bold text-[var(--rm-ink)]">{rate.courierName}</span>
+                                        <span className="text-sm font-extrabold text-[var(--rm-coral-dark)]">{formatNaira(rate.amount)}</span>
                                       </span>
-                                      {rate.serviceType && <span className="mt-1 block text-[9px] text-[#756B61]">{rate.serviceType}</span>}
-                                      <span className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-[9px] text-[#91877E]">
-                                        <span className="inline-flex items-center gap-1"><Clock3 className="h-3 w-3" />{formatEta(rate.eta)}</span>
+                                      {rate.serviceType && <span className="mt-1 block text-xs text-[var(--rm-muted)]">{rate.serviceType}</span>}
+                                      <span className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-[var(--rm-muted)]">
+                                        <span className="inline-flex items-center gap-1"><Clock3 className="h-3 w-3" aria-hidden="true" />{formatEta(rate.eta)}</span>
                                         {rate.pickupEta && <span>Pickup: {rate.pickupEta}</span>}
                                       </span>
-                                      {selected && <span className="mt-2 inline-flex items-center gap-1 text-[9px] font-bold text-[#16845D]"><CheckCircle2 className="h-3 w-3" />Selected</span>}
+                                      {selected && <span className="mt-2 inline-flex items-center gap-1 text-xs font-bold text-[var(--rm-green)]"><CheckCircle2 className="h-3.5 w-3.5" aria-hidden="true" />Selected</span>}
                                     </span>
                                   </label>
                                 );
@@ -1083,18 +1122,18 @@ export default function CheckoutPage() {
                         );
                       })}
 
-                      {!quoteMatchesCart && <p role="alert" className="rounded-lg bg-[#FFF8EC] px-3 py-2 text-[10px] text-[#8A5A13]">Your cart has changed since these rates were calculated. Refresh delivery rates before continuing.</p>}
-                      {quoteAlmostExpired && <p className="rounded-lg bg-[#FFF8EC] px-3 py-2 text-[10px] text-[#8A5A13]">These delivery rates expire soon. Confirm and complete checkout now, or refresh the rates.</p>}
-                      {quoteExpired && <p role="alert" className="rounded-lg bg-red-50 px-3 py-2 text-[10px] text-red-700">These delivery rates have expired. Refresh rates to continue.</p>}
+                      {!quoteMatchesCart && <p role="alert" className="rounded-lg border border-[var(--rm-yellow-bg)] bg-[#fffaf0] px-3 py-2 text-xs text-[var(--rm-yellow)]">Your cart has changed since these rates were calculated. Refresh delivery rates before continuing.</p>}
+                      {quoteAlmostExpired && <p className="rounded-lg border border-[var(--rm-yellow-bg)] bg-[#fffaf0] px-3 py-2 text-xs text-[var(--rm-yellow)]">These delivery rates expire soon. Confirm and complete checkout now, or refresh the rates.</p>}
+                      {quoteExpired && <p role="alert" className="rounded-lg border border-[var(--rm-red-bg)] bg-[var(--rm-red-bg)] px-3 py-2 text-xs text-[var(--rm-red)]">These delivery rates have expired. Refresh rates to continue.</p>}
 
-                      <div className="flex flex-col gap-3 rounded-xl border border-[#EAE6DF] p-4 sm:flex-row sm:items-center sm:justify-between">
+                      <div className="flex flex-col gap-3 rounded-lg border border-[var(--rm-border)] p-4 sm:flex-row sm:items-center sm:justify-between">
                         <div>
-                          <p className="text-[10px] font-bold text-[#401B13]">Selected delivery total</p>
-                          <p className="mt-1 text-lg font-black text-[#9F2D18]">{formatNaira(selectedDeliveryFee)}</p>
-                          <p className="mt-0.5 text-[9px] text-[#91877E]">One delivery option is charged for each seller package.</p>
+                          <p className="text-xs font-semibold text-[var(--rm-ink)]">Selected delivery total</p>
+                          <p className="mt-1 text-xl font-extrabold text-[var(--rm-coral-dark)]">{formatNaira(selectedDeliveryFee)}</p>
+                          <p className="mt-0.5 text-xs text-[var(--rm-muted)]">One delivery option is charged for each seller package.</p>
                         </div>
-                        <button type="button" onClick={handleConfirmDeliveryOptions} disabled={!quoteMatchesCart || !allPackagesSelected || quoteExpired || confirmingRates} className="inline-flex min-h-11 items-center justify-center gap-2 rounded-xl border border-[#FF5A36] bg-white px-4 py-3 text-xs font-bold text-[#9F2D18] transition hover:bg-[#FFF1ED] disabled:cursor-not-allowed disabled:border-[#EAE6DF] disabled:text-[#A69D94]">
-                          {confirmingRates ? <><LoaderCircle className="h-4 w-4 animate-spin" />Saving choices</> : quoteConfirmed ? <><CheckCircle2 className="h-4 w-4" />Delivery confirmed</> : <>Confirm delivery choices<ArrowRight className="h-4 w-4" /></>}
+                        <button type="button" onClick={handleConfirmDeliveryOptions} disabled={!quoteMatchesCart || !allPackagesSelected || quoteExpired || confirmingRates} className="rm-button rm-button-secondary min-h-11">
+                          {confirmingRates ? <><LoaderCircle className="h-4 w-4 animate-spin" aria-hidden="true" />Saving choices</> : quoteConfirmed ? <><CheckCircle2 className="h-4 w-4" aria-hidden="true" />Delivery confirmed</> : <>Confirm delivery choices<ArrowRight className="h-4 w-4" aria-hidden="true" /></>}
                         </button>
                       </div>
                     </div>
@@ -1102,42 +1141,66 @@ export default function CheckoutPage() {
                 </section>
 
                 {/* Payment notice */}
-                <section className="rounded-2xl border border-[#DDECE4] bg-[#F4FBF7] p-4 sm:p-5">
+                <section className="rounded-xl border p-4 sm:p-5" style={{ borderColor: "#dcebe2", background: "#f5faf7" }}>
                   <div className="flex items-start gap-3">
-                    <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-white text-[#16845D]"><ShieldCheck className="h-5 w-5" /></div>
-                    <div>
-                      <h2 className="text-xs font-extrabold text-[#245B43]">Secure payment with Paystack</h2>
-                      <p className="mt-1 text-[10px] leading-5 text-[#557565]">You’ll be redirected to Paystack to pay for all products and selected deliveries in one checkout. ReMarket confirms payment with Paystack before processing your order.</p>
-                      <div className="mt-2 flex flex-wrap gap-2 text-[9px] font-semibold text-[#557565]"><span className="rounded-full bg-white px-2 py-1">Cards</span><span className="rounded-full bg-white px-2 py-1">Bank transfer</span><span className="rounded-full bg-white px-2 py-1">USSD</span></div>
+                    <span className="grid h-10 w-10 shrink-0 place-items-center rounded-lg bg-white text-[var(--rm-green)]">
+                      <ShieldCheck className="h-5 w-5" aria-hidden="true" />
+                    </span>
+                    <div className="min-w-0">
+                      <h2 className="text-sm font-bold text-[var(--rm-ink)]">Secure payment with Paystack</h2>
+                      <p className="mt-1 text-xs leading-5 text-[var(--rm-muted)]">You’ll be redirected to Paystack to pay for all products and selected deliveries in one checkout. ReMarket confirms payment with Paystack before processing your order.</p>
+                      <div className="mt-3 flex flex-wrap gap-2 text-xs font-semibold text-[var(--rm-muted)]">
+                        <span className="rounded-md bg-white px-2.5 py-1">Cards</span>
+                        <span className="rounded-md bg-white px-2.5 py-1">Bank transfer</span>
+                        <span className="rounded-md bg-white px-2.5 py-1">USSD</span>
+                      </div>
                     </div>
                   </div>
                 </section>
 
-                {quoteError && <div role="alert" className="rounded-xl border border-red-200 bg-red-50 p-3 text-[10px] leading-5 text-red-700">{quoteError}</div>}
-                {submitError && <div role="alert" className="rounded-xl border border-red-200 bg-red-50 p-3 text-[10px] leading-5 text-red-700">{submitError}</div>}
+                {quoteError && <div role="alert" className="rounded-lg border border-[var(--rm-red-bg)] bg-[var(--rm-red-bg)] p-3 text-xs leading-5 text-[var(--rm-red)]">{quoteError}</div>}
+                {submitError && <div role="alert" className="rounded-lg border border-[var(--rm-red-bg)] bg-[var(--rm-red-bg)] p-3 text-xs leading-5 text-[var(--rm-red)]">{submitError}</div>}
               </form>
             </div>
 
             {/* Order summary */}
             <aside className="min-w-0 lg:sticky lg:top-24">
-              <section className="overflow-hidden rounded-2xl border border-[#EAE6DF] bg-white shadow-[0_5px_22px_rgba(23,32,42,0.035)]">
-                <div className="flex items-center justify-between gap-3 border-b border-[#F0ECE7] px-5 py-4">
-                  <div><p className="text-[9px] font-bold uppercase tracking-[0.13em] text-[#FF5A36]">Order summary</p><h2 className="mt-0.5 text-sm font-extrabold text-[#401B13]">Your items</h2></div>
-                  <span className="rounded-full bg-[#FFF1ED] px-2.5 py-1 text-[9px] font-bold text-[#9F2D18]">{itemCount} items</span>
-                </div>
+              <section className="rm-panel overflow-hidden">
+                <header className="rm-panel-header">
+                  <div>
+                    <p className="text-[10px] font-bold uppercase tracking-[0.08em] text-[var(--rm-coral-dark)]">Order summary</p>
+                    <h2 className="mt-0.5 text-base font-bold text-[var(--rm-ink)]">Your items</h2>
+                  </div>
+                  <span className="rounded-full bg-[var(--rm-coral-soft)] px-2.5 py-1 text-xs font-bold text-[var(--rm-coral-dark)]">{itemCount} items</span>
+                </header>
 
                 <div className="max-h-[420px] space-y-4 overflow-y-auto p-4">
                   {groups.map((group) => (
-                    <section key={group.businessId} className="overflow-hidden rounded-xl border border-[#EAE6DF]">
-                      <div className="flex items-center gap-2 border-b border-[#F0ECE7] bg-[#FCFAF6] px-3 py-2.5"><Store className="h-3.5 w-3.5 text-[#9F2D18]" /><p className="min-w-0 flex-1 truncate text-[10px] font-bold text-[#401B13]">{group.businessName}</p><span className="text-[8px] text-[#91877E]">{group.items.length} product(s)</span></div>
-                      <div className="divide-y divide-[#F0ECE7] px-3">
+                    <section key={group.businessId} className="overflow-hidden rounded-lg border border-[var(--rm-border)]">
+                      <div className="flex items-center gap-2 border-b border-[var(--rm-border)] bg-[var(--rm-surface-muted)] px-3 py-2.5">
+                        <Store className="h-3.5 w-3.5 shrink-0 text-[var(--rm-coral-dark)]" aria-hidden="true" />
+                        <p className="min-w-0 flex-1 truncate text-xs font-bold text-[var(--rm-ink)]">{group.businessName}</p>
+                        <span className="text-[10px] text-[var(--rm-muted)]">{group.items.length} product(s)</span>
+                      </div>
+                      <div className="divide-y divide-[var(--rm-border)] px-3">
                         {group.items.map((item) => {
                           const oldLine = item.originalPrice !== null ? item.originalPrice * item.quantity : null;
                           const showOld = oldLine !== null && Number.isSafeInteger(oldLine) && oldLine > (item.lineTotal ?? 0);
                           return (
                             <div key={item.id} className="flex gap-3 py-3">
-                              <div className="relative flex h-14 w-14 shrink-0 items-center justify-center overflow-hidden rounded-lg border border-[#EAE6DF] bg-[#FCFAF6]">{item.imageUrl ? <img src={item.imageUrl} alt={item.name} loading="lazy" className="h-full w-full object-cover" /> : <Package className="h-5 w-5 text-[#B6A99E]" />}<span className="absolute -right-0.5 -top-0.5 flex h-4 min-w-4 items-center justify-center rounded-full border border-white bg-[#FF5A36] px-1 text-[8px] font-bold text-white">{item.quantity}</span></div>
-                              <div className="min-w-0 flex-1"><p className="line-clamp-2 text-[10px] font-semibold leading-4 text-[#292522]">{item.name}</p><p className="mt-1 text-[9px] text-[#91877E]">Qty {item.quantity}</p><div className="mt-1 flex items-center justify-between gap-2"><span className="text-[9px] text-[#91877E]">{item.unitPrice !== null ? `${formatNaira(item.unitPrice)} each` : "Price unavailable"}</span><span className="text-[10px] font-extrabold text-[#401B13]">{item.lineTotal !== null ? formatNaira(item.lineTotal) : "—"}</span></div>{showOld && <p className="text-right text-[9px] text-[#91877E] line-through">{formatNaira(oldLine!)}</p>}</div>
+                              <div className="relative flex h-14 w-14 shrink-0 items-center justify-center overflow-hidden rounded-md border border-[var(--rm-border)] bg-[var(--rm-surface-muted)]">
+                                {item.imageUrl ? <img src={item.imageUrl} alt={item.name} loading="lazy" className="h-full w-full object-cover" /> : <Package className="h-5 w-5 text-[var(--rm-subtle)]" aria-hidden="true" />}
+                                <span className="absolute -right-0.5 -top-0.5 flex h-4 min-w-4 items-center justify-center rounded-full border border-white bg-[var(--rm-coral)] px-1 text-[9px] font-bold text-white">{item.quantity}</span>
+                              </div>
+                              <div className="min-w-0 flex-1">
+                                <p className="line-clamp-2 text-xs font-semibold leading-4 text-[var(--rm-ink)]">{item.name}</p>
+                                <p className="mt-1 text-[11px] text-[var(--rm-muted)]">Qty {item.quantity}</p>
+                                <div className="mt-1 flex items-center justify-between gap-2">
+                                  <span className="text-[11px] text-[var(--rm-muted)]">{item.unitPrice !== null ? `${formatNaira(item.unitPrice)} each` : "Price unavailable"}</span>
+                                  <span className="text-xs font-bold text-[var(--rm-ink)]">{item.lineTotal !== null ? formatNaira(item.lineTotal) : "—"}</span>
+                                </div>
+                                {showOld && <p className="text-right text-[10px] text-[var(--rm-subtle)] line-through">{formatNaira(oldLine!)}</p>}
+                              </div>
                             </div>
                           );
                         })}
@@ -1146,39 +1209,66 @@ export default function CheckoutPage() {
                   ))}
                 </div>
 
-                <div className="border-t border-[#F0ECE7] p-5">
+                <div className="border-t border-[var(--rm-border)] p-4 sm:p-5">
                   <div className="space-y-3">
-                    <div className="flex items-center justify-between gap-3 text-[11px]"><span className="text-[#756B61]">Products subtotal</span><span className="font-bold text-[#292522]">{formatNaira(subtotal)}</span></div>
-                    <div className="flex items-center justify-between gap-3 text-[11px]"><span className="text-[#756B61]">Delivery</span><span className="font-bold text-[#292522]">{quote && allPackagesSelected ? formatNaira(selectedDeliveryFee) : "Choose options"}</span></div>
+                    <div className="flex items-center justify-between gap-3 text-xs">
+                      <span className="text-[var(--rm-muted)]">Products subtotal</span>
+                      <span className="font-bold text-[var(--rm-ink)]">{formatNaira(subtotal)}</span>
+                    </div>
+                    <div className="flex items-center justify-between gap-3 text-xs">
+                      <span className="text-[var(--rm-muted)]">Delivery</span>
+                      <span className="font-bold text-[var(--rm-ink)]">{quote && allPackagesSelected ? formatNaira(selectedDeliveryFee) : "Choose options"}</span>
+                    </div>
                   </div>
-                  <div className="my-4 h-px bg-[#EAE6DF]" />
-                  <div className="flex items-end justify-between gap-3"><div><p className="text-[9px] font-bold uppercase tracking-[0.12em] text-[#91877E]">Total to pay</p><p className="mt-1 text-2xl font-black tracking-tight text-[#9F2D18]">{quote && allPackagesSelected ? formatNaira(displayedTotal) : formatNaira(subtotal)}</p></div><span className="mb-1 rounded-full bg-[#F7F4EF] px-2.5 py-1 text-[8px] font-bold text-[#756B61]">NGN</span></div>
-                  {!quoteConfirmed && <p className="mt-2 text-[9px] leading-5 text-[#91877E]">{quote ? "Confirm each seller’s delivery service to calculate your final amount." : "Delivery charges are not included yet. Get delivery options to calculate the final total."}</p>}
-                  {quoteConfirmed && <p className="mt-2 text-[9px] leading-5 text-[#16845D]">Delivery selections confirmed. This is the amount that will be sent to Paystack.</p>}
+                  <div className="my-4 h-px bg-[var(--rm-border)]" />
+                  <div className="flex items-end justify-between gap-3">
+                    <div>
+                      <p className="text-[10px] font-bold uppercase tracking-[0.08em] text-[var(--rm-muted)]">Total to pay</p>
+                      <p className="mt-1 text-2xl font-extrabold tracking-tight text-[var(--rm-coral-dark)]">{quote && allPackagesSelected ? formatNaira(displayedTotal) : formatNaira(subtotal)}</p>
+                    </div>
+                    <span className="mb-1 rounded-md bg-[var(--rm-surface-muted)] px-2.5 py-1 text-[10px] font-bold text-[var(--rm-muted)]">NGN</span>
+                  </div>
+                  {!quoteConfirmed && <p className="mt-2 text-xs leading-5 text-[var(--rm-muted)]">{quote ? "Confirm each seller’s delivery service to calculate your final amount." : "Delivery charges are not included yet. Get delivery options to calculate the final total."}</p>}
+                  {quoteConfirmed && <p className="mt-2 text-xs leading-5 text-[var(--rm-green)]">Delivery selections confirmed. This is the amount that will be sent to Paystack.</p>}
 
-                  <button type="button" onClick={() => formRef.current?.requestSubmit()} disabled={!canSubmitPayment} className="mt-5 flex min-h-12 w-full items-center justify-center gap-2 rounded-xl bg-[#FF5A36] px-4 py-3 text-xs font-extrabold text-white shadow-sm transition hover:bg-[#E94E2C] disabled:cursor-not-allowed disabled:bg-[#EAE6DF] disabled:text-[#91877E]">
-                    {submitting ? <><LoaderCircle className="h-4 w-4 animate-spin" />Connecting to Paystack</> : <><CreditCard className="h-4 w-4" />Pay securely with Paystack<ArrowRight className="h-4 w-4" /></>}
+                  <button type="button" onClick={() => formRef.current?.requestSubmit()} disabled={!canSubmitPayment} className="rm-button rm-button-primary mt-5 min-h-12 w-full">
+                    {submitting ? <><LoaderCircle className="h-4 w-4 animate-spin" aria-hidden="true" />Connecting to Paystack</> : <><CreditCard className="h-4 w-4" aria-hidden="true" />Pay securely with Paystack<ArrowRight className="h-4 w-4" aria-hidden="true" /></>}
                   </button>
 
-                  {!validCart && <p className="mt-2 text-center text-[9px] leading-5 text-[#B42318]">Resolve unavailable products before checkout.</p>}
-                  {validCart && !quote && <p className="mt-2 text-center text-[9px] leading-5 text-[#91877E]">Enter your address and get delivery options to continue.</p>}
-                  {quote && !quoteConfirmed && <p className="mt-2 text-center text-[9px] leading-5 text-[#91877E]">Confirm your delivery choices before payment.</p>}
-                  <div className="mt-4 flex items-start gap-2 rounded-xl bg-[#FCFAF6] p-3"><ShieldCheck className="mt-0.5 h-3.5 w-3.5 shrink-0 text-[#16845D]" /><p className="text-[9px] leading-5 text-[#91877E]">Your payment is processed on Paystack. ReMarket never receives or stores your card PIN or full card details.</p></div>
-                  <Link href="/cart" className="mt-4 flex min-h-10 items-center justify-center gap-2 text-[10px] font-bold text-[#756B61] hover:text-[#9F2D18]"><ArrowLeft className="h-3.5 w-3.5" />Back to cart</Link>
+                  {!validCart && <p className="mt-2 text-center text-xs leading-5 text-[var(--rm-red)]">Resolve unavailable products before checkout.</p>}
+                  {validCart && !quote && <p className="mt-2 text-center text-xs leading-5 text-[var(--rm-muted)]">Enter your address and get delivery options to continue.</p>}
+                  {quote && !quoteConfirmed && <p className="mt-2 text-center text-xs leading-5 text-[var(--rm-muted)]">Confirm your delivery choices before payment.</p>}
+                  <div className="mt-4 flex items-start gap-2 rounded-lg bg-[var(--rm-surface-muted)] p-3">
+                    <ShieldCheck className="mt-0.5 h-4 w-4 shrink-0 text-[var(--rm-green)]" aria-hidden="true" />
+                    <p className="text-xs leading-5 text-[var(--rm-muted)]">Your payment is processed on Paystack. ReMarket never receives or stores your card PIN or full card details.</p>
+                  </div>
+                  <Link href="/cart" className="rm-button rm-button-quiet mt-3 w-full">
+                    <ArrowLeft className="h-4 w-4" aria-hidden="true" />Back to cart
+                  </Link>
                 </div>
               </section>
             </aside>
           </div>
 
           {/* Mobile fixed summary/action bar */}
-          <div className="fixed inset-x-0 bottom-[64px] z-30 border-t border-[#EAE6DF] bg-white/95 px-4 py-3 shadow-[0_-8px_24px_rgba(23,32,42,0.07)] backdrop-blur lg:hidden">
+          <div className="fixed inset-x-0 bottom-[64px] z-30 border-t border-[var(--rm-border)] bg-white px-4 py-3 shadow-[0_-6px_18px_rgba(23,32,42,0.07)] lg:hidden">
             <div className="mx-auto flex max-w-3xl items-center gap-3">
-              <div className="min-w-0 flex-1"><p className="text-[9px] font-semibold text-[#91877E]">{quoteConfirmed ? "Total to pay" : "Products subtotal"}</p><p className="truncate text-lg font-black text-[#9F2D18]">{formatNaira(quoteConfirmed ? displayedTotal : subtotal)}</p></div>
-              <button type="button" onClick={() => formRef.current?.requestSubmit()} disabled={!canSubmitPayment} className="inline-flex min-h-11 min-w-[158px] items-center justify-center gap-2 rounded-xl bg-[#FF5A36] px-4 py-3 text-[11px] font-extrabold text-white disabled:cursor-not-allowed disabled:bg-[#EAE6DF] disabled:text-[#91877E]">{submitting ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <CreditCard className="h-4 w-4" />}{submitting ? "Connecting…" : "Pay with Paystack"}</button>
+              <div className="min-w-0 flex-1">
+                <p className="text-[10px] font-semibold text-[var(--rm-muted)]">{quoteConfirmed ? "Total to pay" : "Products subtotal"}</p>
+                <p className="truncate text-lg font-extrabold text-[var(--rm-coral-dark)]">{formatNaira(quoteConfirmed ? displayedTotal : subtotal)}</p>
+              </div>
+              <button type="button" onClick={() => formRef.current?.requestSubmit()} disabled={!canSubmitPayment} className="rm-button rm-button-primary min-h-11 min-w-[158px]">
+                {submitting ? <LoaderCircle className="h-4 w-4 animate-spin" aria-hidden="true" /> : <CreditCard className="h-4 w-4" aria-hidden="true" />}
+                {submitting ? "Connecting…" : "Pay with Paystack"}
+              </button>
             </div>
           </div>
 
-          <footer className="mt-10 hidden items-center justify-center gap-3 pb-4 text-[10px] text-[#9B9188] lg:flex"><span className="h-px w-12 bg-[#EAE6DF]" /><span>ReMarket · Find it nearby</span><span className="h-px w-12 bg-[#EAE6DF]" /></footer>
+          <footer className="mt-10 hidden items-center justify-center gap-3 pb-4 text-xs text-[var(--rm-subtle)] lg:flex">
+            <span className="h-px w-12 bg-[var(--rm-border)]" />
+            <span>ReMarket · Find it nearby</span>
+            <span className="h-px w-12 bg-[var(--rm-border)]" />
+          </footer>
         </div>
       </main>
       <MobileBottomNav />
