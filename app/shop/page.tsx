@@ -329,11 +329,17 @@ function ProductPrice({ product }: { product: Product }) {
   const discount = getDiscountPercentage(product);
   return (
     <div className="min-w-0">
-      <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
-        <span className="text-[15px] font-bold leading-5 text-[#17202A] sm:text-base">{product.price !== null ? formatNaira(product.price) : "Ask seller"}</span>
-        {product.originalPrice !== null && <del className="whitespace-nowrap text-[10px] text-[#958B83] sm:text-xs">{formatNaira(product.originalPrice)}</del>}
+      <div className="rm-product-price-row">
+        <span className="rm-product-price">{product.price !== null ? formatNaira(product.price) : "Ask seller"}</span>
+        {product.originalPrice !== null && (
+          <del className="rm-product-old-price">{formatNaira(product.originalPrice)}</del>
+        )}
       </div>
-      {discount !== null && <span className="mt-1 inline-flex rounded-sm bg-[#FFF0EA] px-1.5 py-0.5 text-[9px] font-semibold text-[#9F2D18]">{discount}% off</span>}
+      {discount !== null && (
+        <span className="rm-product-badge rm-product-badge-sale mt-1 inline-flex">
+          {discount}% off
+        </span>
+      )}
     </div>
   );
 }
@@ -348,35 +354,126 @@ function ShopProductCard({
   const imageUrl = product.imageUrl ?? product.images[0]?.url ?? null;
   const productUrl = `/product/${encodeURIComponent(product.id)}`;
   const productFeedback = feedback?.productId === product.id ? feedback : null;
+
   return (
-    <article className="group flex min-w-0 flex-col border-b border-r border-[#EEE9E3] bg-white p-2.5 sm:rounded-md sm:border sm:p-3">
-      <div className="relative aspect-square overflow-hidden bg-[#F8F7F4]">
-        <Link href={productUrl} aria-label={`View ${product.name}`} className="absolute inset-0 flex items-center justify-center p-2 sm:p-3">
-          {imageUrl ? <img src={imageUrl} alt={product.name} loading="lazy" className="h-full w-full object-contain transition-transform duration-200 group-hover:scale-[1.025]" /> : <Package className="h-9 w-9 text-[#BDB4AA]" aria-hidden="true" />}
+    <article className="rm-product-card group flex h-full min-w-0 flex-col">
+      <div className="rm-product-media">
+        <Link
+          href={productUrl}
+          aria-label={`View ${product.name}`}
+          className="absolute inset-0 flex items-center justify-center p-2 sm:p-3"
+        >
+          {imageUrl ? (
+            <img
+              src={imageUrl}
+              alt={product.name}
+              loading="lazy"
+              className="block transition-transform duration-200 group-hover:scale-[1.025]"
+              style={{ width: "100%", height: "100%", display: "block", objectFit: "contain" }}
+            />
+          ) : (
+            <Package className="h-9 w-9 text-[#BDB4AA]" aria-hidden="true" />
+          )}
         </Link>
-        {getDiscountPercentage(product) !== null && <span className="absolute left-2 top-2 rounded-sm bg-[#9F2D18] px-1.5 py-1 text-[9px] font-bold text-white">-{getDiscountPercentage(product)}%</span>}
-        <span className={`absolute bottom-2 left-2 rounded-sm px-1.5 py-1 text-[8px] font-semibold ${getAvailabilityClass(product)}`}>{getAvailabilityLabel(product)}</span>
-        <button type="button" aria-label={saved ? `Remove ${product.name} from Saved` : `Save ${product.name}`} aria-pressed={saved} disabled={saving} onClick={() => onToggleSaved(product)} className={`absolute right-2 top-2 flex h-8 w-8 items-center justify-center rounded-full border border-[#E9E4DE] bg-white text-[#6F675F] shadow-sm transition hover:text-[#FF5A36] disabled:opacity-60 ${saved ? "text-[#FF5A36]" : ""}`}>
-          {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Heart className="h-4 w-4" fill={saved ? "currentColor" : "none"} />}
+
+        <div className="rm-product-badges">
+          {getDiscountPercentage(product) !== null && (
+            <span className="rm-product-badge rm-product-badge-sale">
+              -{getDiscountPercentage(product)}%
+            </span>
+          )}
+        </div>
+
+        <span className={`absolute bottom-2 left-2 rm-product-badge ${
+          product.availability === "UNAVAILABLE" || product.stockQuantity === 0
+            ? "border border-[#F4D1CC] bg-[#FFF4F2] text-[#A12A20]"
+            : product.availability === "AVAILABLE"
+              ? "border border-[#CDE8D8] bg-[#F0F8F3] text-[#176B48]"
+              : "border border-[#F0E0B9] bg-[#FFFAED] text-[#805D16]"
+        }`}>
+          {getAvailabilityLabel(product)}
+        </span>
+
+        <button
+          type="button"
+          aria-label={saved ? `Remove ${product.name} from Saved` : `Save ${product.name}`}
+          aria-pressed={saved}
+          disabled={saving}
+          onClick={() => onToggleSaved(product)}
+          className={`rm-icon-button absolute right-2 top-2 h-9 w-9 rounded-full bg-white/95 shadow-sm disabled:opacity-60 ${saved ? "border-[#FFB39F] text-[#FF5A36]" : "text-[#6F675F]"}`}
+        >
+          {saving ? (
+            <Loader2 className="h-4 w-4 animate-spin" />
+          ) : (
+            <Heart className="h-4 w-4" fill={saved ? "currentColor" : "none"} />
+          )}
         </button>
       </div>
-      <div className="flex flex-1 flex-col pt-2.5">
+
+      <div className="rm-product-details flex flex-1 flex-col">
         <div className="mb-1 flex min-h-4 items-center justify-between gap-2">
-          <p className="min-w-0 truncate text-[9px] font-medium uppercase tracking-wide text-[#89796D]">{product.category?.name ?? "Product"}</p>
-          {product.seller.verified && <span title="Verified seller" className="inline-flex shrink-0 items-center gap-0.5 text-[9px] font-medium text-[#26734F]"><BadgeCheck className="h-3 w-3" /> <span className="hidden sm:inline">Verified</span></span>}
+          <p className="rm-product-category min-w-0">
+            {product.category?.name ?? "Product"}
+          </p>
+          {product.seller.verified && (
+            <span title="Verified seller" className="inline-flex shrink-0 items-center gap-0.5 text-[9px] font-semibold text-[#26734F]">
+              <BadgeCheck className="h-3 w-3" />
+              <span className="hidden sm:inline">Verified</span>
+            </span>
+          )}
         </div>
-        <Link href={productUrl} className="line-clamp-2 min-h-[2.5rem] text-[12px] font-medium leading-5 text-[#252A2E] hover:text-[#9F2D18] sm:text-[13px]">{product.name}</Link>
-        <div className="mt-1.5"><ProductPrice product={product} /></div>
-        <div className="mt-1.5 flex min-w-0 items-center gap-1 text-[10px] text-[#777067]">
-          <span className="truncate">{product.seller.name}</span>
-          {product.seller.location?.area && <><span className="text-[#C4BBB1]">·</span><MapPin className="h-3 w-3 shrink-0" /><span className="truncate">{product.seller.location.area}</span></>}
+
+        <Link href={productUrl} className="rm-product-title hover:text-[#9F2D18]">
+          {product.name}
+        </Link>
+
+        <div className="mt-1 min-w-0">
+          <ProductPrice product={product} />
         </div>
+
+        <div className="rm-product-meta mt-1.5 min-w-0">
+          <span className="rm-product-seller">
+            <span className="truncate">{product.seller.name}</span>
+            {product.seller.location?.area && (
+              <>
+                <span className="shrink-0 text-[#C4BBB1]">·</span>
+                <MapPin className="h-3 w-3 shrink-0" />
+                <span className="truncate">{product.seller.location.area}</span>
+              </>
+            )}
+          </span>
+        </div>
+
         <div className="mt-auto pt-2.5">
-          <button type="button" disabled={!canAdd || adding} onClick={() => onAddToCart(product)} aria-label={canAdd ? `Add ${product.name} to cart` : `${product.name} is not available to buy`} className={`flex min-h-9 w-full items-center justify-center gap-1.5 rounded-md px-2 py-2 text-[10px] font-bold transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#FF5A36] focus-visible:ring-offset-2 disabled:cursor-not-allowed ${productFeedback?.kind === "success" ? "bg-[#E8F4EB] text-[#176B48]" : canAdd ? "bg-[#FF5A36] text-white hover:bg-[#E94A28]" : "bg-[#F2F0ED] text-[#8A8178]"}`}>
-            {adding ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : productFeedback?.kind === "success" ? <Check className="h-3.5 w-3.5" /> : <ShoppingCart className="h-3.5 w-3.5" />}
-            {adding ? "Adding" : productFeedback?.kind === "success" ? "Added to cart" : canAdd ? "Add to cart" : getAvailabilityLabel(product)}
+          <button
+            type="button"
+            disabled={!canAdd || adding}
+            onClick={() => onAddToCart(product)}
+            aria-label={canAdd ? `Add ${product.name} to cart` : `${product.name} is not available to buy`}
+            className={`rm-button w-full min-w-0 px-2 text-[10px] sm:text-[11px] disabled:cursor-not-allowed ${
+              productFeedback?.kind === "success"
+                ? "border border-[#CDE8D8] bg-[#F0F8F3] text-[#176B48]"
+                : canAdd
+                  ? "rm-button-primary"
+                  : "border border-[#EAE6DF] bg-[#F2F0ED] text-[#8A8178]"
+            }`}
+          >
+            {adding ? (
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            ) : productFeedback?.kind === "success" ? (
+              <Check className="h-3.5 w-3.5" />
+            ) : (
+              <ShoppingCart className="h-3.5 w-3.5" />
+            )}
+            <span className="truncate">
+              {adding ? "Adding" : productFeedback?.kind === "success" ? "Added to cart" : canAdd ? "Add to cart" : getAvailabilityLabel(product)}
+            </span>
           </button>
-          {productFeedback?.kind === "error" && <p role="alert" className="mt-1.5 text-[9px] leading-4 text-[#B42318]">{productFeedback.message}</p>}
+          {productFeedback?.kind === "error" && (
+            <p role="alert" className="mt-1.5 break-words text-[9px] leading-4 text-[#B42318]">
+              {productFeedback.message}
+            </p>
+          )}
         </div>
       </div>
     </article>
@@ -670,39 +767,39 @@ function ShopPageView({
     return (
       <div className="space-y-1">
         <FilterSection title="Category">
-          <select id={`${prefix}-shop-category`} aria-label="Filter by category" value={selectedCategory?.id ?? ""} onChange={(event) => selectCategory(findCategoryById(categories, event.target.value))} className="h-10 w-full rounded-md border border-[#E4DED6] bg-white px-3 text-xs text-[#252B31] outline-none focus:border-[#FF8A70] focus:ring-2 focus:ring-[#FF5A36]/10">
+          <select id={`${prefix}-shop-category`} aria-label="Filter by category" value={selectedCategory?.id ?? ""} onChange={(event) => selectCategory(findCategoryById(categories, event.target.value))} className="rm-select">
             <option value="">All categories</option>
             {categories.map((item) => <optgroup key={item.id} label={item.name}><option value={item.id}>All {item.name}</option>{item.children.map((child) => <option key={child.id} value={child.id}>— {child.name}</option>)}</optgroup>)}
           </select>
         </FilterSection>
         <FilterSection title="Location">
           <div className="space-y-3">
-            <div><label htmlFor={`${prefix}-shop-state`} className="mb-1.5 block text-[10px] text-[#777067]">State</label><select id={`${prefix}-shop-state`} value={state} onChange={(event) => { setState(event.target.value); setLga(""); setArea(""); }} className="h-10 w-full rounded-md border border-[#E4DED6] bg-white px-3 text-xs outline-none focus:border-[#FF8A70]"><option value="">All supported states</option>{locationGroups.map((item) => <option key={item.state} value={item.state}>{item.state}</option>)}</select></div>
-            <div><label htmlFor={`${prefix}-shop-lga`} className="mb-1.5 block text-[10px] text-[#777067]">Local Government Area</label><select id={`${prefix}-shop-lga`} value={lga} disabled={!state} onChange={(event) => { setLga(event.target.value); setArea(""); }} className="h-10 w-full rounded-md border border-[#E4DED6] bg-white px-3 text-xs outline-none focus:border-[#FF8A70] disabled:bg-[#F6F4F1]"><option value="">{state ? "All LGAs in selected state" : "Select a state first"}</option>{availableLgas.map((item) => <option key={item} value={item}>{item}</option>)}</select></div>
-            <div><label htmlFor={`${prefix}-shop-area`} className="mb-1.5 block text-[10px] text-[#777067]">Area or neighbourhood</label><AreaAutocomplete id={`${prefix}-shop-area`} value={area} state={state || undefined} lga={lga || undefined} onChange={setArea} onSelect={(selected: AreaSelection) => { setState(selected.state); setLga(selected.lga); setArea(selected.area); }} placeholder="Search an area" /></div>
+            <div><label htmlFor={`${prefix}-shop-state`} className="rm-field-label">State</label><select id={`${prefix}-shop-state`} value={state} onChange={(event) => { setState(event.target.value); setLga(""); setArea(""); }} className="rm-select"><option value="">All supported states</option>{locationGroups.map((item) => <option key={item.state} value={item.state}>{item.state}</option>)}</select></div>
+            <div><label htmlFor={`${prefix}-shop-lga`} className="rm-field-label">Local Government Area</label><select id={`${prefix}-shop-lga`} value={lga} disabled={!state} onChange={(event) => { setLga(event.target.value); setArea(""); }} className="rm-select disabled:bg-[#F6F4F1]"><option value="">{state ? "All LGAs in selected state" : "Select a state first"}</option>{availableLgas.map((item) => <option key={item} value={item}>{item}</option>)}</select></div>
+            <div><label htmlFor={`${prefix}-shop-area`} className="rm-field-label">Area or neighbourhood</label><AreaAutocomplete id={`${prefix}-shop-area`} value={area} state={state || undefined} lga={lga || undefined} onChange={setArea} onSelect={(selected: AreaSelection) => { setState(selected.state); setLga(selected.lga); setArea(selected.area); }} placeholder="Search an area" /></div>
           </div>
         </FilterSection>
         <FilterSection title="Price range">
           <div className="grid grid-cols-2 gap-2">
-            <div><label htmlFor={`${prefix}-min-price`} className="mb-1.5 block text-[10px] text-[#777067]">Minimum (₦)</label><input id={`${prefix}-min-price`} type="number" min="0" max="1000000000" step="1" inputMode="numeric" value={minPrice} onChange={(event) => setMinPrice(event.target.value)} placeholder="0" className="h-10 w-full min-w-0 rounded-md border border-[#E4DED6] bg-white px-2.5 text-xs outline-none focus:border-[#FF8A70]" /></div>
-            <div><label htmlFor={`${prefix}-max-price`} className="mb-1.5 block text-[10px] text-[#777067]">Maximum (₦)</label><input id={`${prefix}-max-price`} type="number" min="0" max="1000000000" step="1" inputMode="numeric" value={maxPrice} onChange={(event) => setMaxPrice(event.target.value)} placeholder="Any" className="h-10 w-full min-w-0 rounded-md border border-[#E4DED6] bg-white px-2.5 text-xs outline-none focus:border-[#FF8A70]" /></div>
+            <div><label htmlFor={`${prefix}-min-price`} className="rm-field-label">Minimum (₦)</label><input id={`${prefix}-min-price`} type="number" min="0" max="1000000000" step="1" inputMode="numeric" value={minPrice} onChange={(event) => setMinPrice(event.target.value)} placeholder="0" className="rm-input" /></div>
+            <div><label htmlFor={`${prefix}-max-price`} className="rm-field-label">Maximum (₦)</label><input id={`${prefix}-max-price`} type="number" min="0" max="1000000000" step="1" inputMode="numeric" value={maxPrice} onChange={(event) => setMaxPrice(event.target.value)} placeholder="Any" className="rm-input" /></div>
           </div>
         </FilterSection>
         {filterValidationError && <p role="alert" className="my-3 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-[10px] leading-4 text-red-700">{filterValidationError}</p>}
-        <FilterSection title="Availability"><select id={`${prefix}-availability`} aria-label="Filter by availability" value={availability} onChange={(event) => setAvailability(parseAvailabilityFilter(event.target.value))} className="h-10 w-full rounded-md border border-[#E4DED6] bg-white px-3 text-xs outline-none focus:border-[#FF8A70]"><option value="">Any availability</option><option value="AVAILABLE">Available</option><option value="ASK_SELLER">Ask seller</option><option value="UNAVAILABLE">Unavailable</option></select></FilterSection>
+        <FilterSection title="Availability"><select id={`${prefix}-availability`} aria-label="Filter by availability" value={availability} onChange={(event) => setAvailability(parseAvailabilityFilter(event.target.value))} className="rm-select"><option value="">Any availability</option><option value="AVAILABLE">Available</option><option value="ASK_SELLER">Ask seller</option><option value="UNAVAILABLE">Unavailable</option></select></FilterSection>
         <label className="flex cursor-pointer items-start gap-2.5 rounded-md border border-[#EEE9E3] bg-white p-3"><input type="checkbox" checked={verified} onChange={(event) => setVerified(event.target.checked)} className="mt-0.5 h-4 w-4 shrink-0 accent-[#FF5A36]" /><span><span className="block text-[11px] font-semibold text-[#252B31]">Verified sellers only</span><span className="mt-0.5 block text-[10px] leading-4 text-[#777067]">Show products from verified sellers.</span></span></label>
       </div>
     );
   }
   function renderFilterActions() {
-    return <div className="grid grid-cols-2 gap-2 border-t border-[#EEE9E3] pt-3"><button type="button" onClick={clearFilters} className="flex min-h-10 items-center justify-center gap-1.5 rounded-md border border-[#E4DED6] bg-white px-3 py-2 text-[11px] font-semibold text-[#62574E] hover:bg-[#FAF8F5]"><RotateCcw className="h-3.5 w-3.5" /> Clear</button><button type="button" onClick={applyFilters} className="flex min-h-10 items-center justify-center gap-1.5 rounded-md bg-[#FF5A36] px-3 py-2 text-[11px] font-bold text-white hover:bg-[#E94A28]">Apply filters <ArrowRight className="h-3.5 w-3.5" /></button></div>;
+    return <div className="grid grid-cols-2 gap-2 border-t border-[#EEE9E3] pt-3"><button type="button" onClick={clearFilters} className="rm-button rm-button-secondary w-full text-[11px]"><RotateCcw className="h-3.5 w-3.5" /> Clear</button><button type="button" onClick={applyFilters} className="rm-button rm-button-primary w-full text-[11px]">Apply filters <ArrowRight className="h-3.5 w-3.5" /></button></div>;
   }
 
   return (
     <>
       <SiteHeader searchMode="PRODUCTS" />
-      <main id="main-content" className="min-h-dvh overflow-x-clip bg-white pb-24 text-[#17202A] lg:pb-10">
-        <div className="mx-auto w-full max-w-[1560px] px-3 pb-8 pt-4 sm:px-5 sm:pt-5 lg:px-7 xl:px-9">
+      <main id="main-content" className="rm-storefront min-h-dvh overflow-x-clip pb-24 lg:pb-10">
+        <div className="rm-container pb-8 pt-4 sm:pt-5">
           <nav aria-label="Breadcrumb" className="mb-3 flex items-center gap-2 text-[11px] text-[#81776E]"><Link href="/" className="hover:text-[#9F2D18]">Home</Link><ChevronRight className="h-3 w-3" /><span className="font-medium text-[#4F4943]">Shop</span></nav>
           <div className="mb-4 flex flex-col gap-3 border-b border-[#ECE7E1] pb-4 sm:flex-row sm:items-end sm:justify-between sm:pb-5">
             <div className="min-w-0"><h1 className="text-xl font-bold tracking-tight text-[#17202A] sm:text-2xl">{initialQuery ? `Results for “${initialQuery}”` : title}</h1><p className="mt-1 text-xs text-[#777067]">{countText}</p></div>
@@ -718,15 +815,15 @@ function ShopPageView({
           </div>
 
           <div className="grid min-w-0 grid-cols-1 gap-5 lg:grid-cols-[236px_minmax(0,1fr)] xl:grid-cols-[252px_minmax(0,1fr)] xl:gap-7">
-            <aside className="hidden min-w-0 lg:block"><div className="sticky top-[136px] border border-[#E9E4DE] bg-white p-4"><div className="mb-3 flex items-center justify-between border-b border-[#EEE9E3] pb-3"><div className="flex items-center gap-2"><Filter className="h-4 w-4 text-[#9F2D18]" /><h2 className="text-sm font-bold text-[#242B31]">Filter products</h2></div>{activeFilterCount > 0 && <span className="text-[10px] font-semibold text-[#9F2D18]">{activeFilterCount} applied</span>}</div>{renderFilterFields("desktop")}<div className="mt-4">{renderFilterActions()}</div></div></aside>
+            <aside className="hidden min-w-0 lg:block"><div className="rm-panel sticky top-[136px] p-4"><div className="mb-3 flex items-center justify-between border-b border-[#EEE9E3] pb-3"><div className="flex items-center gap-2"><Filter className="h-4 w-4 text-[#9F2D18]" /><h2 className="text-sm font-bold text-[#242B31]">Filter products</h2></div>{activeFilterCount > 0 && <span className="text-[10px] font-semibold text-[#9F2D18]">{activeFilterCount} applied</span>}</div>{renderFilterFields("desktop")}<div className="mt-4">{renderFilterActions()}</div></div></aside>
 
             <section aria-label="Product results" className="min-w-0">
               {saveFeedback && <div role={saveFeedbackError ? "alert" : "status"} className={`mb-4 flex items-center justify-between gap-3 border px-3 py-2.5 text-[11px] ${saveFeedbackError ? "border-red-200 bg-red-50 text-red-700" : "border-[#FFD9CE] bg-[#FFF5F1] text-[#9F2D18]"}`}><span>{saveFeedback}</span><button type="button" onClick={() => setSaveFeedback("")} aria-label="Dismiss message" className="rounded p-1 hover:bg-black/5"><X className="h-3.5 w-3.5" /></button></div>}
-              {loading && <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 xl:grid-cols-3 2xl:grid-cols-4 sm:gap-3">{Array.from({ length: PAGE_SIZE }, (_, index) => <div key={index} className="overflow-hidden border border-[#EEE9E3] bg-white" aria-hidden="true"><div className="aspect-square animate-pulse bg-[#F1EEE9]" /><div className="space-y-2 p-3"><div className="h-2.5 w-3/4 animate-pulse bg-[#F1EEE9]" /><div className="h-3.5 w-1/2 animate-pulse bg-[#F1EEE9]" /><div className="h-9 animate-pulse bg-[#F1EEE9]" /></div></div>)}</div>}
+              {loading && <div className="rm-product-grid">{Array.from({ length: PAGE_SIZE }, (_, index) => <div key={index} className="rm-product-card overflow-hidden" aria-hidden="true"><div className="rm-product-media animate-pulse bg-[#F1EEE9]" /><div className="rm-product-details space-y-2"><div className="h-2.5 w-3/4 animate-pulse rounded bg-[#F1EEE9]" /><div className="h-3.5 w-1/2 animate-pulse rounded bg-[#F1EEE9]" /><div className="h-10 animate-pulse rounded bg-[#F1EEE9]" /></div></div>)}</div>}
               {!loading && error && <div className="border border-red-200 bg-red-50 px-5 py-10 text-center"><Package className="mx-auto h-9 w-9 text-red-400" /><h2 className="mt-3 text-sm font-bold text-red-800">We couldn’t load products.</h2><p className="mt-2 text-xs leading-5 text-red-700">{error}</p><button type="button" onClick={() => router.refresh()} className="mt-5 rounded-md bg-[#FF5A36] px-5 py-2.5 text-xs font-bold text-white hover:bg-[#E94A28]">Try again</button></div>}
               {!loading && !error && products.length === 0 && <div className="border border-dashed border-[#E8E4DE] bg-[#FCFAF6] px-5 py-12 text-center"><Package className="mx-auto h-10 w-10 text-[#B7ADA3]" /><h2 className="mt-4 text-sm font-bold text-[#17202A]">No products found</h2><p className="mx-auto mt-2 max-w-sm text-xs leading-5 text-[#756B61]">Try changing your category, location or price range.</p><button type="button" onClick={clearFilters} className="mt-5 inline-flex min-h-10 items-center gap-2 rounded-md bg-[#FF5A36] px-5 py-2.5 text-xs font-bold text-white hover:bg-[#E94A28]">Clear filters <RotateCcw className="h-3.5 w-3.5" /></button></div>}
               {!loading && !error && products.length > 0 && <>
-                <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 xl:grid-cols-3 2xl:grid-cols-4 sm:gap-3">
+                <div className="rm-product-grid">
                   {products.map((product) => <ShopProductCard key={product.id} product={product} saved={Boolean(savedProducts[product.id])} saving={Boolean(savingProductIds[product.id])} adding={Boolean(addingProductIds[product.id])} feedback={cartFeedback?.productId === product.id ? cartFeedback : null} onToggleSaved={(item) => void toggleSavedProduct(item)} onAddToCart={(item) => void addProductToCart(item)} />)}
                 </div>
                 {resultsTruncated && <div className="mt-5 border border-[#F2E3C9] bg-[#FFFAF0] px-4 py-3 text-[11px] leading-5 text-[#785B25]">Search results are limited to the first {maxSearchResults.toLocaleString("en-NG")} matches. Narrow your search or add filters to find more specific products.</div>}
@@ -738,12 +835,12 @@ function ShopPageView({
         </div>
       </main>
 
-      {showMobileFilters && <div className="fixed inset-0 z-[100] flex items-end justify-center bg-[#17202A]/45 sm:items-center sm:p-4 lg:hidden" onMouseDown={(event) => { if (event.target === event.currentTarget) setShowMobileFilters(false); }}><section role="dialog" aria-modal="true" aria-labelledby={FILTER_DIALOG_TITLE} className="flex max-h-[90dvh] w-full max-w-lg flex-col overflow-hidden border border-[#EAE6DF] bg-white shadow-2xl sm:rounded-lg"><div className="flex shrink-0 items-center justify-between border-b border-[#ECE7E1] px-4 py-4 sm:px-5"><div><h2 id={FILTER_DIALOG_TITLE} className="text-base font-bold text-[#17202A]">Filter products</h2><p className="mt-0.5 text-[11px] text-[#756B61]">Choose your preferred category, location and price.</p></div><button type="button" onClick={() => setShowMobileFilters(false)} aria-label="Close filters" className="flex h-9 w-9 items-center justify-center rounded-full bg-[#F4F1ED] text-[#62574E] hover:bg-[#FFF0EB] hover:text-[#9F2D18]"><X className="h-4 w-4" /></button></div><div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 py-4 sm:px-5">{renderFilterFields("mobile")}</div><div className="shrink-0 border-t border-[#ECE7E1] bg-white px-4 py-3 pb-[calc(0.75rem+env(safe-area-inset-bottom))] sm:px-5">{renderFilterActions()}</div></section></div>}
+      {showMobileFilters && <div className="fixed inset-0 z-[100] flex items-end justify-center bg-[#17202A]/45 sm:items-center sm:p-4 lg:hidden" onMouseDown={(event) => { if (event.target === event.currentTarget) setShowMobileFilters(false); }}><section role="dialog" aria-modal="true" aria-labelledby={FILTER_DIALOG_TITLE} className="rm-panel flex max-h-[90dvh] w-full max-w-lg flex-col overflow-hidden bg-white shadow-2xl"><div className="flex shrink-0 items-center justify-between border-b border-[#ECE7E1] px-4 py-4 sm:px-5"><div><h2 id={FILTER_DIALOG_TITLE} className="text-base font-bold text-[#17202A]">Filter products</h2><p className="mt-0.5 text-[11px] text-[#756B61]">Choose your preferred category, location and price.</p></div><button type="button" onClick={() => setShowMobileFilters(false)} aria-label="Close filters" className="flex h-9 w-9 items-center justify-center rounded-full bg-[#F4F1ED] text-[#62574E] hover:bg-[#FFF0EB] hover:text-[#9F2D18]"><X className="h-4 w-4" /></button></div><div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 py-4 sm:px-5">{renderFilterFields("mobile")}</div><div className="shrink-0 border-t border-[#ECE7E1] bg-white px-4 py-3 pb-[calc(0.75rem+env(safe-area-inset-bottom))] sm:px-5">{renderFilterActions()}</div></section></div>}
       <MobileBottomNav />
     </>
   );
 }
 
 export default function ShopPage() {
-  return <Suspense fallback={<><SiteHeader searchMode="PRODUCTS" /><main className="min-h-dvh bg-white px-3 pb-24 pt-6 sm:px-5 lg:px-8"><div className="mx-auto max-w-[1560px]"><div className="mb-5 h-8 w-48 animate-pulse bg-[#F1EEE9]" /><div className="grid grid-cols-2 gap-2 sm:grid-cols-3 2xl:grid-cols-4 sm:gap-3">{Array.from({ length: 8 }, (_, index) => <div key={index} className="overflow-hidden border border-[#EEE9E3] bg-white"><div className="aspect-square animate-pulse bg-[#F1EEE9]" /><div className="space-y-2 p-3"><div className="h-2.5 w-3/4 animate-pulse bg-[#F1EEE9]" /><div className="h-3.5 w-1/2 animate-pulse bg-[#F1EEE9]" /></div></div>)}</div></div></main><MobileBottomNav /></>}><ShopPageContent /></Suspense>;
+  return <Suspense fallback={<><SiteHeader searchMode="PRODUCTS" /><main className="rm-storefront min-h-dvh pb-24 pt-6"><div className="rm-container"><div className="mb-5 h-8 w-48 animate-pulse bg-[#F1EEE9]" /><div className="rm-product-grid">{Array.from({ length: 8 }, (_, index) => <div key={index} className="rm-product-card overflow-hidden"><div className="rm-product-media animate-pulse bg-[#F1EEE9]" /><div className="rm-product-details space-y-2"><div className="h-2.5 w-3/4 animate-pulse rounded bg-[#F1EEE9]" /><div className="h-3.5 w-1/2 animate-pulse rounded bg-[#F1EEE9]" /></div></div>)}</div></div></main><MobileBottomNav /></>}><ShopPageContent /></Suspense>;
 }

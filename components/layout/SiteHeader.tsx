@@ -340,27 +340,22 @@ export default function SiteHeader(_props: SiteHeaderProps) {
 
   function renderSearchForm() {
     return (
-      <form
-        onSubmit={handleSearch}
-        role="search"
-        className="flex h-12 w-full items-center rounded-full border border-[#EAE6DF] bg-[#FCFAF6] p-1.5 transition focus-within:border-[#FF9A81] focus-within:bg-white focus-within:ring-2 focus-within:ring-[#FF5A36]/10"
-      >
-        <Search className="ml-3 h-5 w-5 shrink-0 text-[#81766C]" aria-hidden="true" />
+      <form onSubmit={handleSearch} role="search" className="rm-search w-full">
         <input
           type="search"
           value={searchQuery}
           onChange={(event) => setSearchQuery(event.target.value)}
-          placeholder="Search products nearby..."
+          placeholder="Search products"
           aria-label="Search products"
           autoComplete="off"
           maxLength={100}
-          className="min-w-0 flex-1 bg-transparent px-3 text-sm text-[#17202A] outline-none placeholder:text-[#91877E]"
+          className="min-w-0 flex-1"
         />
         <button
           type="submit"
           aria-label="Search products"
           disabled={!searchQuery.trim()}
-          className="flex h-9 w-10 shrink-0 items-center justify-center rounded-full bg-[#FF5A36] text-white transition hover:bg-[#E94A28] disabled:cursor-not-allowed disabled:opacity-60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#FF5A36] focus-visible:ring-offset-2"
+          className="!mr-1 !h-8 !w-8 !rounded-full disabled:cursor-not-allowed disabled:opacity-60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#FF5A36] focus-visible:ring-offset-2"
         >
           <Search className="h-4 w-4" aria-hidden="true" />
         </button>
@@ -523,7 +518,7 @@ export default function SiteHeader(_props: SiteHeaderProps) {
   );
 
   return (
-    <header className="sticky top-0 z-40 border-b border-[#EAE6DF] bg-white/95 shadow-[0_2px_12px_rgba(23,32,42,0.035)] backdrop-blur">
+    <header className="rm-site-header">
       <div className="mx-auto grid max-w-[1600px] grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 gap-y-3 px-4 py-3 sm:px-6 lg:flex lg:min-h-[76px] lg:gap-4 lg:px-6 lg:py-0 xl:gap-6 xl:px-10">
         <Link href="/" aria-label="ReMarket home" className="order-1 flex min-w-0 items-center gap-2.5 lg:w-[170px] lg:shrink-0 xl:w-[190px]">
           <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-[#FF5A36] text-white shadow-sm">

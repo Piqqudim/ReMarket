@@ -300,12 +300,12 @@ function getStockLabel(product: RecentProduct): { label: string; className: stri
 
 function ProductPrice({ product }: { product: RecentProduct }) {
   return (
-    <div className="flex min-w-0 flex-wrap items-baseline gap-x-2 gap-y-0.5">
-      <span className="text-[15px] font-bold leading-5 text-[#17202A] sm:text-base">
+    <div className="rm-product-price-row min-w-0">
+      <span className="rm-product-price">
         {product.price !== null ? formatNaira(product.price) : "Ask seller"}
       </span>
       {product.originalPrice !== null && (
-        <span className="text-xs text-[#8B8178] line-through">
+        <span className="rm-product-old-price">
           {formatNaira(product.originalPrice)}
         </span>
       )}
@@ -319,7 +319,7 @@ function ProductRating({ product }: { product: RecentProduct }) {
   const filledStars = Math.round(product.rating);
   return (
     <div
-      className="mt-1 flex min-w-0 items-center gap-1.5"
+      className="rm-product-rating mt-1 min-w-0"
       aria-label={`${product.rating.toFixed(1)} out of 5 stars from ${product.reviewCount} reviews`}
     >
       <span className="flex shrink-0 items-center gap-px">
@@ -333,7 +333,7 @@ function ProductRating({ product }: { product: RecentProduct }) {
           />
         ))}
       </span>
-      <span className="truncate text-[11px] text-[#71675F]">
+      <span className="truncate">
         {product.rating.toFixed(1)} ({product.reviewCount})
       </span>
     </div>
@@ -359,11 +359,11 @@ function ProductCard({
   const currentFeedback = feedback?.productId === product.id ? feedback : null;
 
   return (
-    <article className="group flex h-full min-w-0 flex-col overflow-hidden rounded-lg border border-[#E8E4DE] bg-white">
+    <article className="group rm-product-card flex h-full flex-col">
       <Link
         href={productHref}
         aria-label={`View ${product.name}`}
-        className="relative block aspect-square overflow-hidden bg-[#F7F6F3] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[#FF5A36]"
+        className="rm-product-media focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[#FF5A36]"
       >
         {product.imageUrl ? (
           <img
@@ -371,6 +371,7 @@ function ProductCard({
             alt={product.name}
             loading="lazy"
             className="h-full w-full object-contain p-2.5 sm:p-3"
+            style={{ width: "100%", height: "100%", display: "block", objectFit: "contain" }}
           />
         ) : (
           <span className="flex h-full w-full items-center justify-center text-[#B9AEA4]">
@@ -378,20 +379,20 @@ function ProductCard({
           </span>
         )}
 
-        <span className={`absolute left-2 top-2 max-w-[calc(100%-1rem)] truncate rounded px-2 py-1 text-[10px] font-semibold ${stock.className}`}>
+        <span className={`rm-product-badge absolute left-2 top-2 max-w-[calc(100%-1rem)] truncate ${stock.className}`}>
           {stock.label}
         </span>
 
         {discount !== null && (
-          <span className="absolute right-2 top-2 rounded bg-[#9F2D18] px-2 py-1 text-[10px] font-bold text-white">
+          <span className="rm-product-badge rm-product-badge-sale absolute right-2 top-2">
             -{discount}%
           </span>
         )}
       </Link>
 
-      <div className="flex min-w-0 flex-1 flex-col p-2.5 sm:p-3">
+      <div className="rm-product-details flex min-w-0 flex-1 flex-col">
         <div className="flex min-h-5 items-center justify-between gap-2">
-          <p className="min-w-0 truncate text-[10px] font-semibold uppercase tracking-wide text-[#8A4A38]">
+          <p className="rm-product-category min-w-0">
             {product.category ?? "Products"}
           </p>
           {product.verified && (
@@ -408,7 +409,7 @@ function ProductCard({
 
         <Link
           href={productHref}
-          className="mt-1 line-clamp-2 min-h-[2.65rem] text-[13px] font-medium leading-[1.3rem] text-[#202A33] hover:text-[#9F2D18] sm:text-sm"
+          className="rm-product-title mt-1 hover:text-[#9F2D18]"
         >
           {product.name}
         </Link>
@@ -419,9 +420,9 @@ function ProductCard({
         </div>
 
         <div className="mt-auto pt-3">
-          <div className="mb-2 flex min-w-0 items-center gap-1.5 text-[11px] text-[#71675F]">
+          <div className="rm-product-meta mb-2 min-w-0 justify-start">
             <MapPin className="h-3.5 w-3.5 shrink-0 text-[#9A8B80]" aria-hidden="true" />
-            <span className="truncate">{product.area ?? "Area not listed"}</span>
+            <span className="rm-product-seller">{product.area ?? "Area not listed"}</span>
           </div>
 
           {canAdd ? (
@@ -429,7 +430,7 @@ function ProductCard({
               type="button"
               disabled={adding}
               onClick={() => onAddToCart(product)}
-              className="flex min-h-10 w-full items-center justify-center gap-2 rounded-md bg-[#FF5A36] px-3 py-2 text-xs font-bold text-white hover:bg-[#E94A28] disabled:cursor-wait disabled:opacity-70 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#FF5A36] focus-visible:ring-offset-2"
+              className="rm-button rm-button-primary w-full disabled:cursor-wait disabled:opacity-70 focus-visible:ring-2 focus-visible:ring-offset-2"
               aria-label={`Add ${product.name} to cart`}
             >
               {adding ? (
@@ -445,14 +446,14 @@ function ProductCard({
             <button
               type="button"
               disabled
-              className="flex min-h-10 w-full items-center justify-center rounded-md bg-[#F0EEEB] px-3 py-2 text-xs font-semibold text-[#8E857D]"
+              className="rm-button rm-button-secondary w-full opacity-65"
             >
               Out of stock
             </button>
           ) : (
             <Link
               href={productHref}
-              className="flex min-h-10 w-full items-center justify-center rounded-md border border-[#E7D5CE] bg-white px-3 py-2 text-xs font-bold text-[#9F2D18] hover:bg-[#FFF5F1]"
+              className="rm-button rm-button-secondary w-full text-[#9F2D18] hover:text-[#9F2D18]"
             >
               {product.price === null ? "Check price" : "Confirm availability"}
             </Link>
@@ -489,21 +490,21 @@ function CategoryTile({ category }: { category: HomeCategoryNode }) {
   return (
     <Link
       href={getCategoryHref(category)}
-      className="group flex min-w-0 items-center gap-2.5 rounded-lg border border-[#E8E4DE] bg-white p-2.5 hover:border-[#E8B5A6] sm:gap-3 sm:p-3"
+      className="rm-category-tile group"
     >
       <span
-        className="flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-md sm:h-11 sm:w-11"
+        className="rm-category-icon overflow-hidden"
         style={{ backgroundColor: category.bg }}
       >
         {category.imageUrl ? (
-          <img src={category.imageUrl} alt="" loading="lazy" className="h-full w-full object-cover" />
+          <img src={category.imageUrl} alt="" loading="lazy" className="h-full w-full object-cover" style={{ width: "100%", height: "100%", display: "block", objectFit: "cover" }} />
         ) : (
           <Icon className="h-5 w-5 text-[#6F5144]" aria-hidden="true" />
         )}
       </span>
 
       <span className="min-w-0 flex-1">
-        <span className="block truncate text-xs font-semibold text-[#2B2927] group-hover:text-[#9F2D18] sm:text-sm">
+        <span className="rm-category-name block group-hover:text-[#9F2D18]">
           {category.name}
         </span>
         <span className="mt-0.5 block text-[10px] text-[#81766D]">
@@ -517,9 +518,9 @@ function CategoryTile({ category }: { category: HomeCategoryNode }) {
 
 function ProductSkeleton() {
   return (
-    <div className="overflow-hidden rounded-lg border border-[#EAE6DF] bg-white">
-      <div className="aspect-square bg-[#F2EEE9]" />
-      <div className="space-y-2 p-3">
+    <div className="rm-product-card overflow-hidden">
+      <div className="rm-product-media animate-pulse" />
+      <div className="rm-product-details space-y-2">
         <div className="h-3 w-2/5 rounded bg-[#F2EEE9]" />
         <div className="h-3 w-4/5 rounded bg-[#F2EEE9]" />
         <div className="h-4 w-1/2 rounded bg-[#F2EEE9]" />
@@ -682,51 +683,51 @@ export default function HomePage() {
   const retryProducts = () => setReloadKey((current) => current + 1);
 
   const productGridClass =
-    "grid min-w-0 grid-cols-2 gap-3 sm:gap-4 md:grid-cols-3 lg:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4";
+    "rm-product-grid min-w-0 grid-cols-2 gap-3 sm:gap-4 md:grid-cols-3 lg:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4";
   const categoryGridClass =
-    "grid min-w-0 grid-cols-2 gap-2 sm:grid-cols-3 sm:gap-3 xl:grid-cols-4";
+    "rm-category-grid min-w-0 grid-cols-2 gap-2 sm:grid-cols-3 sm:gap-3 xl:grid-cols-4";
 
   return (
-    <div className="remarket-home-page min-h-dvh bg-[#FFF7ED]">
+    <div className="rm-storefront remarket-home-page min-h-dvh">
       <SiteHeader searchMode="PRODUCTS" />
 
       <main
         id="main-content"
-        className="min-h-dvh overflow-x-clip bg-white pb-28 text-[#17202A] lg:pb-8"
+        className="min-h-dvh overflow-x-clip bg-[var(--rm-surface)] pb-28 text-[var(--rm-ink)] lg:pb-8"
       >
         <div className="mx-auto w-full max-w-[1680px] px-3 pb-8 pt-4 sm:px-5 sm:pt-6 lg:pl-7 lg:pr-[340px] xl:pt-7">
-          <section className="mb-7 flex flex-col gap-4 border-b border-[#EAE6DF] pb-5 sm:flex-row sm:items-end sm:justify-between sm:gap-6">
+          <section className="rm-section mb-7 flex flex-col gap-4 border-b border-[var(--rm-border)] pb-5 sm:flex-row sm:items-end sm:justify-between sm:gap-6">
             <div className="min-w-0">
-              <p className="text-[11px] font-semibold text-[#9F2D18]">ReMarket / Shop products</p>
-              <h1 className="mt-1.5 text-2xl font-bold leading-tight tracking-tight text-[#17202A] sm:text-[30px]">
+              <p className="text-[11px] font-semibold text-[var(--rm-coral-dark)]">ReMarket / Shop products</p>
+              <h1 className="mt-1.5 text-2xl font-bold leading-tight tracking-tight text-[var(--rm-ink)] sm:text-[30px]">
                 Discover products from local businesses
               </h1>
-              <p className="mt-2 max-w-2xl text-sm leading-6 text-[#71675F]">
+              <p className="rm-section-subtitle mt-2 max-w-2xl text-sm leading-6">
                 Browse products listed by businesses around you and add available items to your cart.
               </p>
             </div>
             <Link
               href="/shop"
-              className="inline-flex min-h-10 shrink-0 items-center justify-center gap-2 self-start rounded-md border border-[#E5DCD3] bg-white px-4 py-2 text-sm font-semibold text-[#514840] hover:border-[#D9A99A] hover:text-[#9F2D18] sm:self-auto"
+              className="rm-button rm-button-secondary shrink-0 self-start sm:self-auto"
             >
               Browse all products
               <ArrowRight className="h-4 w-4" aria-hidden="true" />
             </Link>
           </section>
 
-          <section aria-labelledby="categories-heading" className="mb-9">
-            <div className="mb-3 flex items-end justify-between gap-3">
+          <section aria-labelledby="categories-heading" className="rm-section mb-9">
+            <div className="rm-section-heading">
               <div>
-                <h2 id="categories-heading" className="text-lg font-bold tracking-tight text-[#202A33]">
+                <h2 id="categories-heading" className="rm-section-title">
                   Shop by category
                 </h2>
-                <p className="mt-0.5 text-xs text-[#81766D]">
+                <p className="rm-section-subtitle">
                   Choose a category to narrow down the catalogue.
                 </p>
               </div>
               <Link
                 href="/shop"
-                className="inline-flex shrink-0 items-center gap-1 text-xs font-semibold text-[#9F2D18] hover:text-[#FF5A36]"
+                className="rm-text-link shrink-0"
               >
                 All categories
                 <ChevronRight className="h-3.5 w-3.5" aria-hidden="true" />
@@ -762,21 +763,21 @@ export default function HomePage() {
 
           <section
             id="recent-products"
-            className="scroll-mt-28"
+            className="rm-section scroll-mt-28"
             aria-labelledby="recent-products-heading"
           >
-            <div className="mb-4 flex items-end justify-between gap-3 border-b border-[#EAE6DF] pb-3">
+            <div className="rm-section-heading border-b border-[var(--rm-border)] pb-3">
               <div className="min-w-0">
-                <h2 id="recent-products-heading" className="text-lg font-bold tracking-tight text-[#202A33]">
+                <h2 id="recent-products-heading" className="rm-section-title">
                   Recently listed
                 </h2>
-                <p className="mt-0.5 text-xs text-[#81766D]">
+                <p className="rm-section-subtitle">
                   The latest products added to ReMarket.
                 </p>
               </div>
               <Link
                 href="/shop"
-                className="inline-flex shrink-0 items-center gap-1 text-xs font-semibold text-[#9F2D18] hover:text-[#FF5A36]"
+                className="rm-text-link shrink-0"
               >
                 View all
                 <ArrowRight className="h-3.5 w-3.5" aria-hidden="true" />
@@ -798,7 +799,7 @@ export default function HomePage() {
                 <button
                   type="button"
                   onClick={retryProducts}
-                  className="mt-4 min-h-10 rounded-md bg-[#FF5A36] px-5 py-2 text-xs font-bold text-white hover:bg-[#E94A28]"
+                  className="rm-button rm-button-primary mt-4"
                 >
                   Try again
                 </button>
@@ -820,7 +821,7 @@ export default function HomePage() {
             )}
 
             {!productsLoading && !productsFailed && products.length === 0 && (
-              <div className="rounded-lg border border-dashed border-[#E8E4DE] bg-[#FCFAF6] px-5 py-10 text-center">
+              <div className="rm-empty-state rm-panel rounded-lg border-dashed bg-[var(--rm-surface-muted)] px-5 py-10 text-center">
                 <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-lg bg-white text-[#FF5A36]">
                   <Package className="h-6 w-6" aria-hidden="true" />
                 </div>
@@ -830,7 +831,7 @@ export default function HomePage() {
                 </p>
                 <Link
                   href="/shop"
-                  className="mt-4 inline-flex min-h-10 items-center justify-center gap-2 rounded-md bg-[#FF5A36] px-4 py-2 text-xs font-bold text-white hover:bg-[#E94A28]"
+                  className="rm-button rm-button-primary mt-4"
                 >
                   Explore products
                   <ArrowRight className="h-3.5 w-3.5" aria-hidden="true" />
@@ -849,7 +850,7 @@ export default function HomePage() {
               <button
                 type="button"
                 onClick={() => void handleShareReMarket()}
-                className="inline-flex min-h-9 items-center gap-2 rounded-md px-2.5 py-1.5 font-semibold text-[#9F2D18] hover:bg-[#FFF1ED]"
+                className="rm-button rm-button-quiet min-h-9 px-2.5 text-[var(--rm-coral-dark)]"
               >
                 <Share2 className="h-3.5 w-3.5" aria-hidden="true" />
                 Share ReMarket
