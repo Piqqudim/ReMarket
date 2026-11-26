@@ -323,7 +323,7 @@ export default function ProductImageUpload({
               <img
                 src={url}
                 alt={`Listing image ${index + 1}`}
-                className="aspect-square w-full object-cover"
+                className="aspect-square w-full bg-white object-contain p-0"
                 loading="lazy"
               />
 

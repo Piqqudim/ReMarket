@@ -394,7 +394,7 @@ function OrderCard({ order }: { order: BuyerOrder }) {
                   title={`${item.productName} × ${item.quantity}`}
                 >
                   {item.productImageUrl ? (
-                    <img src={item.productImageUrl} alt={item.productName} loading="lazy" className="h-full w-full object-cover" />
+                    <img src={item.productImageUrl} alt={item.productName} loading="lazy" className="h-full w-full object-contain p-0" />
                   ) : (
                     <Package className="h-5 w-5 text-[var(--rm-subtle)]" />
                   )}

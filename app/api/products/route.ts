@@ -6,6 +6,7 @@ import {
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { checkPublicRateLimit } from "@/lib/rate-limit";
+import { getProductRatingSummaries } from "@/lib/product-ratings";
 
 const MAX_QUERY_LENGTH = 100;
 const MAX_CATEGORY_LENGTH = 100;
@@ -30,6 +31,10 @@ const productSelect = {
   price: true,
   originalPrice: true,
   stockQuantity: true,
+  shippingWeightKg: true,
+  shippingLengthCm: true,
+  shippingWidthCm: true,
+  shippingHeightCm: true,
   availability: true,
   keywords: true,
   imageUrl: true,
@@ -783,7 +788,9 @@ export async function GET(request: NextRequest) {
       }),
     ]);
 
+    const ratingSummaries = await getProductRatingSummaries(records.map((product) => product.id));
     const products = records.map((product) => {
+      const ratingSummary = ratingSummaries.get(product.id);
       const price = toMoneyNumber(product.price);
       const candidateOriginalPrice = toMoneyNumber(product.originalPrice);
       const originalPrice = price !== null && price > 0 && candidateOriginalPrice !== null && candidateOriginalPrice > price
@@ -796,7 +803,10 @@ export async function GET(request: NextRequest) {
         description: product.description,
         price,
         originalPrice,
+        rating: ratingSummary?.rating ?? null,
+        reviewCount: ratingSummary?.reviewCount ?? 0,
         stockQuantity: product.stockQuantity,
+        hasShippingMeasurements: [product.shippingWeightKg, product.shippingLengthCm, product.shippingWidthCm, product.shippingHeightCm].every((value) => typeof value === "number" && Number.isFinite(value) && value > 0),
         availability: product.availability,
         keywords: product.keywords,
         imageUrl: product.imageUrl ?? product.images[0]?.url ?? null,

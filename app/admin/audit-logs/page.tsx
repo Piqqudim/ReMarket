@@ -300,7 +300,7 @@ export default function AdminAuditLogsPage() {
         </div>
       </aside>
 
-      <div className="lg:pl-64">
+      <div className="min-w-0">
         <header className="sticky top-0 z-20 border-b border-[#EAE6DF] bg-[#FFFDFC]/95 px-4 py-3 backdrop-blur sm:px-6 lg:px-8">
           <div className="mx-auto flex max-w-7xl items-center justify-between gap-3">
             <div className="flex items-center gap-3">

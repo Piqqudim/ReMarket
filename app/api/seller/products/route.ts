@@ -93,6 +93,20 @@ function parseOptionalInteger(value: unknown): ParseResult<number | null> {
     : { valid: false, value: null };
 }
 
+function parseOptionalPositiveDecimal(value: unknown): ParseResult<number | null> {
+  if (value === undefined || value === null || value === "") return { valid: true, value: null };
+  if (typeof value !== "number" && typeof value !== "string") return { valid: false, value: null };
+  if (typeof value === "string" && !/^\d+(?:\.\d+)?$/.test(value.trim())) return { valid: false, value: null };
+  const parsed = typeof value === "number" ? value : Number(value.trim());
+  return Number.isFinite(parsed) && parsed > 0 && parsed <= 1000
+    ? { valid: true, value: parsed }
+    : { valid: false, value: null };
+}
+
+function hasCompleteShippingMeasurements(values: Array<number | null>): boolean {
+  return values.length === 4 && values.every((value) => value !== null && Number.isFinite(value) && value > 0);
+}
+
 function parseKeywords(value: unknown): ParseResult<string[]> {
   if (value === undefined) return { valid: true, value: [] };
 
@@ -462,6 +476,10 @@ export async function POST(request: Request) {
     const priceResult = parseOptionalInteger(body.price);
     const originalPriceResult = parseOptionalInteger(body.originalPrice);
     const stockQuantityResult = parseOptionalInteger(body.stockQuantity);
+    const shippingWeightResult = parseOptionalPositiveDecimal(body.shippingWeightKg);
+    const shippingLengthResult = parseOptionalPositiveDecimal(body.shippingLengthCm);
+    const shippingWidthResult = parseOptionalPositiveDecimal(body.shippingWidthCm);
+    const shippingHeightResult = parseOptionalPositiveDecimal(body.shippingHeightCm);
     const imagesResult = parseProductImages(body.images);
 
     const hasLegacyPriceRange = [body.priceMin, body.priceMax].some((value) => {
@@ -551,6 +569,21 @@ export async function POST(request: Request) {
         { status: 400, headers: jsonHeaders() },
       );
     }
+    if (!shippingWeightResult.valid || !shippingLengthResult.valid || !shippingWidthResult.valid || !shippingHeightResult.valid) {
+      return NextResponse.json(
+        { error: "Package weight and dimensions must be positive numbers no greater than 1,000." },
+        { status: 400, headers: jsonHeaders() },
+      );
+    }
+    const shippingMeasurements = [shippingWeightResult.value, shippingLengthResult.value, shippingWidthResult.value, shippingHeightResult.value];
+    const hasAnyShippingMeasurement = shippingMeasurements.some((value) => value !== null);
+    const hasCompleteShipping = hasCompleteShippingMeasurements(shippingMeasurements);
+    if (hasAnyShippingMeasurement && !hasCompleteShipping) {
+      return NextResponse.json(
+        { error: "Enter all four package measurements, or leave all four empty." },
+        { status: 400, headers: jsonHeaders() },
+      );
+    }
 
     const price = priceResult.value;
     const originalPrice = originalPriceResult.value;
@@ -577,6 +610,13 @@ export async function POST(request: Request) {
     ) {
       return NextResponse.json(
         { error: "Invalid availability value." },
+        { status: 400, headers: jsonHeaders() },
+      );
+    }
+    const finalAvailability = availabilityValue || "ASK_SELLER";
+    if (finalAvailability === "AVAILABLE" && price !== null && price > 0 && !hasCompleteShipping) {
+      return NextResponse.json(
+        { error: "Add the packaged item's weight and all dimensions before marking a fixed-price product as Available." },
         { status: 400, headers: jsonHeaders() },
       );
     }
@@ -668,7 +708,11 @@ export async function POST(request: Request) {
       price,
       originalPrice,
       stockQuantity: stockQuantityResult.value,
-      availability: (availabilityValue || "ASK_SELLER") as Availability,
+      shippingWeightKg: shippingWeightResult.value,
+      shippingLengthCm: shippingLengthResult.value,
+      shippingWidthCm: shippingWidthResult.value,
+      shippingHeightCm: shippingHeightResult.value,
+      availability: finalAvailability as Availability,
       keywords: keywordsResult.value,
       imageUrl: compatibilityImageUrl,
       images: images.length > 0

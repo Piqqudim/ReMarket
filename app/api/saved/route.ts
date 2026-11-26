@@ -6,12 +6,13 @@ import { Prisma } from "@prisma/client";
 
 import { prisma } from "@/lib/prisma";
 import { authOptions } from "@/lib/auth";
+import { getProductRatingSummaries } from "@/lib/product-ratings";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
 export const runtime = "nodejs";
 
-type ListingType = "PRODUCT" | "SERVICE";
+type ListingType = "PRODUCT";
 
 const MAX_LISTING_ID_LENGTH = 100;
 
@@ -67,16 +68,7 @@ const activeProductWhere: Prisma.ProductWhereInput = {
   },
 };
 
-const activeServiceWhere: Prisma.ServiceWhereInput = {
-  status: "ACTIVE",
-  deletedAt: null,
-  business: {
-    is: {
-      status: "ACTIVE",
-      deletedAt: null,
-    },
-  },
-};
+
 
 const businessSelect = {
   id: true,
@@ -129,39 +121,8 @@ const productSelect = {
   business: { select: businessSelect },
 } satisfies Prisma.ProductSelect;
 
-const serviceSelect = {
-  id: true,
-  name: true,
-  description: true,
-  price: true,
-  priceMin: true,
-  priceMax: true,
-  durationMinutes: true,
-  fulfillmentType: true,
-  availability: true,
-  imageUrl: true,
-  status: true,
-  deletedAt: true,
-  category: {
-    select: { id: true, name: true },
-  },
-  images: {
-    select: {
-      id: true,
-      url: true,
-      sortOrder: true,
-    },
-    orderBy: { sortOrder: "asc" },
-  },
-  business: { select: businessSelect },
-} satisfies Prisma.ServiceSelect;
-
 type ProductPayload = Prisma.ProductGetPayload<{
   select: typeof productSelect;
-}>;
-
-type ServicePayload = Prisma.ServiceGetPayload<{
-  select: typeof serviceSelect;
 }>;
 
 type FormattedSeller = {
@@ -180,17 +141,14 @@ type SavedProductItem = {
   id: string;
   type: "PRODUCT";
   savedAt: Date;
-  listing: Omit<ProductPayload, "business"> & { seller: FormattedSeller };
+  listing: Omit<ProductPayload, "business"> & {
+    seller: FormattedSeller;
+    rating: number | null;
+    reviewCount: number;
+  };
 };
 
-type SavedServiceItem = {
-  id: string;
-  type: "SERVICE";
-  savedAt: Date;
-  listing: Omit<ServicePayload, "business"> & { seller: FormattedSeller };
-};
-
-type SavedListingItem = SavedProductItem | SavedServiceItem;
+type SavedListingItem = SavedProductItem;
 
 function formatSeller(business: BusinessPayload): FormattedSeller {
   const socialLinks = business.showContactInfo
@@ -283,32 +241,19 @@ export async function GET(request: NextRequest) {
     const { searchParams } = new URL(request.url);
     const rawType = (searchParams.get("type") || "").trim().toUpperCase();
 
-    if (rawType && rawType !== "PRODUCT" && rawType !== "SERVICE") {
+    if (rawType && rawType !== "PRODUCT") {
       return apiResponse(
-        { error: "Type must be PRODUCT or SERVICE." },
-        400,
+        { error: "Only product listings can be saved on ReMarket at this time." },
+        rawType === "SERVICE" ? 404 : 400,
       );
     }
-
-    const type: ListingType | null =
-      rawType === "PRODUCT" ? "PRODUCT" :
-      rawType === "SERVICE" ? "SERVICE" : null;
 
     const page = parsePositiveInteger(searchParams.get("page"), 1, 100000);
     const limit = parsePositiveInteger(searchParams.get("limit"), 20, 50);
 
     const where: Prisma.SavedListingWhereInput = {
       userId: account.id,
-      ...(type === "PRODUCT"
-        ? { product: { is: activeProductWhere } }
-        : type === "SERVICE"
-          ? { service: { is: activeServiceWhere } }
-          : {
-              OR: [
-                { product: { is: activeProductWhere } },
-                { service: { is: activeServiceWhere } },
-              ],
-            }),
+      product: { is: activeProductWhere },
     };
 
     const total = await prisma.savedListing.count({ where });
@@ -324,10 +269,12 @@ export async function GET(request: NextRequest) {
         id: true,
         createdAt: true,
         product: { select: productSelect },
-        service: { select: serviceSelect },
       },
     });
 
+    const ratingSummaries = await getProductRatingSummaries(
+      savedListings.flatMap((saved) => saved.product ? [saved.product.id] : []),
+    );
     const items = savedListings.flatMap<SavedListingItem>((saved) => {
       if (saved.product) {
         const { business, ...product } = saved.product;
@@ -337,19 +284,8 @@ export async function GET(request: NextRequest) {
           savedAt: saved.createdAt,
           listing: {
             ...product,
-            seller: formatSeller(business),
-          },
-        }];
-      }
-
-      if (saved.service) {
-        const { business, ...service } = saved.service;
-        return [{
-          id: saved.id,
-          type: "SERVICE" as const,
-          savedAt: saved.createdAt,
-          listing: {
-            ...service,
+            rating: ratingSummaries.get(product.id)?.rating ?? null,
+            reviewCount: ratingSummaries.get(product.id)?.reviewCount ?? 0,
             seller: formatSeller(business),
           },
         }];
@@ -359,15 +295,24 @@ export async function GET(request: NextRequest) {
     });
 
     const products = savedListings.filter((saved) => saved.product !== null).length;
-    const services = savedListings.filter((saved) => saved.service !== null).length;
+    const services = 0;
 
     return apiResponse({
-      // Current response format used by the Shop and Services pages.
+      // Current product-only response format used by the shopping pages.
       items,
 
       // Compatibility format used by the existing /saved and detail pages.
       // Do not remove this alias until all clients use `items`.
-      savedListings,
+      savedListings: savedListings.map((saved) => saved.product
+        ? {
+            ...saved,
+            product: {
+              ...saved.product,
+              rating: ratingSummaries.get(saved.product.id)?.rating ?? null,
+              reviewCount: ratingSummaries.get(saved.product.id)?.reviewCount ?? 0,
+            },
+          }
+        : saved),
 
       pagination: {
         page: safePage,
@@ -396,7 +341,7 @@ export async function GET(request: NextRequest) {
 
 // ---------------------------------------------------------------------------
 // POST /api/saved
-// Body: { type: "PRODUCT" | "SERVICE", listingId: string }
+// Body: { type: "PRODUCT", listingId: string }
 // ---------------------------------------------------------------------------
 
 export async function POST(request: NextRequest) {
@@ -438,10 +383,10 @@ export async function POST(request: NextRequest) {
       ? data.listingId.trim()
       : "";
 
-    if (rawType !== "PRODUCT" && rawType !== "SERVICE") {
+    if (rawType !== "PRODUCT") {
       return apiResponse(
-        { error: "Type must be PRODUCT or SERVICE." },
-        400,
+        { error: "Only product listings can be saved on ReMarket at this time." },
+        rawType === "SERVICE" ? 404 : 400,
       );
     }
 
@@ -449,59 +394,30 @@ export async function POST(request: NextRequest) {
       return apiResponse({ error: "A valid listingId is required." }, 400);
     }
 
-    const listingType = rawType as ListingType;
+    const listingType: ListingType = "PRODUCT";
+    const product = await prisma.product.findFirst({
+      where: { id: listingId, ...activeProductWhere },
+      select: { id: true },
+    });
 
-    if (listingType === "PRODUCT") {
-      const product = await prisma.product.findFirst({
-        where: { id: listingId, ...activeProductWhere },
-        select: { id: true },
-      });
-
-      if (!product) {
-        return apiResponse(
-          { error: "Product not found or no longer available." },
-          404,
-        );
-      }
-    } else {
-      const service = await prisma.service.findFirst({
-        where: { id: listingId, ...activeServiceWhere },
-        select: { id: true },
-      });
-
-      if (!service) {
-        return apiResponse(
-          { error: "Service not found or no longer available." },
-          404,
-        );
-      }
+    if (!product) {
+      return apiResponse(
+        { error: "Product not found or no longer available." },
+        404,
+      );
     }
 
-    const where: Prisma.SavedListingWhereUniqueInput =
-      listingType === "PRODUCT"
-        ? {
-            userId_productId: {
-              userId: account.id,
-              productId: listingId,
-            },
-          }
-        : {
-            userId_serviceId: {
-              userId: account.id,
-              serviceId: listingId,
-            },
-          };
+    const where: Prisma.SavedListingWhereUniqueInput = {
+      userId_productId: {
+        userId: account.id,
+        productId: listingId,
+      },
+    };
 
-    const createData: Prisma.SavedListingCreateInput =
-      listingType === "PRODUCT"
-        ? {
-            user: { connect: { id: account.id } },
-            product: { connect: { id: listingId } },
-          }
-        : {
-            user: { connect: { id: account.id } },
-            service: { connect: { id: listingId } },
-          };
+    const createData: Prisma.SavedListingCreateInput = {
+      user: { connect: { id: account.id } },
+      product: { connect: { id: listingId } },
+    };
 
     const savedSelect = {
       id: true,
@@ -533,7 +449,7 @@ export async function POST(request: NextRequest) {
         // Current payload consumed by Shop and Services pages.
         item: saved,
 
-        // Compatibility aliases used by product/service detail pages.
+        // Compatibility aliases used by product detail pages.
         savedListing: saved,
         savedListingId: saved.id,
       },

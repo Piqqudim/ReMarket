@@ -211,7 +211,7 @@ export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> },
 ) {
-  const rateLimit = checkPublicRateLimit(request, "featured");
+  const rateLimit = checkPublicRateLimit(request, "product-details");
   if (!rateLimit.allowed) {
     return jsonError(
       "Too many product requests. Please try again shortly.",
@@ -244,6 +244,10 @@ export async function GET(
         availability: true,
         imageUrl: true,
         keywords: true,
+        shippingWeightKg: true,
+        shippingLengthCm: true,
+        shippingWidthCm: true,
+        shippingHeightCm: true,
         createdAt: true,
         updatedAt: true,
         category: {
@@ -367,6 +371,20 @@ export async function GET(
       id: category.id,
       name: category.name,
     }));
+    const [productRating, productReviewCount] = await Promise.all([
+      prisma.productReview.aggregate({ where: { productId: product.id }, _avg: { rating: true } }),
+      prisma.productReview.count({ where: { productId: product.id } }),
+    ]);
+    const hasShippingMeasurements = [
+      product.shippingWeightKg,
+      product.shippingLengthCm,
+      product.shippingWidthCm,
+      product.shippingHeightCm,
+    ].every((value) => typeof value === "number" && Number.isFinite(value) && value > 0);
+    const isPurchaseReady = product.availability === "AVAILABLE" &&
+      product.price !== null && Number.isSafeInteger(product.price) && product.price > 0 &&
+      hasShippingMeasurements &&
+      (product.stockQuantity === null || (Number.isSafeInteger(product.stockQuantity) && product.stockQuantity > 0));
 
     const activeCategoryId = product.category?.isActive
       ? product.category.id
@@ -430,6 +448,10 @@ export async function GET(
       availability: product.availability,
       imageUrl: product.imageUrl ?? product.images[0]?.url ?? null,
       keywords: product.keywords,
+      rating: productReviewCount > 0 ? productRating._avg.rating : null,
+      reviewCount: productReviewCount,
+      hasShippingMeasurements,
+      isPurchaseReady,
       createdAt: product.createdAt,
       updatedAt: product.updatedAt,
       category: formatCategory(product.category),
@@ -453,8 +475,10 @@ export async function GET(
           ? {
               id: seller.location.id,
               area: seller.location.area,
-              street: seller.location.street,
-              address: seller.location.address,
+              ...(showContactInfo ? {
+                street: seller.location.street,
+                address: seller.location.address,
+              } : {}),
               verification: seller.location.verification,
             }
           : null,

@@ -8,6 +8,7 @@ import {
   type FormEvent,
 } from "react";
 import Link from "next/link";
+import CategoryImageUpload from "@/components/admin/CategoryImageUpload";
 import {
   Activity,
   ArrowDownUp,
@@ -210,6 +211,7 @@ export default function AdminCategoriesPage() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [uploadingImage, setUploadingImage] = useState(false);
   const [processingId, setProcessingId] = useState<string | null>(null);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
@@ -339,6 +341,10 @@ export default function AdminCategoriesPage() {
 
   async function submitForm(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (uploadingImage) {
+      setError("Wait for the category image upload to finish before saving.");
+      return;
+    }
     if (usingFallback) {
       setError("Categories could not be loaded from the database. Refresh the page before saving.");
       return;
@@ -672,11 +678,11 @@ export default function AdminCategoriesPage() {
         </div>
       </nav>
 
-      {editorOpen && <div className="fixed inset-0 z-[70] flex items-end justify-center bg-[#17202A]/55 p-2 backdrop-blur-sm sm:items-center sm:p-4" onMouseDown={(event) => { if (event.target === event.currentTarget && !saving) resetForm(); }}>
+      {editorOpen && <div className="fixed inset-0 z-[70] flex items-end justify-center bg-[#17202A]/55 p-2 backdrop-blur-sm sm:items-center sm:p-4" onMouseDown={(event) => { if (event.target === event.currentTarget && !saving && !uploadingImage) resetForm(); }}>
         <section role="dialog" aria-modal="true" aria-labelledby="category-editor-title" className="flex max-h-[96dvh] w-full max-w-2xl flex-col overflow-hidden rounded-t-[24px] border border-[#E7DDD2] bg-[#FFFDFC] shadow-2xl sm:max-h-[92dvh] sm:rounded-[24px]">
           <div className="flex items-start justify-between gap-3 border-b border-[#EEE7DF] px-5 py-4 sm:px-6">
             <div><p className="text-[10px] font-extrabold uppercase tracking-[0.16em] text-[#A0958B]">Category details</p><h2 id="category-editor-title" className="mt-1 text-lg font-black tracking-tight text-[#28221E]">{editingId ? "Edit category" : "Add a category"}</h2><p className="mt-1 text-xs leading-5 text-[#82776D]">Set the name, hierarchy and how buyers see this category.</p></div>
-            <button type="button" onClick={resetForm} disabled={saving} aria-label="Close category editor" className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-[#EAE2D9] bg-white text-[#74695F] hover:border-[#FFB49F] hover:text-[#9F2D18] disabled:opacity-50"><X className="h-4 w-4" /></button>
+            <button type="button" onClick={resetForm} disabled={saving || uploadingImage} aria-label="Close category editor" className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-[#EAE2D9] bg-white text-[#74695F] hover:border-[#FFB49F] hover:text-[#9F2D18] disabled:opacity-50"><X className="h-4 w-4" /></button>
           </div>
 
           <form onSubmit={submitForm} className="min-h-0 flex-1 overflow-y-auto">
@@ -705,13 +711,14 @@ export default function AdminCategoriesPage() {
 
               <div>
                 <label htmlFor="category-image" className="text-xs font-bold text-[#4D453E]">Category image URL <span className="font-normal text-[#9A8E83]">(optional)</span></label>
-                <input id="category-image" type="url" value={imageUrl} onChange={(event) => setImageUrl(event.target.value)} placeholder="https://example.com/category-image.jpg" disabled={usingFallback || saving} className="mt-2 h-11 w-full rounded-xl border border-[#E6DED5] bg-white px-3.5 text-sm text-[#17202A] outline-none transition placeholder:text-[#B1A69B] focus:border-[#FF947C] focus:ring-4 focus:ring-[#FF5A36]/10 disabled:bg-[#F4F0EB]" />
-                <p className="mt-1.5 text-[10px] text-[#9A8E83]">Use a publicly accessible HTTP or HTTPS image URL.</p>
+                <input id="category-image" type="url" value={imageUrl} onChange={(event) => setImageUrl(event.target.value)} placeholder="https://example.com/category-image.jpg" disabled={usingFallback || saving || uploadingImage} className="mt-2 h-11 w-full rounded-xl border border-[#E6DED5] bg-white px-3.5 text-sm text-[#17202A] outline-none transition placeholder:text-[#B1A69B] focus:border-[#FF947C] focus:ring-4 focus:ring-[#FF5A36]/10 disabled:bg-[#F4F0EB]" />
+                <p className="mt-1.5 text-xs text-[#786D63]">Use a public HTTP or HTTPS URL, or upload an image from your device below.</p>
+                <div className="mt-3"><CategoryImageUpload value={imageUrl} onChange={setImageUrl} disabled={usingFallback || saving} onUploadingChange={setUploadingImage} /></div>
               </div>
 
               <div>
                 <label className="text-xs font-bold text-[#4D453E]">Category icon</label>
-                <button type="button" disabled={usingFallback || saving} aria-expanded={showIconPicker} onClick={() => setShowIconPicker((current) => !current)} className="mt-2 flex h-12 w-full items-center justify-between gap-3 rounded-xl border border-[#E6DED5] bg-white px-3 text-sm transition hover:border-[#FFB49F] disabled:bg-[#F4F0EB]">
+                <button type="button" disabled={usingFallback || saving || uploadingImage} aria-expanded={showIconPicker} onClick={() => setShowIconPicker((current) => !current)} className="mt-2 flex h-12 w-full items-center justify-between gap-3 rounded-xl border border-[#E6DED5] bg-white px-3 text-sm transition hover:border-[#FFB49F] disabled:bg-[#F4F0EB]">
                   <span className="flex min-w-0 items-center gap-2.5"><span className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg ${selectedTone.background} ${selectedTone.text}`}><SelectedIcon className="h-4 w-4" /></span><span className="truncate font-semibold">{ICONS.find((item) => item.key === iconKey)?.label ?? iconKey}</span></span>
                   <ChevronDown className={`h-4 w-4 shrink-0 text-[#9A8F84] transition ${showIconPicker ? "rotate-180" : ""}`} />
                 </button>
@@ -728,7 +735,7 @@ export default function AdminCategoriesPage() {
                 </div>
                 <div>
                   <span className="text-xs font-bold text-[#4D453E]">Buyer visibility</span>
-                  <button type="button" disabled={usingFallback || saving} onClick={() => setIsActive((current) => !current)} aria-pressed={isActive} className={`mt-2 flex h-11 w-full items-center justify-between gap-2 rounded-xl border px-3 transition disabled:opacity-60 ${isActive ? "border-emerald-200 bg-emerald-50 text-emerald-800" : "border-[#E4DDD5] bg-[#F5F2EE] text-[#6D655D]"}`}>
+                  <button type="button" disabled={usingFallback || saving || uploadingImage} onClick={() => setIsActive((current) => !current)} aria-pressed={isActive} className={`mt-2 flex h-11 w-full items-center justify-between gap-2 rounded-xl border px-3 transition disabled:opacity-60 ${isActive ? "border-emerald-200 bg-emerald-50 text-emerald-800" : "border-[#E4DDD5] bg-[#F5F2EE] text-[#6D655D]"}`}>
                     <span className="flex items-center gap-2 text-xs font-extrabold"><span className={`h-2 w-2 rounded-full ${isActive ? "bg-emerald-500" : "bg-[#9A9087]"}`} />{isActive ? "Active · visible to buyers" : "Inactive · hidden from buyers"}</span>
                     <span className={`relative h-5 w-9 shrink-0 rounded-full transition ${isActive ? "bg-emerald-500" : "bg-[#C7BEB4]"}`}><span className={`absolute top-0.5 h-4 w-4 rounded-full bg-white shadow-sm transition-all ${isActive ? "left-[18px]" : "left-0.5"}`} /></span>
                   </button>
@@ -739,8 +746,8 @@ export default function AdminCategoriesPage() {
             <div className="sticky bottom-0 flex flex-col-reverse gap-2 border-t border-[#EEE7DF] bg-[#FFFDFC]/95 px-5 py-4 backdrop-blur sm:flex-row sm:items-center sm:justify-between sm:px-6">
               <p className="text-[10px] leading-4 text-[#9A8E83]">{editingId ? "Your changes will update this category." : "New categories become part of ReMarket discovery."}</p>
               <div className="flex flex-col-reverse gap-2 sm:flex-row">
-                <button type="button" onClick={resetForm} disabled={saving} className="min-h-10 rounded-xl border border-[#E2D8CD] bg-white px-4 py-2.5 text-xs font-bold text-[#655C54] hover:bg-[#F8F3ED] disabled:opacity-50">Cancel</button>
-                <button type="submit" disabled={saving || usingFallback} className="inline-flex min-h-10 items-center justify-center gap-2 rounded-xl bg-[#FF5A36] px-4 py-2.5 text-xs font-extrabold text-white transition hover:bg-[#ED4F2F] disabled:cursor-not-allowed disabled:opacity-50">{saving ? <LoaderCircle className="h-4 w-4 animate-spin" /> : editingId ? <Check className="h-4 w-4" /> : <Plus className="h-4 w-4" />}{saving ? "Saving…" : editingId ? "Save changes" : "Create category"}</button>
+                <button type="button" onClick={resetForm} disabled={saving || uploadingImage} className="min-h-10 rounded-xl border border-[#E2D8CD] bg-white px-4 py-2.5 text-xs font-bold text-[#655C54] hover:bg-[#F8F3ED] disabled:opacity-50">Cancel</button>
+                <button type="submit" disabled={saving || uploadingImage || usingFallback} className="inline-flex min-h-10 items-center justify-center gap-2 rounded-xl bg-[#FF5A36] px-4 py-2.5 text-xs font-extrabold text-white transition hover:bg-[#ED4F2F] disabled:cursor-not-allowed disabled:opacity-50">{saving ? <LoaderCircle className="h-4 w-4 animate-spin" /> : editingId ? <Check className="h-4 w-4" /> : <Plus className="h-4 w-4" />}{saving ? "Saving…" : editingId ? "Save changes" : "Create category"}</button>
               </div>
             </div>
           </form>

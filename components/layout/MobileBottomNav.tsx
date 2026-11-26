@@ -9,7 +9,6 @@ import {
   Home,
   ShoppingBag,
   UserCircle,
-  Wrench,
 } from "lucide-react";
 
 type AccountRole = "ADMIN" | "BUYER" | "SELLER";
@@ -59,7 +58,6 @@ function isAccountPath(pathname: string): boolean {
   const accountPrefixes = [
     "/profile",
     "/saved",
-    "/bookings",
     "/account",
   ];
 
@@ -192,10 +190,6 @@ export default function MobileBottomNav() {
     pathname.startsWith("/shop/") ||
     pathname.startsWith("/product/");
 
-  const servicesActive =
-    pathname === "/services" ||
-    pathname.startsWith("/services/");
-
   const accountActive =
     isAccountPath(pathname);
 
@@ -233,12 +227,6 @@ export default function MobileBottomNav() {
       icon: ShoppingBag,
     },
     {
-      label: "Services",
-      href: "/services",
-      active: servicesActive,
-      icon: Wrench,
-    },
-    {
       label: "Account",
       href: accountHref,
       active: accountActive,
@@ -271,7 +259,7 @@ export default function MobileBottomNav() {
       <div
         className="
           mx-auto grid w-full max-w-[600px]
-          grid-cols-4
+          grid-cols-3
         "
       >
         {items.map((item) => {

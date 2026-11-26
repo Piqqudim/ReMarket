@@ -18,6 +18,7 @@ import {
   RotateCcw,
   ShoppingCart,
   SlidersHorizontal,
+  Star,
   X,
 } from "lucide-react";
 
@@ -36,7 +37,10 @@ type Product = {
   description: string | null;
   price: number | null;
   originalPrice: number | null;
+  rating: number | null;
+  reviewCount: number;
   stockQuantity: number | null;
+  hasShippingMeasurements: boolean;
   availability: Availability;
   imageUrl: string | null;
   images: ProductImage[];
@@ -45,7 +49,6 @@ type Product = {
   matchScore: number;
   seller: {
     id: string;
-    name: string;
     verification: string | null;
     verified: boolean;
     location: { area: string | null; street: string | null; lga: string | null; state: string | null } | null;
@@ -124,11 +127,12 @@ function getDiscountPercentage(product: Product): number | null {
   if (product.price === null || product.price <= 0 || product.originalPrice === null || product.originalPrice <= product.price) return null;
   return Math.round(((product.originalPrice - product.price) / product.originalPrice) * 100);
 }
-function canAddProductToCart(product: Pick<Product, "price" | "availability" | "stockQuantity">): boolean {
-  return product.availability === "AVAILABLE" && product.price !== null && product.price > 0 && product.stockQuantity !== 0;
+function canAddProductToCart(product: Pick<Product, "price" | "availability" | "stockQuantity" | "hasShippingMeasurements">): boolean {
+  return product.availability === "AVAILABLE" && product.price !== null && product.price > 0 && product.hasShippingMeasurements && (product.stockQuantity === null || (Number.isSafeInteger(product.stockQuantity) && product.stockQuantity > 0));
 }
-function getAvailabilityLabel(product: Pick<Product, "availability" | "stockQuantity">): string {
+function getAvailabilityLabel(product: Pick<Product, "availability" | "stockQuantity" | "price" | "hasShippingMeasurements">): string {
   if (product.availability === "UNAVAILABLE" || product.stockQuantity === 0) return "Out of stock";
+  if (product.availability === "AVAILABLE" && product.price !== null && product.price > 0 && !product.hasShippingMeasurements) return "Delivery setup pending";
   if (product.availability === "AVAILABLE") return "Available";
   return "Check availability";
 }
@@ -251,8 +255,7 @@ function parseProduct(value: unknown): Product | null {
   const id = cleanString(value.id);
   const name = cleanString(value.name);
   const sellerId = seller ? cleanString(seller.id) : null;
-  const sellerName = seller ? cleanString(seller.name) : null;
-  if (!id || !name || !seller || !sellerId || !sellerName) return null;
+  if (!id || !name || !seller || !sellerId) return null;
   const images: ProductImage[] = (Array.isArray(value.images) ? value.images : []).filter(isRecord).flatMap((image) => {
     const url = cleanString(image.url);
     return url ? [{ id: cleanString(image.id) ?? "", url, publicId: cleanString(image.publicId), sortOrder: typeof image.sortOrder === "number" && Number.isFinite(image.sortOrder) ? image.sortOrder : 0 }] : [];
@@ -272,12 +275,14 @@ function parseProduct(value: unknown): Product | null {
   } : null;
   return {
     id, name, description: cleanString(value.description), price, originalPrice,
-    stockQuantity: parseOptionalNumber(value.stockQuantity), availability: parseAvailability(value.availability),
+    rating: parseOptionalNumber(value.rating) !== null && parseOptionalNumber(value.rating)! <= 5 ? parseOptionalNumber(value.rating) : null,
+    reviewCount: Math.max(0, Math.floor(parseOptionalNumber(value.reviewCount) ?? 0)),
+    stockQuantity: parseOptionalNumber(value.stockQuantity), hasShippingMeasurements: value.hasShippingMeasurements === true, availability: parseAvailability(value.availability),
     imageUrl: cleanString(value.imageUrl), images, category,
     keywords: Array.isArray(value.keywords) ? value.keywords.filter((item): item is string => typeof item === "string") : [],
     matchScore: parseOptionalNumber(value.matchScore) ?? 0,
     seller: {
-      id: sellerId, name: sellerName, verification,
+      id: sellerId, verification,
       verified: seller.verified === true || verification === "VERIFIED",
       location: rawLocation ? { area: cleanString(rawLocation.area), street: cleanString(rawLocation.street), lga: cleanString(rawLocation.lga), state: cleanString(rawLocation.state) } : null,
     },
@@ -361,15 +366,14 @@ function ShopProductCard({
         <Link
           href={productUrl}
           aria-label={`View ${product.name}`}
-          className="absolute inset-0 flex items-center justify-center p-2 sm:p-3"
+          className="absolute inset-0 block"
         >
           {imageUrl ? (
             <img
               src={imageUrl}
               alt={product.name}
               loading="lazy"
-              className="block transition-transform duration-200 group-hover:scale-[1.025]"
-              style={{ width: "100%", height: "100%", display: "block", objectFit: "contain" }}
+              className="rm-product-image transition-transform duration-200 group-hover:scale-[1.025]"
             />
           ) : (
             <Package className="h-9 w-9 text-[#BDB4AA]" aria-hidden="true" />
@@ -430,18 +434,15 @@ function ShopProductCard({
         <div className="mt-1 min-w-0">
           <ProductPrice product={product} />
         </div>
+        {product.rating !== null && product.reviewCount > 0 && <p className="mt-1 inline-flex items-center gap-1 text-[10px] font-semibold text-[var(--rm-muted)]" aria-label={`${product.rating.toFixed(1)} out of 5 from ${product.reviewCount} product reviews`}><Star className="h-3 w-3 fill-amber-400 text-amber-400" aria-hidden="true" />{product.rating.toFixed(1)} <span className="font-normal">({product.reviewCount})</span></p>}
 
         <div className="rm-product-meta mt-1.5 min-w-0">
-          <span className="rm-product-seller">
-            <span className="truncate">{product.seller.name}</span>
-            {product.seller.location?.area && (
-              <>
-                <span className="shrink-0 text-[#C4BBB1]">·</span>
-                <MapPin className="h-3 w-3 shrink-0" />
-                <span className="truncate">{product.seller.location.area}</span>
-              </>
-            )}
-          </span>
+          {product.seller.location?.area && (
+            <span className="rm-product-seller inline-flex min-w-0 items-center gap-1.5">
+              <MapPin className="h-3 w-3 shrink-0" />
+              <span className="truncate">{product.seller.location.area}</span>
+            </span>
+          )}
         </div>
 
         <div className="mt-auto pt-2.5">

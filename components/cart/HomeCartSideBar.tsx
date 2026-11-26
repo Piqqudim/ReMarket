@@ -432,7 +432,7 @@ export default function HomeCartSidebar() {
                           src={item.imageUrl}
                           alt={item.name}
                           loading="lazy"
-                          className="h-full w-full object-cover"
+                          className="h-full w-full object-contain p-0"
                         />
                       ) : (
                         <span className="flex h-full w-full items-center justify-center text-[#B9AEA4]">

@@ -523,7 +523,7 @@ function ProductMobileCard({ product, updating, onUpdate }: { product: Product; 
 function ProductImage({ product, large = false }: { product: Product; large?: boolean }) {
   const size = large ? "h-[58px] w-[58px] sm:h-[68px] sm:w-[68px]" : "h-12 w-12";
   if (product.imageUrl && /^https?:\/\//i.test(product.imageUrl)) {
-    return <img src={product.imageUrl} alt="" loading="lazy" className={`${size} shrink-0 rounded-2xl border border-[#EEE5DC] bg-[#FCFAF6] object-cover`} />;
+    return <img src={product.imageUrl} alt="" loading="lazy" className={`${size} shrink-0 rounded-2xl border border-[#EEE5DC] bg-[#FCFAF6] object-contain p-0`} />;
   }
   return <div className={`${size} flex shrink-0 items-center justify-center rounded-2xl bg-[#FFF0E8] text-[#FF5A36]`}><Package size={large ? 22 : 19} /></div>;
 }

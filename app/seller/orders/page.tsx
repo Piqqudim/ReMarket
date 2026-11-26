@@ -1,12 +1,13 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useState, type ReactNode } from "react";
 import Link from "next/link";
 import { signOut } from "next-auth/react";
 import { useRouter } from "next/navigation";
 import NotificationBell from "@/components/NotificationBell";
 import {
   AlertCircle,
+  BarChart3,
   Bookmark,
   CalendarDays,
   CheckCircle2,
@@ -51,6 +52,17 @@ type SellerOrderItem = {
   lineTotal: number;
 };
 
+type SellerShipment = {
+  id: string;
+  status: string;
+  courierName: string | null;
+  trackingCode: string | null;
+  trackingUrl: string | null;
+  waybillUrl: string | null;
+  estimatedDelivery: string | null;
+  failureReason: string | null;
+};
+
 type SellerOrder = {
   id: string;
   sellerOrderCode: string;
@@ -69,6 +81,7 @@ type SellerOrder = {
   deliveryNotes: string | null;
   items: SellerOrderItem[];
   itemsSubtotal: number;
+  shipments: SellerShipment[];
 };
 
 type Pagination = {
@@ -193,6 +206,20 @@ function parseOrderItem(raw: unknown): SellerOrderItem | null {
   };
 }
 
+function parseShipment(raw: unknown): SellerShipment | null {
+  if (!isRecord(raw) || typeof raw.id !== "string" || typeof raw.status !== "string") return null;
+  return {
+    id: raw.id,
+    status: raw.status,
+    courierName: getNullableText(raw.courierName),
+    trackingCode: getNullableText(raw.trackingCode),
+    trackingUrl: getNullableText(raw.trackingUrl),
+    waybillUrl: getNullableText(raw.waybillUrl),
+    estimatedDelivery: getNullableText(raw.estimatedDelivery),
+    failureReason: getNullableText(raw.failureReason),
+  };
+}
+
 function parseSellerOrder(raw: unknown): SellerOrder | null {
   if (!isRecord(raw)) return null;
   const parentOrder = isRecord(raw.order) ? raw.order : {};
@@ -236,6 +263,9 @@ function parseSellerOrder(raw: unknown): SellerOrder | null {
     deliveryNotes: getNullableText(getFirstValue(parentOrder.deliveryNotes, raw.deliveryNotes)),
     items,
     itemsSubtotal,
+    shipments: Array.isArray(raw.shipments)
+      ? raw.shipments.map(parseShipment).filter((shipment): shipment is SellerShipment => shipment !== null)
+      : [],
   };
 }
 
@@ -257,10 +287,9 @@ function parsePagination(raw: unknown, currentPage: number): Pagination {
 function getNextAction(status: SellerOrderStatus): { nextStatus: SellerOrderStatus; label: string } | null {
   switch (status) {
     case "PENDING_ACCEPTANCE": return { nextStatus: "ACCEPTED", label: "Accept order" };
-    case "ACCEPTED": return { nextStatus: "PROCESSING", label: "Start processing" };
+    case "ACCEPTED": return { nextStatus: "PROCESSING", label: "Start preparing" };
     case "PROCESSING": return { nextStatus: "READY_FOR_DISPATCH", label: "Ready for dispatch" };
-    case "READY_FOR_DISPATCH": return { nextStatus: "DISPATCHED", label: "Mark as dispatched" };
-    case "DISPATCHED": return { nextStatus: "DELIVERED", label: "Mark as delivered" };
+    // Dispatch and delivery are confirmed by the courier webhook, not the seller UI.
     default: return null;
   }
 }
@@ -292,7 +321,7 @@ function OrderItemRow({ item }: { item: SellerOrderItem }) {
     <div className="flex items-center gap-3 py-3.5">
       <div className="grid h-14 w-14 shrink-0 place-items-center overflow-hidden rounded-xl border border-[var(--rm-border)] bg-[var(--rm-surface-muted)]">
         {item.imageUrl
-          ? <img src={item.imageUrl} alt={item.name} loading="lazy" className="h-full w-full object-cover" />
+          ? <img src={item.imageUrl} alt={item.name} loading="lazy" className="h-full w-full object-contain p-0" />
           : <Package className="h-6 w-6 text-[var(--rm-coral-dark)]" />}
       </div>
       <div className="min-w-0 flex-1">
@@ -316,12 +345,16 @@ function DetailRow({ icon, label, children }: { icon: ReactNode; label: string; 
   );
 }
 
-function OrderCard({ order, activeOrderId, onUpdate }: {
+function OrderCard({ order, activeOrderId, onUpdate, onBookShipment }: {
   order: SellerOrder;
   activeOrderId: string | null;
   onUpdate: (order: SellerOrder, nextStatus: SellerOrderStatus) => void;
+  onBookShipment: (order: SellerOrder) => void;
 }) {
   const nextAction = getNextAction(order.status);
+  const latestShipment = order.shipments[0] ?? null;
+  const canBookShipment = order.status === "READY_FOR_DISPATCH" &&
+    (latestShipment === null || latestShipment.status === "FAILED");
   const isUpdating = activeOrderId === order.id;
   const anotherOrderIsUpdating = activeOrderId !== null && !isUpdating;
 
@@ -329,8 +362,8 @@ function OrderCard({ order, activeOrderId, onUpdate }: {
     PENDING_ACCEPTANCE: "Review this order and accept it. Rejection is temporarily unavailable while the refund workflow is being completed.",
     ACCEPTED: "You accepted this order. Start preparing the products.",
     PROCESSING: "Update the order when the products are ready for dispatch.",
-    READY_FOR_DISPATCH: "Update the order once it has been dispatched.",
-    DISPATCHED: "Update the order when it has been delivered to the buyer.",
+    READY_FOR_DISPATCH: "Book the buyer-selected courier. Courier pickup and delivery events will update the order automatically.",
+    DISPATCHED: "The courier has collected this parcel. Use the tracking link for delivery updates.",
     DELIVERED: "Delivery has been reported. The buyer must confirm receipt to complete the order.",
     COMPLETED: "This order has been completed.",
     REJECTED: "You rejected this order.",
@@ -379,6 +412,20 @@ function OrderCard({ order, activeOrderId, onUpdate }: {
         </section>
       </div>
 
+      {latestShipment && <section className="border-t border-[var(--rm-border)] bg-white px-4 py-4 sm:px-5" aria-label="Courier shipment">
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+          <div className="min-w-0">
+            <p className="text-xs font-extrabold text-[var(--rm-ink)]">Courier shipment · {latestShipment.status.replace(/_/g, " ").toLowerCase()}</p>
+            <p className="mt-1 text-xs text-[var(--rm-muted)]">{latestShipment.courierName || "Courier details pending"}{latestShipment.trackingCode ? ` · Tracking ${latestShipment.trackingCode}` : ""}</p>
+            {latestShipment.failureReason && <p className="mt-1 text-xs text-[var(--rm-red)]">{latestShipment.failureReason}</p>}
+          </div>
+          <div className="flex flex-wrap gap-2">
+            {latestShipment.trackingUrl && <a href={latestShipment.trackingUrl} target="_blank" rel="noopener noreferrer" className={secondaryButtonClass}>Track shipment</a>}
+            {latestShipment.waybillUrl && <a href={latestShipment.waybillUrl} target="_blank" rel="noopener noreferrer" className={secondaryButtonClass}>View waybill</a>}
+          </div>
+        </div>
+      </section>}
+
       <div className="flex flex-col gap-3 border-t border-[var(--rm-border)] bg-[var(--rm-surface-muted)]/60 p-4 sm:flex-row sm:items-center sm:justify-between sm:p-5">
         <p className="max-w-3xl text-xs leading-5 text-[var(--rm-muted)]">{statusMessage[order.status]}</p>
         {nextAction && <button
@@ -387,8 +434,12 @@ function OrderCard({ order, activeOrderId, onUpdate }: {
           onClick={() => onUpdate(order, nextAction.nextStatus)}
           className={`${primaryButtonClass} w-full sm:w-auto`}
         >
-          {isUpdating ? <Loader2 className="h-4 w-4 animate-spin" /> : order.status === "DISPATCHED" ? <Truck className="h-4 w-4" /> : <CheckCircle2 className="h-4 w-4" />}
+          {isUpdating ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}
           {isUpdating ? "Updating..." : nextAction.label}
+        </button>}
+        {canBookShipment && <button type="button" disabled={isUpdating || anotherOrderIsUpdating || order.items.length === 0} onClick={() => onBookShipment(order)} className={`${primaryButtonClass} w-full sm:w-auto`}>
+          {isUpdating ? <Loader2 className="h-4 w-4 animate-spin" /> : <Truck className="h-4 w-4" />}
+          {isUpdating ? "Booking courier..." : latestShipment?.status === "FAILED" ? "Retry courier booking" : "Book courier"}
         </button>}
       </div>
     </article>
@@ -403,6 +454,7 @@ export default function SellerOrdersPage() {
   });
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("ALL");
   const [search, setSearch] = useState("");
+  const [statusCounts, setStatusCounts] = useState<Record<string, number>>({});
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [redirecting, setRedirecting] = useState(false);
@@ -418,6 +470,7 @@ export default function SellerOrdersPage() {
     try {
       const params = new URLSearchParams({ page: String(pagination.page), limit: String(PAGE_SIZE) });
       if (statusFilter !== "ALL") params.set("status", statusFilter);
+      if (search.trim()) params.set("search", search.trim());
       const response = await fetch(`/api/seller/orders?${params.toString()}`, {
         method: "GET", cache: "no-store", headers: { Accept: "application/json" }, signal,
       });
@@ -433,6 +486,12 @@ export default function SellerOrdersPage() {
       const parsedOrders = rawOrders.map(parseSellerOrder).filter((order): order is SellerOrder => order !== null);
       if (signal?.aborted) return;
       setOrders(parsedOrders);
+      const rawStatusCounts = isRecord(payload.statusCounts) ? payload.statusCounts : {};
+      const parsedStatusCounts: Record<string, number> = {};
+      for (const [key, value] of Object.entries(rawStatusCounts)) {
+        if (typeof value === "number" && Number.isSafeInteger(value) && value >= 0) parsedStatusCounts[key] = value;
+      }
+      setStatusCounts(parsedStatusCounts);
       setPagination(parsePagination(payload.pagination, pagination.page));
     } catch (loadError) {
       if (signal?.aborted) return;
@@ -440,30 +499,18 @@ export default function SellerOrdersPage() {
     } finally {
       if (!signal?.aborted) { setLoading(false); setRefreshing(false); }
     }
-  }, [pagination.page, statusFilter, router]);
+  }, [pagination.page, statusFilter, search, router]);
 
   useEffect(() => {
     const controller = new AbortController();
-    void loadOrders({ signal: controller.signal });
-    return () => controller.abort();
-  }, [loadOrders]);
+    const delay = window.setTimeout(() => { void loadOrders({ signal: controller.signal }); }, search.trim() ? 300 : 0);
+    return () => { window.clearTimeout(delay); controller.abort(); };
+  }, [loadOrders, search]);
 
-  const filteredOrders = useMemo(() => {
-    const query = search.trim().toLowerCase();
-    if (!query) return orders;
-    return orders.filter((order) => {
-      const itemNames = order.items.map((item) => item.name).join(" ");
-      return [
-        order.sellerOrderCode, order.orderCode ?? "", order.buyerName,
-        order.deliveryRecipient ?? "", order.deliveryPhone ?? "",
-        order.deliveryAddress ?? "", order.deliveryArea ?? "", itemNames,
-      ].join(" ").toLowerCase().includes(query);
-    });
-  }, [orders, search]);
-
-  const pendingCount = orders.filter((order) => order.status === "PENDING_ACCEPTANCE").length;
-  const activeCount = orders.filter((order) => ["ACCEPTED", "PROCESSING", "READY_FOR_DISPATCH", "DISPATCHED"].includes(order.status)).length;
-  const completedCount = orders.filter((order) => order.status === "COMPLETED").length;
+  const filteredOrders = orders;
+  const pendingCount = statusCounts.PENDING_ACCEPTANCE ?? 0;
+  const activeCount = ["ACCEPTED", "PROCESSING", "READY_FOR_DISPATCH", "DISPATCHED", "DELIVERED"].reduce((total, status) => total + (statusCounts[status] ?? 0), 0);
+  const completedCount = statusCounts.COMPLETED ?? 0;
 
   async function updateOrderStatus(order: SellerOrder, nextStatus: SellerOrderStatus) {
     if (activeOrderId) return;
@@ -492,16 +539,42 @@ export default function SellerOrdersPage() {
     }
   }
 
+  async function bookShipment(order: SellerOrder) {
+    const latestShipment = order.shipments[0] ?? null;
+    if (activeOrderId || order.status !== "READY_FOR_DISPATCH" || (latestShipment !== null && latestShipment.status !== "FAILED")) return;
+    setActiveOrderId(order.id);
+    setError("");
+    setNotice("");
+    try {
+      const response = await fetch(`/api/seller/orders/${encodeURIComponent(order.id)}/shipments`, {
+        method: "POST",
+        headers: { Accept: "application/json", "Content-Type": "application/json" },
+        body: JSON.stringify({}),
+      });
+      const payload: unknown = await response.json().catch(() => null);
+      if (response.status === 401 || response.status === 403) {
+        setRedirecting(true);
+        router.replace("/seller/login");
+        return;
+      }
+      if (!response.ok) throw new Error(getErrorMessage(payload, "We could not book the courier for this order."));
+      setNotice(`${order.sellerOrderCode}: ${getText(isRecord(payload) ? payload.message : null, "Courier booking submitted.")}`);
+      await loadOrders({ refresh: true });
+    } catch (bookingError) {
+      setError(bookingError instanceof Error ? bookingError.message : "Unable to book the courier.");
+    } finally {
+      setActiveOrderId(null);
+    }
+  }
+
   function changeFilter(value: StatusFilter) {
     setStatusFilter(value);
     setPagination((current) => ({ ...current, page: 1 }));
-    setSearch("");
     setNotice("");
   }
 
   function changePage(nextPage: number) {
     setPagination((current) => ({ ...current, page: Math.max(1, nextPage) }));
-    setSearch("");
     window.scrollTo({ top: 0, behavior: "smooth" });
   }
 
@@ -531,7 +604,7 @@ export default function SellerOrdersPage() {
           <nav className="hidden items-center gap-1 lg:flex" aria-label="Seller navigation">
             <Link href="/seller" className="inline-flex items-center gap-2 rounded-xl px-3 py-2.5 text-xs font-semibold text-[var(--rm-text)] transition hover:bg-[var(--rm-cream)] hover:text-[var(--rm-coral-dark)]"><Store className="h-4 w-4" />Dashboard</Link>
             <Link href="/seller#products-section" className="inline-flex items-center gap-2 rounded-xl px-3 py-2.5 text-xs font-semibold text-[var(--rm-text)] transition hover:bg-[var(--rm-cream)] hover:text-[var(--rm-coral-dark)]"><Package className="h-4 w-4" />Products</Link>
-            <Link href="/seller/orders" aria-current="page" className="inline-flex items-center gap-2 rounded-xl bg-[var(--rm-coral-soft)] px-3 py-2.5 text-xs font-bold text-[var(--rm-coral-dark)]"><ClipboardCheck className="h-4 w-4" />Orders</Link>
+            <Link href="/seller/orders" aria-current="page" className="inline-flex items-center gap-2 rounded-xl bg-[var(--rm-coral-soft)] px-3 py-2.5 text-xs font-bold text-[var(--rm-coral-dark)]"><ClipboardCheck className="h-4 w-4" />Orders</Link><Link href="/seller/insights" className="inline-flex items-center gap-2 rounded-xl px-3 py-2.5 text-xs font-semibold text-[var(--rm-text)] transition hover:bg-[var(--rm-cream)] hover:text-[var(--rm-coral-dark)]"><BarChart3 className="h-4 w-4" />Insights</Link>
             <Link href="/seller#orders-section" className="inline-flex items-center gap-2 rounded-xl px-3 py-2.5 text-xs font-semibold text-[var(--rm-text)] transition hover:bg-[var(--rm-cream)] hover:text-[var(--rm-coral-dark)]"><Truck className="h-4 w-4" />Inventory overview</Link>
           </nav>
 
@@ -547,7 +620,7 @@ export default function SellerOrdersPage() {
                   <Link href="/account" className="flex items-center gap-3 rounded-xl px-3 py-2.5 text-xs font-medium text-[var(--rm-text)] hover:bg-[var(--rm-cream)] hover:text-[var(--rm-coral-dark)]"><UserRound className="h-4 w-4 text-[var(--rm-muted)]" />Account overview</Link>
                   <Link href="/saved" className="flex items-center gap-3 rounded-xl px-3 py-2.5 text-xs font-medium text-[var(--rm-text)] hover:bg-[var(--rm-cream)] hover:text-[var(--rm-coral-dark)]"><Bookmark className="h-4 w-4 text-[var(--rm-muted)]" />Saved items</Link>
                   <Link href="/seller/profile" className="flex items-center gap-3 rounded-xl px-3 py-2.5 text-xs font-medium text-[var(--rm-text)] hover:bg-[var(--rm-cream)] hover:text-[var(--rm-coral-dark)]"><Store className="h-4 w-4 text-[var(--rm-muted)]" />Seller profile</Link>
-                  <Link href="/seller/claims" className="flex items-center gap-3 rounded-xl px-3 py-2.5 text-xs font-medium text-[var(--rm-text)] hover:bg-[var(--rm-cream)] hover:text-[var(--rm-coral-dark)]"><ShieldCheck className="h-4 w-4 text-[var(--rm-muted)]" />Business claims</Link>
+                  
                   <Link href="/seller#products-section" className="flex items-center gap-3 rounded-xl px-3 py-2.5 text-xs font-medium text-[var(--rm-text)] hover:bg-[var(--rm-cream)] hover:text-[var(--rm-coral-dark)]"><Package className="h-4 w-4 text-[var(--rm-muted)]" />Manage products</Link>
                   <Link href="/seller/orders" className="flex items-center gap-3 rounded-xl bg-[var(--rm-coral-soft)] px-3 py-2.5 text-xs font-bold text-[var(--rm-coral-dark)]"><ClipboardCheck className="h-4 w-4" />Manage orders</Link>
                 </div>
@@ -564,10 +637,10 @@ export default function SellerOrdersPage() {
             <p className="px-3 pb-1 pt-2 text-[10px] font-bold uppercase tracking-[0.12em] text-[var(--rm-muted)]">Seller workspace</p>
             <Link onClick={() => setMobileNavOpen(false)} href="/seller" className="rounded-xl px-4 py-3 text-sm font-medium text-[var(--rm-text)] hover:bg-[var(--rm-cream)]">Dashboard</Link>
             <Link onClick={() => setMobileNavOpen(false)} href="/seller#products-section" className="rounded-xl px-4 py-3 text-sm font-medium text-[var(--rm-text)] hover:bg-[var(--rm-cream)]">Manage products</Link>
-            <Link onClick={() => setMobileNavOpen(false)} href="/seller/orders" className="rounded-xl bg-[var(--rm-coral-soft)] px-4 py-3 text-sm font-bold text-[var(--rm-coral-dark)]">Manage orders</Link>
+            <Link onClick={() => setMobileNavOpen(false)} href="/seller/orders" className="rounded-xl bg-[var(--rm-coral-soft)] px-4 py-3 text-sm font-bold text-[var(--rm-coral-dark)]">Manage orders</Link><Link onClick={() => setMobileNavOpen(false)} href="/seller/insights" className="rounded-xl px-4 py-3 text-sm font-medium text-[var(--rm-text)] hover:bg-[var(--rm-cream)]">Insights</Link>
             <Link onClick={() => setMobileNavOpen(false)} href="/seller#orders-section" className="rounded-xl px-4 py-3 text-sm font-medium text-[var(--rm-text)] hover:bg-[var(--rm-cream)]">Inventory overview</Link>
             <Link onClick={() => setMobileNavOpen(false)} href="/seller/profile" className="rounded-xl px-4 py-3 text-sm font-medium text-[var(--rm-text)] hover:bg-[var(--rm-cream)]">Seller profile</Link>
-            <Link onClick={() => setMobileNavOpen(false)} href="/seller/claims" className="rounded-xl px-4 py-3 text-sm font-medium text-[var(--rm-text)] hover:bg-[var(--rm-cream)]">Business claims</Link>
+            
             <div className="my-1 border-t border-[var(--rm-border)]" />
             <p className="px-3 pb-1 pt-2 text-[10px] font-bold uppercase tracking-[0.12em] text-[var(--rm-muted)]">Your account</p>
             <Link onClick={() => setMobileNavOpen(false)} href="/account" className="rounded-xl px-4 py-3 text-sm font-medium text-[var(--rm-text)] hover:bg-[var(--rm-cream)]">Account overview</Link>
@@ -592,21 +665,21 @@ export default function SellerOrdersPage() {
         </div>
 
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-          <SummaryCard title="New orders" value={pendingCount} description="Awaiting your response on this page" icon={<Clock3 className="h-5 w-5" />} />
-          <SummaryCard title="In progress" value={activeCount} description="Being prepared or delivered on this page" icon={<Truck className="h-5 w-5" />} />
-          <SummaryCard title="Completed" value={completedCount} description="Completed orders on this page" icon={<CheckCircle2 className="h-5 w-5" />} />
+          <SummaryCard title="New orders" value={pendingCount} description="Across all matching orders" icon={<Clock3 className="h-5 w-5" />} />
+          <SummaryCard title="In progress" value={activeCount} description="Across all matching orders" icon={<Truck className="h-5 w-5" />} />
+          <SummaryCard title="Completed" value={completedCount} description="Across all matching orders" icon={<CheckCircle2 className="h-5 w-5" />} />
         </div>
 
         <section className="rm-panel mt-6 p-4 sm:p-5">
           <div className="flex flex-col gap-4">
             <div>
               <h2 className="text-base font-extrabold text-[var(--rm-ink)]">Your orders</h2>
-              <p className="mt-1 text-xs leading-5 text-[var(--rm-muted)]">Search the currently loaded page or filter orders by status.</p>
+              <p className="mt-1 text-xs leading-5 text-[var(--rm-muted)]">Search all your orders or filter them by status.</p>
             </div>
             <label className="relative block">
               <span className="sr-only">Search orders</span>
               <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[var(--rm-subtle)]" />
-              <input type="search" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search order code, buyer, address or product..." className="rm-input h-11 w-full pl-10 pr-4 text-sm" />
+              <input type="search" value={search} onChange={(event) => { setSearch(event.target.value); setPagination((current) => ({ ...current, page: 1 })); }} placeholder="Search order code, buyer, address or product..." className="rm-input h-11 w-full pl-10 pr-4 text-sm" />
             </label>
             <div className="flex items-center gap-2 text-xs font-bold text-[var(--rm-text)]">
               <span className="grid h-8 w-8 place-items-center rounded-lg bg-[var(--rm-coral-soft)] text-[var(--rm-coral-dark)]"><Package className="h-4 w-4" /></span>Filter by order status
@@ -637,10 +710,10 @@ export default function SellerOrdersPage() {
         ) : (
           <div className="mt-6 space-y-4">
             <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
-              <p className="font-semibold text-[var(--rm-text)]">Showing {filteredOrders.length} of {pagination.total} {pagination.total === 1 ? "order" : "orders"} on this page</p>
+              <p className="font-semibold text-[var(--rm-text)]">Showing {filteredOrders.length} of {pagination.total} matching {pagination.total === 1 ? "order" : "orders"}</p>
               <span className="text-[var(--rm-muted)]">Newest orders first</span>
             </div>
-            {filteredOrders.map((order) => <OrderCard key={order.id} order={order} activeOrderId={activeOrderId} onUpdate={(item, nextStatus) => { void updateOrderStatus(item, nextStatus); }} />)}
+            {filteredOrders.map((order) => <OrderCard key={order.id} order={order} activeOrderId={activeOrderId} onUpdate={(item, nextStatus) => { void updateOrderStatus(item, nextStatus); }} onBookShipment={(item) => { void bookShipment(item); }} />)}
           </div>
         )}
 
@@ -660,7 +733,7 @@ export default function SellerOrdersPage() {
         <section className="mt-7 rounded-2xl border border-[var(--rm-coral)]/20 bg-[var(--rm-coral-soft)] p-4 sm:p-5">
           <div className="flex items-start gap-3">
             <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-white text-[var(--rm-coral-dark)]"><Truck className="h-5 w-5" /></span>
-            <div><h3 className="text-sm font-extrabold text-[var(--rm-coral-dark)]">Order completion</h3><p className="mt-1 text-sm leading-6 text-[var(--rm-coral-dark)]">After you mark an order as delivered, the buyer still needs to confirm receipt. The order becomes completed after the buyer confirms delivery.</p></div>
+            <div><h3 className="text-sm font-extrabold text-[var(--rm-coral-dark)]">Order completion</h3><p className="mt-1 text-sm leading-6 text-[var(--rm-coral-dark)]">The courier reports dispatch and delivery. After delivery is confirmed, the buyer can confirm receipt to complete the order.</p></div>
           </div>
         </section>
 
@@ -670,7 +743,7 @@ export default function SellerOrdersPage() {
             <div className="flex flex-wrap gap-x-4 gap-y-2">
               <Link href="/seller" className="hover:text-[var(--rm-coral-dark)]">Dashboard</Link>
               <Link href="/seller/profile" className="hover:text-[var(--rm-coral-dark)]">Profile settings</Link>
-              <Link href="/seller/claims" className="hover:text-[var(--rm-coral-dark)]">Business claims</Link>
+              
               <button type="button" onClick={() => void logout()} className="text-left hover:text-[var(--rm-coral-dark)]">Sign out</button>
             </div>
           </div>

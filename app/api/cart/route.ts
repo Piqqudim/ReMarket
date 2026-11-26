@@ -76,6 +76,10 @@ export async function GET() {
                 deletedAt: true,
 
                 stockQuantity: true,
+                shippingWeightKg: true,
+                shippingLengthCm: true,
+                shippingWidthCm: true,
+                shippingHeightCm: true,
                 imageUrl: true,
 
                 business: {
@@ -205,6 +209,13 @@ export async function GET() {
         }
       }
 
+      const hasValidShippingDetails = product !== null && [
+        product.shippingWeightKg,
+        product.shippingLengthCm,
+        product.shippingWidthCm,
+        product.shippingHeightCm,
+      ].every((value) => typeof value === "number" && Number.isFinite(value) && value > 0);
+
       /* PURCHASABILITY */
 
       const purchasable =
@@ -213,6 +224,7 @@ export async function GET() {
         hasFixedPrice &&
         hasValidStock &&
         hasEnoughStock &&
+        hasValidShippingDetails &&
         lineTotal !== null;
 
       /* UNAVAILABLE REASON */
@@ -234,6 +246,9 @@ export async function GET() {
       } else if (!hasEnoughStock) {
         unavailableReason =
           "The requested quantity is higher than the available stock.";
+      } else if (!hasValidShippingDetails) {
+        unavailableReason =
+          "The seller has not completed this product's package measurements, so delivery checkout is unavailable.";
       } else if (lineTotal === null) {
         unavailableReason =
           "The product total exceeds the maximum allowed order value.";
@@ -294,6 +309,7 @@ export async function GET() {
               hasFixedPrice,
               hasValidStock,
               hasEnoughStock,
+              hasValidShippingDetails,
 
               purchasable,
               unavailableReason,

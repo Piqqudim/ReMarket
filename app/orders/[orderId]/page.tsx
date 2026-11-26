@@ -700,7 +700,7 @@ function SellerOrderCard({
             {sellerOrder.items.map((item) => (
               <div key={item.id} className="flex min-w-0 items-center gap-3 rounded-lg bg-[var(--rm-surface-muted)] p-3">
                 <div className="flex h-14 w-14 shrink-0 items-center justify-center overflow-hidden rounded-lg border border-[var(--rm-border)] bg-white">
-                  {item.productImageUrl ? <img src={item.productImageUrl} alt={item.productName} loading="lazy" className="h-full w-full object-cover" /> : <Package className="h-5 w-5 text-[var(--rm-subtle)]" />}
+                  {item.productImageUrl ? <img src={item.productImageUrl} alt={item.productName} loading="lazy" className="h-full w-full object-contain p-0" /> : <Package className="h-5 w-5 text-[var(--rm-subtle)]" />}
                 </div>
                 <div className="min-w-0 flex-1">
                   {item.productId ? (

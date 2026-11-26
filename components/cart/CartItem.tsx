@@ -65,7 +65,7 @@ export default function CartItem({
         aria-label={`View ${item.name}`}
       >
         {item.imageUrl ? (
-          <img src={item.imageUrl} alt={item.name} loading="lazy" className="h-full w-full object-contain p-1.5" />
+          <img src={item.imageUrl} alt={item.name} loading="lazy" className="h-full w-full object-contain p-0" />
         ) : (
           <Package className="h-8 w-8 text-[#B6A99E]" />
         )}

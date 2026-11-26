@@ -24,6 +24,9 @@ type AddToCartButtonProps = {
   /** Current selling price only. Never pass originalPrice here. */
   price: number | null;
   stockQuantity?: number | null;
+  isPurchaseReady?: boolean;
+  hasShippingMeasurements?: boolean;
+  compact?: boolean;
 };
 
 const MAX_QUANTITY = 50;
@@ -64,6 +67,9 @@ export default function AddToCartButton({
   availability,
   price,
   stockQuantity = null,
+  isPurchaseReady = true,
+  hasShippingMeasurements = true,
+  compact = false,
 }: AddToCartButtonProps) {
   const router = useRouter();
 
@@ -72,21 +78,25 @@ export default function AddToCartButton({
   const [success, setSuccess] = useState(false);
   const [error, setError] = useState("");
 
-  const safeStock = getSafeStockQuantity(stockQuantity);
+  const hasExplicitStock = stockQuantity !== null && stockQuantity !== undefined;
+  const hasInvalidStock = hasExplicitStock && getSafeStockQuantity(stockQuantity) === null;
+  const safeStock = hasInvalidStock ? 0 : getSafeStockQuantity(stockQuantity);
 
   const hasValidPrice =
     typeof price === "number" &&
     Number.isSafeInteger(price) &&
     price > 0;
 
-  const outOfStock =
-    availability === "UNAVAILABLE" ||
-    (safeStock !== null && safeStock <= 0);
+  const outOfStock = safeStock !== null && safeStock <= 0 && !hasInvalidStock;
+  const unavailable = availability === "UNAVAILABLE";
 
   const canPurchase =
+    isPurchaseReady &&
     availability === "AVAILABLE" &&
     hasValidPrice &&
-    !outOfStock;
+    !outOfStock &&
+    !unavailable &&
+    !hasInvalidStock;
 
   const maxQuantity =
     safeStock === null
@@ -190,17 +200,33 @@ export default function AddToCartButton({
   }
 
   if (!canPurchase) {
-    const title = outOfStock
-      ? "Currently out of stock"
-      : availability !== "AVAILABLE"
-        ? "Online checkout unavailable"
-        : "Fixed price required";
+    const title = hasInvalidStock
+      ? "Stock information unavailable"
+      : outOfStock
+        ? "Currently out of stock"
+        : unavailable
+          ? "Currently unavailable"
+          : availability === "ASK_SELLER"
+            ? "Ask seller to confirm availability"
+            : !hasValidPrice
+              ? "Fixed price required"
+              : !hasShippingMeasurements
+                ? "Delivery details incomplete"
+                : "Online checkout unavailable";
 
-    const message = outOfStock
-      ? "This product cannot currently be added to your cart."
-      : availability !== "AVAILABLE"
-        ? "Availability needs to be confirmed before online checkout."
-        : "A valid fixed selling price is required before this product can be purchased online.";
+    const message = hasInvalidStock
+      ? "The available stock information could not be confirmed. Please contact the seller."
+      : outOfStock
+        ? "This product cannot currently be added to your cart."
+        : unavailable
+          ? "The seller has marked this product as unavailable."
+          : availability === "ASK_SELLER"
+            ? "Availability needs to be confirmed with the seller before online checkout."
+            : !hasValidPrice
+              ? "A valid fixed selling price is required before this product can be purchased online."
+              : !hasShippingMeasurements
+                ? "The seller needs to complete the package measurements before delivery checkout."
+                : "This product is not currently eligible for online checkout.";
 
     return (
       <div className="rounded-xl border border-[#EAE6DF] bg-[#FCFAF6] px-4 py-3">
@@ -211,6 +237,29 @@ export default function AddToCartButton({
         <p className="mt-1 text-[11px] leading-5 text-[#756B61]">
           {message}
         </p>
+      </div>
+    );
+  }
+
+  if (compact) {
+    return (
+      <div className="mt-3 space-y-2">
+        <button
+          type="button"
+          onClick={() => void addToCart()}
+          disabled={loading || selectedQuantity > maxQuantity || maxQuantity < 1}
+          className="inline-flex min-h-11 w-full items-center justify-center gap-2 rounded-xl bg-[#FF5A36] px-3 py-2.5 text-sm font-bold text-white transition hover:bg-[#E94E2C] active:scale-[0.99] disabled:cursor-not-allowed disabled:opacity-60"
+          aria-label="Add this product to cart"
+        >
+          {loading ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <ShoppingCart className="h-4 w-4" />}
+          {loading ? "Adding…" : success ? "Added to cart" : "Add to cart"}
+        </button>
+        {error && <p role="alert" className="text-xs leading-5 text-red-700">{error}</p>}
+        {success && (
+          <p role="status" className="text-xs font-semibold text-[#137A59]">
+            Added successfully. <Link href="/cart" className="underline underline-offset-2">View cart</Link>
+          </p>
+        )}
       </div>
     );
   }

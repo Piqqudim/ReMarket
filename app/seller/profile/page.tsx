@@ -830,34 +830,7 @@ export default function SellerProfilePage() {
                             <ChevronRight aria-hidden="true" className="h-4 w-4 shrink-0 text-gray-400 transition group-hover:translate-x-0.5 group-hover:text-[#9F2D18]" />
                           </Link>
 
-                          {/* BUSINESS CLAIMS */}
 
-                          <Link
-                            href="/seller/claims"
-                            className="group flex min-w-0 items-center gap-3 rounded-xl border border-[#EAE6DF] bg-white p-3.5 transition hover:border-[#FFB39F] hover:bg-[#FFF7ED] focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-[#FF5A36]/20"
-                          >
-                            <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-[#EEF4FF] text-[#3566B8] transition group-hover:bg-[#E0EAFF]">
-                              <ShieldCheck
-                                aria-hidden="true"
-                                className="h-5 w-5"
-                              />
-                            </span>
-
-                            <span className="min-w-0 flex-1">
-                              <span className="block text-sm font-bold text-[#17202A]">
-                                Business claims
-                              </span>
-
-                              <span className="mt-1 block text-[11px] leading-5 text-gray-500">
-                                View or submit ownership claims.
-                              </span>
-                            </span>
-
-                            <ChevronRight
-                              aria-hidden="true"
-                              className="h-4 w-4 shrink-0 text-gray-400 transition group-hover:translate-x-0.5 group-hover:text-[#9F2D18]"
-                            />
-                          </Link>
 
                           {/* REFERRALS */}
 

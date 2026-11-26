@@ -34,6 +34,7 @@ type RecentProduct = {
   rating: number | null;
   reviewCount: number;
   stockQuantity: number | null;
+  hasShippingMeasurements: boolean;
   availability: Availability;
   imageUrl: string | null;
   category: string | null;
@@ -98,12 +99,13 @@ function parseCategoryName(value: unknown): string | null {
 }
 
 function canAddProductToCart(
-  product: Pick<RecentProduct, "availability" | "price" | "stockQuantity">,
+  product: Pick<RecentProduct, "availability" | "price" | "stockQuantity" | "hasShippingMeasurements">,
 ): boolean {
   return product.availability === "AVAILABLE" &&
     product.price !== null &&
     product.price > 0 &&
-    product.stockQuantity !== 0;
+    product.hasShippingMeasurements &&
+    (product.stockQuantity === null || (Number.isSafeInteger(product.stockQuantity) && product.stockQuantity > 0));
 }
 
 function isProductOutOfStock(
@@ -145,6 +147,7 @@ function parseRecentProduct(value: unknown): RecentProduct | null {
     rating,
     reviewCount: rawReviewCount === null ? 0 : Math.floor(rawReviewCount),
     stockQuantity: parseOptionalNumber(value.stockQuantity),
+    hasShippingMeasurements: value.hasShippingMeasurements === true,
     availability: parseAvailability(value.availability),
     imageUrl: cleanString(value.imageUrl),
     category: parseCategoryName(value.category),
@@ -255,7 +258,6 @@ async function fetchHomepageProducts(signal: AbortSignal): Promise<FeedResult> {
       signal,
     });
 
-    if (response.status === 404) return { data: null, failed: false };
     if (!response.ok) {
       console.error(`Homepage products returned HTTP ${response.status}.`);
       return { data: null, failed: true };
@@ -292,7 +294,7 @@ function getStockLabel(product: RecentProduct): { label: string; className: stri
   }
 
   if (product.availability === "AVAILABLE") {
-    return { label: "In stock", className: "bg-[#EAF5ED] text-[#176B48]" };
+    return { label: product.stockQuantity === null ? "Available" : `${product.stockQuantity} available`, className: "bg-[#EAF5ED] text-[#176B48]" };
   }
 
   return { label: "Check availability", className: "bg-[#FFF4DE] text-[#805D16]" };
@@ -316,26 +318,10 @@ function ProductPrice({ product }: { product: RecentProduct }) {
 function ProductRating({ product }: { product: RecentProduct }) {
   if (product.rating === null || product.reviewCount < 1) return null;
 
-  const filledStars = Math.round(product.rating);
   return (
-    <div
-      className="rm-product-rating mt-1 min-w-0"
-      aria-label={`${product.rating.toFixed(1)} out of 5 stars from ${product.reviewCount} reviews`}
-    >
-      <span className="flex shrink-0 items-center gap-px">
-        {Array.from({ length: 5 }).map((_, index) => (
-          <Star
-            key={index}
-            className={index < filledStars
-              ? "h-3 w-3 fill-[#E7A52E] text-[#E7A52E]"
-              : "h-3 w-3 fill-none text-[#C9C1B9]"}
-            aria-hidden="true"
-          />
-        ))}
-      </span>
-      <span className="truncate">
-        {product.rating.toFixed(1)} ({product.reviewCount})
-      </span>
+    <div className="rm-product-rating mt-1 min-w-0" aria-label={`${product.rating.toFixed(1)} out of 5 from ${product.reviewCount} product reviews`}>
+      <Star className="h-3 w-3 shrink-0 fill-[#E7A52E] text-[#E7A52E]" aria-hidden="true" />
+      <span className="truncate">{product.rating.toFixed(1)} ({product.reviewCount})</span>
     </div>
   );
 }
@@ -370,8 +356,7 @@ function ProductCard({
             src={product.imageUrl}
             alt={product.name}
             loading="lazy"
-            className="h-full w-full object-contain p-2.5 sm:p-3"
-            style={{ width: "100%", height: "100%", display: "block", objectFit: "contain" }}
+            className="rm-product-image transition-transform duration-300 group-hover:scale-[1.025]"
           />
         ) : (
           <span className="flex h-full w-full items-center justify-center text-[#B9AEA4]">
@@ -450,6 +435,8 @@ function ProductCard({
             >
               Out of stock
             </button>
+          ) : product.availability === "AVAILABLE" && product.price !== null && product.price > 0 && !product.hasShippingMeasurements ? (
+            <button type="button" disabled title="Seller delivery details are not complete yet." className="rm-button rm-button-secondary w-full opacity-70">Delivery setup pending</button>
           ) : (
             <Link
               href={productHref}

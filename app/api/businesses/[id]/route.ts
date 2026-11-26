@@ -5,6 +5,7 @@ import {
 
 import { prisma } from "@/lib/prisma";
 import { checkPublicRateLimit } from "@/lib/rate-limit";
+import { getProductRatingSummaries } from "@/lib/product-ratings";
 
 const MAX_BUSINESS_ID_LENGTH = 100;
 
@@ -206,6 +207,11 @@ export async function GET(
             price: true,
             originalPrice: true,
             availability: true,
+            stockQuantity: true,
+            shippingWeightKg: true,
+            shippingLengthCm: true,
+            shippingWidthCm: true,
+            shippingHeightCm: true,
             imageUrl: true,
             keywords: true,
             category: {
@@ -245,68 +251,9 @@ export async function GET(
           },
         },
 
-        services: {
-          where: {
-            status: "ACTIVE",
-            deletedAt: null,
-          },
-          select: {
-            id: true,
-            name: true,
-            description: true,
-            price: true,
-            priceMin: true,
-            priceMax: true,
-            durationMinutes: true,
-            fulfillmentType: true,
-            availability: true,
-            keywords: true,
-            imageUrl: true,
-            createdAt: true,
-            updatedAt: true,
-            category: {
-              select: {
-                id: true,
-                name: true,
-                iconKey: true,
-                imageUrl: true,
-                parentId: true,
-                isActive: true,
-                sortOrder: true,
-                parent: {
-                  select: {
-                    id: true,
-                    name: true,
-                    isActive: true,
-                  },
-                },
-              },
-            },
-            images: {
-              select: {
-                id: true,
-                url: true,
-                sortOrder: true,
-              },
-              orderBy: {
-                sortOrder: "asc",
-              },
-            },
-          },
-          orderBy: {
-            updatedAt: "desc",
-          },
-        },
-
         _count: {
           select: {
             products: {
-              where: {
-                status: "ACTIVE",
-                deletedAt: null,
-              },
-            },
-            services: {
               where: {
                 status: "ACTIVE",
                 deletedAt: null,
@@ -346,6 +293,11 @@ export async function GET(
         _all: true,
       },
     });
+
+    // Aggregate product reviews in one grouped query instead of issuing one query per card.
+    const productRatingSummaries = await getProductRatingSummaries(
+      business.products.map((product) => product.id),
+    );
 
     const reviewCount = reviewSummary._count._all;
     const averageRating =
@@ -426,56 +378,50 @@ export async function GET(
       businessCategories,
 
       productCount: business._count.products,
-      serviceCount: business._count.services,
       averageRating,
       reviewCount,
 
-      products: business.products.map((product) => ({
-        id: product.id,
-        name: product.name,
-        description: product.description,
-        price: product.price,
-        originalPrice: getValidOriginalPrice(
-          product.price,
-          product.originalPrice,
-        ),
-        availability: product.availability,
-        imageUrl: product.imageUrl,
-        keywords: product.keywords,
-        category: product.category
-          ? formatCategory(product.category)
-          : null,
-        images: product.images.map((image) => ({
-          id: image.id,
-          url: image.url,
-          publicId: image.publicId,
-          sortOrder: image.sortOrder,
-        })),
-      })),
+      products: business.products.map((product) => {
+        const ratingSummary = productRatingSummaries.get(product.id);
+        const hasShippingMeasurements = [
+          product.shippingWeightKg,
+          product.shippingLengthCm,
+          product.shippingWidthCm,
+          product.shippingHeightCm,
+        ].every((value) => typeof value === "number" && Number.isFinite(value) && value > 0);
+        const isPurchaseReady = product.availability === "AVAILABLE" &&
+          typeof product.price === "number" && Number.isSafeInteger(product.price) && product.price > 0 &&
+          hasShippingMeasurements &&
+          (product.stockQuantity === null || (Number.isSafeInteger(product.stockQuantity) && product.stockQuantity > 0));
 
-      services: business.services.map((service) => ({
-        id: service.id,
-        name: service.name,
-        description: service.description,
-        price: service.price,
-        priceMin: service.priceMin,
-        priceMax: service.priceMax,
-        durationMinutes: service.durationMinutes,
-        fulfillmentType: service.fulfillmentType,
-        availability: service.availability,
-        keywords: service.keywords,
-        imageUrl: service.imageUrl,
-        createdAt: service.createdAt,
-        updatedAt: service.updatedAt,
-        category: service.category
-          ? formatCategory(service.category)
-          : null,
-        images: service.images.map((image) => ({
-          id: image.id,
-          url: image.url,
-          sortOrder: image.sortOrder,
-        })),
-      })),
+        return {
+          id: product.id,
+          name: product.name,
+          description: product.description,
+          price: product.price,
+          originalPrice: getValidOriginalPrice(
+            product.price,
+            product.originalPrice,
+          ),
+          availability: product.availability,
+          stockQuantity: product.stockQuantity,
+          rating: ratingSummary?.rating ?? null,
+          reviewCount: ratingSummary?.reviewCount ?? 0,
+          hasShippingMeasurements,
+          isPurchaseReady,
+          imageUrl: product.imageUrl,
+          keywords: product.keywords,
+          category: product.category
+            ? formatCategory(product.category)
+            : null,
+          images: product.images.map((image) => ({
+            id: image.id,
+            url: image.url,
+            publicId: image.publicId,
+            sortOrder: image.sortOrder,
+          })),
+        };
+      }),
 
       socialLinks: formattedSocialLinks,
     };

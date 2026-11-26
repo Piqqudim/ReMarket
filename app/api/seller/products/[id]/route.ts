@@ -43,6 +43,10 @@ type ProductUpdateData = {
   price?: number | null;
   originalPrice?: number | null;
   stockQuantity?: number | null;
+  shippingWeightKg?: number | null;
+  shippingLengthCm?: number | null;
+  shippingWidthCm?: number | null;
+  shippingHeightCm?: number | null;
   keywords?: string[];
 };
 
@@ -146,6 +150,20 @@ function parseOptionalInteger(value: unknown): { valid: boolean; value: number |
     return { valid: false, value: null };
   }
   return { valid: true, value: parsed };
+}
+
+function parseOptionalPositiveDecimal(value: unknown): { valid: boolean; value: number | null } {
+  if (value === undefined || value === null || value === "") return { valid: true, value: null };
+  if (typeof value !== "number" && typeof value !== "string") return { valid: false, value: null };
+  if (typeof value === "string" && !/^\d+(?:\.\d+)?$/.test(value.trim())) return { valid: false, value: null };
+  const parsed = typeof value === "number" ? value : Number(value.trim());
+  return Number.isFinite(parsed) && parsed > 0 && parsed <= 1000
+    ? { valid: true, value: parsed }
+    : { valid: false, value: null };
+}
+
+function hasCompleteShippingMeasurements(values: Array<number | null>): boolean {
+  return values.length === 4 && values.every((value) => value !== null && Number.isFinite(value) && value > 0);
 }
 
 function isSafeImageUrl(value: string): boolean {
@@ -408,6 +426,7 @@ export async function PATCH(
     const supportedFields = new Set([
       "name", "description", "availability", "keywords", "categoryId",
       "price", "originalPrice", "stockQuantity", "images", "priceMin", "priceMax",
+      "shippingWeightKg", "shippingLengthCm", "shippingWidthCm", "shippingHeightCm",
     ]);
     const unsupportedFields = Object.keys(body).filter((key) => !supportedFields.has(key));
     if (unsupportedFields.length > 0) {
@@ -492,6 +511,32 @@ export async function PATCH(
         return jsonError("Stock quantity must be null or a whole number between 0 and 2,147,483,647.", 400);
       }
       data.stockQuantity = stockResult.value;
+    }
+
+    const shippingKeys = ["shippingWeightKg", "shippingLengthCm", "shippingWidthCm", "shippingHeightCm"] as const;
+    for (const key of shippingKeys) {
+      if (!hasOwn(body, key)) continue;
+      const result = parseOptionalPositiveDecimal(body[key]);
+      if (!result.valid) return jsonError("Package weight and dimensions must be positive numbers no greater than 1,000.", 400);
+      data[key] = result.value;
+    }
+    const shippingChanged = shippingKeys.some((key) => hasOwn(body, key));
+    const finalShippingValues = [
+      data.shippingWeightKg !== undefined ? data.shippingWeightKg : existing.shippingWeightKg,
+      data.shippingLengthCm !== undefined ? data.shippingLengthCm : existing.shippingLengthCm,
+      data.shippingWidthCm !== undefined ? data.shippingWidthCm : existing.shippingWidthCm,
+      data.shippingHeightCm !== undefined ? data.shippingHeightCm : existing.shippingHeightCm,
+    ];
+    const hasAnyFinalShipping = finalShippingValues.some((value) => value !== null);
+    const hasCompleteFinalShipping = hasCompleteShippingMeasurements(finalShippingValues);
+    if (hasAnyFinalShipping && !hasCompleteFinalShipping) {
+      return jsonError("Enter all four package measurements, or clear all four.", 400);
+    }
+    const finalAvailability = data.availability ?? existing.availability;
+    const finalProductPrice = data.price !== undefined ? data.price : existing.price;
+    const checkoutFieldsChanged = shippingChanged || hasOwn(body, "availability") || hasOwn(body, "price");
+    if (checkoutFieldsChanged && finalAvailability === "AVAILABLE" && finalProductPrice !== null && finalProductPrice > 0 && !hasCompleteFinalShipping) {
+      return jsonError("Add the packaged item's weight and all dimensions before marking a fixed-price product as Available.", 400);
     }
 
     const imagesProvided = hasOwn(body, "images");

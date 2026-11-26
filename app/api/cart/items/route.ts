@@ -191,6 +191,10 @@ export async function POST(request: Request) {
               id: true,
               price: true,
               stockQuantity: true,
+              shippingWeightKg: true,
+              shippingLengthCm: true,
+              shippingWidthCm: true,
+              shippingHeightCm: true,
             },
           });
 
@@ -209,6 +213,18 @@ export async function POST(request: Request) {
           ) {
             throw new CartConflictError(
               "Only products with a confirmed fixed price can be added to the cart.",
+            );
+          }
+
+          const hasShippingMeasurements = [
+            product.shippingWeightKg,
+            product.shippingLengthCm,
+            product.shippingWidthCm,
+            product.shippingHeightCm,
+          ].every((value) => typeof value === "number" && Number.isFinite(value) && value > 0);
+          if (!hasShippingMeasurements) {
+            throw new CartConflictError(
+              "This product is not ready for delivery checkout yet. The seller must complete its package measurements.",
             );
           }
 

@@ -1,7 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { Readable } from "node:stream";
 import { v2 as cloudinary } from "cloudinary";
+import { getServerSession } from "next-auth";
 
+import { authOptions } from "@/lib/auth";
+import { prisma } from "@/lib/prisma";
 import { checkPublicRateLimit } from "@/lib/rate-limit";
 
 export const runtime = "nodejs";
@@ -22,27 +25,65 @@ const ALLOWED_TYPES = new Set([
   "image/webp",
 ]);
 
-const {
-  CLOUDINARY_CLOUD_NAME,
-  CLOUDINARY_API_KEY,
-  CLOUDINARY_API_SECRET,
-} = process.env;
+function configureCloudinary(): boolean {
+  const cloudName = process.env.CLOUDINARY_CLOUD_NAME;
+  const apiKey = process.env.CLOUDINARY_API_KEY;
+  const apiSecret = process.env.CLOUDINARY_API_SECRET;
 
-if (
-  !CLOUDINARY_CLOUD_NAME ||
-  !CLOUDINARY_API_KEY ||
-  !CLOUDINARY_API_SECRET
-) {
-  throw new Error(
-    "Missing Cloudinary environment variables."
-  );
+  if (!cloudName || !apiKey || !apiSecret) return false;
+
+  cloudinary.config({
+    cloud_name: cloudName,
+    api_key: apiKey,
+    api_secret: apiSecret,
+  });
+  return true;
 }
 
-cloudinary.config({
-  cloud_name: CLOUDINARY_CLOUD_NAME,
-  api_key: CLOUDINARY_API_KEY,
-  api_secret: CLOUDINARY_API_SECRET,
-});
+async function requireAuthenticatedUploader(): Promise<{ authorized: true } | { authorized: false; response: NextResponse }> {
+  const session = await getServerSession(authOptions);
+  const userId = session?.user?.id;
+
+  if (typeof userId !== "string" || !userId.trim()) {
+    return {
+      authorized: false,
+      response: NextResponse.json(
+        { error: "Sign in before uploading images." },
+        { status: 401, headers: { "Cache-Control": "no-store" } },
+      ),
+    };
+  }
+
+  const user = await prisma.user.findUnique({
+    where: { id: userId },
+    select: { id: true, role: true, accountStatus: true },
+  });
+
+  if (!user) {
+    return {
+      authorized: false,
+      response: NextResponse.json(
+        { error: "Your account could not be verified. Sign in again." },
+        { status: 401, headers: { "Cache-Control": "no-store" } },
+      ),
+    };
+  }
+
+  if (
+    (user.role !== "ADMIN" && user.role !== "BUYER" && user.role !== "SELLER") ||
+    (user.role !== "ADMIN" && user.accountStatus !== "ACTIVE")
+  ) {
+    return {
+      authorized: false,
+      response: NextResponse.json(
+        { error: "Your account is not allowed to upload images." },
+        { status: 403, headers: { "Cache-Control": "no-store" } },
+      ),
+    };
+  }
+
+  return { authorized: true };
+}
 
 /*
  * -----------------------------------------
@@ -138,6 +179,9 @@ function getResponseHeaders(
 export async function POST(
   request: NextRequest
 ) {
+  const auth = await requireAuthenticatedUploader();
+  if (!auth.authorized) return auth.response;
+
   const rateLimit =
     checkPublicRateLimit(
       request,
@@ -160,6 +204,13 @@ export async function POST(
   }
 
   try {
+    if (!configureCloudinary()) {
+      return NextResponse.json(
+        { error: "Image storage is not configured. Contact the system administrator." },
+        { status: 503, headers: getResponseHeaders(rateLimit.headers) },
+      );
+    }
+
     /*
      * Reject obviously oversized requests before
      * Next parses multipart/form-data.

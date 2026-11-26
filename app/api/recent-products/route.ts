@@ -3,6 +3,7 @@ import type { Prisma } from "@prisma/client";
 
 import { prisma } from "@/lib/prisma";
 import { checkPublicRateLimit } from "@/lib/rate-limit";
+import { getProductRatingSummaries } from "@/lib/product-ratings";
 
 const DEFAULT_PAGE = 1;
 const DEFAULT_PAGE_SIZE = 8;
@@ -16,6 +17,11 @@ const recentProductSelect = {
   price: true,
   originalPrice: true,
   availability: true,
+  stockQuantity: true,
+  shippingWeightKg: true,
+  shippingLengthCm: true,
+  shippingWidthCm: true,
+  shippingHeightCm: true,
   imageUrl: true,
   createdAt: true,
   category: {
@@ -246,6 +252,7 @@ function serializeProduct(product: RecentProductRecord) {
 
   return {
     ...fields,
+    hasShippingMeasurements: [product.shippingWeightKg, product.shippingLengthCm, product.shippingWidthCm, product.shippingHeightCm].every((value) => typeof value === "number" && Number.isFinite(value) && value > 0),
     price: currentPrice,
     originalPrice,
     imageUrl: product.imageUrl ?? images[0]?.url ?? null,
@@ -325,9 +332,18 @@ export async function GET(request: NextRequest) {
       }),
     ]);
 
+    const ratingSummaries = await getProductRatingSummaries(records.map((product) => product.id));
+
     return NextResponse.json(
       {
-        products: records.map(serializeProduct),
+        products: records.map((product) => {
+          const summary = ratingSummaries.get(product.id);
+          return {
+            ...serializeProduct(product),
+            rating: summary?.rating ?? null,
+            reviewCount: summary?.reviewCount ?? 0,
+          };
+        }),
         ...paginationMetadata(total, page, pageSize),
       },
       { headers },

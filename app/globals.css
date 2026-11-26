@@ -16,6 +16,7 @@
   --rm-coral-hover: #ed4c2b;
   --rm-coral-dark: #9f2d18;
   --rm-coral-soft: #fff0e9;
+  --rm-coral-deep-hover: #842513;
 
   /* Storefront surfaces */
   --rm-page: #fcfaf6;
@@ -24,11 +25,18 @@
   --rm-border: #eae6df;
   --rm-border-strong: #dcd5cb;
 
+  /* Typography */
+  --rm-font-sans: var(--font-public-sans), "Public Sans", ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif;
+  --rm-font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+  --rm-type-body: 1rem;
+  --rm-type-small: 0.875rem;
+  --rm-type-label: 0.8125rem;
+
   /* Text */
   --rm-ink: #17202a;
   --rm-text: #344054;
   --rm-muted: #667085;
-  --rm-subtle: #98a2b3;
+  --rm-subtle: #667085;
 
   /* Status */
   --rm-green: #15803d;
@@ -42,6 +50,8 @@
   --rm-content-width: 1440px;
   --rm-page-gutter: 24px;
   --rm-header-height: 72px;
+  --rm-header-scroll-offset: 126px;
+  --rm-mobile-bottom-nav-height: 58px;
   --rm-radius-sm: 8px;
   --rm-radius-md: 12px;
   --rm-radius-lg: 16px;
@@ -52,6 +62,7 @@
   --rm-shadow-card: 0 2px 10px rgba(23, 32, 42, 0.045);
   --rm-shadow-card-hover: 0 8px 22px rgba(23, 32, 42, 0.085);
   --rm-shadow-popover: 0 12px 32px rgba(23, 32, 42, 0.14);
+  --rm-shadow-focus: 0 0 0 2px rgba(159, 45, 24, 0.14);
 
   /* Backwards-compatible aliases for existing components. */
   --cream: var(--rm-cream);
@@ -78,18 +89,27 @@
   --color-cream: var(--rm-cream);
   --color-cream-deep: var(--rm-cream-deep);
   --color-coral: var(--rm-coral);
+  --color-coral-hover: var(--rm-coral-hover);
   --color-coral-light: var(--rm-coral-soft);
   --color-coral-dark: var(--rm-coral-dark);
   --color-ink: var(--rm-ink);
   --color-muted: var(--rm-muted);
+  --color-subtle: var(--rm-subtle);
+  --color-text: var(--rm-text);
+  --color-page: var(--rm-page);
+  --color-surface: var(--rm-surface);
+  --color-surface-muted: var(--rm-surface-muted);
   --color-card: var(--rm-surface);
   --color-border: var(--rm-border);
+  --color-border-strong: var(--rm-border-strong);
   --color-green: var(--rm-green);
   --color-green-bg: var(--rm-green-bg);
   --color-yellow: var(--rm-yellow);
   --color-yellow-bg: var(--rm-yellow-bg);
   --color-red: var(--rm-red);
   --color-red-bg: var(--rm-red-bg);
+  --font-sans: var(--font-public-sans);
+  --font-mono: var(--rm-font-mono);
 
   --shadow-soft: var(--rm-shadow-card-hover);
   --shadow-card: var(--rm-shadow-card);
@@ -97,88 +117,106 @@
 
 /* =========================================================
    BASE / RESET
+   Keep browser defaults in Tailwind's base layer so component
+   styles and utility classes can override them predictably.
 ========================================================= */
 
-*,
-*::before,
-*::after {
-  box-sizing: border-box;
-}
+@layer base {
+  *,
+  *::before,
+  *::after {
+    box-sizing: border-box;
+  }
 
-html {
-  min-height: 100%;
-  scroll-behavior: smooth;
-  scroll-padding-top: calc(var(--rm-header-height) + 16px);
-  -webkit-text-size-adjust: 100%;
-}
+  html {
+    min-height: 100%;
+    scroll-behavior: smooth;
+    scroll-padding-top: calc(var(--rm-header-scroll-offset) + 12px);
+    -webkit-text-size-adjust: 100%;
+  }
 
-body {
-  min-height: 100vh;
-  min-height: 100dvh;
-  margin: 0;
-  background: var(--rm-page);
-  color: var(--rm-ink);
-  font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont,
-    "Segoe UI", Roboto, Oxygen, Ubuntu, Cantarell, "Helvetica Neue", sans-serif;
-  font-size: 15px;
-  line-height: 1.5;
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
-}
+  body {
+    min-height: 100vh;
+    min-height: 100dvh;
+    margin: 0;
+    background: var(--rm-page);
+    color: var(--rm-ink);
+    font-family: var(--rm-font-sans);
+    font-size: var(--rm-type-body);
+    line-height: 1.55;
+    font-kerning: normal;
+    font-synthesis: none;
+    text-rendering: optimizeLegibility;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
 
-button,
-input,
-textarea,
-select {
-  font: inherit;
-}
+  button,
+  input,
+  textarea,
+  select {
+    font: inherit;
+    letter-spacing: inherit;
+  }
 
-button,
-[role="button"] {
-  cursor: pointer;
-}
+  h1, h2, h3, h4, h5, h6 {
+    color: inherit;
+    font-family: inherit;
+    text-wrap: balance;
+  }
 
-button:disabled,
-[aria-disabled="true"] {
-  cursor: not-allowed;
-}
+  h1 { font-size: clamp(1.75rem, 3vw, 2.5rem); font-weight: 750; line-height: 1.12; letter-spacing: -0.04em; }
+  h2 { font-size: clamp(1.375rem, 2.2vw, 1.875rem); font-weight: 700; line-height: 1.2; letter-spacing: -0.03em; }
+  h3 { font-size: 1.125rem; font-weight: 650; line-height: 1.3; letter-spacing: -0.02em; }
+  h4 { font-size: 1rem; font-weight: 650; line-height: 1.35; }
 
-input::placeholder,
-textarea::placeholder {
-  color: var(--rm-subtle);
-  opacity: 1;
-}
+  button,
+  [role="button"] {
+    cursor: pointer;
+  }
 
-img,
-video,
-svg {
-  max-width: 100%;
-}
+  button:disabled,
+  [aria-disabled="true"] {
+    cursor: not-allowed;
+  }
 
-img {
-  height: auto;
-}
+  input::placeholder,
+  textarea::placeholder {
+    color: var(--rm-subtle);
+    opacity: 1;
+  }
 
-a {
-  color: inherit;
-  text-decoration: none;
-}
+  img,
+  video,
+  svg {
+    max-width: 100%;
+  }
 
-:focus-visible {
-  outline: 2px solid var(--rm-coral);
-  outline-offset: 3px;
-}
+  img {
+    height: auto;
+  }
 
-::selection {
-  background: var(--rm-coral-soft);
-  color: var(--rm-coral-dark);
-}
+  a {
+    color: inherit;
+    text-decoration: none;
+  }
 
-/* Keep native controls legible on touch devices. */
-input,
-select,
-textarea {
-  min-width: 0;
+  :focus-visible {
+    outline: 2px solid var(--rm-coral-dark);
+    outline-offset: 2px;
+  }
+
+  ::selection {
+    background: var(--rm-coral-soft);
+    color: var(--rm-coral-dark);
+  }
+
+  /* Keep native controls from forcing horizontal overflow. */
+  input,
+  select,
+  textarea {
+    min-width: 0;
+  }
 }
 
 /* =========================================================
@@ -311,13 +349,15 @@ textarea {
     height: 44px;
     border: 1px solid var(--rm-border-strong);
     border-radius: 10px;
-    background: #fff;
-    transition: border-color 140ms ease, box-shadow 140ms ease;
+    background: var(--rm-surface);
+    transition: border-color 140ms ease;
   }
 
+  /* A clear border change is enough; avoid a large orange halo around the
+     entire shared search field, especially on narrow mobile screens. */
   .rm-search:focus-within {
     border-color: var(--rm-coral);
-    box-shadow: 0 0 0 3px rgba(255, 90, 54, 0.1);
+    box-shadow: none;
   }
 
   .rm-search input {
@@ -337,19 +377,27 @@ textarea {
   }
 
   .rm-search button {
-    width: 42px;
-    height: 42px;
+    width: 32px;
+    height: 32px;
+    min-width: 32px;
     display: grid;
     flex: none;
     place-items: center;
+    margin-inline-end: 4px;
     border: 0;
-    border-radius: 0 9px 9px 0;
+    border-radius: 999px;
     background: var(--rm-coral);
     color: #fff;
+    transition: background-color 140ms ease;
   }
 
-  .rm-search button:hover {
+  .rm-search button:hover:not(:disabled) {
     background: var(--rm-coral-hover);
+  }
+
+  .rm-search button:disabled {
+    cursor: not-allowed;
+    opacity: 0.6;
   }
 
   .rm-header-actions {
@@ -383,13 +431,13 @@ textarea {
   }
 
   .rm-header-action-primary {
-    background: var(--rm-coral);
+    background: var(--rm-coral-dark);
     color: #fff;
   }
 
   .rm-header-action-primary:hover {
-    border-color: var(--rm-coral-hover);
-    background: var(--rm-coral-hover);
+    border-color: var(--rm-coral-deep-hover);
+    background: var(--rm-coral-deep-hover);
     color: #fff;
   }
 
@@ -454,20 +502,76 @@ textarea {
   .rm-product-media {
     position: relative;
     display: block;
+    width: 100%;
+    min-width: 0;
     overflow: hidden;
     aspect-ratio: 1 / 1;
-    background: #f3f0eb;
+    background: var(--rm-surface-muted);
+    isolation: isolate;
   }
 
-  .rm-product-media img {
+  /* The link and image use the full media box. Do not add internal image padding: it
+     makes the product look undersized before object-fit is even applied. */
+  .rm-product-media > a:not(.rm-product-media) {
+    position: absolute;
+    inset: 0;
+    display: block;
+    min-width: 0;
+    min-height: 0;
+  }
+
+  /* Listing-card imagery fills its square media slot. Detail galleries opt into
+     contain so the full item remains visible. */
+  .rm-product-media img,
+  .rm-product-image {
+    display: block;
     width: 100%;
     height: 100%;
-    display: block;
+    min-width: 0;
+    min-height: 0;
+    max-width: 100%;
+    max-height: 100%;
+    object-fit: cover;
+    object-position: center;
+    padding: 0;
+    margin: 0;
+  }
+
+  /* Use cover only for lifestyle/editorial imagery that is meant to crop. */
+  .rm-product-media--cover img,
+  .rm-product-media img.rm-image-cover {
     object-fit: cover;
     transition: transform 220ms ease;
   }
 
-  .rm-product-card:hover .rm-product-media img {
+  .rm-product-media--contain img,
+  .rm-product-media img.rm-image-contain {
+    object-fit: contain;
+  }
+
+  /* Product-card text scale: legible without making the cards bulky. */
+  .rm-product-category { font-size: 13px; line-height: 1.4; }
+  .rm-product-title { font-size: 15px; line-height: 1.4; min-height: 2.8em; }
+  .rm-product-price { font-size: 19px; line-height: 1.25; }
+
+  .rm-image-cover,
+  .rm-image-contain {
+    width: 100%;
+    height: 100%;
+    display: block;
+    object-position: center;
+  }
+
+  .rm-image-cover {
+    object-fit: cover;
+  }
+
+  .rm-image-contain {
+    object-fit: contain;
+  }
+
+  .rm-product-card:hover .rm-product-media--cover img,
+  .rm-product-card:hover .rm-product-media img.rm-image-cover {
     transform: scale(1.025);
   }
 
@@ -489,13 +593,13 @@ textarea {
     border-radius: 5px;
     background: #fff;
     color: var(--rm-ink);
-    font-size: 9px;
-    font-weight: 750;
-    line-height: 1.1;
+    font-size: 11px;
+    font-weight: 700;
+    line-height: 1.15;
   }
 
   .rm-product-badge-sale {
-    background: var(--rm-coral);
+    background: var(--rm-coral-dark);
     color: #fff;
   }
 
@@ -507,8 +611,9 @@ textarea {
     display: block;
     overflow: hidden;
     color: var(--rm-muted);
-    font-size: 10px;
+    font-size: 12px;
     font-weight: 600;
+    line-height: 1.35;
     text-overflow: ellipsis;
     white-space: nowrap;
   }
@@ -519,7 +624,7 @@ textarea {
     min-height: 2.8em;
     margin: 4px 0 7px;
     color: var(--rm-ink);
-    font-size: 12px;
+    font-size: 13px;
     font-weight: 600;
     line-height: 1.4;
     -webkit-box-orient: vertical;
@@ -535,15 +640,17 @@ textarea {
 
   .rm-product-price {
     color: var(--rm-ink);
-    font-size: 15px;
-    font-weight: 800;
+    font-size: 16px;
+    font-weight: 700;
     letter-spacing: -0.025em;
     line-height: 1.2;
+    font-variant-numeric: tabular-nums;
   }
 
   .rm-product-old-price {
     color: var(--rm-subtle);
-    font-size: 10px;
+    font-size: 12px;
+    font-variant-numeric: tabular-nums;
     text-decoration: line-through;
   }
 
@@ -554,7 +661,7 @@ textarea {
     gap: 8px;
     margin-top: 8px;
     color: var(--rm-muted);
-    font-size: 10px;
+    font-size: 12px;
   }
 
   .rm-product-seller {
@@ -573,7 +680,7 @@ textarea {
     gap: 3px;
     flex: none;
     color: #95610d;
-    font-size: 10px;
+    font-size: 12px;
     font-weight: 700;
   }
 
@@ -653,12 +760,12 @@ textarea {
   }
 
   .rm-button-primary {
-    background: var(--rm-coral);
+    background: var(--rm-coral-dark);
     color: #fff;
   }
 
   .rm-button-primary:hover {
-    background: var(--rm-coral-hover);
+    background: var(--rm-coral-deep-hover);
   }
 
   .rm-button-secondary {
@@ -730,7 +837,7 @@ textarea {
   .rm-select:focus,
   .rm-textarea:focus {
     border-color: var(--rm-coral);
-    box-shadow: 0 0 0 3px rgba(255, 90, 54, 0.1);
+    box-shadow: var(--rm-shadow-focus);
   }
 
   /* =======================================================
@@ -820,11 +927,11 @@ textarea {
     }
 
     .rm-product-title {
-      font-size: 13px;
+      font-size: 14px;
     }
 
     .rm-product-price {
-      font-size: 16px;
+      font-size: 17px;
     }
 
     .rm-category-grid {
@@ -856,9 +963,15 @@ textarea {
     }
   }
 
+  @media (max-width: 1023px) {
+    :root {
+      --rm-header-scroll-offset: 168px;
+    }
+  }
+
   @media (max-width: 767px) {
     :root {
-      --rm-page-gutter: 14px;
+      --rm-page-gutter: 16px;
       --rm-header-height: 58px;
     }
 
@@ -915,13 +1028,28 @@ textarea {
       min-height: 58px;
     }
 
+    .rm-search,
     .rm-mobile-search {
       height: 38px;
+      border-radius: 10px;
     }
 
+    .rm-search:focus-within,
+    .rm-mobile-search:focus-within {
+      box-shadow: none;
+    }
+
+    .rm-search input,
     .rm-mobile-search input {
       padding-inline: 10px;
       font-size: 12px;
+    }
+
+    .rm-search button {
+      width: 32px;
+      height: 32px;
+      min-width: 32px;
+      margin-inline-end: 3px;
     }
 
     .rm-header-actions {
@@ -956,16 +1084,16 @@ textarea {
     .rm-product-title {
       min-height: 2.7em;
       margin: 3px 0 6px;
-      font-size: 11px;
+      font-size: 13px;
     }
 
     .rm-product-price {
-      font-size: 14px;
+      font-size: 15px;
     }
 
     .rm-product-meta {
       margin-top: 6px;
-      font-size: 9px;
+      font-size: 11px;
     }
 
     .rm-product-badges {
@@ -974,9 +1102,9 @@ textarea {
     }
 
     .rm-product-badge {
-      min-height: 19px;
-      padding: 3px 6px;
-      font-size: 8px;
+      min-height: 21px;
+      padding: 3px 7px;
+      font-size: 11px;
     }
 
     .rm-category-grid {
@@ -1012,7 +1140,7 @@ textarea {
       position: fixed;
       inset: auto 0 0;
       z-index: 45;
-      min-height: 58px;
+      min-height: var(--rm-mobile-bottom-nav-height);
       display: grid;
       grid-template-columns: repeat(4, minmax(0, 1fr));
       padding: 6px 8px max(6px, env(safe-area-inset-bottom));
@@ -1034,7 +1162,7 @@ textarea {
       border-radius: 8px;
       background: transparent;
       color: var(--rm-muted);
-      font-size: 9px;
+      font-size: 10px;
       font-weight: 650;
     }
 
@@ -1059,4 +1187,86 @@ textarea {
       animation-iteration-count: 1 !important;
     }
   }
+}
+
+
+/* ---------------------------------------------------------
+   Readable utility baseline
+   Tailwind's default text-xs is 12px. Keep the global type
+   scale comfortably readable while preserving stronger,
+   explicit Admin and seller-storefront overrides below.
+--------------------------------------------------------- */
+:where(body) .text-xs { font-size: 0.8125rem !important; line-height: 1.45; }
+:where(body) [class*="text-[8px]"],
+:where(body) [class*="text-[9px]"] { font-size: 0.75rem !important; line-height: 1.45; }
+:where(body) [class*="text-[10px]"],
+:where(body) [class*="text-[11px]"],
+:where(body) [class*="text-[12px]"] { font-size: 0.8125rem !important; line-height: 1.5; }
+
+/* =========================================================
+   ADMIN WORKSPACE + ACCESSIBLE TYPOGRAPHY
+   Every admin route uses one shared navigation shell. Legacy
+   page-level sidebars/mobile bars are hidden only inside the
+   shared content region; page-specific content and actions remain.
+========================================================= */
+.rm-admin-scope {
+  color: var(--rm-ink);
+  font-family: var(--rm-font-sans);
+  font-size: 1rem;
+  line-height: 1.55;
+  font-kerning: normal;
+  font-synthesis: none;
+}
+.rm-admin-scope h1 { font-size: clamp(1.75rem, 2.5vw, 2rem); font-weight: 750; line-height: 1.16; letter-spacing: -0.035em; }
+.rm-admin-scope h2 { font-size: clamp(1.375rem, 1.9vw, 1.55rem); font-weight: 700; line-height: 1.25; letter-spacing: -0.025em; }
+.rm-admin-scope h3 { font-size: 1.125rem; font-weight: 700; line-height: 1.32; letter-spacing: -0.015em; }
+.rm-admin-scope h4,
+.rm-admin-scope h5,
+.rm-admin-scope h6 { font-size: 1rem; font-weight: 650; line-height: 1.4; }
+.rm-admin-scope :is(input, select, textarea) { font-family: inherit; font-size: 0.9375rem !important; line-height: 1.5; }
+.rm-admin-scope .text-xs { font-size: 0.875rem !important; line-height: 1.5; }
+.rm-admin-scope form label { font-size: 0.875rem !important; font-weight: 650; line-height: 1.45; }
+.rm-admin-scope table { font-variant-numeric: tabular-nums; }
+.rm-admin-scope table th { font-size: 0.875rem !important; font-weight: 700; line-height: 1.4; letter-spacing: 0.012em; }
+.rm-admin-scope table td { font-size: 0.875rem !important; line-height: 1.5; }
+.rm-admin-scope aside nav a { font-size: 0.875rem !important; font-weight: 650; line-height: 1.4; }
+.rm-admin-scope [class*="text-[8px]"],
+.rm-admin-scope [class*="text-[9px]"] { font-size: 0.75rem !important; line-height: 1.45; }
+.rm-admin-scope [class*="text-[10px]"],
+.rm-admin-scope [class*="text-[11px]"] { font-size: 0.8125rem !important; line-height: 1.5; }
+.rm-admin-scope [class*="text-[12px]"] { font-size: 0.875rem !important; line-height: 1.5; }
+.rm-admin-scope .rm-admin-content { min-width: 0; flex: 1 1 auto; }
+.rm-admin-content aside:has(nav) { display: none !important; }
+/* The shared shell owns primary navigation. Preserve in-page section tabs (labelled "Admin sections"). */
+.rm-admin-content nav[aria-label="Admin navigation"],
+.rm-admin-content nav[aria-label="Mobile admin navigation"],
+.rm-admin-content nav.fixed.inset-x-0.bottom-0 { display: none !important; }
+.rm-admin-workspace-sidebar { box-shadow: 1px 0 0 rgba(23, 32, 42, 0.02); }
+
+/* Public seller storefront: comfortable reading sizes on mobile and desktop. */
+.rm-seller-storefront {
+  font-family: var(--rm-font-sans);
+  font-size: 1rem;
+  line-height: 1.6;
+  font-kerning: normal;
+}
+.rm-seller-storefront .text-xs { font-size: 0.875rem !important; line-height: 1.5; }
+.rm-seller-storefront .text-sm { font-size: 1rem !important; line-height: 1.5; }
+.rm-seller-storefront [class*="text-[8px]"],
+.rm-seller-storefront [class*="text-[9px]"] { font-size: 0.75rem !important; line-height: 1.45; }
+.rm-seller-storefront [class*="text-[10px]"],
+.rm-seller-storefront [class*="text-[11px]"] { font-size: 0.8125rem !important; line-height: 1.5; }
+.rm-seller-storefront [class*="text-[12px]"] { font-size: 0.875rem !important; line-height: 1.5; }
+.rm-seller-storefront .rm-product-details { padding: 14px 14px 16px; }
+.rm-seller-storefront .rm-product-title { font-size: 0.9375rem !important; line-height: 1.45; font-weight: 650; }
+.rm-seller-storefront .rm-product-price { font-size: 1.1875rem !important; font-weight: 800; line-height: 1.25; }
+.rm-seller-storefront .rm-product-badge { font-size: 0.8125rem !important; }
+.rm-seller-storefront .rm-product-card { border-radius: 14px; }
+.rm-seller-storefront :is(button, a.rm-button) { min-height: 42px; }
+@media (min-width: 640px) {
+  .rm-seller-storefront .rm-product-title { font-size: 1rem !important; }
+  .rm-seller-storefront .rm-product-price { font-size: 1.25rem !important; }
+}
+@media (max-width: 639px) {
+  .rm-seller-storefront .rm-product-details { padding: 12px; }
 }

@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { SellerOrderStatus } from "@prisma/client";
+import { Prisma, SellerOrderStatus } from "@prisma/client";
 
 import { prisma } from "@/lib/prisma";
 import { requireSellerAccount } from "@/lib/seller-auth";
@@ -144,6 +144,7 @@ export async function GET(request: NextRequest) {
     );
 
     const skip = (page - 1) * limit;
+    const searchTerm = (searchParams.get("search") ?? "").trim().slice(0, 120);
 
     /*
      * --------------------------------------------------
@@ -176,15 +177,39 @@ export async function GET(request: NextRequest) {
      * --------------------------------------------------
      */
 
-    const where = {
+    const baseWhere: Prisma.SellerOrderWhereInput = {
       businessId: business.id,
       sellerId: access.user.id,
-
-      ...(statusParam
-        ? {
-            status: statusParam as SellerOrderStatus,
-          }
-        : {}),
+      ...(searchTerm ? {
+        OR: [
+          { sellerOrderCode: { contains: searchTerm, mode: "insensitive" } },
+          { order: { is: {
+            orderCode: { contains: searchTerm, mode: "insensitive" },
+          } } },
+          { order: { is: {
+            deliveryRecipient: { contains: searchTerm, mode: "insensitive" },
+          } } },
+          { order: { is: {
+            buyer: { is: { name: { contains: searchTerm, mode: "insensitive" } } },
+          } } },
+          { order: { is: {
+            buyer: { is: { email: { contains: searchTerm, mode: "insensitive" } } },
+          } } },
+          { order: { is: {
+            deliveryPhone: { contains: searchTerm, mode: "insensitive" },
+          } } },
+          { order: { is: {
+            deliveryAddress: { contains: searchTerm, mode: "insensitive" },
+          } } },
+          { order: { is: {
+            deliveryArea: { contains: searchTerm, mode: "insensitive" },
+          } } },
+          { items: { some: { productName: { contains: searchTerm, mode: "insensitive" } } } },
+        ],
+      } : {}),
+    };
+    const where: Prisma.SellerOrderWhereInput = {
+      AND: [baseWhere, ...(statusParam ? [{ status: statusParam as SellerOrderStatus }] : [])],
     };
 
     /*
@@ -193,7 +218,7 @@ export async function GET(request: NextRequest) {
      * --------------------------------------------------
      */
 
-    const [orders, total] = await Promise.all([
+    const [orders, total, statusGroups] = await Promise.all([
       prisma.sellerOrder.findMany({
         where,
 
@@ -245,6 +270,9 @@ export async function GET(request: NextRequest) {
               status: true,
 
               createdAt: true,
+              buyer: {
+                select: { id: true, name: true, email: true },
+              },
 
               deliveryRecipient: true,
               deliveryPhone: true,
@@ -279,11 +307,34 @@ export async function GET(request: NextRequest) {
               createdAt: true,
             },
           },
+          shipments: {
+            orderBy: { createdAt: "desc" },
+            take: 5,
+            select: {
+              id: true,
+              status: true,
+              courierName: true,
+              trackingCode: true,
+              trackingUrl: true,
+              waybillUrl: true,
+              estimatedDelivery: true,
+              shippingFee: true,
+              currency: true,
+              bookedAt: true,
+              pickedUpAt: true,
+              inTransitAt: true,
+              deliveredAt: true,
+              failureReason: true,
+            },
+          },
         },
       }),
 
-      prisma.sellerOrder.count({
-        where,
+      prisma.sellerOrder.count({ where }),
+      prisma.sellerOrder.groupBy({
+        by: ["status"],
+        where: baseWhere,
+        _count: { _all: true },
       }),
     ]);
 
@@ -304,6 +355,8 @@ export async function GET(request: NextRequest) {
     return NextResponse.json(
       {
         orders,
+        statusCounts: Object.fromEntries(statusGroups.map((item) => [item.status, item._count._all])),
+        search: searchTerm,
 
         business: {
           id: business.id,

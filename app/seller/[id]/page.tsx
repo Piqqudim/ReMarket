@@ -5,18 +5,19 @@ import Link from "next/link";
 import { useParams } from "next/navigation";
 import { getSession } from "next-auth/react";
 import {
-  ArrowRight, BadgeCheck, Clock3, ExternalLink, Heart,
+  ArrowRight, BadgeCheck, ExternalLink, Heart,
   LoaderCircle, MapPin, MessageCircle, Music2, Package, Pencil, Phone,
-  Search, Share2, Star, Store, Trash2, Wrench,
+  Search, Share2, Star, Store, Trash2,
 } from "lucide-react";
 import SiteHeader from "@/components/layout/SiteHeader";
 import MobileBottomNav from "@/components/layout/MobileBottomNav";
+import AddToCartButton from "@/components/cart/AddToCartButton";
 import { trackContactEvent } from "@/lib/contact-event";
 
 type Availability = "AVAILABLE" | "ASK_SELLER" | "UNAVAILABLE";
 type Verification = "VERIFIED" | "UNVERIFIED";
 type ReMarketRole = "ADMIN" | "SELLER" | "BUYER";
-type SavedListingType = "PRODUCT" | "SERVICE";
+type SavedListingType = "PRODUCT";
 type SavedListingIds = Record<string, string>;
 type CategoryInfo = {
   id?: string;
@@ -31,13 +32,8 @@ type Product = {
   id: string; name: string; description: string | null; price: number | null;
   originalPrice: number | null; availability: Availability; imageUrl: string | null;
   images: ProductImage[]; category: CategoryInfo | null; keywords: string[];
-};
-type Service = {
-  id: string; name: string; description: string | null; price: number | null;
-  priceMin: number | null; priceMax: number | null; durationMinutes: number | null;
-  fulfillmentType: "AT_PROVIDER" | "AT_CUSTOMER" | "REMOTE" | "FLEXIBLE";
-  availability: Availability; imageUrl: string | null; images: ProductImage[];
-  category: CategoryInfo | null; keywords: string[];
+  stockQuantity: number | null; rating: number | null; reviewCount: number;
+  hasShippingMeasurements: boolean; isPurchaseReady: boolean;
 };
 type SocialLink = { id: string; platform: string; handle: string };
 type SellerLocation = { id?: string; area: string; street?: string | null; address?: string | null; hasDirections?: boolean } | null;
@@ -46,7 +42,7 @@ type Seller = {
   location: SellerLocation; availability: Availability; verification: Verification;
   verified: boolean; category: string | null; categories: string[];
   businessCategories: CategoryInfo[]; productCount: number; products: Product[];
-  serviceCount: number; services: Service[]; showContactInfo: boolean;
+  showContactInfo: boolean;
   socialLinks: SocialLink[]; imageUrl: string | null; averageRating: number; reviewCount: number;
 };
 type Review = {
@@ -57,7 +53,7 @@ type RatingBreakdown = { 1: number; 2: number; 3: number; 4: number; 5: number }
 
 const CATEGORY_COLORS: Record<string, string> = {
   fashion: "#FFE0D6", electronics: "#DDF5EA", food: "#FFF0C7",
-  beauty: "#E7E5FF", textiles: "#F9DCE8", services: "#E4E9EF",
+  beauty: "#E7E5FF", textiles: "#F9DCE8",
 };
 const EMPTY_BREAKDOWN: RatingBreakdown = { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 };
 type ContactEventPlatform = Parameters<typeof trackContactEvent>[0]["platform"];
@@ -132,13 +128,6 @@ function discountPercent(price: number | null, originalPrice: number | null): nu
 function formatProductPrice(product: Pick<Product, "price" | "originalPrice">): string {
   return product.price !== null && product.price > 0 ? money(product.price) : "Ask seller";
 }
-function formatServicePrice(service: Pick<Service, "price" | "priceMin" | "priceMax">): string {
-  if (service.price !== null && service.price > 0) return money(service.price);
-  if (service.priceMin !== null && service.priceMax !== null) return service.priceMin === service.priceMax ? money(service.priceMin) : `${money(service.priceMin)} – ${money(service.priceMax)}`;
-  if (service.priceMin !== null) return `From ${money(service.priceMin)}`;
-  if (service.priceMax !== null) return `Up to ${money(service.priceMax)}`;
-  return "Ask seller";
-}
 function getProductImages(listing: { images?: ProductImage[]; imageUrl?: string | null }): ProductImage[] {
   const images = Array.isArray(listing.images) ? listing.images.filter((image) => image && typeof image.url === "string" && image.url.trim()).sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0)) : [];
   return images.length ? images : listing.imageUrl ? [{ url: listing.imageUrl }] : [];
@@ -148,15 +137,6 @@ function getAvailabilityLabel(value: Availability): string {
 }
 function getAvailabilityClass(value: Availability): string {
   return value === "AVAILABLE" ? "bg-[var(--rm-green-bg)] text-[var(--rm-green)]" : value === "UNAVAILABLE" ? "bg-[var(--rm-surface-muted)] text-[var(--rm-muted)]" : "bg-[var(--rm-yellow-bg)] text-[var(--rm-coral-dark)]";
-}
-function formatDuration(minutes: number | null): string | null {
-  if (minutes === null || !Number.isFinite(minutes) || minutes <= 0) return null;
-  if (minutes < 60) return `${minutes} min`;
-  const hours = Math.floor(minutes / 60), remainder = minutes % 60;
-  return remainder ? `${hours} hr ${remainder} min` : `${hours} hr`;
-}
-function getFulfillmentLabel(type: Service["fulfillmentType"]): string {
-  return type === "AT_PROVIDER" ? "At seller's location" : type === "AT_CUSTOMER" ? "At customer's location" : type === "REMOTE" ? "Remote service" : "Flexible location";
 }
 function normalizeNigerianPhone(value: string): string {
   let clean = value.trim();
@@ -234,17 +214,11 @@ function parseProduct(raw: unknown): Product | null {
     imageUrl: getString(raw.imageUrl), images: parseImages(raw.images),
     category: parseCategoryInfo(raw.category),
     keywords: Array.isArray(raw.keywords) ? raw.keywords.filter((word): word is string => typeof word === "string" && word.trim().length > 0) : [],
-  };
-}
-function parseService(raw: unknown): Service | null {
-  if (!isRecord(raw) || typeof raw.id !== "string" || typeof raw.name !== "string") return null;
-  const fulfillmentType: Service["fulfillmentType"] = raw.fulfillmentType === "AT_PROVIDER" || raw.fulfillmentType === "AT_CUSTOMER" || raw.fulfillmentType === "REMOTE" ? raw.fulfillmentType : "FLEXIBLE";
-  return {
-    id: raw.id, name: raw.name, description: getString(raw.description), price: getNumber(raw.price),
-    priceMin: getNumber(raw.priceMin), priceMax: getNumber(raw.priceMax), durationMinutes: getNumber(raw.durationMinutes),
-    fulfillmentType, availability: isAvailability(raw.availability), imageUrl: getString(raw.imageUrl), images: parseImages(raw.images),
-    category: parseCategoryInfo(raw.category),
-    keywords: Array.isArray(raw.keywords) ? raw.keywords.filter((word): word is string => typeof word === "string" && word.trim().length > 0) : [],
+    stockQuantity: raw.stockQuantity === null ? null : getNumber(raw.stockQuantity),
+    rating: typeof raw.rating === "number" && Number.isFinite(raw.rating) && raw.rating >= 0 && raw.rating <= 5 ? raw.rating : null,
+    reviewCount: typeof raw.reviewCount === "number" && Number.isSafeInteger(raw.reviewCount) && raw.reviewCount >= 0 ? raw.reviewCount : 0,
+    hasShippingMeasurements: raw.hasShippingMeasurements === true,
+    isPurchaseReady: raw.isPurchaseReady === true,
   };
 }
 function formatReviewDate(value: string): string {
@@ -281,7 +255,6 @@ function normalizeSeller(raw: unknown): Seller | null {
     const category = parseCategoryInfo(candidate); return category ? [category] : [];
   });
   const products = Array.isArray(raw.products) ? raw.products.map(parseProduct).filter((item): item is Product => item !== null) : [];
-  const services = Array.isArray(raw.services) ? raw.services.map(parseService).filter((item): item is Service => item !== null) : [];
   const rawLocation = isRecord(raw.location) ? raw.location : null;
   const location: SellerLocation = rawLocation ? {
     id: getString(rawLocation.id) ?? undefined, area: getString(rawLocation.area, "") ?? "",
@@ -293,14 +266,13 @@ function normalizeSeller(raw: unknown): Seller | null {
   }) : [];
   const verification: Verification = raw.verification === "VERIFIED" ? "VERIFIED" : "UNVERIFIED";
   const productCount = typeof raw.productCount === "number" && Number.isInteger(raw.productCount) && raw.productCount >= 0 ? raw.productCount : products.length;
-  const serviceCount = typeof raw.serviceCount === "number" && Number.isInteger(raw.serviceCount) && raw.serviceCount >= 0 ? raw.serviceCount : services.length;
   const averageRating = typeof raw.averageRating === "number" && Number.isFinite(raw.averageRating) ? Math.max(0, Math.min(5, raw.averageRating)) : 0;
   const reviewCount = typeof raw.reviewCount === "number" && Number.isInteger(raw.reviewCount) && raw.reviewCount >= 0 ? raw.reviewCount : 0;
   return {
     id: raw.id, name: getString(raw.name, "ReMarket Seller") ?? "ReMarket Seller", ownerName: getString(raw.ownerName),
     description: getString(raw.description), location, availability: isAvailability(raw.availability), verification,
     verified: raw.verified === true || verification === "VERIFIED", category: getString(raw.category) ?? categories[0] ?? null,
-    categories, businessCategories, productCount, products, serviceCount, services,
+    categories, businessCategories, productCount, products,
     showContactInfo: raw.showContactInfo === true, socialLinks: links, imageUrl: getString(raw.imageUrl), averageRating, reviewCount,
   };
 }
@@ -309,7 +281,7 @@ function SaveButton({ type, listingId, saved, busy, disabled, onClick }: {
   type: SavedListingType; listingId: string; saved: boolean; busy: boolean; disabled: boolean;
   onClick: (type: SavedListingType, id: string) => void;
 }) {
-  const label = type === "PRODUCT" ? "product" : "service";
+  const label = "product";
   return <button type="button" onClick={() => onClick(type, listingId)} disabled={busy || disabled} aria-pressed={saved} aria-label={saved ? `Remove ${label} from Saved` : `Save ${label}`} className={`rm-icon-button !h-8 !w-8 sm:!h-9 sm:!w-9 shrink-0 rounded-full bg-white/95 shadow-sm transition disabled:cursor-wait disabled:opacity-60 ${saved ? "border-[var(--rm-coral)] text-[var(--rm-coral-dark)]" : "text-[var(--rm-muted)] hover:border-[var(--rm-coral)] hover:text-[var(--rm-coral-dark)]"}`}>
     {busy ? <LoaderCircle size={14} className="animate-spin sm:h-4 sm:w-4" /> : <Heart size={15} className="sm:h-4 sm:w-4" fill={saved ? "currentColor" : "none"} />}
   </button>;
@@ -326,19 +298,18 @@ function ProductCard({ product, sellerCategory, saved, saving, savedLoading, onS
 
   return (
     <article className="rm-product-card group flex h-full min-w-0 flex-col">
-      <div className="rm-product-media relative aspect-[5/4] sm:aspect-square">
+      <div className="rm-product-media">
         <Link
           href={href}
           aria-label={`View ${product.name}`}
-          className="absolute inset-0 flex min-h-0 min-w-0 items-center justify-center p-2.5 sm:p-4"
+          className="absolute inset-0 block"
         >
           {images[0] ? (
             <img
               src={images[0].url}
               alt={product.name}
               loading="lazy"
-              style={{ width: "100%", height: "100%", objectFit: "contain" }}
-              className="block min-h-0 min-w-0 transition-transform duration-300 group-hover:scale-[1.035]"
+              className="rm-product-image transition-transform duration-300 group-hover:scale-[1.025]"
             />
           ) : (
             <div
@@ -381,6 +352,13 @@ function ProductCard({ product, sellerCategory, saved, saving, savedLoading, onS
             {product.name}
           </Link>
         </h3>
+        {product.reviewCount > 0 && product.rating !== null && (
+          <div className="mt-1.5 inline-flex items-center gap-1.5 text-xs font-semibold text-[var(--rm-text)]" aria-label={`${product.rating.toFixed(1)} out of 5 from ${product.reviewCount} product reviews`}>
+            <Star size={13} className="fill-[#FFB300] text-[#FFB300]" aria-hidden="true" />
+            <span>{product.rating.toFixed(1)}</span>
+            <span className="font-normal text-[var(--rm-muted)]">({product.reviewCount.toLocaleString("en-NG")})</span>
+          </div>
+        )}
         {product.description && (
           <p className="mt-1 line-clamp-2 break-words text-[9px] leading-[1.45] text-[var(--rm-muted)] sm:text-[10px] sm:leading-4">
             {product.description}
@@ -396,82 +374,26 @@ function ProductCard({ product, sellerCategory, saved, saving, savedLoading, onS
             </span>
           )}
         </div>
-      </div>
-    </article>
-  );
-}
-
-function ServiceCard({ service, saved, saving, savedLoading, onSave }: {
-  service: Service; saved: boolean; saving: boolean; savedLoading: boolean;
-  onSave: (type: SavedListingType, id: string) => void;
-}) {
-  const images = getProductImages(service);
-  const duration = formatDuration(service.durationMinutes);
-
-  return (
-    <article className="rm-product-card group flex h-full min-w-0 flex-col">
-      <div className="rm-product-media relative aspect-[5/4] sm:aspect-square">
-        {images[0] ? (
-          <img
-            src={images[0].url}
-            alt={service.name}
-            loading="lazy"
-            style={{ width: "100%", height: "100%", objectFit: "contain" }}
-            className="block min-h-0 min-w-0 p-2.5 transition-transform duration-300 group-hover:scale-[1.035] sm:p-3"
+        {product.isPurchaseReady ? (
+          <AddToCartButton
+            productId={product.id}
+            availability={product.availability}
+            price={product.price}
+            stockQuantity={product.stockQuantity}
+            isPurchaseReady={product.isPurchaseReady}
+            hasShippingMeasurements={product.hasShippingMeasurements}
+            compact
           />
         ) : (
-          <div className="flex h-full w-full items-center justify-center bg-[var(--rm-surface-muted)]">
-            <Wrench size={30} className="text-[var(--rm-coral-dark)] sm:h-9 sm:w-9" />
-          </div>
+          <Link href={href} className="mt-3 inline-flex min-h-11 w-full items-center justify-center rounded-xl border border-[var(--rm-border-strong)] bg-[var(--rm-surface-muted)] px-3 py-2 text-sm font-bold text-[var(--rm-text)] transition hover:border-[var(--rm-coral)] hover:text-[var(--rm-coral-dark)]">
+            View product details
+          </Link>
         )}
-        <div className="absolute right-2 top-2 sm:right-2.5 sm:top-2.5">
-          <SaveButton
-            type="SERVICE"
-            listingId={service.id}
-            saved={saved}
-            busy={saving}
-            disabled={savedLoading}
-            onClick={onSave}
-          />
-        </div>
-        <span className={`absolute bottom-2 left-2 max-w-[calc(100%-3.5rem)] truncate rounded-full px-2 py-1 text-[8px] font-bold sm:bottom-2.5 sm:left-2.5 sm:text-[9px] ${getAvailabilityClass(service.availability)}`}>
-          {getAvailabilityLabel(service.availability)}
-        </span>
-      </div>
-      <div className="rm-product-details flex min-w-0 flex-1 flex-col p-2.5 sm:p-3.5">
-        {service.category && (
-          <p className="rm-product-category mb-1 text-[8px] uppercase tracking-wide sm:text-[9px]">
-            {categoryLabel(service.category)}
-          </p>
-        )}
-        <h3 className="rm-product-title min-h-[2.7em] break-words text-[11px] leading-[1.35] sm:text-[13px]">
-          {service.name}
-        </h3>
-        {service.description && (
-          <p className="mt-1 line-clamp-2 break-words text-[9px] leading-[1.45] text-[var(--rm-muted)] sm:text-[10px] sm:leading-4">
-            {service.description}
-          </p>
-        )}
-        <p className="mt-auto pt-2.5 text-[13px] font-extrabold leading-tight text-[var(--rm-coral-dark)] sm:pt-3 sm:text-[15px]">
-          {formatServicePrice(service)}
-        </p>
-        <div className="mt-2 flex min-w-0 flex-wrap gap-1">
-          <span className="max-w-full rounded-full bg-[var(--rm-surface-muted)] px-2 py-1 text-[8px] font-semibold leading-tight text-[var(--rm-muted)] sm:px-2.5 sm:text-[9px]">
-            {getFulfillmentLabel(service.fulfillmentType)}
-          </span>
-          {duration && (
-            <span className="inline-flex items-center gap-1 rounded-full bg-[var(--rm-surface-muted)] px-2 py-1 text-[8px] font-semibold leading-tight text-[var(--rm-muted)] sm:px-2.5 sm:text-[9px]">
-              <Clock3 size={10} />{duration}
-            </span>
-          )}
-        </div>
-        <a href="#seller-contact" className="rm-button rm-button-secondary mt-3 min-h-9 w-full px-2 text-center text-[10px] leading-tight sm:mt-4 sm:min-h-10 sm:text-[11px]">
-          Contact about this service
-        </a>
       </div>
     </article>
   );
 }
+
 function SellerPageContent({ id }: { id: string }) {
   const [seller, setSeller] = useState<Seller | null>(null);
   const [loading, setLoading] = useState(true), [error, setError] = useState(""), [notFound, setNotFound] = useState(false), [directionsLoading, setDirectionsLoading] = useState(false);
@@ -488,8 +410,8 @@ function SellerPageContent({ id }: { id: string }) {
     async function loadSaved() {
       setSavedListingsLoading(true);
       try {
-        const [products, services] = await Promise.all([loadSavedType("PRODUCT", controller.signal), loadSavedType("SERVICE", controller.signal)]);
-        if (!controller.signal.aborted) setSavedListingIds({ ...products, ...services });
+        const products = await loadSavedType("PRODUCT", controller.signal);
+        if (!controller.signal.aborted) setSavedListingIds(products);
       } catch (err) { if (!(err instanceof DOMException && err.name === "AbortError")) console.error("Seller saved listings load error:", err); }
       finally { if (!controller.signal.aborted) setSavedListingsLoading(false); }
     }
@@ -618,7 +540,7 @@ function SellerPageContent({ id }: { id: string }) {
             delete next[key];
             return next;
           });
-          setSavedNotice(type === "PRODUCT" ? "Product removed from Saved." : "Service removed from Saved.");
+          setSavedNotice("Product removed from Saved.");
         }
       } else {
         const response = await fetch("/api/saved", {
@@ -631,7 +553,7 @@ function SellerPageContent({ id }: { id: string }) {
 
         if (response.status === 401 || response.status === 403) {
           setSavedAuthRequired(true);
-          throw new Error("Sign in to save products and services.");
+          throw new Error("Sign in to save products.");
         }
         if (!response.ok) {
           throw new Error(
@@ -646,13 +568,7 @@ function SellerPageContent({ id }: { id: string }) {
           throw new Error("The saved listing ID was not returned. Refresh and try again.");
         }
         setSavedListingIds((current) => ({ ...current, [key]: item.id as string }));
-        setSavedNotice(
-          isRecord(payload) && payload.alreadySaved === true
-            ? "This item is already in Saved."
-            : type === "PRODUCT"
-              ? "Product added to Saved."
-              : "Service added to Saved.",
-        );
+        setSavedNotice(isRecord(payload) && payload.alreadySaved === true ? "This product is already in Saved." : "Product added to Saved.");
       }
 
       window.dispatchEvent(new Event("remarket-saved-items-changed"));
@@ -746,13 +662,14 @@ function SellerPageContent({ id }: { id: string }) {
 
   if (!id) return <><SiteHeader searchMode="ALL" /><main className="rm-storefront flex min-h-[65vh] w-full items-center justify-center px-4 py-12"><div className="max-w-md rounded-3xl border border-[var(--rm-border-strong)] bg-white p-8 text-center shadow-sm"><Store size={34} className="mx-auto text-[var(--rm-coral-dark)]" /><h1 className="mt-4 text-xl font-black text-[var(--rm-coral-dark)]">Seller not found</h1><p className="mt-2 text-sm leading-6 text-[var(--rm-muted)]">We couldn&apos;t find the seller you&apos;re looking for.</p><Link href="/shop" className="rm-button rm-button-primary mt-5">Browse products <ArrowRight size={15} /></Link></div></main><MobileBottomNav /></>;
 
-  return <><SiteHeader searchMode="ALL" /><main id="main-content" className="rm-storefront min-h-screen w-full overflow-x-clip pb-24 text-[var(--rm-ink)] lg:pb-10">
+  return <><SiteHeader searchMode="ALL" /><main id="main-content" className="rm-storefront rm-seller-storefront min-h-screen w-full overflow-x-clip pb-24 text-[var(--rm-ink)] lg:pb-10">
     {loading ? <div className="rm-container w-full py-10"><div className="h-[260px] animate-pulse rounded-[26px] bg-[var(--rm-surface-muted)]" /><div className="mt-6 grid grid-cols-2 gap-4 md:grid-cols-4 xl:grid-cols-5">{Array.from({ length: 10 }).map((_, index) => <div key={index} className="aspect-[4/5] animate-pulse rounded-2xl bg-[var(--rm-surface-muted)]" />)}</div></div>
     : error || !seller ? <div className="mx-auto flex min-h-[65vh] w-full items-center justify-center px-4 py-12"><section className="w-full max-w-lg rounded-3xl border border-[var(--rm-border-strong)] bg-[var(--rm-coral-soft)] p-8 text-center"><Store size={34} className="mx-auto text-[var(--rm-coral-dark)]" /><h1 className="mt-4 text-xl font-black text-[var(--rm-coral-dark)]">{notFound ? "Seller not found" : "Unable to load seller"}</h1><p className="mt-2 text-sm leading-6 text-[var(--rm-muted)]">{notFound ? "This seller profile may have been removed or is no longer available." : error || "We could not load this seller profile."}</p>{!notFound && <button type="button" onClick={() => window.location.reload()} className="rm-button rm-button-secondary mt-5">Try again</button>}<Link href="/shop" className="rm-button rm-button-primary mt-5">Back to Shop <ArrowRight size={14} /></Link></section></div>
     : <>
       <section className="w-full border-b border-[var(--rm-border)] bg-[var(--rm-cream)]">
-        <div className="rm-container py-4 sm:py-7">
-          <div className="mb-3 flex min-w-0 items-center gap-1.5 overflow-hidden text-[9px] font-medium text-[var(--rm-muted)] sm:mb-4 sm:gap-2 sm:text-[10px]">
+        <div className="rm-container py-5 sm:py-8">
+          <div className="rounded-[24px] border border-[var(--rm-border)] bg-white px-4 py-5 shadow-[var(--rm-shadow-card)] sm:px-6 sm:py-7 lg:px-8">
+          <div className="mb-4 flex min-w-0 items-center gap-2 overflow-hidden text-xs font-medium text-[var(--rm-muted)] sm:mb-5">
             <Link href="/" className="hover:text-[var(--rm-coral-dark)]">Home</Link>
             <span>/</span>
             <span>Stores</span>
@@ -778,7 +695,6 @@ function SellerPageContent({ id }: { id: string }) {
                 </div>
                 <div className="mt-2.5 flex flex-wrap items-center gap-x-3 gap-y-1.5 text-[10px] font-medium text-[var(--rm-muted)] sm:mt-3 sm:gap-x-4 sm:text-[11px]">
                   <span className="inline-flex items-center gap-1"><Package size={12} className="shrink-0 text-[var(--rm-coral)]" />{seller.productCount.toLocaleString("en-NG")} products</span>
-                  <span className="inline-flex items-center gap-1"><Wrench size={12} className="shrink-0 text-[var(--rm-coral)]" />{seller.serviceCount.toLocaleString("en-NG")} services</span>
                   <a href="#seller-reviews" className="inline-flex items-center gap-1 hover:text-[var(--rm-coral-dark)]"><Star size={12} className="shrink-0 fill-[#FFB300] text-[#FFB300]" />{seller.reviewCount > 0 ? `${seller.averageRating.toFixed(1)} · ` : ""}{seller.reviewCount.toLocaleString("en-NG")} reviews</a>
                 </div>
               </div>
@@ -788,20 +704,20 @@ function SellerPageContent({ id }: { id: string }) {
               <button type="button" onClick={() => void shareSeller()} aria-label="Share store" className="rm-button rm-button-secondary min-h-10 min-w-0 flex-1 px-3 text-[11px] sm:flex-none sm:px-4 sm:text-[13px]"><Share2 size={14} /><span>Share</span></button>
             </div>
           </div>
+          </div>
         </div>
       </section>
 
       <nav aria-label="Seller storefront sections" className="sticky top-[var(--rm-header-height)] z-30 w-full border-b border-[var(--rm-border)] bg-white/95 backdrop-blur">
         <div className="rm-container flex items-center gap-1 overflow-x-auto py-1.5 sm:py-2 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
           <a href="#seller-products" className="shrink-0 rounded-lg bg-[var(--rm-coral-soft)] px-3 py-2 text-[10px] font-bold sm:px-3.5 sm:py-2.5 sm:text-[11px] text-[var(--rm-coral-dark)]">Products</a>
-          <a href="#seller-services" className="shrink-0 rounded-lg px-3 py-2 text-[10px] font-semibold sm:px-3.5 sm:py-2.5 sm:text-[11px] text-[var(--rm-text)] transition hover:bg-[var(--rm-surface-muted)] hover:text-[var(--rm-coral-dark)]">Services</a>
           <a href="#seller-about" className="shrink-0 rounded-lg px-3 py-2 text-[10px] font-semibold sm:px-3.5 sm:py-2.5 sm:text-[11px] text-[var(--rm-text)] transition hover:bg-[var(--rm-surface-muted)] hover:text-[var(--rm-coral-dark)]">About</a>
           <a href="#seller-contact" className="shrink-0 rounded-lg px-3 py-2 text-[10px] font-semibold sm:px-3.5 sm:py-2.5 sm:text-[11px] text-[var(--rm-text)] transition hover:bg-[var(--rm-surface-muted)] hover:text-[var(--rm-coral-dark)]">Contact &amp; location</a>
           <a href="#seller-reviews" className="shrink-0 rounded-lg px-3 py-2 text-[10px] font-semibold sm:px-3.5 sm:py-2.5 sm:text-[11px] text-[var(--rm-text)] transition hover:bg-[var(--rm-surface-muted)] hover:text-[var(--rm-coral-dark)]">Reviews <span className="ml-1 text-[9px] opacity-70">{seller.reviewCount}</span></a>
         </div>
       </nav>
 
-      <div className="rm-container w-full py-5 sm:py-8">
+      <div className="rm-container w-full py-6 sm:py-9">
         {savedNotice && <div role="status" aria-live="polite" className="mb-4 flex flex-wrap items-center gap-2 rounded-lg border border-[var(--rm-border-strong)] bg-[var(--rm-coral-soft)] px-4 py-3 text-[11px] font-semibold text-[var(--rm-coral-dark)]"><Heart size={14} /><span>{savedNotice}</span>{savedAuthRequired && <Link href={`/buyer/login?callbackUrl=${encodeURIComponent(`/seller/${id}`)}`} className="font-extrabold underline underline-offset-2">Sign in</Link>}</div>}
         {shareNotice && <p role="status" className="mb-4 rounded-lg border border-[var(--rm-border)] bg-white px-4 py-3 text-[11px] font-semibold text-[var(--rm-muted)]">{shareNotice}</p>}
 
@@ -833,10 +749,6 @@ function SellerPageContent({ id }: { id: string }) {
               </> : <div className="rm-empty-state min-h-[170px] rounded-xl border border-dashed border-[var(--rm-border-strong)] bg-[var(--rm-surface-muted)] px-4 py-7 sm:min-h-[220px] sm:py-10"><Search size={26} className="mx-auto text-[var(--rm-subtle)]" /><p className="mt-3 text-sm font-bold text-[var(--rm-text)]">No matching products</p><p className="mt-1 text-[11px] text-[var(--rm-subtle)]">Try another search or category.</p><button type="button" onClick={() => { setProductSearch(""); setActiveProductCategory("All"); }} className="mt-4 rounded-lg border border-[var(--rm-border)] bg-white px-4 py-2 text-[10px] font-bold text-[var(--rm-coral-dark)]">Reset filters</button></div> : <div className="rm-empty-state min-h-[170px] rounded-xl border border-dashed border-[var(--rm-border-strong)] bg-[var(--rm-surface-muted)] px-4 py-7 sm:min-h-[220px] sm:py-10"><Package size={30} className="mx-auto text-[var(--rm-subtle)]" /><p className="mt-3 text-sm font-bold text-[var(--rm-text)]">No products listed yet</p><p className="mt-1 text-[11px] text-[var(--rm-subtle)]">Contact the seller to ask what is currently available.</p></div>}
             </section>
 
-            <section id="seller-services" className="scroll-mt-24 border-t border-[var(--rm-border)] pt-6 sm:scroll-mt-28 sm:pt-8">
-              <div className="mb-4 flex items-end justify-between gap-3"><div><p className="text-[9px] font-bold uppercase tracking-[0.14em] text-[var(--rm-coral-dark)]">More from this store</p><h2 className="rm-section-title mt-1">Services</h2><p className="rm-section-subtitle mt-1">{seller.serviceCount.toLocaleString("en-NG")} {seller.serviceCount === 1 ? "service" : "services"} offered</p></div><Wrench size={20} className="text-[var(--rm-coral)]" /> </div>
-              {seller.services.length > 0 ? <div className="rm-product-grid min-w-0 grid-cols-2 gap-2 sm:grid-cols-3 sm:gap-4 xl:grid-cols-3 xl:gap-4">{seller.services.map((service) => <ServiceCard key={service.id} service={service} saved={Boolean(savedListingIds[savedKey("SERVICE", service.id)])} saving={savingListingKey === savedKey("SERVICE", service.id)} savedLoading={savedListingsLoading} onSave={(type, listingId) => { void toggleSaved(type, listingId); }} />)}</div> : <div className="rm-empty-state min-h-[170px] rounded-xl border border-dashed border-[var(--rm-border-strong)] bg-[var(--rm-surface-muted)] px-4 py-7 sm:min-h-[220px] sm:py-10"><Wrench size={27} className="mx-auto text-[var(--rm-subtle)]" /><p className="mt-3 text-sm font-bold text-[var(--rm-text)]">No services listed yet</p><p className="mt-1 text-[11px] text-[var(--rm-subtle)]">This seller has not published any services.</p></div>}
-            </section>
 
             <section id="seller-reviews" className="scroll-mt-24 border-t border-[var(--rm-border)] pt-6 sm:scroll-mt-28 sm:pt-8">
               <div className="mb-5 flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between"><div><p className="text-[9px] font-bold uppercase tracking-[0.14em] text-[var(--rm-coral-dark)]">Buyer feedback</p><h2 className="rm-section-title mt-1">Ratings &amp; reviews</h2><p className="rm-section-subtitle mt-1">Reviews shared by ReMarket buyer accounts.</p></div></div>
@@ -847,12 +759,12 @@ function SellerPageContent({ id }: { id: string }) {
                   <div className="rm-panel bg-[var(--rm-surface-muted)] p-4"><div className="text-center"><p className="text-3xl font-extrabold text-[var(--rm-coral-dark)]">{seller.reviewCount > 0 ? seller.averageRating.toFixed(1) : "—"}</p><div className="mt-2"><RatingStars rating={seller.averageRating} size={17} /></div><p className="mt-2 text-[10px] text-[var(--rm-muted)]">{seller.reviewCount} {seller.reviewCount === 1 ? "review" : "reviews"}</p></div>
                     <div className="mt-5 space-y-2">{([5, 4, 3, 2, 1] as const).map((rating) => { const count = ratingBreakdown[rating], percent = seller.reviewCount > 0 ? Math.min(100, Math.round((count / seller.reviewCount) * 100)) : 0; return <div key={rating} className="flex items-center gap-2"><span className="w-3 text-right text-[10px] font-bold text-[var(--rm-muted)]">{rating}</span><Star size={11} className="fill-[#FFB300] text-[#FFB300]" /><div className="h-1.5 flex-1 overflow-hidden rounded-full bg-[var(--rm-border-strong)]"><div className="h-full rounded-full bg-[var(--rm-coral)]" style={{ width: `${percent}%` }} /></div><span className="w-6 text-right text-[9px] text-[var(--rm-muted)]">{count}</span></div>; })}</div>
                   </div>
-                  <div className="rm-panel min-w-0 p-3.5 sm:p-4">{currentUserLoading ? <div className="flex min-h-28 items-center justify-center gap-2 text-[11px] text-[var(--rm-muted)]"><LoaderCircle size={15} className="animate-spin text-[var(--rm-coral)]" />Checking your account...</div> : currentUserRole === "BUYER" ? <form onSubmit={submitReview}><h3 className="text-sm font-bold text-[var(--rm-coral-dark)]">Leave a review</h3><p className="mt-1 text-[10px] leading-5 text-[var(--rm-muted)]">Share your experience with this business.</p><p className="mt-4 text-[10px] font-bold uppercase tracking-[0.1em] text-[var(--rm-muted)]">Your rating</p><div className="mt-2 flex flex-wrap items-center gap-2"><div className="flex items-center gap-1">{[1, 2, 3, 4, 5].map((rating) => <button key={rating} type="button" aria-label={`Rate ${rating} out of 5`} aria-pressed={reviewRating === rating} onClick={() => setReviewRating(rating)} className="rounded-lg p-1 hover:bg-[var(--rm-coral-soft)]"><Star size={21} className={rating <= reviewRating ? "fill-[#FFB300] text-[#FFB300]" : "text-[var(--rm-border-strong)]"} /></button>)}</div><span className="text-[10px] text-[var(--rm-muted)]"><RatingLabel rating={reviewRating} /></span></div><textarea value={reviewComment} onChange={(event) => setReviewComment(event.target.value)} rows={4} maxLength={2000} placeholder="What was your experience with this business?" className="rm-textarea mt-4 w-full text-[12px] leading-5" /><div className="mt-1 text-right text-[9px] text-[var(--rm-subtle)]">{reviewComment.length}/2000</div><button type="submit" disabled={reviewSubmitting} className="rm-button rm-button-primary mt-3 w-full disabled:opacity-60">{reviewSubmitting ? <><LoaderCircle size={14} className="animate-spin" />Submitting...</> : "Submit review"}</button></form> : currentUserRole === null ? <div className="py-3 text-center"><Star size={22} className="mx-auto text-[var(--rm-coral)]" /><h3 className="mt-3 text-sm font-bold text-[var(--rm-coral-dark)]">Sign in to leave a review</h3><p className="mt-1 text-[10px] text-[var(--rm-muted)]">Buyer accounts can share their experience.</p><div className="mt-4 flex justify-center gap-2"><Link href={`/buyer/login?callbackUrl=${encodeURIComponent(`/seller/${id}#seller-reviews`)}`} className="rm-button rm-button-primary">Sign in</Link><Link href="/buyer/signup" className="rm-button rm-button-secondary">Create account</Link></div></div> : <div className="py-5 text-center"><Star size={22} className="mx-auto text-[var(--rm-muted)]" /><h3 className="mt-3 text-sm font-bold text-[var(--rm-coral-dark)]">Buyer reviews only</h3><p className="mt-1 text-[10px] text-[var(--rm-muted)]">Only buyer accounts can submit reviews.</p></div>}</div>
+                  <div className="rm-panel min-w-0 p-3.5 sm:p-4">{currentUserLoading ? <div className="flex min-h-28 items-center justify-center gap-2 text-[11px] text-[var(--rm-muted)]"><LoaderCircle size={15} className="animate-spin text-[var(--rm-coral)]" />Checking your account...</div> : currentUserRole === "BUYER" ? <form onSubmit={submitReview}><h3 className="text-sm font-bold text-[var(--rm-coral-dark)]">Leave a review</h3><p className="mt-1 text-[10px] leading-5 text-[var(--rm-muted)]">Share your experience with this business.</p><p className="mt-4 text-[10px] font-bold uppercase tracking-[0.1em] text-[var(--rm-muted)]">Your rating</p><div className="mt-2 flex flex-wrap items-center gap-2"><div className="flex items-center gap-1">{[1, 2, 3, 4, 5].map((rating) => <button key={rating} type="button" aria-label={`Rate ${rating} out of 5`} aria-pressed={reviewRating === rating} onClick={() => setReviewRating(rating)} className="rounded-lg p-1 hover:bg-[var(--rm-coral-soft)]"><Star size={21} className={rating <= reviewRating ? "fill-[#FFB300] text-[#FFB300]" : "text-[var(--rm-border-strong)]"} /></button>)}</div><span className="text-[10px] text-[var(--rm-muted)]"><RatingLabel rating={reviewRating} /></span></div><textarea aria-label="Write your business review" value={reviewComment} onChange={(event) => setReviewComment(event.target.value)} rows={4} maxLength={2000} placeholder="What was your experience with this business?" className="rm-textarea mt-4 w-full text-[12px] leading-5" /><div className="mt-1 text-right text-[9px] text-[var(--rm-subtle)]">{reviewComment.length}/2000</div><button type="submit" disabled={reviewSubmitting} className="rm-button rm-button-primary mt-3 w-full disabled:opacity-60">{reviewSubmitting ? <><LoaderCircle size={14} className="animate-spin" />Submitting...</> : "Submit review"}</button></form> : currentUserRole === null ? <div className="py-3 text-center"><Star size={22} className="mx-auto text-[var(--rm-coral)]" /><h3 className="mt-3 text-sm font-bold text-[var(--rm-coral-dark)]">Sign in to leave a review</h3><p className="mt-1 text-[10px] text-[var(--rm-muted)]">Buyer accounts can share their experience.</p><div className="mt-4 flex justify-center gap-2"><Link href={`/buyer/login?callbackUrl=${encodeURIComponent(`/seller/${id}#seller-reviews`)}`} className="rm-button rm-button-primary">Sign in</Link><Link href="/buyer/signup" className="rm-button rm-button-secondary">Create account</Link></div></div> : <div className="py-5 text-center"><Star size={22} className="mx-auto text-[var(--rm-muted)]" /><h3 className="mt-3 text-sm font-bold text-[var(--rm-coral-dark)]">Buyer reviews only</h3><p className="mt-1 text-[10px] text-[var(--rm-muted)]">Only buyer accounts can submit reviews.</p></div>}</div>
                 </div>
                 <div className="space-y-3">{reviewsLoading ? <div className="flex min-h-40 items-center justify-center rounded-xl border border-dashed border-[var(--rm-border-strong)] bg-[var(--rm-surface-muted)]"><span className="flex items-center gap-2 text-[11px] text-[var(--rm-muted)]"><LoaderCircle size={15} className="animate-spin text-[var(--rm-coral)]" />Loading reviews...</span></div> : reviews.length === 0 ? <div className="rm-empty-state min-h-[170px] rounded-xl border border-dashed border-[var(--rm-border-strong)] bg-[var(--rm-surface-muted)] px-4 py-7 sm:min-h-[220px] sm:py-10"><Star size={26} className="mx-auto text-[var(--rm-subtle)]" /><p className="mt-3 text-sm font-bold text-[var(--rm-text)]">No reviews yet</p><p className="mt-1 text-[10px] text-[var(--rm-subtle)]">Be the first customer to rate this business.</p></div> : reviews.map((review) => {
                   const own = currentUserRole === "BUYER" && review.isOwnReview, editing = editingReviewId === review.id;
                   return <article key={review.id} className="rm-panel min-w-0 p-3 sm:p-5"><div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between"><div className="min-w-0 flex-1"><div className="flex items-center gap-3"><div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-[#FFE0D6] text-[10px] font-extrabold text-[var(--rm-coral-dark)]">{initials(review.user.name)}</div><div><p className="text-[11px] font-bold text-[var(--rm-ink)]">{review.user.name}</p><p className="text-[9px] text-[var(--rm-subtle)]">{formatReviewDate(review.createdAt)}{review.updatedAt !== review.createdAt ? " · Edited" : ""}</p></div></div>
-                    {!editing ? <><div className="mt-3"><RatingStars rating={review.rating} size={14} /></div>{review.comment && <p className="mt-3 whitespace-pre-wrap break-words text-[11px] leading-6 text-[var(--rm-text)]">{review.comment}</p>}</> : <div className="mt-3"><div className="flex items-center gap-2">{[1, 2, 3, 4, 5].map((rating) => <button key={rating} type="button" aria-label={`Change rating to ${rating}`} onClick={() => setEditingRating(rating)}><Star size={19} className={rating <= editingRating ? "fill-[#FFB300] text-[#FFB300]" : "text-[var(--rm-border-strong)]"} /></button>)}<span className="text-[10px] text-[var(--rm-muted)]"><RatingLabel rating={editingRating} /></span></div><textarea value={editingComment} onChange={(event) => setEditingComment(event.target.value)} maxLength={2000} rows={4} className="rm-textarea mt-3 w-full text-[12px] leading-5" /><div className="mt-3 flex justify-end gap-2"><button type="button" onClick={cancelEditReview} disabled={reviewUpdatingId === review.id} className="rm-button rm-button-secondary">Cancel</button><button type="button" onClick={() => void updateReview(review.id)} disabled={reviewUpdatingId === review.id} className="rm-button rm-button-primary disabled:opacity-60">{reviewUpdatingId === review.id ? "Saving..." : "Save changes"}</button></div></div>}</div>
+                    {!editing ? <><div className="mt-3"><RatingStars rating={review.rating} size={14} /></div>{review.comment && <p className="mt-3 whitespace-pre-wrap break-words text-[11px] leading-6 text-[var(--rm-text)]">{review.comment}</p>}</> : <div className="mt-3"><div className="flex items-center gap-2">{[1, 2, 3, 4, 5].map((rating) => <button key={rating} type="button" aria-label={`Change rating to ${rating}`} onClick={() => setEditingRating(rating)}><Star size={19} className={rating <= editingRating ? "fill-[#FFB300] text-[#FFB300]" : "text-[var(--rm-border-strong)]"} /></button>)}<span className="text-[10px] text-[var(--rm-muted)]"><RatingLabel rating={editingRating} /></span></div><textarea aria-label={`Edit review by ${review.user.name}`} value={editingComment} onChange={(event) => setEditingComment(event.target.value)} maxLength={2000} rows={4} className="rm-textarea mt-3 w-full text-[12px] leading-5" /><div className="mt-3 flex justify-end gap-2"><button type="button" onClick={cancelEditReview} disabled={reviewUpdatingId === review.id} className="rm-button rm-button-secondary">Cancel</button><button type="button" onClick={() => void updateReview(review.id)} disabled={reviewUpdatingId === review.id} className="rm-button rm-button-primary disabled:opacity-60">{reviewUpdatingId === review.id ? "Saving..." : "Save changes"}</button></div></div>}</div>
                     {own && !editing && <div className="flex shrink-0 gap-1"><button type="button" onClick={() => beginEditReview(review)} className="inline-flex items-center gap-1 rounded-lg px-2 py-1.5 text-[9px] font-bold text-[var(--rm-muted)] hover:bg-[var(--rm-coral-soft)]"><Pencil size={12} />Edit</button><button type="button" onClick={() => void deleteReview(review.id)} disabled={reviewDeletingId === review.id} className="inline-flex items-center gap-1 rounded-lg px-2 py-1.5 text-[9px] font-bold text-[var(--rm-coral-dark)] hover:bg-[var(--rm-coral-soft)] disabled:opacity-60">{reviewDeletingId === review.id ? <LoaderCircle size={12} className="animate-spin" /> : <Trash2 size={12} />}Delete</button></div>}</div></article>;
                 })}
                   {reviewsHasMore && !reviewsLoading && <div className="flex justify-center pt-2"><button type="button" onClick={() => void loadMoreReviews()} disabled={reviewsLoadingMore} className="inline-flex min-h-10 items-center gap-2 rounded-lg border border-[var(--rm-border)] bg-white px-5 py-2.5 text-[10px] font-bold text-[var(--rm-coral-dark)] hover:bg-[var(--rm-cream)] disabled:opacity-60">{reviewsLoadingMore ? <><LoaderCircle size={13} className="animate-spin" />Loading more...</> : "Load more reviews"}</button></div>}
@@ -863,7 +775,7 @@ function SellerPageContent({ id }: { id: string }) {
 
           <aside className="order-2 min-w-0 space-y-3 sm:space-y-4 lg:order-none">
             <section id="seller-contact" className="rm-panel scroll-mt-24 min-w-0 p-3.5 sm:scroll-mt-28 sm:p-5 lg:sticky lg:top-[130px]">
-              <div className="flex items-center gap-2.5 border-b border-[var(--rm-border)] pb-3"><div className="flex h-9 w-9 items-center justify-center rounded-lg bg-[var(--rm-coral-soft)] text-[var(--rm-coral-dark)]"><MessageCircle size={17} /></div><div><h2 className="text-sm font-extrabold text-[var(--rm-ink)]">Contact this seller</h2><p className="mt-0.5 text-[10px] text-[var(--rm-muted)]">Ask about products or services</p></div></div>
+              <div className="flex items-center gap-2.5 border-b border-[var(--rm-border)] pb-3"><div className="flex h-9 w-9 items-center justify-center rounded-lg bg-[var(--rm-coral-soft)] text-[var(--rm-coral-dark)]"><MessageCircle size={17} /></div><div><h2 className="text-sm font-extrabold text-[var(--rm-ink)]">Contact this seller</h2><p className="mt-0.5 text-[10px] text-[var(--rm-muted)]">Ask about products</p></div></div>
               <div className="mt-3 space-y-2">{seller.showContactInfo && seller.socialLinks.length > 0 ? seller.socialLinks.map((link) => {
                 if (link.platform === "DIRECTIONS") return null;
                 const url = buildContactUrl(link.platform, link.handle);
@@ -881,7 +793,7 @@ function SellerPageContent({ id }: { id: string }) {
             <section id="seller-about" className="rm-panel scroll-mt-24 min-w-0 p-3.5 sm:scroll-mt-28 sm:p-5">
               <p className="text-[9px] font-bold uppercase tracking-[0.14em] text-[var(--rm-coral-dark)]">Store information</p>
               <h2 className="mt-1 text-sm font-extrabold text-[var(--rm-ink)]">About {seller.name}</h2>
-              <p className="mt-3 whitespace-pre-line text-[11px] leading-6 text-[var(--rm-text)]">{seller.description || "Explore products and services from this local business. Contact the seller for details about current offers and availability."}</p>
+              <p className="mt-3 whitespace-pre-line text-[11px] leading-6 text-[var(--rm-text)]">{seller.description || "Explore products from this local business. Contact the seller for details about current offers and availability."}</p>
               {(seller.businessCategories.length > 0 || seller.categories.length > 0) && <div className="mt-4 border-t border-[var(--rm-border)] pt-3"><p className="text-[9px] font-bold uppercase tracking-[0.12em] text-[var(--rm-subtle)]">Categories</p><div className="mt-2 flex flex-wrap gap-1.5">{seller.businessCategories.length > 0 ? seller.businessCategories.map((category) => <Link key={category.id ?? categoryLabel(category)} href={categoryHref(category)} className="rounded-md px-2.5 py-1.5 text-[9px] font-bold text-[var(--rm-text)] transition hover:ring-1 hover:ring-[var(--rm-coral)]" style={{ backgroundColor: getCategoryColor(category.name) }}>{categoryLabel(category)}</Link>) : seller.categories.map((category) => <span key={category} className="rounded-md px-2.5 py-1.5 text-[9px] font-bold text-[var(--rm-text)]" style={{ backgroundColor: getCategoryColor(category) }}>{category}</span>)}</div></div>}
             </section>
           </aside>

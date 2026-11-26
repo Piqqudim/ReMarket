@@ -1189,7 +1189,7 @@ export default function CheckoutPage() {
                           return (
                             <div key={item.id} className="flex gap-3 py-3">
                               <div className="relative flex h-14 w-14 shrink-0 items-center justify-center overflow-hidden rounded-md border border-[var(--rm-border)] bg-[var(--rm-surface-muted)]">
-                                {item.imageUrl ? <img src={item.imageUrl} alt={item.name} loading="lazy" className="h-full w-full object-cover" /> : <Package className="h-5 w-5 text-[var(--rm-subtle)]" aria-hidden="true" />}
+                                {item.imageUrl ? <img src={item.imageUrl} alt={item.name} loading="lazy" className="h-full w-full object-contain p-0" /> : <Package className="h-5 w-5 text-[var(--rm-subtle)]" aria-hidden="true" />}
                                 <span className="absolute -right-0.5 -top-0.5 flex h-4 min-w-4 items-center justify-center rounded-full border border-white bg-[var(--rm-coral)] px-1 text-[9px] font-bold text-white">{item.quantity}</span>
                               </div>
                               <div className="min-w-0 flex-1">

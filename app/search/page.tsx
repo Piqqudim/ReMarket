@@ -25,6 +25,7 @@ import {
   Search,
   ShoppingCart,
   SlidersHorizontal,
+  Star,
   X,
 } from "lucide-react";
 
@@ -77,7 +78,6 @@ type ListingCategory = {
 
 type ProductSellerContext = {
   id: string;
-  name: string;
   verified: boolean;
   location: {
     area: string | null;
@@ -92,7 +92,10 @@ type ProductSearchResult = {
   description: string | null;
   price: number | null;
   originalPrice: number | null;
+  rating: number | null;
+  reviewCount: number;
   stockQuantity: number | null;
+  hasShippingMeasurements: boolean;
   availability: Availability;
   imageUrl: string | null;
   images: ListingImage[];
@@ -432,8 +435,7 @@ function parseProduct(value: unknown): ProductSearchResult | null {
   const id = cleanString(value.id);
   const name = cleanString(value.name);
   const sellerId = seller ? cleanString(seller.id) : null;
-  const sellerName = seller ? cleanString(seller.name) : null;
-  if (!id || !name || !seller || !sellerId || !sellerName) return null;
+  if (!id || !name || !seller || !sellerId) return null;
 
   const images = parseImages(value.images);
   const price = parseNumber(value.price) ?? parseNumber(value.salePrice) ?? parseNumber(value.currentPrice);
@@ -449,7 +451,10 @@ function parseProduct(value: unknown): ProductSearchResult | null {
     description: cleanString(value.description),
     price,
     originalPrice,
+    rating: parseNumber(value.rating) !== null && parseNumber(value.rating)! <= 5 ? parseNumber(value.rating) : null,
+    reviewCount: Math.max(0, Math.floor(parseNumber(value.reviewCount) ?? 0)),
     stockQuantity: parseNumber(value.stockQuantity),
+    hasShippingMeasurements: value.hasShippingMeasurements === true,
     availability: parseAvailability(value.availability),
     imageUrl: cleanString(value.imageUrl) ?? images[0]?.url ?? null,
     images,
@@ -458,7 +463,6 @@ function parseProduct(value: unknown): ProductSearchResult | null {
     matchScore: parseNumber(value.matchScore) ?? 0,
     seller: {
       id: sellerId,
-      name: sellerName,
       verified: seller.verified === true || verification === "VERIFIED",
       location: rawLocation ? {
         area: cleanString(rawLocation.area),
@@ -562,6 +566,9 @@ function getAvailabilityStatus(product: ProductSearchResult) {
   if (product.availability === "UNAVAILABLE" || product.stockQuantity === 0) {
     return { label: "Out of stock", className: "bg-[#F3E8E8] text-[#9F2D18]" };
   }
+  if (product.availability === "AVAILABLE" && product.price !== null && product.price > 0 && !product.hasShippingMeasurements) {
+    return { label: "Delivery setup pending", className: "bg-[#FFF4DD] text-[#805D16]" };
+  }
   if (product.availability === "AVAILABLE") {
     return { label: product.stockQuantity !== null ? `${product.stockQuantity} in stock` : "Available", className: "bg-[#DCFCE7] text-[#166534]" };
   }
@@ -569,7 +576,7 @@ function getAvailabilityStatus(product: ProductSearchResult) {
 }
 
 function canAddToCart(product: ProductSearchResult): boolean {
-  return product.availability === "AVAILABLE" && product.price !== null && product.price > 0 && product.stockQuantity !== 0;
+  return product.availability === "AVAILABLE" && product.price !== null && product.price > 0 && product.hasShippingMeasurements && (product.stockQuantity === null || (Number.isSafeInteger(product.stockQuantity) && product.stockQuantity > 0));
 }
 
 /* -------------------------------------------------------------------------- */
@@ -607,7 +614,7 @@ function ProductResultCard({
       <div className="rm-product-media" style={{ backgroundColor: categoryBackground }}>
         <Link href={productHref} aria-label={`View ${product.name}`} className="absolute inset-0">
           {image ? (
-            <img src={image} alt={product.name} loading="lazy" style={{ width: "100%", height: "100%", display: "block" }} />
+            <img src={image} alt={product.name} loading="lazy" className="rm-product-image" />
           ) : (
             <span className="flex h-full w-full items-center justify-center text-[#A69D94]"><Package className="h-9 w-9" /></span>
           )}
@@ -645,23 +652,21 @@ function ProductResultCard({
         </Link>
 
         <div className="rm-product-price-row mt-1.5">
-          <span className="rm-product-price">{product.price !== null ? formatNaira(product.price) : "Price unavailable"}</span>
+          <span className="rm-product-price">{product.price !== null ? formatNaira(product.price) : "Ask seller"}</span>
           {product.originalPrice !== null && product.price !== null && (
             <del className="rm-product-old-price">{formatNaira(product.originalPrice)}</del>
           )}
         </div>
+        {product.rating !== null && product.reviewCount > 0 && <p className="mt-1 inline-flex items-center gap-1 text-[10px] font-semibold text-[var(--rm-muted)]" aria-label={`${product.rating.toFixed(1)} out of 5 from ${product.reviewCount} product reviews`}><Star className="h-3 w-3 fill-amber-400 text-amber-400" aria-hidden="true" />{product.rating.toFixed(1)} <span className="font-normal">({product.reviewCount})</span></p>}
 
         {product.description && (
           <p className="mt-1.5 line-clamp-2 text-[10px] leading-4 text-[var(--rm-muted)]">{product.description}</p>
         )}
 
         <div className="rm-product-meta mt-auto border-t border-[var(--rm-border)] pt-2.5">
-          <Link href={`/seller/${encodeURIComponent(product.seller.id)}`} className="rm-product-seller" title={product.seller.name}>
-            {product.seller.name}
-          </Link>
-          <p className="flex min-w-0 shrink-0 items-center gap-0.5 text-[9px] text-[var(--rm-muted)]">
-            <MapPin className="h-2.5 w-2.5 shrink-0" />
-            <span className="max-w-[78px] truncate">{product.seller.location?.area ?? "Nearby"}</span>
+          <p className="flex min-w-0 items-center gap-1 text-[10px] text-[var(--rm-muted)]">
+            <MapPin className="h-3 w-3 shrink-0 text-[var(--rm-coral)]" />
+            <span className="truncate">{product.seller.location?.area ?? "Location not listed"}</span>
           </p>
         </div>
 
@@ -669,11 +674,11 @@ function ProductResultCard({
           type="button"
           disabled={!canAdd || adding}
           onClick={() => onAddToCart(product)}
-          title={!canAdd ? "This product requires a confirmed price and availability." : "Add to cart"}
+          title={!canAdd ? (product.availability === "AVAILABLE" && product.price !== null && product.price > 0 && product.stockQuantity !== 0 && !product.hasShippingMeasurements ? "Seller delivery details are not complete yet." : "This product requires a confirmed price, availability and stock.") : "Add to cart"}
           className={`rm-button mt-2.5 w-full ${canAdd ? "rm-button-primary" : "cursor-not-allowed border-[var(--rm-border)] bg-[var(--rm-surface-muted)] text-[var(--rm-subtle)]"}`}
         >
           {adding ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <ShoppingCart className="h-3.5 w-3.5" />}
-          {!canAdd ? "Not available to buy" : adding ? "Adding..." : "Add to cart"}
+          {!canAdd ? (!product.hasShippingMeasurements && product.availability === "AVAILABLE" && product.price !== null && product.price > 0 ? "Delivery setup pending" : "Not available to buy") : adding ? "Adding..." : "Add to cart"}
         </button>
 
         {feedback && (

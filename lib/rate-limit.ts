@@ -16,9 +16,11 @@ export type PublicRateLimitScope =
   | "search"
   | "near-me"
   | "recent-products"
+  | "product-details"
   | "request-read"
   | "request-create"
   | "upload"
+  | "admin-category-upload"
   | "contact-event"
   | "business-view-event"
   | "business-review-read"
@@ -62,6 +64,11 @@ const PUBLIC_RATE_LIMITS: Record<
     windowMs: 60_000,
   },
 
+  "product-details": {
+    limit: 60,
+    windowMs: 60_000,
+  },
+
   "request-read": {
     limit: 20,
     windowMs: 60_000,
@@ -82,6 +89,11 @@ const PUBLIC_RATE_LIMITS: Record<
    */
   upload: {
     limit: 25,
+    windowMs: 5 * 60_000,
+  },
+
+  "admin-category-upload": {
+    limit: 15,
     windowMs: 5 * 60_000,
   },
 

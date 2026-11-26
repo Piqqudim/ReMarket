@@ -736,27 +736,19 @@ async function loadRankedListings(
 
   const sellerIds = Array.from(sellerMap.keys());
 
-  const [products, services] = await Promise.all([
-    prisma.product.findMany({
-      where: {
-        businessId: { in: sellerIds },
-        status: "ACTIVE",
-        deletedAt: null,
-      },
-      select: nearMeProductSelect,
-      orderBy: { updatedAt: "desc" },
-    }),
-
-    prisma.service.findMany({
-      where: {
-        businessId: { in: sellerIds },
-        status: "ACTIVE",
-        deletedAt: null,
-      },
-      select: nearMeServiceSelect,
-      orderBy: { updatedAt: "desc" },
-    }),
-  ]);
+  // ReMarket's active discovery experience is product-only. Keep the
+  // legacy service serializer below for historical type compatibility, but
+  // do not query or expose Service records through this public endpoint.
+  const products = await prisma.product.findMany({
+    where: {
+      businessId: { in: sellerIds },
+      status: "ACTIVE",
+      deletedAt: null,
+    },
+    select: nearMeProductSelect,
+    orderBy: { updatedAt: "desc" },
+  });
+  const services: NearMeService[] = [];
 
   const listings: RankedListing[] = [];
 
@@ -1133,7 +1125,7 @@ export async function GET(request: NextRequest) {
 
       if (rankedSellers.length === 0) {
         const warning =
-          "No products or services were found on a matching street yet. Try another street or search by area.";
+          "No products were found on a matching street yet. Try another street or search by area.";
 
         return NextResponse.json(
           {
@@ -1427,7 +1419,7 @@ export async function GET(request: NextRequest) {
         total: 0,
         mode: "none",
         location: null,
-        error: "Unable to load nearby products and services.",
+        error: "Unable to load nearby products.",
       },
       {
         status: 500,

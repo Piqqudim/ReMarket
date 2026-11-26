@@ -12,7 +12,7 @@ import {
   Package,
   RefreshCw,
   ShoppingBag,
-  Store,
+  Star,
   Trash2,
 } from "lucide-react";
 
@@ -27,6 +27,8 @@ type ProductItem = {
   price: number | null;
   priceMin: number | null;
   priceMax: number | null;
+  rating: number | null;
+  reviewCount: number;
   availability: string;
   imageUrl: string | null;
   category: string | null;
@@ -84,29 +86,7 @@ function formatNaira(value: number): string {
 }
 
 function getPriceLabel(product: ProductItem): string {
-  if (product.price !== null) {
-    return formatNaira(product.price);
-  }
-
-  // Legacy price range fallback for older product listings.
-  if (
-    product.priceMin !== null &&
-    product.priceMax !== null
-  ) {
-    return product.priceMin === product.priceMax
-      ? formatNaira(product.priceMin)
-      : `${formatNaira(product.priceMin)} – ${formatNaira(product.priceMax)}`;
-  }
-
-  if (product.priceMin !== null) {
-    return `From ${formatNaira(product.priceMin)}`;
-  }
-
-  if (product.priceMax !== null) {
-    return `Up to ${formatNaira(product.priceMax)}`;
-  }
-
-  return "Ask seller";
+  return product.price !== null ? formatNaira(product.price) : "Ask seller";
 }
 
 function getImageUrl(
@@ -176,7 +156,7 @@ function getAvailabilityClasses(
 /* -------------------------------------------------------------------------- */
 
 /**
- * The saved API may return both products and services.
+ * The saved API returns product listings for the current release.
  * This page deliberately extracts products only.
  */
 function normalizeSavedProducts(data: unknown): ProductItem[] {
@@ -197,7 +177,7 @@ function normalizeSavedProducts(data: unknown): ProductItem[] {
     const savedListingId = stringOrNull(entry.id);
 
     if (!savedListingId || !isRecord(entry.product)) {
-      // Ignore services and invalid saved records.
+      // Ignore unsupported and invalid saved records.
       continue;
     }
 
@@ -252,6 +232,8 @@ function normalizeSavedProducts(data: unknown): ProductItem[] {
       price: numberOrNull(product.price),
       priceMin: numberOrNull(product.priceMin),
       priceMax: numberOrNull(product.priceMax),
+      rating: numberOrNull(product.rating) !== null && numberOrNull(product.rating)! <= 5 ? numberOrNull(product.rating) : null,
+      reviewCount: Math.max(0, Math.floor(numberOrNull(product.reviewCount) ?? 0)),
 
       availability: stringOrDefault(
         product.availability,
@@ -327,23 +309,19 @@ function ProductCard({
       {/* PRODUCT IMAGE */}
 
       <div
-        className="relative aspect-square overflow-hidden
-          bg-[#FCFAF6]"
+        className="rm-product-media"
       >
         <Link
           href={productHref}
           aria-label={`View ${product.name}`}
-          className="block h-full w-full"
+          className="absolute inset-0 block"
         >
           {product.imageUrl ? (
             <img
               src={product.imageUrl}
               alt={product.name}
               loading="lazy"
-              className={`h-full w-full object-cover
-                transition-transform duration-300
-                group-hover:scale-[1.035]
-                ${!product.isAvailable ? "opacity-70" : ""}`}
+              className={`rm-product-image transition-transform duration-300 group-hover:scale-[1.025] ${!product.isAvailable ? "opacity-70" : ""}`}
             />
           ) : (
             <div
@@ -438,21 +416,11 @@ function ProductCard({
         <p className="mt-2 text-sm font-extrabold text-[#9F2D18]">
           {getPriceLabel(product)}
         </p>
+        {product.rating !== null && product.reviewCount > 0 && <p className="mt-1 inline-flex items-center gap-1 text-[10px] font-semibold text-[#756B61]" aria-label={`${product.rating.toFixed(1)} out of 5 from ${product.reviewCount} product reviews`}><Star className="h-3 w-3 fill-amber-400 text-amber-400" aria-hidden="true" />{product.rating.toFixed(1)} <span className="font-normal">({product.reviewCount})</span></p>}
 
-        {/* SELLER INFORMATION */}
+        {/* LOCATION CONTEXT — do not display the business name on product cards. */}
 
         <div className="mt-2 flex min-w-0 items-center gap-1.5">
-          <Store
-            className="h-3 w-3 shrink-0 text-[#958B83]"
-            aria-hidden="true"
-          />
-
-          <span className="truncate text-[9px] font-medium text-[#756B61]">
-            {product.businessName}
-          </span>
-        </div>
-
-        <div className="mt-1 flex min-w-0 items-center gap-1.5">
           <MapPin
             className="h-3 w-3 shrink-0 text-[#FF5A36]"
             aria-hidden="true"

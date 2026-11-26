@@ -590,7 +590,7 @@ export default function NearMePage() {
         }
         const category = business.categories?.[0]
             ?.category?.name ??
-            "Services";
+            "Local business";
         saveBusiness({
             id: business.id,
             name: business.name,
@@ -994,7 +994,7 @@ export default function NearMePage() {
                 const category = business
                     .categories?.[0]
                     ?.category?.name ??
-                    "Services";
+                    "Local business";
                 const saved = savedBusinessIds.has(business.id);
                 const product = business
                     .products?.[0] ??
@@ -1115,7 +1115,7 @@ export default function NearMePage() {
 
                                   {product && (<div className="mt-3 flex items-center gap-2.5 border-t border-[#F0ECE6] pt-3">
 
-                                      {productImage ? (<img src={productImage} alt={product.name} className="h-10 w-10 rounded-lg object-cover"/>) : (<div className="flex h-10 w-10 items-center justify-center rounded-lg bg-[#FCFAF6] text-gray-400">
+                                      {productImage ? (<img src={productImage} alt={product.name} className="h-10 w-10 rounded-lg object-contain p-0"/>) : (<div className="flex h-10 w-10 items-center justify-center rounded-lg bg-[#FCFAF6] text-gray-400">
 
                                           <Package className="h-4 w-4"/>
 

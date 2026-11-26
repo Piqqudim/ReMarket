@@ -197,8 +197,7 @@ function formatNotificationTime(value: string): string {
  * External URLs and protocol-relative URLs are rejected.
  */
 function getSafeInternalHref(
-  value: unknown
-): string | null {
+  value: unknown): string | null {
   if (typeof value !== "string") {
     return null;
   }
@@ -318,24 +317,8 @@ function getNotificationHref(
     notification.type === "SERVICE_BOOKING_UPDATED" ||
     notification.type === "SERVICE_BOOKING_MESSAGE"
   ) {
-    const bookingId = data?.bookingId;
-
-    if (
-      notification.type === "SERVICE_BOOKING_CREATED"
-    ) {
-      return "/seller#service-bookings";
-    }
-
-    if (
-      typeof bookingId === "string" &&
-      bookingId.trim()
-    ) {
-      return `/service-bookings/${encodeURIComponent(
-        bookingId.trim()
-      )}/messages`;
-    }
-
-    return "/bookings";
+    // Historical service notifications must not send users into a disabled workflow.
+    return "/shop";
   }
 
   /*
