@@ -84,6 +84,13 @@ const productSearchSelect = {
   price: true,
   originalPrice: true,
   stockQuantity: true,
+
+  // Shipping measurements used to determine delivery eligibility.
+  shippingWeightKg: true,
+  shippingLengthCm: true,
+  shippingWidthCm: true,
+  shippingHeightCm: true,
+
   availability: true,
   imageUrl: true,
   keywords: true,
@@ -823,6 +830,21 @@ function formatProduct(product: SearchProduct, matchScore: number) {
       ? null
       : Number(product.originalPrice);
 
+  // A product is delivery-ready only when all four saved measurements
+  // contain finite, positive values. Null, zero, negative and invalid values
+  // must not enable Add to cart.
+  const hasShippingMeasurements = [
+    product.shippingWeightKg,
+    product.shippingLengthCm,
+    product.shippingWidthCm,
+    product.shippingHeightCm,
+  ].every(
+    (value) =>
+      typeof value === "number" &&
+      Number.isFinite(value) &&
+      value > 0,
+  );
+
   return {
     id: product.id,
     type: "PRODUCT" as const,
@@ -837,6 +859,7 @@ function formatProduct(product: SearchProduct, matchScore: number) {
         : null,
     stockQuantity: product.stockQuantity,
     availability: product.availability,
+    hasShippingMeasurements,
     imageUrl: product.imageUrl,
     keywords: product.keywords,
     category: product.category?.isActive ? product.category : null,

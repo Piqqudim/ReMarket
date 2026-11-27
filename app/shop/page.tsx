@@ -1,6 +1,6 @@
 "use client";
 
-import { Suspense, useEffect, useMemo, useState, type ReactNode } from "react";
+import { Suspense, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import {
@@ -88,6 +88,7 @@ type RawCategory = {
 };
 
 const PAGE_SIZE = 12;
+const PRODUCT_REFRESH_INTERVAL_MS = 30_000;
 const FILTER_DIALOG_TITLE = "shop-mobile-filter-title";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -540,6 +541,9 @@ function ShopPageView({
   const [saveFeedbackError, setSaveFeedbackError] = useState(false);
   const [addingProductIds, setAddingProductIds] = useState<Record<string, boolean>>({});
   const [cartFeedback, setCartFeedback] = useState<CartFeedback>(null);
+  const [productsRefreshKey, setProductsRefreshKey] = useState(0);
+  const lastSuccessfulSearchKeyRef = useRef<string | null>(null);
+  const lastRefreshTriggerAtRef = useRef(0);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -612,48 +616,183 @@ function ShopPageView({
 
   useEffect(() => {
     const controller = new AbortController();
+
     async function loadProducts() {
-      setLoading(true);
-      setError("");
-      setCartFeedback(null);
+      let searchKey = "";
+
       try {
-        const params = new URLSearchParams({ type: "product", page: String(initialPage), pageSize: String(PAGE_SIZE), sort: initialSort });
+        const params = new URLSearchParams({
+          type: "product",
+          page: String(initialPage),
+          pageSize: String(PAGE_SIZE),
+          sort: initialSort,
+        });
         const fields: Array<[string, string]> = [
-          ["q", initialQuery], ["category", initialCategory], ["categoryId", initialCategoryId], ["state", initialState],
-          ["lga", initialLga], ["area", initialArea], ["minPrice", initialMinPrice], ["maxPrice", initialMaxPrice], ["availability", initialAvailability],
+          ["q", initialQuery],
+          ["category", initialCategory],
+          ["categoryId", initialCategoryId],
+          ["state", initialState],
+          ["lga", initialLga],
+          ["area", initialArea],
+          ["minPrice", initialMinPrice],
+          ["maxPrice", initialMaxPrice],
+          ["availability", initialAvailability],
         ];
-        fields.forEach(([key, value]) => { if (value.trim()) params.set(key, value.trim()); });
+
+        fields.forEach(([key, value]) => {
+          if (value.trim()) params.set(key, value.trim());
+        });
         if (initialVerified) params.set("verified", "true");
-        const response = await fetch(`/api/search?${params.toString()}`, { cache: "no-store", headers: { Accept: "application/json" }, signal: controller.signal });
+
+        // Keep the existing product grid visible during a background refresh.
+        // Show the loading skeleton only for the first load or a changed search.
+        searchKey = params.toString();
+        const isSameSearch = lastSuccessfulSearchKeyRef.current === searchKey;
+        if (!isSameSearch) setLoading(true);
+        setError("");
+        if (!isSameSearch) setCartFeedback(null);
+
+        const response = await fetch(`/api/search?${searchKey}`, {
+          cache: "no-store",
+          headers: { Accept: "application/json" },
+          signal: controller.signal,
+        });
         const data: unknown = await response.json().catch(() => null);
-        if (!response.ok) throw new Error(isRecord(data) ? cleanString(data.error) ?? "Unable to load products." : "Unable to load products.");
-        if (!isRecord(data)) throw new Error("The search API returned an invalid response.");
-        const parsed = (Array.isArray(data.products) ? data.products : []).map(parseProduct).filter((item): item is Product => item !== null);
+
+        if (!response.ok) {
+          throw new Error(
+            isRecord(data)
+              ? cleanString(data.error) ?? "Unable to load products."
+              : "Unable to load products.",
+          );
+        }
+        if (!isRecord(data)) {
+          throw new Error("The search API returned an invalid response.");
+        }
+
+        const parsed = (Array.isArray(data.products) ? data.products : [])
+          .map(parseProduct)
+          .filter((item): item is Product => item !== null);
+
         if (controller.signal.aborted) return;
+
+        lastSuccessfulSearchKeyRef.current = searchKey;
+
         const meta = isRecord(data.resultMeta) ? data.resultMeta : {};
-        const readInt = (key: string, fallback: number, minimum = 0) => typeof meta[key] === "number" && Number.isSafeInteger(meta[key]) && (meta[key] as number) >= minimum ? meta[key] as number : fallback;
+        const readInt = (key: string, fallback: number, minimum = 0) =>
+          typeof meta[key] === "number" &&
+          Number.isSafeInteger(meta[key]) &&
+          (meta[key] as number) >= minimum
+            ? (meta[key] as number)
+            : fallback;
         const reportedTotal = readInt("totalProducts", parsed.length);
         const pageSize = readInt("pageSize", PAGE_SIZE, 1);
         const maxResults = readInt("maxResults", 120, 1);
         const cappedTotal = Math.min(reportedTotal, maxResults);
+
         setProducts(parsed);
         setTotalProducts(reportedTotal);
-        setTotalPages(Math.max(1, readInt("totalPages", Math.max(1, Math.ceil(cappedTotal / pageSize)), 1)));
+        setTotalPages(
+          Math.max(
+            1,
+            readInt(
+              "totalPages",
+              Math.max(1, Math.ceil(cappedTotal / pageSize)),
+              1,
+            ),
+          ),
+        );
         setHasMoreResults(meta.hasMore === true);
         setMaxSearchResults(maxResults);
         setResultsTruncated(meta.truncated === true || reportedTotal > maxResults);
       } catch (err) {
         if (err instanceof DOMException && err.name === "AbortError") return;
         console.error("Products loading error:", err);
-        setProducts([]); setTotalProducts(0); setTotalPages(1); setHasMoreResults(false); setMaxSearchResults(120); setResultsTruncated(false);
-        setError(err instanceof Error ? err.message : "Unable to load products. Please try again.");
+
+        // A failed background refresh should not erase products already on screen.
+        const hasPreviousResults =
+          Boolean(searchKey) && lastSuccessfulSearchKeyRef.current === searchKey;
+        if (!hasPreviousResults) {
+          setProducts([]);
+          setTotalProducts(0);
+          setTotalPages(1);
+          setHasMoreResults(false);
+          setMaxSearchResults(120);
+          setResultsTruncated(false);
+          setError(
+            err instanceof Error
+              ? err.message
+              : "Unable to load products. Please try again.",
+          );
+        }
       } finally {
         if (!controller.signal.aborted) setLoading(false);
       }
     }
+
     void loadProducts();
     return () => controller.abort();
-  }, [initialQuery, initialCategory, initialCategoryId, initialState, initialLga, initialArea, initialMinPrice, initialMaxPrice, initialAvailability, initialVerified, initialPage, initialSort]);
+  }, [
+    initialQuery,
+    initialCategory,
+    initialCategoryId,
+    initialState,
+    initialLga,
+    initialArea,
+    initialMinPrice,
+    initialMaxPrice,
+    initialAvailability,
+    initialVerified,
+    initialPage,
+    initialSort,
+    productsRefreshKey,
+  ]);
+
+  // Refresh product eligibility when the buyer returns to the Shop page and
+  // periodically while the page is visible. This also picks up seller changes
+  // made on another device without requiring the buyer to reload manually.
+  useEffect(() => {
+    const refreshProducts = () => {
+      if (document.visibilityState !== "visible") return;
+
+      // Focus, pageshow and visibilitychange can fire together. Avoid
+      // triggering several identical searches for one return-to-tab action.
+      const now = Date.now();
+      if (now - lastRefreshTriggerAtRef.current < 1_500) return;
+      lastRefreshTriggerAtRef.current = now;
+      setProductsRefreshKey((current) => current + 1);
+    };
+
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === "visible") refreshProducts();
+    };
+
+    const handleStorage = (event: StorageEvent) => {
+      if (event.key === "remarket-products-updated" && event.newValue) {
+        refreshProducts();
+      }
+    };
+
+    window.addEventListener("focus", refreshProducts);
+    window.addEventListener("pageshow", refreshProducts);
+    window.addEventListener("storage", handleStorage);
+    window.addEventListener("remarket-products-changed", refreshProducts);
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+
+    const intervalId = window.setInterval(
+      refreshProducts,
+      PRODUCT_REFRESH_INTERVAL_MS,
+    );
+
+    return () => {
+      window.clearInterval(intervalId);
+      window.removeEventListener("focus", refreshProducts);
+      window.removeEventListener("pageshow", refreshProducts);
+      window.removeEventListener("storage", handleStorage);
+      window.removeEventListener("remarket-products-changed", refreshProducts);
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+    };
+  }, []);
 
   useEffect(() => {
     if (!showMobileFilters) return;

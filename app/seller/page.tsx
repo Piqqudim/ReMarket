@@ -249,6 +249,20 @@ function getSafeExternalUrl(value: string | null | undefined): string {
   }
 }
 
+function notifyProductCatalogChanged() {
+  if (typeof window === "undefined") return;
+
+  // Refresh the Shop page in this tab, if it is mounted in the same document.
+  window.dispatchEvent(new Event("remarket-products-changed"));
+
+  // Notify other ReMarket tabs in this browser. The Shop page listens for this key.
+  try {
+    window.localStorage.setItem("remarket-products-updated", String(Date.now()));
+  } catch {
+    // The Shop page also refreshes on focus and through its periodic polling.
+  }
+}
+
 function parseCategoryTree(payload: unknown): SellerCategoryNode[] {
   if (!isRecord(payload)) return [];
   const rawItems: Record<string, unknown>[] = [];
@@ -815,6 +829,7 @@ export default function SellerDashboard() {
       const data = await readJsonSafely<ApiErrorResponse>(response);
       if (response.status === 401 || response.status === 403) { router.replace("/seller/login"); return; }
       if (!response.ok) { setError(getResponseError(data, method === "POST" ? "Unable to create product." : "Unable to update product.")); return; }
+      notifyProductCatalogChanged();
       setShowProductForm(false); setEditingProductId(null); resetProductForm();
       try {
         await reloadBusiness();
@@ -836,6 +851,7 @@ export default function SellerDashboard() {
       const data = await readJsonSafely<ApiErrorResponse>(response);
       if (response.status === 401 || response.status === 403) { router.replace("/seller/login"); return; }
       if (!response.ok) { setError(getResponseError(data, "Unable to delete product.")); return; }
+      notifyProductCatalogChanged();
       if (editingProductId === product.id) { resetProductForm(); setEditingProductId(null); setShowProductForm(false); }
       try { await reloadBusiness(); setSuccess("Product deleted successfully."); }
       catch (refreshError) { console.error("Product deleted but dashboard refresh failed:", refreshError); setSuccess("Product deleted successfully, but the dashboard could not refresh. Reload the page to confirm the latest list."); }
