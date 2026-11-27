@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useParams, usePathname } from "next/navigation";
-import { signOut } from "next-auth/react";
+import { signOut } from "@/lib/client-auth";
 import { useEffect, useState } from "react";
 import type { FormEvent } from "react";
 import {

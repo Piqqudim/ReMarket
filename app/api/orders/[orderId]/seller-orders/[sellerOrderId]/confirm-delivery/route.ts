@@ -10,6 +10,7 @@ import {
 import { requireBuyer } from "@/lib/buyer-auth";
 import { prisma } from "@/lib/prisma";
 import { createNotification } from "@/lib/notifications";
+import { queueProductReviewInvitations } from "@/lib/product-review-notifications";
 import {
   createSettlementAfterBuyerConfirmation,
   initiateQueuedSellerPayout,
@@ -430,6 +431,9 @@ export async function PATCH(_request: Request, context: RouteContext) {
     }
 
     if (result.kind === "ALREADY_COMPLETED") {
+      await queueProductReviewInvitations(result.orderId, result.sellerOrderId).catch((error) => {
+        console.error("PRODUCT_REVIEW_INVITATION_RETRY_ERROR:", error);
+      });
       return NextResponse.json(
         {
           success: true,
@@ -472,6 +476,10 @@ export async function PATCH(_request: Request, context: RouteContext) {
         notificationError,
       );
     }
+
+    await queueProductReviewInvitations(result.orderId, result.sellerOrderId).catch((error) => {
+      console.error("PRODUCT_REVIEW_INVITATION_QUEUE_ERROR:", error);
+    });
 
     let payoutResult: Awaited<ReturnType<typeof initiateQueuedSellerPayout>> | null = null;
     if (result.settlement.payoutId) {

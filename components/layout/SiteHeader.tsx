@@ -7,7 +7,8 @@ import {
   type FormEvent,
 } from "react";
 import { usePathname, useRouter } from "next/navigation";
-import { getSession, signOut } from "next-auth/react";
+import { signOut } from "@/lib/client-auth";
+import { getSession } from "next-auth/react";
 import Link from "next/link";
 import {
   ArrowRight,

@@ -9,6 +9,7 @@ import {
 import { NextResponse } from "next/server";
 
 import { createNotification } from "@/lib/notifications";
+import { queueProductReviewInvitations } from "@/lib/product-review-notifications";
 import { prisma } from "@/lib/prisma";
 import {
   createShipbubbleProviderEventKey,
@@ -457,6 +458,12 @@ export async function POST(request: Request) {
       } catch (notificationError) {
         console.error("SHIPBUBBLE_TRACKING_NOTIFICATION_ERROR:", notificationError);
       }
+    }
+
+    if (result.statusApplied && result.status === ShipmentStatus.DELIVERED) {
+      await queueProductReviewInvitations(result.orderId, result.sellerOrderId).catch((error) => {
+        console.error("SHIPBUBBLE_REVIEW_INVITATION_QUEUE_ERROR:", error);
+      });
     }
 
     return NextResponse.json(

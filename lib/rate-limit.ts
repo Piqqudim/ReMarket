@@ -24,7 +24,9 @@ export type PublicRateLimitScope =
   | "contact-event"
   | "business-view-event"
   | "business-review-read"
-  | "business-review-write";
+  | "business-review-write"
+  | "product-review-read"
+  | "product-review-write";
 
 export type RateLimitResult = {
   allowed: boolean;
@@ -113,6 +115,16 @@ const PUBLIC_RATE_LIMITS: Record<
   },
 
   "business-review-write": {
+    limit: 5,
+    windowMs: 60_000,
+  },
+
+  "product-review-read": {
+    limit: 60,
+    windowMs: 60_000,
+  },
+
+  "product-review-write": {
     limit: 5,
     windowMs: 60_000,
   },

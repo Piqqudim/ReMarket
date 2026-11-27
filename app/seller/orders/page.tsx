@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState, type ReactNode } from "react";
 import Link from "next/link";
-import { signOut } from "next-auth/react";
+import { signOut } from "@/lib/client-auth";
 import { useRouter } from "next/navigation";
 import NotificationBell from "@/components/NotificationBell";
 import {

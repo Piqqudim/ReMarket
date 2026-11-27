@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { signOut } from "next-auth/react";
+import { signOut } from "@/lib/client-auth";
 import { useEffect, useMemo, useState, type FormEvent } from "react";
 import {
   Activity, ArrowRight, ChartNoAxesCombined, ChevronLeft, ChevronRight,

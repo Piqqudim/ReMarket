@@ -9,8 +9,6 @@ const CHANNELS = [
   "inApp",
   "push",
   "email",
-  "whatsapp",
-  "sms",
 ] as const;
 
 type Channel = (typeof CHANNELS)[number];
@@ -53,8 +51,6 @@ async function getAuthenticatedUser() {
  * inApp: true
  * push: false
  * email: false
- * whatsapp: false
- * sms: false
  */
 
 export async function GET() {
@@ -90,8 +86,6 @@ export async function GET() {
           inApp: saved?.inApp ?? true,
           push: saved?.push ?? false,
           email: saved?.email ?? false,
-          whatsapp: saved?.whatsapp ?? false,
-          sms: saved?.sms ?? false,
           customized: Boolean(saved),
           updatedAt: saved?.updatedAt ?? null,
         };
@@ -201,6 +195,13 @@ export async function PATCH(request: NextRequest) {
         { error: "Provide at least one notification channel to update." },
         400
       );
+    }
+
+    if (updates.email === true && (!process.env.RESEND_API_KEY?.trim() || !process.env.EMAIL_FROM?.trim())) {
+      return response({ error: "Email notifications are not available until ReMarket's email provider is configured." }, 503);
+    }
+    if (updates.push === true && (!process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY?.trim() || !process.env.VAPID_PRIVATE_KEY?.trim() || !process.env.VAPID_SUBJECT?.trim() || !process.env.PUSH_SUBSCRIPTION_ENCRYPTION_KEY?.trim())) {
+      return response({ error: "Browser push is not configured on ReMarket yet." }, 503);
     }
 
     const preference =

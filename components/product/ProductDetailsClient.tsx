@@ -16,6 +16,7 @@ import {
 } from "lucide-react";
 
 import AddToCartButton from "@/components/cart/AddToCartButton";
+import ProductReviewsPanel from "@/components/product/ProductReviewsPanel";
 import MobileBottomNav from "@/components/layout/MobileBottomNav";
 import SiteHeader from "@/components/layout/SiteHeader";
 
@@ -328,6 +329,8 @@ export default function ProductDetailsClient({ productId }: { productId: string 
                 </div>
               </section>
             </div>
+
+            <ProductReviewsPanel productId={product.id} />
 
             {related.length > 0 && <section className="mt-12" aria-labelledby="related-products-heading">
               <div className="mb-4 flex items-end justify-between gap-3"><div><p className="text-xs font-bold uppercase tracking-wide text-[var(--rm-coral)]">Keep exploring</p><h2 id="related-products-heading" className="mt-1 text-xl font-extrabold text-[var(--rm-ink)]">Related products</h2></div><Link href="/shop" className="rm-text-link">View all products</Link></div>

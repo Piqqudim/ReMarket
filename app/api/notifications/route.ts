@@ -5,6 +5,7 @@ import {
 } from "next/server";
 
 import { getServerSession } from "next-auth";
+import { NotificationChannel } from "@prisma/client";
 
 import { prisma } from "@/lib/prisma";
 import { authOptions } from "@/lib/auth";
@@ -147,6 +148,7 @@ export async function GET(request: NextRequest) {
 
     const where = {
       userId,
+      deliveries: { some: { channel: NotificationChannel.IN_APP } },
 
       ...(unreadFilter === true
         ? {
@@ -224,6 +226,7 @@ export async function GET(request: NextRequest) {
       where: {
         userId,
         readAt: null,
+        deliveries: { some: { channel: NotificationChannel.IN_APP } },
       },
     });
 
@@ -421,6 +424,7 @@ export async function PATCH(request: NextRequest) {
           id: notificationId,
           userId,
           readAt: null,
+          deliveries: { some: { channel: NotificationChannel.IN_APP } },
         },
 
         data: {
@@ -437,6 +441,7 @@ export async function PATCH(request: NextRequest) {
           where: {
             id: notificationId,
             userId,
+            deliveries: { some: { channel: NotificationChannel.IN_APP } },
           },
 
           select: {
@@ -519,6 +524,7 @@ export async function PATCH(request: NextRequest) {
         where: {
           userId,
           readAt: null,
+          deliveries: { some: { channel: NotificationChannel.IN_APP } },
         },
 
         data: {

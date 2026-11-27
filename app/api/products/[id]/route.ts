@@ -372,8 +372,8 @@ export async function GET(
       name: category.name,
     }));
     const [productRating, productReviewCount] = await Promise.all([
-      prisma.productReview.aggregate({ where: { productId: product.id }, _avg: { rating: true } }),
-      prisma.productReview.count({ where: { productId: product.id } }),
+      prisma.productReview.aggregate({ where: { productId: product.id, status: "PUBLISHED" }, _avg: { rating: true } }),
+      prisma.productReview.count({ where: { productId: product.id, status: "PUBLISHED" } }),
     ]);
     const hasShippingMeasurements = [
       product.shippingWeightKg,

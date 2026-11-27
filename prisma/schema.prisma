@@ -244,6 +244,8 @@ enum NotificationChannel {
  */
 enum NotificationDeliveryStatus {
   PENDING
+  PROCESSING
+  CANCELLED
   SENT
   DELIVERED
   FAILED
@@ -301,6 +303,7 @@ enum NotificationType {
   ORDER_CANCELLED
 
   REVIEW_RECEIVED
+  REVIEW_INVITATION
   REVIEW_REPLIED
   REVIEW_REPORTED
   REVIEW_REMOVED
@@ -319,6 +322,18 @@ enum NotificationType {
 /**
  * Audience for admin-created announcements.
  */
+enum ProductReviewStatus {
+  PUBLISHED
+  HIDDEN
+  REMOVED
+}
+
+enum ProductReviewReportStatus {
+  OPEN
+  REVIEWED
+  DISMISSED
+}
+
 enum NotificationAudience {
   EVERYONE
   BUYERS
@@ -461,8 +476,13 @@ model User {
   settlements    SellerSettlement[]    @relation("SellerSettlementSeller")
   payouts        SellerPayout[]        @relation("SellerPayoutSeller")
 
-  // Reviews written for individual products.
+  // Reviews written for individual products and historical seller ownership.
   productReviews ProductReview[]
+  productReviewsAsSeller ProductReview[] @relation("ProductReviewSeller")
+  productReviewResponses ProductReview[] @relation("ProductReviewResponder")
+  productReviewReports ProductReviewReport[] @relation("ProductReviewReporter")
+  productReviewModerations ProductReviewModerationLog[] @relation("ProductReviewModerator")
+  pushSubscriptions PushSubscription[]
 
   // Saved Shipbubble delivery quotes and validated address codes.
   deliveryQuotes        DeliveryQuote[]
@@ -1322,13 +1342,50 @@ model NotificationDelivery {
   providerMessageId String?
 
   error String?
+  attemptCount Int @default(0)
+  nextAttemptAt DateTime @default(now())
+  lockedAt DateTime?
+  lastAttemptAt DateTime?
+
+  attempts NotificationDeliveryAttempt[]
 
   createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   @@unique([notificationId, channel])
   @@index([notificationId])
-  @@index([channel, status])
-  @@index([status])
+  @@index([channel, status, nextAttemptAt])
+  @@index([status, nextAttemptAt])
+}
+
+model NotificationDeliveryAttempt {
+  id String @id @default(cuid())
+  deliveryId String
+  delivery NotificationDelivery @relation(fields: [deliveryId], references: [id], onDelete: Cascade)
+  attemptNumber Int
+  status NotificationDeliveryStatus
+  providerMessageId String?
+  error String?
+  createdAt DateTime @default(now())
+
+  @@unique([deliveryId, attemptNumber])
+  @@index([deliveryId, createdAt])
+}
+
+model PushSubscription {
+  id String @id @default(cuid())
+  userId String
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  endpoint String @unique
+  p256dh String
+  auth String
+  expirationTime DateTime?
+  userAgent String?
+  lastUsedAt DateTime?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([userId, updatedAt])
 }
 
 model NotificationPreference {
@@ -1699,6 +1756,8 @@ model OrderItem {
   lineTotal Int
 
   inventoryReserved Boolean @default(false)
+
+  productReview ProductReview?
 
   createdAt DateTime @default(now())
 
@@ -2104,21 +2163,76 @@ model ShipbubbleAddress {
 }
 
 model ProductReview {
-  id        String @id @default(cuid())
-  productId String
-  userId    String
+  id String @id @default(cuid())
 
-  rating  Int
+  // Snapshot fields and optional product reference preserve review history
+  // when a listing is subsequently removed.
+  productId String?
+  product Product? @relation(fields: [productId], references: [id], onDelete: SetNull)
+  productName String
+
+  // Each review is tied to one actual purchased item.
+  orderItemId String? @unique
+  orderItem OrderItem? @relation(fields: [orderItemId], references: [id], onDelete: Restrict)
+
+  userId String
+  user User @relation(fields: [userId], references: [id], onDelete: Restrict)
+
+  // Seller identity is captured at purchase time for historical ownership checks.
+  sellerId String?
+  seller User? @relation("ProductReviewSeller", fields: [sellerId], references: [id], onDelete: SetNull)
+
+  rating Int
   comment String?
+  status ProductReviewStatus @default(PUBLISHED)
 
-  product Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+  sellerResponse String?
+  sellerResponseById String?
+  sellerResponseBy User? @relation("ProductReviewResponder", fields: [sellerResponseById], references: [id], onDelete: SetNull)
+  sellerRespondedAt DateTime?
 
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  reports ProductReviewReport[]
+  moderationLogs ProductReviewModerationLog[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  @@unique([productId, userId])
-  @@index([productId, createdAt])
+  @@index([productId, status, createdAt])
+  @@index([sellerId, status, createdAt])
   @@index([userId, createdAt])
+}
+
+model ProductReviewReport {
+  id String @id @default(cuid())
+  reviewId String
+  review ProductReview @relation(fields: [reviewId], references: [id], onDelete: Cascade)
+  reporterId String
+  reporter User @relation("ProductReviewReporter", fields: [reporterId], references: [id], onDelete: Restrict)
+  reason String
+  details String?
+  status ProductReviewReportStatus @default(OPEN)
+  reviewedAt DateTime?
+  reviewedById String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([reviewId, reporterId])
+  @@index([status, createdAt])
+  @@index([reviewId, createdAt])
+}
+
+model ProductReviewModerationLog {
+  id String @id @default(cuid())
+  reviewId String
+  review ProductReview @relation(fields: [reviewId], references: [id], onDelete: Cascade)
+  moderatorId String
+  moderator User @relation("ProductReviewModerator", fields: [moderatorId], references: [id], onDelete: Restrict)
+  action String
+  reason String?
+  previousStatus ProductReviewStatus?
+  newStatus ProductReviewStatus
+  createdAt DateTime @default(now())
+
+  @@index([reviewId, createdAt])
+  @@index([moderatorId, createdAt])
 }

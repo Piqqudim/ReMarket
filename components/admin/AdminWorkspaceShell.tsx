@@ -3,9 +3,10 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { signOut } from "next-auth/react";
+import { signOut } from "@/lib/client-auth";
 import {
   CalendarClock,
+  Bell,
   CreditCard,
   ChevronRight,
   ClipboardList,
@@ -17,6 +18,7 @@ import {
   Package,
   ShieldCheck,
   ShoppingCart,
+  Star,
   Store,
   Tags,
   Trash2,
@@ -45,6 +47,7 @@ const NAV_GROUPS: Array<{
       { label: "Products", href: "/admin/products", icon: Package },
       { label: "Categories", href: "/admin/categories", icon: Tags },
       { label: "Orders", href: "/admin/orders", icon: ShoppingCart },
+      { label: "Product reviews", href: "/admin/product-reviews", icon: Star },
     ],
   },
   {
@@ -60,6 +63,7 @@ const NAV_GROUPS: Array<{
       { label: "Delivery", href: "/admin/delivery", icon: Truck },
       { label: "Buyer requests", href: "/admin/requests", icon: ClipboardList },
       { label: "Announcements", href: "/admin/announcements", icon: Megaphone },
+      { label: "Notification deliveries", href: "/admin/notification-deliveries", icon: Bell },
       { label: "Content", href: "/admin/content", icon: FileText },
     ],
   },

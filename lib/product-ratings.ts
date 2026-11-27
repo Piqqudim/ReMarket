@@ -17,12 +17,12 @@ export async function getProductRatingSummaries(
 
   const rows = await prisma.productReview.groupBy({
     by: ["productId"],
-    where: { productId: { in: ids } },
+    where: { productId: { in: ids }, status: "PUBLISHED" },
     _avg: { rating: true },
     _count: { _all: true },
   });
 
-  return new Map(rows.map((row) => [row.productId, {
+  return new Map(rows.filter((row) => row.productId !== null).map((row) => [row.productId as string, {
     rating: typeof row._avg.rating === "number" ? row._avg.rating : null,
     reviewCount: row._count._all,
   }]));

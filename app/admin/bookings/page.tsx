@@ -10,7 +10,7 @@ import {
 } from "react";
 
 import { usePathname } from "next/navigation";
-import { signOut } from "next-auth/react";
+import { signOut } from "@/lib/client-auth";
 
 import type { LucideIcon } from "lucide-react";
 

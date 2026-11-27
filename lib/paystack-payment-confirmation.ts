@@ -220,7 +220,7 @@ export async function confirmPaystackPayment(
       null;
 
     if (mappedStatus) {
-      await prisma.payment.updateMany({
+      const updated = await prisma.payment.updateMany({
         where: {
           id: existingPayment.id,
           status: { in: ["PENDING", "INITIATED"] },
@@ -230,6 +230,29 @@ export async function confirmPaystackPayment(
           failureReason: `Paystack transaction status: ${providerStatus}`.slice(0, 500),
         },
       });
+
+      // Notify only when this request actually recorded a failed/cancelled
+      // attempt. A concurrent successful confirmation must not be followed
+      // by a stale failure notification.
+      if (updated.count === 1) {
+        try {
+          await createNotification({
+            userId: existingPayment.order.buyer.id,
+            type: NotificationType.PAYMENT_FAILED,
+            title: mappedStatus === "CANCELLED" ? "Payment not completed" : "Payment unsuccessful",
+            message: `Paystack did not complete payment for order ${existingPayment.order.orderCode}. You can review the order and try again if it is still awaiting payment.`,
+            priority: NotificationPriority.HIGH,
+            dedupeKey: `paystack-payment-failed:${existingPayment.id}`,
+            data: {
+              orderId: existingPayment.order.id,
+              orderCode: existingPayment.order.orderCode,
+              href: `/orders/${existingPayment.order.id}`,
+            } as Prisma.InputJsonValue,
+          });
+        } catch (notificationError) {
+          console.error("PAYSTACK_PAYMENT_FAILURE_NOTIFICATION_ERROR:", notificationError);
+        }
+      }
     }
 
     return {
