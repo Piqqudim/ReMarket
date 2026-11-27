@@ -195,10 +195,10 @@ function getShipmentNotification(status: ShipmentStatus) {
 /**
  * POST /api/webhooks/shipbubble
  *
- * Shipbubble signs the raw request body. Configure the signing credential
- * in SHIPBUBBLE_WEBHOOK_SECRET (or use SHIPBUBBLE_API_KEY where the account's
- * Shipbubble webhook setup uses its API key). Never trust status fields until
- * the signature has been checked.
+ * Verify the raw request body using the dedicated SHIPBUBBLE_WEBHOOK_SECRET.
+ * Do not reuse SHIPBUBBLE_API_KEY unless Shipbubble explicitly confirms that
+ * it is also the webhook signing secret for this merchant account. The
+ * signature algorithm/header still requires account-level provider confirmation.
  */
 export async function POST(request: Request) {
   let rawBody: Buffer;

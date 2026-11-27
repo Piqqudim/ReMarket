@@ -448,6 +448,12 @@ export async function GET(
       availability: product.availability,
       imageUrl: product.imageUrl ?? product.images[0]?.url ?? null,
       keywords: product.keywords,
+      // Return the persisted package measurements as well as the readiness flag.
+      // Product Details needs the actual values, not only a boolean indicating completeness.
+      shippingWeightKg: product.shippingWeightKg,
+      shippingLengthCm: product.shippingLengthCm,
+      shippingWidthCm: product.shippingWidthCm,
+      shippingHeightCm: product.shippingHeightCm,
       rating: productReviewCount > 0 ? productRating._avg.rating : null,
       reviewCount: productReviewCount,
       hasShippingMeasurements,

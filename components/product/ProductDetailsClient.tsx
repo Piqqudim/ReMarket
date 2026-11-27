@@ -43,6 +43,10 @@ type ProductDetails = {
   stockQuantity: number | null;
   availability: ProductAvailability;
   imageUrl: string | null;
+  shippingWeightKg: number | null;
+  shippingLengthCm: number | null;
+  shippingWidthCm: number | null;
+  shippingHeightCm: number | null;
   rating: number | null;
   reviewCount: number;
   hasShippingMeasurements: boolean;
@@ -120,6 +124,10 @@ function safeProduct(value: unknown): ProductDetails | null {
     stockQuantity: typeof value.stockQuantity === "number" && Number.isSafeInteger(value.stockQuantity) ? value.stockQuantity : null,
     availability,
     imageUrl: typeof value.imageUrl === "string" ? value.imageUrl : null,
+    shippingWeightKg: typeof value.shippingWeightKg === "number" && Number.isFinite(value.shippingWeightKg) && value.shippingWeightKg > 0 ? value.shippingWeightKg : null,
+    shippingLengthCm: typeof value.shippingLengthCm === "number" && Number.isFinite(value.shippingLengthCm) && value.shippingLengthCm > 0 ? value.shippingLengthCm : null,
+    shippingWidthCm: typeof value.shippingWidthCm === "number" && Number.isFinite(value.shippingWidthCm) && value.shippingWidthCm > 0 ? value.shippingWidthCm : null,
+    shippingHeightCm: typeof value.shippingHeightCm === "number" && Number.isFinite(value.shippingHeightCm) && value.shippingHeightCm > 0 ? value.shippingHeightCm : null,
     rating,
     reviewCount: typeof value.reviewCount === "number" && Number.isSafeInteger(value.reviewCount) ? value.reviewCount : 0,
     hasShippingMeasurements: value.hasShippingMeasurements === true,
@@ -286,6 +294,17 @@ export default function ProductDetailsClient({ productId }: { productId: string 
                       {product.availability !== "AVAILABLE" ? "This product is not currently marked as available for purchase." : product.stockQuantity === 0 ? "This product is currently out of stock." : !product.price || product.price <= 0 ? "A fixed selling price has not been provided, so checkout is unavailable." : "The seller has not completed the package measurements required for delivery checkout."}
                     </div>}
                   </div>
+                </div>
+
+                <div className="mt-5 rounded-2xl border border-[var(--rm-border)] bg-white p-4 sm:p-5">
+                  <h2 className="text-sm font-extrabold text-[var(--rm-ink)]">Package measurements</h2>
+                  <p className="mt-1 text-xs leading-5 text-[var(--rm-muted)]">The seller-provided measurements used when checking delivery options.</p>
+                  <dl className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-4">
+                    <div className="rounded-xl bg-[var(--rm-surface-muted)] p-3"><dt className="text-[11px] font-medium text-[var(--rm-muted)]">Weight</dt><dd className="mt-1 break-words text-sm font-bold text-[var(--rm-ink)]">{product.shippingWeightKg !== null ? `${product.shippingWeightKg.toLocaleString("en-NG", { maximumFractionDigits: 2 })} kg` : "Not provided"}</dd></div>
+                    <div className="rounded-xl bg-[var(--rm-surface-muted)] p-3"><dt className="text-[11px] font-medium text-[var(--rm-muted)]">Length</dt><dd className="mt-1 break-words text-sm font-bold text-[var(--rm-ink)]">{product.shippingLengthCm !== null ? `${product.shippingLengthCm.toLocaleString("en-NG", { maximumFractionDigits: 2 })} cm` : "Not provided"}</dd></div>
+                    <div className="rounded-xl bg-[var(--rm-surface-muted)] p-3"><dt className="text-[11px] font-medium text-[var(--rm-muted)]">Width</dt><dd className="mt-1 break-words text-sm font-bold text-[var(--rm-ink)]">{product.shippingWidthCm !== null ? `${product.shippingWidthCm.toLocaleString("en-NG", { maximumFractionDigits: 2 })} cm` : "Not provided"}</dd></div>
+                    <div className="rounded-xl bg-[var(--rm-surface-muted)] p-3"><dt className="text-[11px] font-medium text-[var(--rm-muted)]">Height</dt><dd className="mt-1 break-words text-sm font-bold text-[var(--rm-ink)]">{product.shippingHeightCm !== null ? `${product.shippingHeightCm.toLocaleString("en-NG", { maximumFractionDigits: 2 })} cm` : "Not provided"}</dd></div>
+                  </dl>
                 </div>
 
                 <div className="mt-5 rounded-2xl border border-[var(--rm-border)] bg-white p-4 sm:p-5">

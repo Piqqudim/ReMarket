@@ -6,6 +6,7 @@ import { usePathname } from "next/navigation";
 import { signOut } from "next-auth/react";
 import {
   CalendarClock,
+  CreditCard,
   ChevronRight,
   ClipboardList,
   FileText,
@@ -19,6 +20,7 @@ import {
   Store,
   Tags,
   Trash2,
+  Truck,
   UserRound,
   Users,
   Wallet,
@@ -47,11 +49,15 @@ const NAV_GROUPS: Array<{
   },
   {
     label: "Finance",
-    items: [{ label: "Settlements", href: "/admin/settlements", icon: Wallet }],
+    items: [
+      { label: "Payments", href: "/admin/payments", icon: CreditCard },
+      { label: "Settlements", href: "/admin/settlements", icon: Wallet },
+    ],
   },
   {
     label: "Operations",
     items: [
+      { label: "Delivery", href: "/admin/delivery", icon: Truck },
       { label: "Buyer requests", href: "/admin/requests", icon: ClipboardList },
       { label: "Announcements", href: "/admin/announcements", icon: Megaphone },
       { label: "Content", href: "/admin/content", icon: FileText },
